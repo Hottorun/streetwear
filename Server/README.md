@@ -53,16 +53,42 @@ an unchanged catalog produces nothing, and a failing source backs off.
 | `SQLITE_PATH` | `streetw.sqlite` | `:memory:` supported |
 | `AUTO_MIGRATE` | on | `false` to skip migrations at boot |
 | `DISABLE_POLLER` | off | `true` to run the API without polling |
-| `PORT` | 8080 | |
+| `POLITE_INTERVAL` | `2.0` | Minimum seconds between requests to one host |
+| `PORT` | 8080 | Read in `configure.swift`; hosts assign this at runtime |
+| `HOST` | `0.0.0.0` | Must not be localhost inside a container |
 
 ## Deploying to Railway
 
-1. Push the repo to GitHub.
-2. New project → Deploy from repo. Set the Dockerfile path to `Server/Dockerfile` and
-   leave the build context at the repo root — the server package depends on the root
-   package by path, so both must be in the image.
-3. Add a Postgres database; Railway injects `DATABASE_URL` and migrations run at boot.
-4. Generate a domain.
+Railway watches the GitHub repo, builds an image from the Dockerfile, and runs it as a
+long-lived process.
+
+1. **New Project → Deploy from GitHub repo**, pick the repo.
+2. Nothing else to configure: `railway.json` at the repo root pins the builder to
+   `DOCKERFILE` with `dockerfilePath: Server/Dockerfile`. **Without that file Railway
+   uses its Railpack autodetector, which has no Swift provider and fails with "could not
+   determine how to build the app."** If you'd rather set it in the UI: Settings → Build →
+   Builder = Dockerfile, Dockerfile Path = `Server/Dockerfile`, and leave Root Directory
+   empty.
+3. **+ New → Database → Postgres.** Railway injects `DATABASE_URL` automatically; nothing
+   to copy. On boot `configure.swift` sees it, switches from SQLite to Postgres, and runs
+   migrations.
+4. **Settings → Networking → Generate Domain**, then `curl https://<domain>/health`.
+
+### Why the build context is the repo root
+
+Two different settings, easy to conflate:
+
+- *Dockerfile path* — which file holds the instructions: `Server/Dockerfile`
+- *Build context* — which directory Docker may copy from: the **repo root**
+
+They differ because `Server/Package.swift` declares `.package(path: "..")`. `StreetwCore`
+lives at the repo root, so a context of `Server/` literally cannot see it and the build
+fails while resolving. That's also why the Dockerfile's `COPY` paths (`Sources`,
+`Server/Sources`) are written relative to the root.
+
+The whole source tree is copied before `swift build`, rather than resolving from manifests
+first for better layer caching: SwiftPM validates that every declared target directory
+exists when it loads the package graph, path dependencies included.
 
 Cost is roughly $5 for the service plus $5 for Postgres to begin with. The poller is
 I/O-bound and mostly receives 304s, so one instance goes a long way.

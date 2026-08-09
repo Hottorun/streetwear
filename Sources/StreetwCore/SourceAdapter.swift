@@ -90,16 +90,18 @@ public struct FetchResult: Sendable {
     }
 }
 
-public enum SourceError: LocalizedError {
+public enum SourceError: LocalizedError, Equatable {
     case badResponse(Int)
     case notThisKind
     case emptyPayload
+    case disallowedByRobots(String)
 
     public var errorDescription: String? {
         switch self {
         case .badResponse(let code): "Server returned \(code)"
         case .notThisKind: "Not a supported source"
         case .emptyPayload: "Nothing returned"
+        case .disallowedByRobots(let path): "robots.txt disallows \(path)"
         }
     }
 }
@@ -163,7 +165,11 @@ public extension HTTPFetching {
 }
 
 public struct LiveHTTPFetcher: HTTPFetching {
-    public init() {}
+    private let userAgent: String
+
+    public init(userAgent: String = Net.userAgent) {
+        self.userAgent = userAgent
+    }
 
     /// Returns body plus status, without throwing on 4xx — callers care about
     /// 401/403 as a *signal* (drop lock), not only as a failure.
@@ -172,7 +178,7 @@ public struct LiveHTTPFetcher: HTTPFetching {
     /// empty body instead of re-downloading megabytes of JSON on every poll.
     public func get(_ url: URL, etag: String?) async throws -> HTTPResponse {
         var request = URLRequest(url: url)
-        request.setValue(Net.userAgent, forHTTPHeaderField: "User-Agent")
+        request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
         if let etag {
             request.setValue(etag, forHTTPHeaderField: "If-None-Match")
         }
@@ -188,17 +194,16 @@ public struct LiveHTTPFetcher: HTTPFetching {
 }
 
 public enum Net {
-    /// A browser-ish UA. Several storefronts 403 the default URLSession agent.
-    /// The server will replace this with an identifiable one naming a contact URL —
-    /// see BACKEND.md on the politeness budget.
-    public static let userAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0 Safari/537.36"
+    /// Identifies the client honestly and says where to complain. Verified to receive
+    /// 200s from the storefronts we actually poll, so there is nothing to gain from
+    /// impersonating a browser — and being identifiable is what keeps access.
+    public static let userAgent = "streetw/1.0 (+https://github.com/Hottorun/streetwear)"
 
     public static let live = LiveHTTPFetcher()
 
     static let session: URLSession = {
         let config = URLSessionConfiguration.default
         config.timeoutIntervalForRequest = 20
-        config.httpAdditionalHeaders = ["User-Agent": userAgent]
         config.requestCachePolicy = .useProtocolCachePolicy
         return URLSession(configuration: config)
     }()

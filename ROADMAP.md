@@ -89,8 +89,12 @@ See `BACKEND.md` for the full plan.
       12 tests, no network.
 - [ ] Client syncs from the server rather than fetching sources directly (`RemoteSource`)
 - [ ] Device registration → APNs, size-targeted restock pushes
-- [ ] Politeness budget: per-domain concurrency limit, `robots.txt`, a `User-Agent` naming
-      a contact URL (currently inherits the app's browser-ish one)
+- [x] **Politeness budget.** `PoliteFetcher` wraps any fetcher: robots.txt fetched once
+      per host and obeyed (longest-match Allow/Disallow, wildcards, Crawl-delay, named
+      groups), plus a reserved-slot limiter that spaces requests per host even under
+      concurrency. The browser-spoofing User-Agent is gone — an honest
+      `streetw/1.0 (+repo url)` was verified to get 200s from the storefronts we actually
+      poll, so impersonation bought nothing and being identifiable is what keeps access.
 - [ ] `FOR UPDATE SKIP LOCKED` on the poll queue, once there's more than one instance
 - [ ] Retention server-side; the phone then keeps a much smaller window
 

@@ -204,6 +204,16 @@ Changing these silently will break intended behavior:
 - Images are stored as `[String]` (`imageURLStrings`) with a computed `imageURLs`; SwiftData is
   happier with those than `[URL]`.
 
+### Politeness is not optional
+
+All outbound fetching should go through `PoliteFetcher` (the server wires it up in
+`configure.swift`). It obeys robots.txt per host and spaces requests by
+`POLITE_INTERVAL`, reserving each slot *before* sleeping so concurrent callers queue
+rather than all firing at once. `Net.userAgent` is honest on purpose — verified to get
+200s from the storefronts we poll, so don't "fix" access problems by impersonating a
+browser. A missing robots.txt is treated as permissive: failing closed would drop brands
+for an unrelated reason.
+
 ### Server specifics
 
 - **The catalog is global.** Brands, sources, products and variants are one row per
