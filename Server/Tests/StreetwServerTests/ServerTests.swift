@@ -416,3 +416,31 @@ struct DeviceUpdateTests {
         }
     }
 }
+
+@Suite("Database TLS")
+struct DatabaseTLSTests {
+    /// Regression: `.prefer` with default verification fails outright against managed
+    /// Postgres, because the certificate is signed by the provider's own CA for a
+    /// private hostname — the handshake errors rather than falling back.
+    @Test("Provider-internal hosts use a plaintext private-network hop", arguments: [
+        "postgres.railway.internal", "db.internal", "localhost", "127.0.0.1"
+    ])
+    func internalHostsDisableTLS(host: String) {
+        #expect(Application.tlsMode(host: host, override: nil) == .disable)
+    }
+
+    @Test("Public hosts encrypt but skip verification by default", arguments: [
+        "containers-us-west-1.railway.app", "ep-cool-name.eu-central-1.aws.neon.tech"
+    ])
+    func publicHostsSkipVerification(host: String) {
+        #expect(Application.tlsMode(host: host, override: nil) == .noVerify)
+    }
+
+    @Test("DATABASE_TLS overrides the guess")
+    func overrideWins() {
+        #expect(Application.tlsMode(host: "postgres.railway.internal", override: "verify") == .verify)
+        #expect(Application.tlsMode(host: "example.com", override: "disable") == .disable)
+        #expect(Application.tlsMode(host: "example.com", override: "nonsense") == .noVerify,
+                "an unrecognised value must fall back, not crash the boot")
+    }
+}

@@ -19,11 +19,27 @@ func configure(_ app: Application) async throws {
     // server runs without Docker. Every array column is `.json`, so both work.
     if let url = Environment.get("DATABASE_URL") {
         var config = try SQLPostgresConfiguration(url: url)
-        // Managed Postgres terminates TLS at the proxy with its own certificate.
-        config.coreConfiguration.tls = .prefer(try .init(configuration: .clientDefault))
+        let host = URLComponents(string: url)?.host ?? ""
+        let mode = Application.tlsMode(host: host)
+
+        // `.prefer` only falls back when the server *refuses* TLS. Managed Postgres
+        // offers TLS with a certificate the system trust store can't verify (private
+        // hostname, internal CA), so verification has to be addressed explicitly or the
+        // handshake fails outright.
+        switch mode {
+        case .disable:
+            config.coreConfiguration.tls = .disable
+        case .verify:
+            config.coreConfiguration.tls = .require(try .init(configuration: .clientDefault))
+        case .noVerify:
+            var tls = TLSConfiguration.makeClientConfiguration()
+            tls.certificateVerification = .none
+            config.coreConfiguration.tls = .prefer(try .init(configuration: tls))
+        }
+
         app.databases.use(.postgres(configuration: config), as: .psql)
         app.storage[DatabaseKindKey.self] = "postgres"
-        app.logger.notice("database: postgres (DATABASE_URL)")
+        app.logger.notice("database: postgres (DATABASE_URL), host=\(host), tls=\(mode.rawValue)")
     } else {
         // Refuse to start rather than quietly write to a disk that vanishes on the next
         // deploy. Silent ephemeral SQLite in production would look perfectly healthy
@@ -69,6 +85,39 @@ func configure(_ app: Application) async throws {
     }
 
     try routes(app)
+}
+
+enum DatabaseTLSMode: String {
+    /// Plaintext. Correct on a provider's private network, where traffic never leaves it.
+    case disable
+    /// Encrypted, certificate not checked. What managed Postgres normally needs: the
+    /// certificate is issued by the provider's own CA for an internal hostname, so a
+    /// public trust store can never validate it.
+    case noVerify = "no-verify"
+    /// Encrypted and verified. Use when connecting over the public internet.
+    case verify
+}
+
+extension Application {
+    /// Chosen automatically from the host, overridable with `DATABASE_TLS`.
+    ///
+    /// The override is a parameter rather than an environment read inside the function:
+    /// env vars are process-global, and tests run in parallel, so reading it here made
+    /// one test's `setenv` leak into another's expectations.
+    static func tlsMode(
+        host: String,
+        override: String? = Environment.get("DATABASE_TLS")
+    ) -> DatabaseTLSMode {
+        if let override, let mode = DatabaseTLSMode(rawValue: override.lowercased()) {
+            return mode
+        }
+        // Provider-internal hostnames aren't reachable from outside and aren't in any
+        // public DNS, so plaintext there is a private-network hop, not the internet.
+        if host.hasSuffix(".internal") || host == "localhost" || host == "127.0.0.1" {
+            return .disable
+        }
+        return .noVerify
+    }
 }
 
 struct DatabaseKindKey: StorageKey {
