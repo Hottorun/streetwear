@@ -10,18 +10,25 @@
 # ---------- build ----------
 FROM swift:6.0-noble AS build
 
-WORKDIR /build
+# The directory name matters and must stay `streetw`. SwiftPM derives a path
+# dependency's *identity* from the directory's basename, not from `name:` in the
+# manifest — so `Server/Package.swift`'s `.product(..., package: "streetw")` only
+# resolves when the root package sits in a folder called `streetw`. Building in
+# /build made the identity "build" and failed with "unknown package 'streetw'".
+WORKDIR /streetw
 
-# The whole source tree is copied before building: SwiftPM validates that every declared
-# target directory exists when it loads the package graph, including the path dependency,
-# so resolving against manifests alone doesn't work here.
+# The whole source tree is copied before building, rather than resolving from manifests
+# first for better layer caching: SwiftPM validates that every declared target directory
+# exists when it loads the package graph, path dependencies and test targets included.
+# Omitting Tests/ makes it report "overlapping sources" for the test target.
 COPY Package.swift Package.resolved ./
 COPY Sources ./Sources
 COPY Tests ./Tests
 COPY Server/Package.swift Server/Package.resolved ./Server/
 COPY Server/Sources ./Server/Sources
+COPY Server/Tests ./Server/Tests
 
-WORKDIR /build/Server
+WORKDIR /streetw/Server
 RUN swift build -c release --product StreetwServer --static-swift-stdlib
 
 RUN mkdir -p /staging \

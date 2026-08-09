@@ -214,6 +214,18 @@ rather than all firing at once. `Net.userAgent` is honest on purpose — verifie
 browser. A missing robots.txt is treated as permissive: failing closed would drop brands
 for an unrelated reason.
 
+### The repo directory name is load-bearing
+
+`Server/Package.swift` refers to `.product(name: "StreetwCore", package: "streetw")`.
+SwiftPM derives a **path dependency's identity from the directory basename**, not from
+`name:` in the manifest — so the root package must live in a folder called `streetw`.
+Renaming the checkout, or building in a differently-named directory, fails with
+`unknown package 'streetw'`. This is why the Dockerfile uses `WORKDIR /streetw`.
+
+Related: SwiftPM validates that every declared target directory exists when it loads the
+graph, so the Docker image must copy `Tests/` and `Server/Tests/` too even though it only
+builds the executable. Omitting them yields a confusing "overlapping sources" error.
+
 ### Server specifics
 
 - **The catalog is global.** Brands, sources, products and variants are one row per
