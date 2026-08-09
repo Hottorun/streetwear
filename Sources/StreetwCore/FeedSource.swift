@@ -4,6 +4,12 @@
 
 import Foundation
 
+// On Linux, XMLParser lives in a separate FoundationXML module rather than Foundation.
+// Without this the parser type is `AnyObject` and nothing here compiles.
+#if canImport(FoundationXML)
+import FoundationXML
+#endif
+
 public struct FeedSource: SourceAdapter {
     public var kind: BrandSource.Kind { .feed }
 

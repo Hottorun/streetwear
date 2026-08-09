@@ -212,9 +212,14 @@ public enum Net {
     /// default has a memory-only cache — product shots were being refetched on every
     /// scroll. Configured once at launch.
     public static func configureSharedCache() {
-        URLCache.shared = URLCache(
-            memoryCapacity: 32 * 1024 * 1024,
-            diskCapacity: 512 * 1024 * 1024
-        )
+        let memory = 32 * 1024 * 1024
+        let disk = 512 * 1024 * 1024
+        // swift-corelibs-foundation's URLCache has no two-argument initialiser; the
+        // disk path is required there and absent on Apple platforms.
+        #if canImport(FoundationNetworking)
+        URLCache.shared = URLCache(memoryCapacity: memory, diskCapacity: disk, diskPath: nil)
+        #else
+        URLCache.shared = URLCache(memoryCapacity: memory, diskCapacity: disk)
+        #endif
     }
 }

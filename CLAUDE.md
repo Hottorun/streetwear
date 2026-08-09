@@ -214,6 +214,20 @@ rather than all firing at once. `Net.userAgent` is honest on purpose — verifie
 browser. A missing robots.txt is treated as permissive: failing closed would drop brands
 for an unrelated reason.
 
+### StreetwCore must compile on Linux
+
+The server image builds it with swift-corelibs-foundation, which differs from Apple's
+Foundation in ways the compiler only reveals there. Already hit and guarded:
+
+- `XMLParser`/`XMLParserDelegate` live in a separate **FoundationXML** module
+  (`#if canImport(FoundationXML)`), not Foundation.
+- `URLCache` has no two-argument initialiser; `diskPath:` is required
+  (`#if canImport(FoundationNetworking)`).
+
+`canImport(FoundationNetworking)` is a reliable "is this Linux" discriminator here. Adding
+Foundation APIs to `StreetwCore` risks this class of break and it will not show up in any
+local build or test — only in the deploy.
+
 ### Keep the Docker toolchain in step with local
 
 `Server/Dockerfile` pins `swift:6.3.3-noble` to match `swift --version` here. `Package.resolved`
