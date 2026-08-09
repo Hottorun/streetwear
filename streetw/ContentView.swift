@@ -5,51 +5,38 @@
 //  Created by Dimitris Kern on 09.08.26.
 //
 
-import SwiftUI
 import SwiftData
+import SwiftUI
 
 struct ContentView: View {
-    @Environment(\.modelContext) private var modelContext
-    @Query private var items: [Item]
+    @Environment(\.modelContext) private var context
+    @State private var engine: SyncEngine?
+    @State private var sizes = SizeProfileStore()
+
+    /// Dev affordance, matching `-seedBrands` / `-seedSizes`: `-startTab style`
+    /// opens straight to a tab so screenshots don't need UI automation.
+    @State private var selection = UserDefaults.standard.string(forKey: "startTab") ?? "feed"
 
     var body: some View {
-        NavigationSplitView {
-            List {
-                ForEach(items) { item in
-                    NavigationLink {
-                        Text("Item at \(item.timestamp, format: Date.FormatStyle(date: .numeric, time: .standard))")
-                    } label: {
-                        Text(item.timestamp, format: Date.FormatStyle(date: .numeric, time: .standard))
-                    }
-                }
-                .onDelete(perform: deleteItems)
+        TabView(selection: $selection) {
+            Tab("Feed", systemImage: "square.stack", value: "feed") {
+                FeedView()
             }
-            .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    EditButton()
-                }
-                ToolbarItem {
-                    Button(action: addItem) {
-                        Label("Add Item", systemImage: "plus")
-                    }
-                }
+            Tab("Brands", systemImage: "tag", value: "brands") {
+                BrandsView()
             }
-        } detail: {
-            Text("Select an item")
+            Tab("Saved", systemImage: "bookmark", value: "saved") {
+                SavedView()
+            }
+            Tab("Style", systemImage: "chart.pie", value: "style") {
+                StyleView()
+            }
         }
-    }
-
-    private func addItem() {
-        withAnimation {
-            let newItem = Item(timestamp: Date())
-            modelContext.insert(newItem)
-        }
-    }
-
-    private func deleteItems(offsets: IndexSet) {
-        withAnimation {
-            for index in offsets {
-                modelContext.delete(items[index])
+        .environment(engine)
+        .environment(sizes)
+        .task {
+            if engine == nil {
+                engine = SyncEngine(context: context)
             }
         }
     }
@@ -57,5 +44,5 @@ struct ContentView: View {
 
 #Preview {
     ContentView()
-        .modelContainer(for: Item.self, inMemory: true)
+        .modelContainer(PreviewData.container)
 }

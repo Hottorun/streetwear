@@ -10,6 +10,10 @@
 		9695A4953028BA30002C4F89 /* streetw.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = streetw.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
+/* Begin PBXBuildFile section */
+		9695A4B23028BA32002C4F03 /* StreetwCore in Frameworks */ = {isa = PBXBuildFile; productRef = 9695A4B13028BA32002C4F02 /* StreetwCore */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		9695A4973028BA30002C4F89 /* streetw */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
@@ -23,6 +27,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				9695A4B23028BA32002C4F03 /* StreetwCore in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -65,6 +70,7 @@
 			);
 			name = streetw;
 			packageProductDependencies = (
+				9695A4B13028BA32002C4F02 /* StreetwCore */,
 			);
 			productName = streetw;
 			productReference = 9695A4953028BA30002C4F89 /* streetw.app */;
@@ -95,6 +101,9 @@
 			mainGroup = 9695A48C3028BA30002C4F89;
 			minimizedProjectReferenceProxies = 1;
 			preferredProjectObjectVersion = 77;
+			packageReferences = (
+				9695A4B03028BA32002C4F01 /* XCLocalSwiftPackageReference "." */,
+			);
 			productRefGroup = 9695A4963028BA30002C4F89 /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
@@ -123,6 +132,20 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		9695A4B03028BA32002C4F01 /* XCLocalSwiftPackageReference "." */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = .;
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		9695A4B13028BA32002C4F02 /* StreetwCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = StreetwCore;
+		};
+/* End XCSwiftPackageProductDependency section */
 
 /* Begin XCBuildConfiguration section */
 		9695A4A03028BA32002C4F89 /* Debug */ = {
@@ -251,6 +274,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = MNMFVK9ATJ;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
@@ -282,6 +306,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = MNMFVK9ATJ;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;

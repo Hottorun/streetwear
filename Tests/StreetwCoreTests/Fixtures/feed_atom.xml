@@ -1,0 +1,321 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<feed xml:lang="en" xmlns="http://www.w3.org/2005/Atom" xmlns:opensearch="http://a9.com/-/spec/opensearch/1.1/" xmlns:s="http://jadedpixel.com/-/spec/shopify">
+  <id>https://www.bbcicecream.com/blogs/news.atom</id>
+  <link rel="alternate" type="text/html" href="https://www.bbcicecream.com/blogs/news"/>
+  <link rel="self" type="application/atom+xml" href="https://www.bbcicecream.com/blogs/news.atom"/>
+  <title>Billionaire Boys Club - NEWS</title>
+  <updated>2026-07-31T15:00:03-04:00</updated>
+  <author>
+    <name>Billionaire Boys Club</name>
+  </author>
+  <entry>
+    <id>https://www.bbcicecream.com/blogs/news/billionaire-boys-club-x-jon-stan</id>
+    <published>2026-07-31T15:00:03-04:00</published>
+    <updated>2026-07-31T15:00:03-04:00</updated>
+    <link rel="alternate" type="text/html" href="https://www.bbcicecream.com/blogs/news/billionaire-boys-club-x-jon-stan"/>
+    <title>Billionaire Boys Club x Jon Stan</title>
+    <author>
+      <name>Francesca Verceles-Zara</name>
+    </author>
+  </entry>
+  <entry>
+    <id>https://www.bbcicecream.com/blogs/news/bbc-icecream-x-cousinz</id>
+    <published>2026-07-21T11:50:26-04:00</published>
+    <updated>2026-07-21T11:50:29-04:00</updated>
+    <link rel="alternate" type="text/html" href="https://www.bbcicecream.com/blogs/news/bbc-icecream-x-cousinz"/>
+    <title>Billionaire Boys Club x Cousinz Festival</title>
+    <author>
+      <name>Francesca Verceles-Zara</name>
+    </author>
+  </entry>
+  <entry>
+    <id>https://www.bbcicecream.com/blogs/news/billionaire-boys-club-x-globe-trotter-a-journey-worth-taking</id>
+    <published>2026-07-17T07:24:09-04:00</published>
+    <updated>2026-07-17T07:24:13-04:00</updated>
+    <link rel="alternate" type="text/html" href="https://www.bbcicecream.com/blogs/news/billionaire-boys-club-x-globe-trotter-a-journey-worth-taking"/>
+    <title>Billionaire Boys Club x Globe-Trotter: A Journey Worth Taking</title>
+    <author>
+      <name>Francesca Verceles-Zara</name>
+    </author>
+  </entry>
+  <entry>
+    <id>https://www.bbcicecream.com/blogs/news/the-blue-room-at-paris-fashion-week</id>
+    <published>2026-06-26T17:30:03-04:00</published>
+    <updated>2026-06-26T17:30:03-04:00</updated>
+    <link rel="alternate" type="text/html" href="https://www.bbcicecream.com/blogs/news/the-blue-room-at-paris-fashion-week"/>
+    <title>The Blue Room at Paris Fashion Week</title>
+    <author>
+      <name>Alexis Ortiz</name>
+    </author>
+  </entry>
+  <entry>
+    <id>https://www.bbcicecream.com/blogs/news/icecream-summer-2</id>
+    <published>2026-06-25T17:45:05-04:00</published>
+    <updated>2026-06-25T17:45:05-04:00</updated>
+    <link rel="alternate" type="text/html" href="https://www.bbcicecream.com/blogs/news/icecream-summer-2"/>
+    <title>Icecream Summer 2</title>
+    <author>
+      <name>Alexis Ortiz</name>
+    </author>
+  </entry>
+  <entry>
+    <id>https://www.bbcicecream.com/blogs/news/billionaire-boys-club-summer-2</id>
+    <published>2026-06-22T17:30:05-04:00</published>
+    <updated>2026-06-22T17:30:05-04:00</updated>
+    <link rel="alternate" type="text/html" href="https://www.bbcicecream.com/blogs/news/billionaire-boys-club-summer-2"/>
+    <title>Billionaire Boys Club Summer 2</title>
+    <author>
+      <name>Alexis Ortiz</name>
+    </author>
+  </entry>
+  <entry>
+    <id>https://www.bbcicecream.com/blogs/news/community-builds-immunity-an-exclusive-interview-with-cory-ng-founder-of-potluck-club</id>
+    <published>2026-06-02T11:30:03-04:00</published>
+    <updated>2026-06-02T11:30:03-04:00</updated>
+    <link rel="alternate" type="text/html" href="https://www.bbcicecream.com/blogs/news/community-builds-immunity-an-exclusive-interview-with-cory-ng-founder-of-potluck-club"/>
+    <title>Community Builds Immunity—An exclusive interview with Cory Ng, Founder of Potluck Club</title>
+    <author>
+      <name>Francesca Verceles-Zara</name>
+    </author>
+  </entry>
+  <entry>
+    <id>https://www.bbcicecream.com/blogs/news/billionaire-boys-club-summer-1</id>
+    <published>2026-05-26T17:30:03-04:00</published>
+    <updated>2026-05-26T17:30:03-04:00</updated>
+    <link rel="alternate" type="text/html" href="https://www.bbcicecream.com/blogs/news/billionaire-boys-club-summer-1"/>
+    <title>Billionaire Boys Club Summer 1</title>
+    <author>
+      <name>Alexis Ortiz</name>
+    </author>
+  </entry>
+  <entry>
+    <id>https://www.bbcicecream.com/blogs/news/icecream-summer-1</id>
+    <published>2026-05-20T17:30:03-04:00</published>
+    <updated>2026-05-20T17:30:03-04:00</updated>
+    <link rel="alternate" type="text/html" href="https://www.bbcicecream.com/blogs/news/icecream-summer-1"/>
+    <title>Icecream Summer 1</title>
+    <author>
+      <name>Alexis Ortiz</name>
+    </author>
+  </entry>
+  <entry>
+    <id>https://www.bbcicecream.com/blogs/news/billionaire-boys-club-x-topicals-the-shop-shop-the-look</id>
+    <published>2026-05-20T07:30:04-04:00</published>
+    <updated>2026-05-20T07:30:04-04:00</updated>
+    <link rel="alternate" type="text/html" href="https://www.bbcicecream.com/blogs/news/billionaire-boys-club-x-topicals-the-shop-shop-the-look"/>
+    <title>Billionaire Boys Club x Topicals: The Shop—Shop the Look</title>
+    <author>
+      <name>Francesca Verceles-Zara</name>
+    </author>
+  </entry>
+  <entry>
+    <id>https://www.bbcicecream.com/blogs/news/billionaire-boys-club-x-topicals-presents-the-shop</id>
+    <published>2026-05-20T07:30:04-04:00</published>
+    <updated>2026-06-02T10:52:04-04:00</updated>
+    <link rel="alternate" type="text/html" href="https://www.bbcicecream.com/blogs/news/billionaire-boys-club-x-topicals-presents-the-shop"/>
+    <title>Billionaire Boys Club x Topicals Presents: The Shop</title>
+    <author>
+      <name>Francesca Verceles-Zara</name>
+    </author>
+  </entry>
+  <entry>
+    <id>https://www.bbcicecream.com/blogs/news/billionaire-boys-club-pre-fall-2026</id>
+    <published>2026-05-11T17:50:04-04:00</published>
+    <updated>2026-05-11T17:50:04-04:00</updated>
+    <link rel="alternate" type="text/html" href="https://www.bbcicecream.com/blogs/news/billionaire-boys-club-pre-fall-2026"/>
+    <title>Billionaire Boys Club Pre Fall 2026</title>
+    <author>
+      <name>Alexis Ortiz</name>
+    </author>
+  </entry>
+  <entry>
+    <id>https://www.bbcicecream.com/blogs/news/icecream-pre-fall-2026</id>
+    <published>2026-05-05T18:00:04-04:00</published>
+    <updated>2026-05-11T12:39:11-04:00</updated>
+    <link rel="alternate" type="text/html" href="https://www.bbcicecream.com/blogs/news/icecream-pre-fall-2026"/>
+    <title>Icecream Pre Fall 2026</title>
+    <author>
+      <name>Alexis Ortiz</name>
+    </author>
+  </entry>
+  <entry>
+    <id>https://www.bbcicecream.com/blogs/news/history-of-jerseys-with-billie-eilish-and-billionaire-boys-club</id>
+    <published>2026-04-16T17:47:25-04:00</published>
+    <updated>2026-04-16T17:47:29-04:00</updated>
+    <link rel="alternate" type="text/html" href="https://www.bbcicecream.com/blogs/news/history-of-jerseys-with-billie-eilish-and-billionaire-boys-club"/>
+    <title>History of Jerseys with Billie Eilish and Billionaire Boys Club</title>
+    <author>
+      <name>Francesca Verceles-Zara</name>
+    </author>
+  </entry>
+  <entry>
+    <id>https://www.bbcicecream.com/blogs/news/icecream-x-reebok-board-flip-homecoming-lagos</id>
+    <published>2026-04-14T10:22:58-04:00</published>
+    <updated>2026-06-02T10:49:55-04:00</updated>
+    <link rel="alternate" type="text/html" href="https://www.bbcicecream.com/blogs/news/icecream-x-reebok-board-flip-homecoming-lagos"/>
+    <title>ICECREAM x Reebok Board Flip: HOMECOMING™ Lagos</title>
+    <author>
+      <name>Francesca Verceles-Zara</name>
+    </author>
+    <content type="html">
+      <![CDATA[<p> </p>
+<p><scribe-shadow id="crxjs-ext" data-crx="okfkdaglfjjjfefdcppliegebpoegaii" style="position: fixed; width: 0px; height: 0px; top: 0px; left: 0px; z-index: 2147483647; overflow: visible; visibility: visible;"></scribe-shadow></p>]]>
+    </content>
+  </entry>
+  <entry>
+    <id>https://www.bbcicecream.com/blogs/news/joopiter-marketplace-sneaker-vault</id>
+    <published>2026-04-10T14:36:36-04:00</published>
+    <updated>2026-04-10T14:36:39-04:00</updated>
+    <link rel="alternate" type="text/html" href="https://www.bbcicecream.com/blogs/news/joopiter-marketplace-sneaker-vault"/>
+    <title>Joopiter Marketplace Sneaker Vault</title>
+    <author>
+      <name>Francesca Verceles-Zara</name>
+    </author>
+  </entry>
+  <entry>
+    <id>https://www.bbcicecream.com/blogs/news/icecream-spring-drop-ii</id>
+    <published>2026-04-08T07:50:08-04:00</published>
+    <updated>2026-04-08T09:35:25-04:00</updated>
+    <link rel="alternate" type="text/html" href="https://www.bbcicecream.com/blogs/news/icecream-spring-drop-ii"/>
+    <title>Icecream: Spring Drop II</title>
+    <author>
+      <name>Alexis Ortiz</name>
+    </author>
+  </entry>
+  <entry>
+    <id>https://www.bbcicecream.com/blogs/news/billionaire-boys-club-ii</id>
+    <published>2026-04-01T15:00:17-04:00</published>
+    <updated>2026-04-01T15:00:21-04:00</updated>
+    <link rel="alternate" type="text/html" href="https://www.bbcicecream.com/blogs/news/billionaire-boys-club-ii"/>
+    <title>Billionaire Boys Club: Spring Drop II</title>
+    <author>
+      <name>Francesca Verceles-Zara</name>
+    </author>
+  </entry>
+  <entry>
+    <id>https://www.bbcicecream.com/blogs/news/new-york-yankees-x-billionaire-boys-club-2026</id>
+    <published>2026-03-26T09:50:02-04:00</published>
+    <updated>2026-06-02T10:49:32-04:00</updated>
+    <link rel="alternate" type="text/html" href="https://www.bbcicecream.com/blogs/news/new-york-yankees-x-billionaire-boys-club-2026"/>
+    <title>Certified New York—New York Yankees x Billionaire Boys Club I</title>
+    <author>
+      <name>Francesca Verceles-Zara</name>
+    </author>
+  </entry>
+  <entry>
+    <id>https://www.bbcicecream.com/blogs/news/coming-soon-billionaire-boys-club-x-yankees</id>
+    <published>2026-03-24T09:45:05-04:00</published>
+    <updated>2026-06-02T10:49:18-04:00</updated>
+    <link rel="alternate" type="text/html" href="https://www.bbcicecream.com/blogs/news/coming-soon-billionaire-boys-club-x-yankees"/>
+    <title>Coming Soon: Billionaire Boys Club x Yankees</title>
+    <author>
+      <name>Francesca Verceles-Zara</name>
+    </author>
+  </entry>
+  <entry>
+    <id>https://www.bbcicecream.com/blogs/news/mantra-market-miami-whos-wearing-what</id>
+    <published>2026-03-09T18:23:10-04:00</published>
+    <updated>2026-03-09T18:26:03-04:00</updated>
+    <link rel="alternate" type="text/html" href="https://www.bbcicecream.com/blogs/news/mantra-market-miami-whos-wearing-what"/>
+    <title>Mantra Market Miami—Who&apos;s wearing what?</title>
+    <author>
+      <name>Francesca Verceles-Zara</name>
+    </author>
+  </entry>
+  <entry>
+    <id>https://www.bbcicecream.com/blogs/news/celebrating-305-day-with-mantra-market-miami</id>
+    <published>2026-03-09T17:43:23-04:00</published>
+    <updated>2026-03-09T18:30:24-04:00</updated>
+    <link rel="alternate" type="text/html" href="https://www.bbcicecream.com/blogs/news/celebrating-305-day-with-mantra-market-miami"/>
+    <title>Celebrating 305 Day with Mantra Market Miami</title>
+    <author>
+      <name>Francesca Verceles-Zara</name>
+    </author>
+  </entry>
+  <entry>
+    <id>https://www.bbcicecream.com/blogs/news/icecream-spring-2026-drop-1</id>
+    <published>2026-02-19T09:00:04-05:00</published>
+    <updated>2026-02-19T09:00:04-05:00</updated>
+    <link rel="alternate" type="text/html" href="https://www.bbcicecream.com/blogs/news/icecream-spring-2026-drop-1"/>
+    <title>ICECREAM: Spring 2026 Drop 1</title>
+    <author>
+      <name>Francesca Verceles-Zara</name>
+    </author>
+  </entry>
+  <entry>
+    <id>https://www.bbcicecream.com/blogs/news/billionaire-boys-club-spring-drop-1</id>
+    <published>2026-02-13T08:51:10-05:00</published>
+    <updated>2026-02-13T08:51:46-05:00</updated>
+    <link rel="alternate" type="text/html" href="https://www.bbcicecream.com/blogs/news/billionaire-boys-club-spring-drop-1"/>
+    <title>Billionaire Boys Club: Spring Drop 1</title>
+    <author>
+      <name>Francesca Verceles-Zara</name>
+    </author>
+  </entry>
+  <entry>
+    <id>https://www.bbcicecream.com/blogs/news/icecream-x-clipse-hell-hath-no-fury</id>
+    <published>2026-02-03T18:55:07-05:00</published>
+    <updated>2026-06-02T10:48:31-04:00</updated>
+    <link rel="alternate" type="text/html" href="https://www.bbcicecream.com/blogs/news/icecream-x-clipse-hell-hath-no-fury"/>
+    <title>Icecream x Clipse — Hell Hath No Fury</title>
+    <author>
+      <name>Francesca Verceles-Zara</name>
+    </author>
+  </entry>
+  <entry>
+    <id>https://www.bbcicecream.com/blogs/news/icecream-spring-26</id>
+    <published>2026-02-02T11:00:03-05:00</published>
+    <updated>2026-02-02T11:00:03-05:00</updated>
+    <link rel="alternate" type="text/html" href="https://www.bbcicecream.com/blogs/news/icecream-spring-26"/>
+    <title>ICECREAM SPRING 26</title>
+    <author>
+      <name>Alexis Ortiz</name>
+    </author>
+  </entry>
+  <entry>
+    <id>https://www.bbcicecream.com/blogs/news/coming-soon-icecream-x-clipse-hell-hath-no-fury</id>
+    <published>2026-02-01T19:50:20-05:00</published>
+    <updated>2026-06-02T10:47:19-04:00</updated>
+    <link rel="alternate" type="text/html" href="https://www.bbcicecream.com/blogs/news/coming-soon-icecream-x-clipse-hell-hath-no-fury"/>
+    <title>Coming Soon: Icecream x Clipse—Hell Hath No Fury</title>
+    <author>
+      <name>Francesca Verceles-Zara</name>
+    </author>
+    <summary type="html">
+      <![CDATA[<p><br></p><p><a class="read-more" href="https://www.bbcicecream.com/blogs/news/coming-soon-icecream-x-clipse-hell-hath-no-fury">More</a></p>]]>
+    </summary>
+  </entry>
+  <entry>
+    <id>https://www.bbcicecream.com/blogs/news/icecream-x-reebok-board-flip-archive-defines-luxury-skate-footwear-at-paris-men-s-fashion-week</id>
+    <published>2026-01-28T16:33:19-05:00</published>
+    <updated>2026-01-28T16:33:23-05:00</updated>
+    <link rel="alternate" type="text/html" href="https://www.bbcicecream.com/blogs/news/icecream-x-reebok-board-flip-archive-defines-luxury-skate-footwear-at-paris-men-s-fashion-week"/>
+    <title>Icecream x Reebok Board Flip Archive Defines Luxury Skate Footwear at Paris Men’s Fashion Week</title>
+    <author>
+      <name>Francesca Verceles-Zara</name>
+    </author>
+    <summary type="html">
+      <![CDATA[<p><meta charset="utf-8">Enjoy an exclusive look inside the Reebok x Icecream PFW Archive.</p><p><a class="read-more" href="https://www.bbcicecream.com/blogs/news/icecream-x-reebok-board-flip-archive-defines-luxury-skate-footwear-at-paris-men-s-fashion-week">More</a></p>]]>
+    </summary>
+  </entry>
+  <entry>
+    <id>https://www.bbcicecream.com/blogs/news/billionaire-boys-club-spring-26</id>
+    <published>2026-01-26T10:55:01-05:00</published>
+    <updated>2026-01-26T10:55:01-05:00</updated>
+    <link rel="alternate" type="text/html" href="https://www.bbcicecream.com/blogs/news/billionaire-boys-club-spring-26"/>
+    <title>Billionaire Boys Club Spring 26</title>
+    <author>
+      <name>Alexis Ortiz</name>
+    </author>
+  </entry>
+  <entry>
+    <id>https://www.bbcicecream.com/blogs/news/jae-tips-teams-up-with-billionaire-boys-club-for-miami-art-basel</id>
+    <published>2025-12-09T16:30:20-05:00</published>
+    <updated>2026-06-02T10:46:57-04:00</updated>
+    <link rel="alternate" type="text/html" href="https://www.bbcicecream.com/blogs/news/jae-tips-teams-up-with-billionaire-boys-club-for-miami-art-basel"/>
+    <title>Jae Tips teams up with Billionaire Boys Club for Miami Art Basel</title>
+    <author>
+      <name>Lundon Lafci</name>
+    </author>
+  </entry>
+</feed>
