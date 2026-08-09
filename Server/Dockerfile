@@ -8,7 +8,12 @@
 # which has no Swift provider and fails with "could not determine how to build the app".
 
 # ---------- build ----------
-FROM swift:6.0-noble AS build
+# Pinned to the toolchain this project is developed with. `Package.resolved` records
+# dependency versions, and those dependencies declare their own swift-tools-version —
+# Vapor's tree currently needs 6.2+. An older image reads the same Package.resolved and
+# fails with "is using Swift tools version 6.2.0 but the installed version is 6.0.3".
+# Keep this in step with `swift --version` locally; a floating tag would drift.
+FROM swift:6.3.3-noble AS build
 
 # The directory name matters and must stay `streetw`. SwiftPM derives a path
 # dependency's *identity* from the directory's basename, not from `name:` in the

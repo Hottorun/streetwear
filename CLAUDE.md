@@ -214,6 +214,14 @@ rather than all firing at once. `Net.userAgent` is honest on purpose — verifie
 browser. A missing robots.txt is treated as permissive: failing closed would drop brands
 for an unrelated reason.
 
+### Keep the Docker toolchain in step with local
+
+`Server/Dockerfile` pins `swift:6.3.3-noble` to match `swift --version` here. `Package.resolved`
+pins dependency *versions*, and those dependencies declare their own swift-tools-version —
+Vapor's tree needs 6.2+. Building the same resolved graph on an older image fails with
+`is using Swift tools version 6.2.0 but the installed version is 6.0.3`. Bumping the local
+toolchain, or re-resolving to newer dependencies, means bumping the image tag too.
+
 ### The repo directory name is load-bearing
 
 `Server/Package.swift` refers to `.product(name: "StreetwCore", package: "streetw")`.

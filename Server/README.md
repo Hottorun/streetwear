@@ -74,6 +74,13 @@ long-lived process.
    migrations.
 4. **Settings → Networking → Generate Domain**, then `curl https://<domain>/health`.
 
+### Toolchain
+
+The Dockerfile pins `swift:6.3.3-noble`, matching local development. Dependencies in
+`Package.resolved` declare their own minimum swift-tools-version (Vapor's tree needs 6.2+),
+so an older image fails to even read the resolved graph. If you upgrade Xcode and
+re-resolve, bump the image tag to match.
+
 ### Why the build context is the repo root
 
 Two different settings, easy to conflate:
