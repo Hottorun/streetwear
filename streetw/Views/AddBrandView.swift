@@ -8,7 +8,10 @@ import SwiftUI
 struct AddBrandView: View {
     @Environment(\.modelContext) private var context
     @Environment(\.dismiss) private var dismiss
-    @Environment(SyncEngine.self) private var engine: SyncEngine?
+    @Environment(SyncEngine.self) private var engine: SyncEngine
+    @Environment(RemoteSync.self) private var remote: RemoteSync
+    @Environment(ServerSettings.self) private var settings: ServerSettings
+    @Environment(SizeProfileStore.self) private var sizes: SizeProfileStore
 
     @State private var name = ""
     @State private var website = ""
@@ -105,6 +108,26 @@ struct AddBrandView: View {
     }
 
     private func add() {
+        // With a server, the brand is created there and watched centrally; the local
+        // store is then filled by the next sync rather than by this device polling.
+        if settings.isConfigured {
+            let website = self.website
+            let typed = name.trimmingCharacters(in: .whitespaces)
+            let handle = instagram
+            let profile = sizes.profile
+            Task {
+                _ = try? await remote.addBrand(
+                    url: website,
+                    name: typed.isEmpty ? nil : typed,
+                    instagram: handle.isEmpty ? nil : handle,
+                    sizes: profile
+                )
+                await remote.sync(sizes: profile)
+            }
+            dismiss()
+            return
+        }
+
         let typed = name.trimmingCharacters(in: .whitespaces)
         let brand = Brand(
             name: typed,
@@ -119,7 +142,7 @@ struct AddBrandView: View {
         try? context.save()
 
         // First sync establishes the baseline so the feed isn't flooded on day one.
-        Task { await engine?.sync(brands: [brand]) }
+        Task { await engine.sync(brands: [brand]) }
         dismiss()
     }
 }

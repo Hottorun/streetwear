@@ -5,13 +5,12 @@ import StreetwCore
 import SwiftUI
 
 struct SizeProfileSection: View {
-    @Environment(SizeProfileStore.self) private var store: SizeProfileStore?
+    @Environment(SizeProfileStore.self) private var store: SizeProfileStore
 
     var body: some View {
-        if let store {
-            @Bindable var store = store
+        @Bindable var store = store
 
-            Section {
+        Section {
                 SizeChipRow(
                     title: "Clothing",
                     options: SizeProfile.apparelOptions,
@@ -33,7 +32,6 @@ struct SizeProfileSection: View {
                      ? "Set your sizes and streetw can tell you when something is back in a size you actually wear."
                      : "Restocks in \(store.profile.summary) are highlighted in your feed.")
             }
-        }
     }
 }
 

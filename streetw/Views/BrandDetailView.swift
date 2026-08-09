@@ -7,7 +7,7 @@ import SwiftUI
 
 struct BrandDetailView: View {
     @Environment(\.modelContext) private var context
-    @Environment(SyncEngine.self) private var engine: SyncEngine?
+    @Environment(SyncEngine.self) private var engine: SyncEngine
 
     @Bindable var brand: Brand
 
@@ -101,16 +101,16 @@ struct BrandDetailView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
-                if engine?.isSyncing == true {
+                if engine.isSyncing {
                     ProgressView()
                 } else {
                     Button("Refresh", systemImage: "arrow.clockwise") {
-                        Task { await engine?.sync(brands: [brand]) }
+                        Task { await engine.sync(brands: [brand]) }
                     }
                 }
             }
         }
-        .refreshable { await engine?.sync(brands: [brand]) }
+        .refreshable { await engine.sync(brands: [brand]) }
         .onDisappear {
             brand.lastOpenedAt = Date()
             try? context.save()

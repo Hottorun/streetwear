@@ -7,7 +7,7 @@ import SwiftUI
 
 struct BrandsView: View {
     @Environment(\.modelContext) private var context
-    @Environment(SyncEngine.self) private var engine: SyncEngine?
+    @Environment(SyncEngine.self) private var engine: SyncEngine
 
     @Query(sort: \Brand.name) private var brands: [Brand]
     @State private var isAdding = false

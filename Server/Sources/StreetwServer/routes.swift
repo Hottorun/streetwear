@@ -7,7 +7,36 @@ import StreetwCore
 import Vapor
 
 func routes(_ app: Application) throws {
+    // Kept as a bare 200 for the platform's health check — it must stay cheap and must
+    // not fail the deploy just because the database is briefly unreachable.
     app.get("health") { _ async in "ok" }
+
+    /// The one to look at by eye. Actually queries the database, so a 200 here means
+    /// the connection and the migrated schema are both real.
+    app.get("status") { req async -> StatusResponse in
+        var status = StatusResponse(
+            database: req.application.storage[DatabaseKindKey.self] ?? "unknown",
+            environment: req.application.environment.name,
+            pollerRunning: req.application.storage[PollLoopKey.self] != nil
+        )
+        do {
+            status.brands = try await BrandModel.query(on: req.db).count()
+            status.sources = try await SourceModel.query(on: req.db).count()
+            status.products = try await ProductModel.query(on: req.db).count()
+            status.events = try await EventModel.query(on: req.db).count()
+            status.devices = try await DeviceModel.query(on: req.db).count()
+            status.databaseConnected = true
+            if let next = try await SourceModel.query(on: req.db)
+                .sort(\.$nextCheckAt).first() {
+                status.nextPollAt = next.nextCheckAt
+            }
+        } catch {
+            // Reported rather than thrown: "what exactly is wrong" beats a 500.
+            status.databaseConnected = false
+            status.databaseError = String(describing: error)
+        }
+        return status
+    }
 
     let v1 = app.grouped("v1")
 
@@ -35,7 +64,7 @@ func routes(_ app: Application) throws {
 
     let authed = v1.grouped(DeviceAuthenticator())
 
-    v1.patch("devices", "me") { req async throws -> HTTPStatus in
+    authed.patch("devices", "me") { req async throws -> HTTPStatus in
         let device = try await req.authenticatedDevice()
         let body = try req.content.decode(UpdateDevice.self)
 
@@ -52,18 +81,18 @@ func routes(_ app: Application) throws {
 
     // MARK: Brands
 
-    v1.get("brands") { req async throws -> [BrandResponse] in
+    v1.get("brands") { req async throws -> [BrandDTO] in
         let query = try? req.query.get(String.self, at: "q")
         var builder = BrandModel.query(on: req.db)
         if let query, !query.isEmpty {
             builder = builder.filter(\.$name, .custom("ILIKE"), "%\(query)%")
         }
-        return try await builder.sort(\.$name).limit(50).all().map(BrandResponse.init)
+        return try await builder.sort(\.$name).limit(50).all().map(BrandDTO.init)
     }
 
     /// Probe a URL and, if it is watchable, create the shared brand. Runs outside the
     /// poll loop so a slow discovery can't stall routine checks.
-    v1.post("brands", "discover") { req async throws -> BrandResponse in
+    v1.post("brands", "discover") { req async throws -> BrandDTO in
         let body = try req.content.decode(DiscoverBrand.self)
         guard let base = BrandDiscovery.normalizedURL(body.url) else {
             throw Abort(.badRequest, reason: "Not a usable URL")
@@ -71,7 +100,7 @@ func routes(_ app: Application) throws {
         let slug = base.host() ?? body.url
 
         if let existing = try await BrandModel.query(on: req.db).filter(\.$slug == slug).first() {
-            return BrandResponse(existing)
+            return BrandDTO(existing)
         }
 
         let found = await BrandDiscovery.discover(website: body.url, instagramHandle: body.instagram)
@@ -89,7 +118,7 @@ func routes(_ app: Application) throws {
             try await SourceModel(brandID: brandID, kind: source.kind, url: source.url.absoluteString)
                 .save(on: req.db)
         }
-        return BrandResponse(brand)
+        return BrandDTO(brand)
     }
 
     // MARK: Follows
@@ -118,6 +147,17 @@ func routes(_ app: Application) throws {
             .filter(\.$brand.$id == brandID)
             .delete()
         return .noContent
+    }
+
+    /// What this device follows. The client needs this to hydrate its local brand
+    /// list; `/v1/brands` is a global search and would not tell it what's mine.
+    authed.get("follows") { req async throws -> [BrandDTO] in
+        let device = try await req.authenticatedDevice()
+        let follows = try await FollowModel.query(on: req.db)
+            .filter(\.$user.$id == device.$user.id)
+            .with(\.$brand)
+            .all()
+        return follows.map { BrandDTO($0.brand) }
     }
 
     // MARK: Feed

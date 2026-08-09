@@ -14,6 +14,7 @@ struct StyleView: View {
         NavigationStack {
             List {
                 SizeProfileSection()
+                ServerSettingsSection()
 
                 if profile.isEmpty {
                     Section {

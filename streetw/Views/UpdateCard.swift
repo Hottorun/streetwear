@@ -27,7 +27,7 @@ struct UpdateCarousel: View {
 struct UpdateCard: View {
     @Environment(\.modelContext) private var context
     @Environment(\.openURL) private var openURL
-    @Environment(SizeProfileStore.self) private var sizes: SizeProfileStore?
+    @Environment(SizeProfileStore.self) private var sizes: SizeProfileStore
 
     let update: BrandUpdate
     var width: CGFloat = 150
@@ -37,7 +37,7 @@ struct UpdateCard: View {
     /// "Back in M, L" beats a bare "Back" — the size is the whole point of a restock.
     /// Narrowed to the user's sizes when they've set them.
     private var restockLabel: String {
-        let profile = sizes?.profile ?? SizeProfile()
+        let profile = sizes.profile
         let mine = update.restockedSizes(matching: profile)
         let shown = (mine.isEmpty ? update.restockedSizes : mine)
             .filter { $0 != "Default Title" && !$0.isEmpty }
@@ -46,12 +46,7 @@ struct UpdateCard: View {
     }
 
     /// Only worth a badge once the user has actually told us their sizes.
-    private var isInMySize: Bool {
-        guard let profile = sizes?.profile, !profile.isEmpty, !update.variants.isEmpty else {
-            return false
-        }
-        return !update.availableSizes(matching: profile).isEmpty
-    }
+    private var isInMySize: Bool { update.isInMySize(sizes.profile) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {

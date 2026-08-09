@@ -9,9 +9,6 @@ import SwiftData
 import SwiftUI
 
 struct ContentView: View {
-    @Environment(\.modelContext) private var context
-    @State private var engine: SyncEngine?
-    @State private var sizes = SizeProfileStore()
 
     /// Dev affordance, matching `-seedBrands` / `-seedSizes`: `-startTab style`
     /// opens straight to a tab so screenshots don't need UI automation.
@@ -30,13 +27,6 @@ struct ContentView: View {
             }
             Tab("Style", systemImage: "chart.pie", value: "style") {
                 StyleView()
-            }
-        }
-        .environment(engine)
-        .environment(sizes)
-        .task {
-            if engine == nil {
-                engine = SyncEngine(context: context)
             }
         }
     }

@@ -344,3 +344,75 @@ struct PollerResilienceTests {
         }
     }
 }
+
+@Suite("Status")
+struct StatusTests {
+    @Test("Status proves the database is reachable and reports counts")
+    func statusReportsDatabase() async throws {
+        try await withServer { app in
+            let brand = BrandModel(
+                name: "Test", slug: "test.com", website: nil,
+                instagramHandle: nil, usesGeneratedName: false
+            )
+            try await brand.save(on: app.db)
+
+            try await app.testing().test(.GET, "status") { res async throws in
+                #expect(res.status == .ok)
+                let status = try res.content.decode(StatusResponse.self)
+                #expect(status.databaseConnected)
+                #expect(status.databaseError == nil)
+                #expect(status.brands == 1)
+                // Tests run on SQLite; production must report postgres.
+                #expect(status.database == "sqlite")
+            }
+        }
+    }
+
+    @Test("Health stays a cheap 200 so a database blip can't fail the deploy")
+    func healthIsCheap() async throws {
+        try await withServer { app in
+            try await app.testing().test(.GET, "health") { res async in
+                #expect(res.status == .ok)
+            }
+        }
+    }
+}
+
+@Suite("Device updates")
+struct DeviceUpdateTests {
+    /// Regression: this route calls `authenticatedDevice()` but was registered outside
+    /// the authenticated group, so the middleware never ran and it always 401'd —
+    /// which broke the client's very first sync step.
+    @Test("Updating sizes works with a bearer token")
+    func patchDeviceIsAuthenticated() async throws {
+        try await withServer { app in
+            var token = ""
+            try await app.testing().test(.POST, "v1/devices", beforeRequest: { req in
+                try req.content.encode(RegisterDevice())
+            }, afterResponse: { res async throws in
+                token = try res.content.decode(DeviceResponse.self).token
+            })
+
+            let auth = HTTPHeaders([("Authorization", "Bearer \(token)")])
+            try await app.testing().test(.PATCH, "v1/devices/me", headers: auth, beforeRequest: { req in
+                try req.content.encode(UpdateDevice(sizes: SizePayload(apparel: ["M"], shoe: ["9"])))
+            }, afterResponse: { res async throws in
+                #expect(res.status == .noContent)
+            })
+
+            let user = try #require(try await UserModel.query(on: app.db).first())
+            #expect(user.apparelSizes == ["M"])
+        }
+    }
+
+    @Test("Updating sizes without a token is refused")
+    func patchDeviceRequiresAuth() async throws {
+        try await withServer { app in
+            try await app.testing().test(.PATCH, "v1/devices/me", beforeRequest: { req in
+                try req.content.encode(UpdateDevice())
+            }, afterResponse: { res async throws in
+                #expect(res.status == .unauthorized)
+            })
+        }
+    }
+}

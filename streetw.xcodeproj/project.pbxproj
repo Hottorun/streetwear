@@ -6,13 +6,13 @@
 	objectVersion = 77;
 	objects = {
 
-/* Begin PBXFileReference section */
-		9695A4953028BA30002C4F89 /* streetw.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = streetw.app; sourceTree = BUILT_PRODUCTS_DIR; };
-/* End PBXFileReference section */
-
 /* Begin PBXBuildFile section */
 		9695A4B23028BA32002C4F03 /* StreetwCore in Frameworks */ = {isa = PBXBuildFile; productRef = 9695A4B13028BA32002C4F02 /* StreetwCore */; };
 /* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		9695A4953028BA30002C4F89 /* streetw.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = streetw.app; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		9695A4973028BA30002C4F89 /* streetw */ = {
@@ -100,10 +100,10 @@
 			);
 			mainGroup = 9695A48C3028BA30002C4F89;
 			minimizedProjectReferenceProxies = 1;
-			preferredProjectObjectVersion = 77;
 			packageReferences = (
 				9695A4B03028BA32002C4F01 /* XCLocalSwiftPackageReference "." */,
 			);
+			preferredProjectObjectVersion = 77;
 			productRefGroup = 9695A4963028BA30002C4F89 /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
@@ -132,20 +132,6 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXSourcesBuildPhase section */
-
-/* Begin XCLocalSwiftPackageReference section */
-		9695A4B03028BA32002C4F01 /* XCLocalSwiftPackageReference "." */ = {
-			isa = XCLocalSwiftPackageReference;
-			relativePath = .;
-		};
-/* End XCLocalSwiftPackageReference section */
-
-/* Begin XCSwiftPackageProductDependency section */
-		9695A4B13028BA32002C4F02 /* StreetwCore */ = {
-			isa = XCSwiftPackageProductDependency;
-			productName = StreetwCore;
-		};
-/* End XCSwiftPackageProductDependency section */
 
 /* Begin XCBuildConfiguration section */
 		9695A4A03028BA32002C4F89 /* Debug */ = {
@@ -353,6 +339,20 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		9695A4B03028BA32002C4F01 /* XCLocalSwiftPackageReference "." */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = .;
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		9695A4B13028BA32002C4F02 /* StreetwCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = StreetwCore;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = 9695A48D3028BA30002C4F89 /* Project object */;
 }

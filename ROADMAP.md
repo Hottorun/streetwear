@@ -87,7 +87,13 @@ See `BACKEND.md` for the full plan.
       stored → **zero events on the first poll** (baseline) → a forced restock produced one
       event with `restockedSizes: ["M"]` and `availableInMySize: true` for a matching device.
       12 tests, no network.
-- [ ] Client syncs from the server rather than fetching sources directly (`RemoteSource`)
+- [x] **Client syncs from the server.** Wire types moved to `StreetwCore` so app and
+      server share one contract. The app registers a device, follows brands server-side,
+      and fills its SwiftData store from `/v1/feed` — the whole UI, saving, style profile
+      and size filter keep working unchanged. Standalone mode still works when no server
+      is set. Verified end to end against a live server: restock detected → phone synced →
+      feed shows "2 restocked · Back in M".
+- [ ] Background refresh on the client so the feed is warm before the app opens
 - [ ] Device registration → APNs, size-targeted restock pushes
 - [x] **Politeness budget.** `PoliteFetcher` wraps any fetcher: robots.txt fetched once
       per host and obeyed (longest-match Allow/Disallow, wildcards, Crawl-delay, named

@@ -24,6 +24,10 @@ final class Brand {
     /// From the storefront's /meta.json. Prices are meaningless without it.
     var currencyCode: String?
 
+    /// Server-side brand id when this brand came from a synced account. Nil for brands
+    /// added in standalone mode, which is what keeps both modes working side by side.
+    var remoteID: UUID?
+
     /// True while `name` is still the hostname-derived guess ("Bbcicecream"), so the
     /// first sync may replace it with the real one from /meta.json ("Billionaire Boys
     /// Club"). Cleared once a real name lands or the user edits it.

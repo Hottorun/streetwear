@@ -11,28 +11,45 @@ import SwiftUI
 
 @main
 struct streetwApp: App {
-    var sharedModelContainer: ModelContainer = {
-        let schema = Schema([
-            Brand.self,
-            BrandUpdate.self,
-            SavedItem.self,
-        ])
-        let modelConfiguration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
+    let sharedModelContainer: ModelContainer
 
-        do {
-            return try ModelContainer(for: schema, configurations: [modelConfiguration])
-        } catch {
-            fatalError("Could not create ModelContainer: \(error)")
-        }
-    }()
+    // Built here, not in a `.task`, so they exist before any view body runs. Creating
+    // them asynchronously raced with child views' own `.task`s: FeedView could run
+    // first, see nil, and silently skip the sync — the server looked "not working".
+    @State private var settings: ServerSettings
+    @State private var sizes: SizeProfileStore
+    @State private var remote: RemoteSync
+    @State private var engine: SyncEngine
 
     init() {
         Net.configureSharedCache()
+
+        let schema = Schema([Brand.self, BrandUpdate.self, SavedItem.self])
+        let container: ModelContainer
+        do {
+            container = try ModelContainer(
+                for: schema,
+                configurations: [ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)]
+            )
+        } catch {
+            fatalError("Could not create ModelContainer: \(error)")
+        }
+        sharedModelContainer = container
+
+        let settings = ServerSettings()
+        _settings = State(initialValue: settings)
+        _sizes = State(initialValue: SizeProfileStore())
+        _remote = State(initialValue: RemoteSync(context: container.mainContext, settings: settings))
+        _engine = State(initialValue: SyncEngine(context: container.mainContext))
     }
 
     var body: some Scene {
         WindowGroup {
             ContentView()
+                .environment(settings)
+                .environment(sizes)
+                .environment(remote)
+                .environment(engine)
                 .task { await DevSeed.runIfRequested(in: sharedModelContainer.mainContext) }
         }
         .modelContainer(sharedModelContainer)

@@ -7,19 +7,20 @@ import SwiftUI
 
 struct FeedView: View {
     @Environment(\.modelContext) private var context
-    @Environment(SyncEngine.self) private var engine: SyncEngine?
-    @Environment(SizeProfileStore.self) private var sizes: SizeProfileStore?
+    @Environment(SyncEngine.self) private var engine: SyncEngine
+    @Environment(SizeProfileStore.self) private var sizes: SizeProfileStore
+    @Environment(RemoteSync.self) private var remote: RemoteSync
+    @Environment(ServerSettings.self) private var settings: ServerSettings
 
     @Query(filter: #Predicate<Brand> { $0.followed }, sort: \Brand.name)
     private var brands: [Brand]
 
     private var isFiltering: Bool {
-        guard let sizes else { return false }
-        return sizes.filterFeedToMySize && !sizes.profile.isEmpty
+        sizes.filterFeedToMySize && !sizes.profile.isEmpty
     }
 
     private var groups: [BrandGroup] {
-        let profile = sizes?.profile ?? SizeProfile()
+        let profile = sizes.profile
         let filtering = isFiltering
 
         return brands
@@ -54,7 +55,7 @@ struct FeedView: View {
                     EmptyStateView(
                         symbol: "checkmark.circle",
                         title: "All caught up",
-                        message: engine?.lastSyncedAt == nil
+                        message: engine.lastSyncedAt == nil
                             ? "Pull down to check your brands for the first time."
                             : "Nothing new since you last looked. Pull to refresh."
                     )
@@ -64,7 +65,7 @@ struct FeedView: View {
             }
             .navigationTitle("Feed")
             .toolbar {
-                if let sizes, !sizes.profile.isEmpty {
+                if !sizes.profile.isEmpty {
                     ToolbarItem(placement: .topBarLeading) {
                         @Bindable var sizes = sizes
                         Toggle(isOn: $sizes.filterFeedToMySize) {
@@ -75,16 +76,22 @@ struct FeedView: View {
                     }
                 }
                 ToolbarItem(placement: .topBarTrailing) {
-                    if engine?.isSyncing == true {
+                    if engine.isSyncing || remote.isSyncing {
                         ProgressView()
                     } else {
                         Button("Refresh", systemImage: "arrow.clockwise") {
-                            Task { await engine?.syncAll() }
+                            Task { await refresh() }
                         }
                     }
                 }
             }
-            .refreshable { await engine?.syncAll() }
+            .refreshable { await refresh() }
+            // Sync when the feed appears. Without this a configured server does nothing
+            // until the user happens to pull to refresh, which reads as "not working".
+            .task(id: settings.baseURLString) {
+                guard settings.isConfigured, remote.lastSyncedAt == nil else { return }
+                await refresh()
+            }
             .overlay(alignment: .bottom) { syncStatus }
         }
     }
@@ -94,7 +101,7 @@ struct FeedView: View {
             Section {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("\(totalNew) new \(totalNew == 1 ? "thing" : "things") from \(groups.count) \(groups.count == 1 ? "brand" : "brands")")
-                    if isFiltering, let sizes {
+                    if isFiltering {
                         Text("Filtered to \(sizes.profile.summary)")
                             .font(.caption)
                             .foregroundStyle(.tertiary)
@@ -122,7 +129,7 @@ struct FeedView: View {
 
     @ViewBuilder
     private var syncStatus: some View {
-        if let engine, engine.isSyncing, let progress = engine.progress {
+        if engine.isSyncing, let progress = engine.progress {
             Text("Checking \(progress)…")
                 .font(.caption)
                 .padding(.horizontal, 12)
@@ -130,6 +137,15 @@ struct FeedView: View {
                 .background(.thinMaterial, in: Capsule())
                 .padding(.bottom, 8)
                 .transition(.opacity)
+        }
+    }
+
+    /// Server mode when one is configured; otherwise the app polls sources itself.
+    private func refresh() async {
+        if settings.isConfigured {
+            await remote.sync(sizes: sizes.profile)
+        } else {
+            await engine.syncAll()
         }
     }
 

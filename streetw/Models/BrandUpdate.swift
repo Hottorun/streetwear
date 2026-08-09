@@ -38,6 +38,10 @@ final class BrandUpdate {
 
     var isSeen: Bool = false
 
+    /// Set by the server, which matched this item against the device's size profile.
+    /// Server-mode items carry no variants, so the local check can't answer this.
+    var serverSaysInMySize: Bool = false
+
     /// Inverse of `SavedItem.update`, so a card can check its saved state directly
     /// instead of running a per-card query.
     @Relationship(deleteRule: .cascade, inverse: \SavedItem.update)
@@ -81,6 +85,14 @@ final class BrandUpdate {
     /// Sizes currently buyable, for the card subtitle. Empty for one-size products.
     var availableSizes: [String] {
         variants.filter { $0.available && $0.isMeaningfulSize }.map(\.displaySize)
+    }
+
+    /// True when something is buyable in the user's sizes. Uses local variant data when
+    /// present, and otherwise trusts the server's answer.
+    func isInMySize(_ profile: SizeProfile) -> Bool {
+        guard !profile.isEmpty else { return false }
+        if variants.isEmpty { return serverSaysInMySize }
+        return !availableSizes(matching: profile).isEmpty
     }
 
     /// Buyable right now *and* in a size the user wears.

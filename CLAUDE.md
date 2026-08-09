@@ -204,6 +204,19 @@ Changing these silently will break intended behavior:
 - Images are stored as `[String]` (`imageURLStrings`) with a computed `imageURLs`; SwiftData is
   happier with those than `[URL]`.
 
+### Client/server wiring
+
+Wire types live in `Sources/StreetwCore/API.swift` and are shared by both sides; the
+server adds Vapor `Content` conformance by extension. Don't duplicate a DTO in the server
+— that's how the two drift. `APICoding` pins ISO8601 dates on both ends, and
+`ContentConfiguration` is set to match: a mismatch wouldn't error, it would silently
+return the wrong `since` window.
+
+Shared objects (`ServerSettings`, `SizeProfileStore`, `RemoteSync`, `SyncEngine`) are
+built in `streetwApp.init`, **not** in a `.task`. Creating them asynchronously raced with
+child views' own `.task`s — `FeedView` could run first, see nil, and skip the sync, which
+looked exactly like a broken server.
+
 ### Politeness is not optional
 
 All outbound fetching should go through `PoliteFetcher` (the server wires it up in

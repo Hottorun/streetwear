@@ -15,17 +15,32 @@ func configure(_ app: Application) async throws {
         app.http.server.configuration.port = port
     }
 
-    // Postgres in production (Railway injects DATABASE_URL); SQLite locally so the
+    // Postgres in production (the host injects DATABASE_URL); SQLite locally so the
     // server runs without Docker. Every array column is `.json`, so both work.
     if let url = Environment.get("DATABASE_URL") {
         var config = try SQLPostgresConfiguration(url: url)
         // Managed Postgres terminates TLS at the proxy with its own certificate.
         config.coreConfiguration.tls = .prefer(try .init(configuration: .clientDefault))
         app.databases.use(.postgres(configuration: config), as: .psql)
+        app.storage[DatabaseKindKey.self] = "postgres"
+        app.logger.notice("database: postgres (DATABASE_URL)")
     } else {
+        // Refuse to start rather than quietly write to a disk that vanishes on the next
+        // deploy. Silent ephemeral SQLite in production would look perfectly healthy
+        // while losing every poll baseline — which then re-notifies the whole catalog.
+        guard app.environment != .production || Environment.get("ALLOW_SQLITE") == "true" else {
+            app.logger.critical("""
+            DATABASE_URL is not set in a production environment. Refusing to start on \
+            ephemeral SQLite. On Railway, add a Postgres service and reference it from \
+            this service's variables as DATABASE_URL=${{Postgres.DATABASE_URL}}. \
+            Set ALLOW_SQLITE=true only if you genuinely want throwaway storage.
+            """)
+            throw Abort(.internalServerError, reason: "DATABASE_URL missing in production")
+        }
         let path = Environment.get("SQLITE_PATH") ?? "streetw.sqlite"
         app.databases.use(.sqlite(path == ":memory:" ? .memory : .file(path)), as: .sqlite)
-        app.logger.notice("no DATABASE_URL — using SQLite at \(path)")
+        app.storage[DatabaseKindKey.self] = "sqlite"
+        app.logger.notice("database: sqlite at \(path)")
     }
 
     app.migrations.add(CreateSchema())
@@ -35,6 +50,11 @@ func configure(_ app: Application) async throws {
     }
 
     app.routes.defaultMaxBodySize = "1mb"
+
+    // Pin date encoding on both sides. The feed's `since` cursor is a timestamp, so a
+    // mismatch here wouldn't error — it would silently return the wrong window.
+    ContentConfiguration.global.use(encoder: APICoding.encoder, for: .json)
+    ContentConfiguration.global.use(decoder: APICoding.decoder, for: .json)
 
     // Every outbound request goes through the politeness budget: robots.txt obeyed,
     // and at most one request per host per interval no matter how many sources are due.
@@ -49,6 +69,10 @@ func configure(_ app: Application) async throws {
     }
 
     try routes(app)
+}
+
+struct DatabaseKindKey: StorageKey {
+    typealias Value = String
 }
 
 struct PollerKey: StorageKey {
