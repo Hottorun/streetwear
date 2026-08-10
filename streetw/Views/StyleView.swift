@@ -7,6 +7,7 @@ import SwiftUI
 
 struct StyleView: View {
     @Query private var saves: [SavedItem]
+    @State private var isShowingSettings = false
 
     private var profile: StyleProfile { StyleProfile.build(from: saves) }
 
@@ -39,7 +40,41 @@ struct StyleView: View {
             .scrollContentBackground(.hidden)
             .background(Color.paper)
             .navigationTitle("Style")
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Settings", systemImage: "gearshape") { isShowingSettings = true }
+                }
+            }
+            .sheet(isPresented: $isShowingSettings) { SettingsSheet() }
         }
+    }
+}
+
+/// Plumbing, kept off the Style page itself but not out of reach.
+///
+/// Both of these were on Style and were removed for being noise on a page about
+/// clothes. They still have to exist somewhere: without the alerts row iOS never issues
+/// a device token, so the entire push pipeline has nothing to deliver to — the server
+/// can be perfectly configured and still be silent.
+struct SettingsSheet: View {
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            List {
+                NotificationsSection()
+                ServerSettingsSection()
+            }
+            .scrollContentBackground(.hidden)
+            .background(Color.paper)
+            .navigationTitle("Settings")
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Done") { dismiss() }
+                }
+            }
+        }
+        .tint(.ink)
     }
 }
 

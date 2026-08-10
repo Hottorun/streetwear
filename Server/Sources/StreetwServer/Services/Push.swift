@@ -74,7 +74,16 @@ extension Application {
             logger.notice("apns: not configured (APNS_KEY_P8/APNS_KEY_ID/APNS_TEAM_ID) — pushes disabled")
             return nil
         }
-        let topic = Environment.get("APNS_TOPIC") ?? "functional.streetw"
+
+        // Required, with no default on purpose. The topic *is* the bundle ID, so a
+        // default here is a value that silently goes stale the moment the app's
+        // identifier changes — and a wrong topic is not a startup error, it is every
+        // push being rejected by Apple long after the deploy looked healthy. Refusing to
+        // enable push is the loud failure; guessing is the quiet one.
+        guard let topic = Environment.get("APNS_TOPIC") else {
+            logger.error("apns: APNS_TOPIC is not set (it must be the app's bundle ID) — pushes disabled")
+            return nil
+        }
 
         do {
             // Deployment platforms mangle multi-line env vars; accepting the escaped form

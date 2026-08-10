@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 `streetw` is an iOS app (SwiftUI + SwiftData, iOS 26.5 deployment target) that watches streetwear
 brands for new drops, restocks and collections, and builds a style profile from what you save.
-Bundle ID `functional.streetw`.
+Bundle ID `com.kern.functional.streetw`, signed by team `JD6NETLE45` (KERN AG).
 
 The repo holds **three things** — a shared library, an iOS app, and a server:
 
@@ -79,7 +79,7 @@ xcodebuild -project streetw.xcodeproj -scheme streetw \
   -derivedDataPath /tmp/streetw-dd build
 
 xcrun simctl install "$DEVICE" /tmp/streetw-dd/Build/Products/Debug-iphonesimulator/streetw.app
-xcrun simctl launch "$DEVICE" functional.streetw
+xcrun simctl launch "$DEVICE" com.kern.functional.streetw
 xcrun simctl io "$DEVICE" screenshot shot.png
 ```
 
@@ -99,7 +99,7 @@ constructed — the profile only takes effect on the **next** launch.
 Inspect what landed by querying the store directly:
 
 ```bash
-DB="$(xcrun simctl get_app_container "$DEVICE" functional.streetw data)/Library/Application Support/default.store"
+DB="$(xcrun simctl get_app_container "$DEVICE" com.kern.functional.streetw data)/Library/Application Support/default.store"
 sqlite3 "$DB" "select (select count(*) from ZBRAND), (select count(*) from ZBRANDUPDATE), (select count(*) from ZBRANDUPDATE where ZISSEEN=0);"
 ```
 

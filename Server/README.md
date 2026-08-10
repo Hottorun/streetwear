@@ -59,7 +59,7 @@ an unchanged catalog produces nothing, and a failing source backs off.
 | `APNS_KEY_P8` | — | Contents of the `.p8`. `\n` escapes are accepted, so it pastes as one line |
 | `APNS_KEY_ID` | — | Key ID from the developer portal |
 | `APNS_TEAM_ID` | — | Team ID from the developer portal |
-| `APNS_TOPIC` | `functional.streetw` | The app's bundle ID |
+| `APNS_TOPIC` | — | **Required** with the other `APNS_*`. The app's bundle ID (`com.kern.functional.streetw`); no default, because a stale one means every push is rejected by Apple rather than failing at boot |
 | `EVENT_RETENTION_DAYS` | `30` | Events older than this, already notified, are pruned |
 | `PRODUCT_RETENTION_DAYS` | `180` | Products unseen this long *and* with no events left are pruned |
 

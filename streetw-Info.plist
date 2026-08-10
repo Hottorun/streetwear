@@ -1,35 +1,15 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<!--
-  Only the keys Xcode's generated Info.plist cannot express.
-
-  `GENERATE_INFOPLIST_FILE` stays on and merges its keys over this file, so everything
-  else (bundle name, orientations, scene manifest) is still driven by the
-  INFOPLIST_KEY_* build settings rather than duplicated here. These two are the
-  exception: `INFOPLIST_KEY_UIBackgroundModes` and
-  `INFOPLIST_KEY_BGTaskSchedulerPermittedIdentifiers` are silently dropped — the build
-  succeeds and the keys simply aren't in the bundle, which at runtime shows up as
-  BGTaskScheduler refusing to register the identifier.
-
-  It lives beside the .xcodeproj rather than inside `streetw/`, because that directory is
-  a PBXFileSystemSynchronizedRootGroup and anything dropped in it joins the target
-  automatically — an Info.plist would be picked up as a bundle resource as well as being
-  the target's Info.plist.
--->
 <plist version="1.0">
 <dict>
-	<key>UIBackgroundModes</key>
-	<array>
-		<!-- BGAppRefreshTask: a warm feed by the time the app is opened. -->
-		<string>fetch</string>
-		<!-- Lets a drop notification pull the feed before it is even tapped. -->
-		<string>remote-notification</string>
-	</array>
-	<!-- Must match AppDelegate.refreshTaskID exactly; registering an identifier that
-	     isn't listed here throws at launch. -->
 	<key>BGTaskSchedulerPermittedIdentifiers</key>
 	<array>
 		<string>functional.streetw.refresh</string>
+	</array>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>fetch</string>
+		<string>remote-notification</string>
 	</array>
 </dict>
 </plist>

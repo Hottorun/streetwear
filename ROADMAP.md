@@ -167,6 +167,27 @@ APNs key in its environment, and the app target needs the Push Notifications cap
 
 ## Phase 3 — alerts and the round app
 
+- [x] **A visual identity.** The app was stock SwiftUI forms; it now has a design system
+      (`streetw/Views/DesignSystem.swift`): an achromatic gallery palette where photographs
+      carry all the colour, and exactly one accent — vermilion — rationed to things that are
+      time-critical. Three type roles rather than SF at four sizes: **New York** for titles,
+      tracked SF caps for brand wordmarks, **SF Mono** for sizes, prices and times.
+      The signature element is the **size run**, a product's sizes printed as type with
+      sold-out struck through and yours ruled in vermilion — the size profile finally
+      *visible* rather than implied. Long runs narrow to what's buyable, because a sneaker
+      runs 5–13 in half sizes and an overflowing row truncates every token to an ellipsis.
+      The feed is laid out lead-plus-briefs per brand, which is load-bearing rather than
+      decorative: a brand can publish 250 items in one poll and a flat list of equal rows is
+      unreadable.
+- [x] **Brand marks.** Brands show their own logo, taken from the icon their site
+      publishes for home screens (`BrandMark` in StreetwCore) — the brand's own file,
+      served for exactly that purpose, so no scraping and no third-party logo API.
+      Ranked by intent, then decodability, then size: raster beats vector because
+      `UIImage` cannot decode SVG and one would silently become a monogram. Shopify CDN
+      URLs get their size parameters rewritten from 32px to 180px, since nearly every
+      storefront declares only a favicon. Falls back to initials, which is not a rare
+      path — BBC declares only an SVG. `/favicon.ico` is a guess rather than a floor:
+      Shopify 404s it.
 - [ ] Push: new drop · restocked in your size · storefront locked (drop imminent)
 - [ ] **Shock-drop alerts** — mostly built already: `PageWatchSource` plus the `dropLock` signal
       (401/403 or redirect to `/password`) is exactly the unannounced-release detector. It only
@@ -181,17 +202,28 @@ APNs key in its environment, and the app target needs the Push Notifications cap
 
 ## Phase 4 — the collection, properly
 
-- [ ] Masonry, image-first grid
+- [x] **Split `UpdateCard`.** Done early, because the restyle forced the issue: `FeedLead`
+      and `FeedTile` carry time, price, stock and the accent, while `CollectionTile`
+      carries none of it. The hype/calm distinction is now a data boundary rather than a
+      visual one, exactly as this list predicted one shared card would fail to be.
+- [x] **Masonry, image-first grid.** Saved is a staggered two-column wall — hand-split
+      into columns rather than a `LazyVGrid`, which forces every row to its tallest cell
+      and flattens a wall back into a table. Still driven by a deterministic hash of the
+      item id rather than by real image dimensions; deterministic on purpose, because a
+      collection that reflows while you look at it is the opposite of calm.
 - [ ] Quick-save gesture — swipe from feed straight to a board, no modal
 - [ ] Auto-tagging via Vision (dominant colour, silhouette) — replaces the text-vocabulary guessing
       in `StyleProfile` and is what makes boards self-organise
 - [ ] Boards, private by default
 - [ ] Notes and size annotations per saved item
-- [ ] Split `UpdateCard` — the hype/calm distinction should become a data boundary, not just a
-      visual one; feed and collection sharing one card component won't survive past v1
 
 ## Known gaps not yet scheduled
 
+- Real image dimensions for the collection wall, so tile heights match the photographs
+- An entry point for server settings and the notification prompt: both were removed from
+  the Style tab, so there is currently no way in the app to change the server URL or grant
+  notification permission. The shipped default server means nothing is broken today, but
+  push cannot be switched on without a prompt somewhere.
 - Sitemap-based discovery for non-Shopify brands
 - Shopify `/collections.json` for collection-level drops
 - `updated_at` for silent product edits (price changes, description rewrites)
