@@ -8,6 +8,9 @@ import SwiftUI
 struct BrandDetailView: View {
     @Environment(\.modelContext) private var context
     @Environment(SyncEngine.self) private var engine: SyncEngine
+    @Environment(RemoteSync.self) private var remote: RemoteSync
+    @Environment(ServerSettings.self) private var settings: ServerSettings
+    @Environment(SizeProfileStore.self) private var sizes: SizeProfileStore
 
     @Bindable var brand: Brand
 
@@ -54,6 +57,18 @@ struct BrandDetailView: View {
                 TextField("Style, in your words", text: styleBinding, axis: .vertical)
                 RatingPicker(rating: $brand.myRating)
                 Toggle("Following", isOn: $brand.followed)
+                    .onChange(of: brand.followed) { _, following in
+                        guard settings.isConfigured, let id = brand.remoteID else { return }
+                        Task {
+                            // The server decides what gets polled, so following has to
+                            // be recorded there, not just flagged locally.
+                            if following {
+                                try? await remote.follow(brandID: id)
+                            } else {
+                                await remote.unfollow(brand)
+                            }
+                        }
+                    }
             }
 
             Section("Recent") {
@@ -101,19 +116,28 @@ struct BrandDetailView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
-                if engine.isSyncing {
+                if engine.isSyncing || remote.isSyncing {
                     ProgressView()
                 } else {
                     Button("Refresh", systemImage: "arrow.clockwise") {
-                        Task { await engine.sync(brands: [brand]) }
+                        Task { await refresh() }
                     }
                 }
             }
         }
-        .refreshable { await engine.sync(brands: [brand]) }
+        .refreshable { await refresh() }
         .onDisappear {
             brand.lastOpenedAt = Date()
             try? context.save()
+        }
+    }
+
+    /// In server mode the phone never polls storefronts itself.
+    private func refresh() async {
+        if settings.isConfigured {
+            await remote.sync(sizes: sizes.profile)
+        } else {
+            await engine.sync(brands: [brand])
         }
     }
 

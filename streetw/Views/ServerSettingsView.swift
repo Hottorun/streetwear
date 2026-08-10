@@ -30,7 +30,7 @@ struct ServerSettingsSection: View {
 
     var body: some View {
         Section {
-                TextField("streetw-server.up.railway.app", text: $draft)
+                TextField(ServerSettings.defaultBaseURLString, text: $draft)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
                     .keyboardType(.URL)
@@ -38,7 +38,14 @@ struct ServerSettingsSection: View {
 
                 HStack {
                     Button("Connect", systemImage: "antenna.radiowaves.left.and.right", action: save)
+                        .buttonStyle(.borderless)
                         .disabled(draft.trimmingCharacters(in: .whitespaces).isEmpty)
+                    // Clearing the field is sticky, so without this there'd be no way
+                    // back to the shipped server short of retyping it.
+                    if draft.trimmingCharacters(in: .whitespaces).isEmpty {
+                        Button("Use default") { draft = ServerSettings.defaultBaseURLString; save() }
+                            .buttonStyle(.borderless)
+                    }
                     Spacer()
                     if settings.isRegistered {
                         Label("Device registered", systemImage: "checkmark.seal.fill")

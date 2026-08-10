@@ -81,6 +81,17 @@ final class RemoteSync {
         return brand
     }
 
+    /// Dry run via the server, so the phone never fetches storefronts itself.
+    func probe(url: String) async throws -> BrandProbe {
+        guard let api else { throw APIError.notConfigured }
+        return try await api.probe(url: url)
+    }
+
+    func follow(brandID: UUID) async throws {
+        guard let api else { throw APIError.notConfigured }
+        try await api.follow(brandID: brandID)
+    }
+
     func unfollow(_ brand: Brand) async {
         guard let remoteID = brand.remoteID, let api else { return }
         do {

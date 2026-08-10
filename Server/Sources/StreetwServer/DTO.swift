@@ -16,6 +16,7 @@ extension FollowBrand: @retroactive Content {}
 extension DeviceResponse: @retroactive Content {}
 extension BrandDTO: @retroactive Content {}
 extension FeedItem: @retroactive Content {}
+extension BrandProbe: @retroactive Content {}
 extension FeedResponse: @retroactive Content {}
 extension StatusResponse: @retroactive Content {}
 

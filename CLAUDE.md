@@ -100,6 +100,10 @@ screenX = windowX + 27 + devicePointX
 screenY = windowY + 69 + devicePointY
 ```
 
+**Switches need a longer synthetic press.** A ~90ms down/up flips buttons and tab items
+but not `Toggle`/`UISwitch` — hold ~300ms. Two "the tap isn't landing" investigations
+turned out to be this, not coordinates.
+
 Verify the scale before trusting it — click two tab-bar items a known distance apart and confirm
 the screen delta equals the device-point delta. Re-read the window geometry each session. To locate
 targets precisely, scan the PNG for the accent colour rather than eyeballing: selected controls are
@@ -216,6 +220,24 @@ Shared objects (`ServerSettings`, `SizeProfileStore`, `RemoteSync`, `SyncEngine`
 built in `streetwApp.init`, **not** in a `.task`. Creating them asynchronously raced with
 child views' own `.task`s — `FeedView` could run first, see nil, and skip the sync, which
 looked exactly like a broken server.
+
+### Everything must go over the server when one is configured
+
+Each operation that could fetch from the phone is guarded by `settings.isConfigured`, with
+the local path in the `else`. Adding a new one means adding both halves:
+
+| Operation | Server route |
+|---|---|
+| launch/refresh sync | `GET /v1/follows` + `GET /v1/feed` |
+| add brand | `POST /v1/brands/discover` then `POST /v1/follows` |
+| "check site" preview | `GET /v1/brands/probe` (dry run — creates nothing) |
+| delete / unfollow | `DELETE /v1/follows/:id` |
+| size profile change | `PATCH /v1/devices/me` |
+
+Two traps worth knowing. Deleting a brand locally without unfollowing looks like it worked
+and then the next sync **restores it** from the server's follow list. And the launch sync
+lives on `ContentView`, not `FeedView` — in `FeedView` it only ran if the user happened to
+open that tab.
 
 ### Politeness is not optional
 

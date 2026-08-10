@@ -93,6 +93,10 @@ See `BACKEND.md` for the full plan.
       and size filter keep working unchanged. Standalone mode still works when no server
       is set. Verified end to end against a live server: restock detected → phone synced →
       feed shows "2 restocked · Back in M".
+- [x] **All client operations routed through the server.** Audited and verified on the
+      wire: register, size-profile push, site probe (dry run), add brand, follow, unfollow,
+      feed sync. Local polling remains only as the standalone fallback when no server is
+      configured.
 - [ ] Background refresh on the client so the feed is warm before the app opens
 - [ ] Device registration → APNs, size-targeted restock pushes
 - [x] **Politeness budget.** `PoliteFetcher` wraps any fetcher: robots.txt fetched once

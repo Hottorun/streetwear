@@ -90,6 +90,27 @@ func routes(_ app: Application) throws {
         return try await builder.sort(\.$name).limit(50).all().map(BrandDTO.init)
     }
 
+    /// Dry run: what would we watch here? Creates nothing. Exists so the client's
+    /// "check site" preview doesn't have to fetch storefronts from the phone, which
+    /// would sidestep the server's politeness budget entirely.
+    v1.get("brands", "probe") { req async throws -> BrandProbe in
+        guard let raw = try? req.query.get(String.self, at: "url"),
+              BrandDiscovery.normalizedURL(raw) != nil else {
+            throw Abort(.badRequest, reason: "Not a usable URL")
+        }
+        let found = await BrandDiscovery.discover(website: raw, instagramHandle: nil)
+        return BrandProbe(
+            suggestedName: found.suggestedName,
+            sources: found.sources.map {
+                BrandProbe.Source(
+                    kind: $0.kind.rawValue,
+                    url: $0.url.absoluteString,
+                    isAutomatic: $0.kind.isAutomatic
+                )
+            }
+        )
+    }
+
     /// Probe a URL and, if it is watchable, create the shared brand. Runs outside the
     /// poll loop so a slow discovery can't stall routine checks.
     v1.post("brands", "discover") { req async throws -> BrandDTO in

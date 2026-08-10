@@ -86,12 +86,6 @@ struct FeedView: View {
                 }
             }
             .refreshable { await refresh() }
-            // Sync when the feed appears. Without this a configured server does nothing
-            // until the user happens to pull to refresh, which reads as "not working".
-            .task(id: settings.baseURLString) {
-                guard settings.isConfigured, remote.lastSyncedAt == nil else { return }
-                await refresh()
-            }
             .overlay(alignment: .bottom) { syncStatus }
         }
     }

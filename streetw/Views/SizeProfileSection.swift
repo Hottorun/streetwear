@@ -6,6 +6,8 @@ import SwiftUI
 
 struct SizeProfileSection: View {
     @Environment(SizeProfileStore.self) private var store: SizeProfileStore
+    @Environment(RemoteSync.self) private var remote: RemoteSync
+    @Environment(ServerSettings.self) private var settings: ServerSettings
 
     var body: some View {
         @Bindable var store = store
@@ -31,6 +33,12 @@ struct SizeProfileSection: View {
                 Text(store.profile.isEmpty
                      ? "Set your sizes and streetw can tell you when something is back in a size you actually wear."
                      : "Restocks in \(store.profile.summary) are highlighted in your feed.")
+            }
+            // The server targets restock alerts using this profile, so a change here is
+            // useless until it's pushed.
+            .onChange(of: store.profile) { _, profile in
+                guard settings.isConfigured else { return }
+                Task { await remote.pushSizes(profile) }
             }
     }
 }

@@ -39,14 +39,22 @@ final class ServerSettings {
         didSet { UserDefaults.standard.set(token, forKey: "serverToken") }
     }
 
+    /// The deployed server, so a fresh install is server-backed without anyone
+    /// typing a URL. Applied only when *nothing* has been stored yet: clearing the
+    /// field in Settings persists an empty string, which is a deliberate choice to
+    /// run standalone and must not snap back to this on the next launch.
+    static let defaultBaseURLString = "selfless-exploration-production-86b2.up.railway.app"
+
     init() {
-        baseURLString = UserDefaults.standard.string(forKey: "serverBaseURL") ?? ""
+        // `nil` means "never configured" — an explicitly cleared field reads as "".
+        baseURLString = UserDefaults.standard.string(forKey: "serverBaseURL")
+            ?? Self.defaultBaseURLString
         token = UserDefaults.standard.string(forKey: "serverToken")
 
-        // A value supplied as a launch argument lives only in the volatile argument
-        // domain, and assigning the stored property in `init` bypasses `didSet`. Write
-        // it back so `-serverBaseURL` behaves like the other dev flags and survives a
-        // relaunch.
+        // Assigning the stored property in `init` bypasses `didSet`, so persist here.
+        // This covers both the shipped default and `-serverBaseURL`, whose value lives
+        // only in the volatile argument domain — writing it back makes the flag behave
+        // like the other dev flags and survive a relaunch.
         if !baseURLString.isEmpty {
             UserDefaults.standard.set(baseURLString, forKey: "serverBaseURL")
         }
@@ -89,6 +97,16 @@ struct StreetwAPI: Sendable {
 
     func discover(_ body: DiscoverBrand) async throws -> BrandDTO {
         try await send(path: "v1/brands/discover", method: "POST", body: body, authenticated: false)
+    }
+
+    func probe(url: String) async throws -> BrandProbe {
+        try await send(
+            path: "v1/brands/probe",
+            method: "GET",
+            body: Optional<Never>.none,
+            query: [URLQueryItem(name: "url", value: url)],
+            authenticated: false
+        )
     }
 
     func follows() async throws -> [BrandDTO] {

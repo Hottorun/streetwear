@@ -19,6 +19,7 @@ struct AddBrandView: View {
     @State private var styleDescription = ""
 
     @State private var discovery: DiscoveredSources?
+    @State private var probed: BrandProbe?
     @State private var isDiscovering = false
     @State private var didProbe = false
 
@@ -54,6 +55,16 @@ struct AddBrandView: View {
                         HStack {
                             ProgressView()
                             Text("Checking the site…").foregroundStyle(.secondary)
+                        }
+                    } else if let probed {
+                        if probed.sources.isEmpty {
+                            Text("Nothing automatic found. You can still add it and open it manually.")
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
+                        } else {
+                            ForEach(probed.sources) { source in
+                                ProbeSourceRow(source: source)
+                            }
                         }
                     } else if let discovery {
                         if discovery.sources.isEmpty {
@@ -96,13 +107,26 @@ struct AddBrandView: View {
     private func probe() {
         guard !isDiscovering else { return }
         isDiscovering = true
+
         Task {
-            let found = await BrandDiscovery.discover(website: website, instagramHandle: instagram)
-            await MainActor.run {
-                discovery = found
-                if name.isEmpty, let suggested = found.suggestedName { name = suggested }
-                isDiscovering = false
-                didProbe = true
+            // With a server, it does the probing — the phone must not fetch storefronts
+            // directly or it sidesteps the shared politeness budget.
+            if settings.isConfigured {
+                let result = try? await remote.probe(url: website)
+                await MainActor.run {
+                    probed = result
+                    if name.isEmpty, let suggested = result?.suggestedName { name = suggested }
+                    isDiscovering = false
+                    didProbe = true
+                }
+            } else {
+                let found = await BrandDiscovery.discover(website: website, instagramHandle: instagram)
+                await MainActor.run {
+                    discovery = found
+                    if name.isEmpty, let suggested = found.suggestedName { name = suggested }
+                    isDiscovering = false
+                    didProbe = true
+                }
             }
         }
     }
@@ -144,6 +168,31 @@ struct AddBrandView: View {
         // First sync establishes the baseline so the feed isn't flooded on day one.
         Task { await engine.sync(brands: [brand]) }
         dismiss()
+    }
+}
+
+/// Same row, for sources the *server* reported.
+struct ProbeSourceRow: View {
+    let source: BrandProbe.Source
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: source.symbol)
+                .frame(width: 22)
+                .foregroundStyle(source.isAutomatic ? Color.accentColor : .secondary)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(source.label).font(.subheadline)
+                Text(source.url)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+            Spacer()
+            if !source.isAutomatic {
+                Text("Link only").font(.caption2).foregroundStyle(.secondary)
+            }
+        }
     }
 }
 

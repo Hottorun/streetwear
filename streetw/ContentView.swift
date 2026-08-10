@@ -9,6 +9,10 @@ import SwiftData
 import SwiftUI
 
 struct ContentView: View {
+    @Environment(RemoteSync.self) private var remote: RemoteSync
+    @Environment(ServerSettings.self) private var settings: ServerSettings
+    @Environment(SizeProfileStore.self) private var sizes: SizeProfileStore
+
 
     /// Dev affordance, matching `-seedBrands` / `-seedSizes`: `-startTab style`
     /// opens straight to a tab so screenshots don't need UI automation.
@@ -28,6 +32,12 @@ struct ContentView: View {
             Tab("Style", systemImage: "chart.pie", value: "style") {
                 StyleView()
             }
+        }
+        // Sync at the root, not in FeedView: a configured server should be live
+        // whichever tab the app happens to open on.
+        .task(id: settings.baseURLString) {
+            guard settings.isConfigured, remote.lastSyncedAt == nil else { return }
+            await remote.sync(sizes: sizes.profile)
         }
     }
 }

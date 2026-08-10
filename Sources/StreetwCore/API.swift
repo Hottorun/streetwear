@@ -125,6 +125,38 @@ public struct BrandDTO: Codable, Sendable, Hashable, Identifiable {
     }
 }
 
+/// Result of a dry-run probe: what the server *would* watch, without creating anything.
+public struct BrandProbe: Codable, Sendable, Hashable {
+    public struct Source: Codable, Sendable, Hashable, Identifiable {
+        public var id: String { url }
+        public var kind: String
+        public var url: String
+        public var isAutomatic: Bool
+
+        public init(kind: String, url: String, isAutomatic: Bool) {
+            self.kind = kind
+            self.url = url
+            self.isAutomatic = isAutomatic
+        }
+
+        public var label: String {
+            BrandSource.Kind(rawValue: kind)?.label ?? kind
+        }
+
+        public var symbol: String {
+            BrandSource.Kind(rawValue: kind)?.symbol ?? "questionmark"
+        }
+    }
+
+    public var suggestedName: String?
+    public var sources: [Source]
+
+    public init(suggestedName: String?, sources: [Source]) {
+        self.suggestedName = suggestedName
+        self.sources = sources
+    }
+}
+
 public struct FeedItem: Codable, Sendable, Hashable, Identifiable {
     public var eventID: UUID
     public var kind: String

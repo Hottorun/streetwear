@@ -8,6 +8,8 @@ import SwiftUI
 struct BrandsView: View {
     @Environment(\.modelContext) private var context
     @Environment(SyncEngine.self) private var engine: SyncEngine
+    @Environment(RemoteSync.self) private var remote: RemoteSync
+    @Environment(ServerSettings.self) private var settings: ServerSettings
 
     @Query(sort: \Brand.name) private var brands: [Brand]
     @State private var isAdding = false
@@ -47,7 +49,14 @@ struct BrandsView: View {
     }
 
     private func delete(at offsets: IndexSet) {
-        for index in offsets { context.delete(brands[index]) }
+        let doomed = offsets.map { brands[$0] }
+        // Unfollow first. Deleting only locally looks like it worked, then the next
+        // sync re-creates the brand from the server's follow list.
+        if settings.isConfigured {
+            let remote = self.remote
+            Task { for brand in doomed { await remote.unfollow(brand) } }
+        }
+        for brand in doomed { context.delete(brand) }
         try? context.save()
     }
 }
