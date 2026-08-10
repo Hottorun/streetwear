@@ -97,6 +97,16 @@ See `BACKEND.md` for the full plan.
       wire: register, size-profile push, site probe (dry run), add brand, follow, unfollow,
       feed sync. Local polling remains only as the standalone fallback when no server is
       configured.
+- [x] **Deployed.** Railway, Postgres, poller running. The app ships the deployment URL as
+      `ServerSettings.defaultBaseURLString`, applied only when nothing has been stored yet,
+      so a fresh install is server-backed with no setup and an explicitly cleared field
+      still means standalone.
+- [ ] **Device registration 500s in production.** `POST /v1/devices` fails against the
+      deployed Postgres while brand writes on the same database succeed, so the phone never
+      gets a token and every authed route is unreachable. Not reproducible locally on
+      SQLite, and production `ErrorMiddleware` hides the reason. `/status` now counts
+      `users` too — it was the one table it never touched, which is why a broken
+      registration path still read as healthy.
 - [ ] Background refresh on the client so the feed is warm before the app opens
 - [ ] Device registration → APNs, size-targeted restock pushes
 - [x] **Politeness budget.** `PoliteFetcher` wraps any fetcher: robots.txt fetched once

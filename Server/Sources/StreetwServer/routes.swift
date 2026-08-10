@@ -25,6 +25,7 @@ func routes(_ app: Application) throws {
             status.products = try await ProductModel.query(on: req.db).count()
             status.events = try await EventModel.query(on: req.db).count()
             status.devices = try await DeviceModel.query(on: req.db).count()
+            status.users = try await UserModel.query(on: req.db).count()
             status.databaseConnected = true
             if let next = try await SourceModel.query(on: req.db)
                 .sort(\.$nextCheckAt).first() {

@@ -26,6 +26,7 @@ struct ServerSettingsSection: View {
         var brands: Int
         var products: Int
         var pollerRunning: Bool
+        var databaseError: String?
     }
 
     var body: some View {
@@ -72,6 +73,13 @@ struct ServerSettingsSection: View {
                         Text("\(summary.brands) brands · \(summary.products) products · poller \(summary.pollerRunning ? "running" : "off")")
                             .font(.caption)
                             .foregroundStyle(.secondary)
+                        // `databaseConnected == false` still returns 200, so without
+                        // this a broken schema reads as a healthy connection.
+                        if let dbError = summary.databaseError {
+                            Text(dbError)
+                                .font(.caption)
+                                .foregroundStyle(.red)
+                        }
                         // Ephemeral SQLite in production silently loses everything on
                         // redeploy, so say it out loud rather than showing a green tick.
                         if summary.database != "postgres" {
@@ -115,7 +123,8 @@ struct ServerSettingsSection: View {
                     connected: status.databaseConnected,
                     brands: status.brands,
                     products: status.products,
-                    pollerRunning: status.pollerRunning
+                    pollerRunning: status.pollerRunning,
+                    databaseError: status.databaseError
                 )
             )
             // Registering here means the first sync isn't the thing that discovers a

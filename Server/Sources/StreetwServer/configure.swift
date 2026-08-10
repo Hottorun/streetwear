@@ -61,6 +61,7 @@ func configure(_ app: Application) async throws {
 
     app.migrations.add(CreateSchema())
     app.migrations.add(AddIndexes())
+    app.migrations.add(FixPostgresArrayColumns())
     if Environment.get("AUTO_MIGRATE") != "false" {
         try await app.autoMigrate()
     }

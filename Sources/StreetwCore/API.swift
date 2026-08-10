@@ -232,6 +232,9 @@ public struct StatusResponse: Codable, Sendable {
     public var products: Int
     public var events: Int
     public var devices: Int
+    /// Counted separately from `devices` because registration writes `users` first:
+    /// if that table is the broken one, every other count still looks healthy.
+    public var users: Int
     public var nextPollAt: Date?
 
     public init(
@@ -245,6 +248,7 @@ public struct StatusResponse: Codable, Sendable {
         products: Int = 0,
         events: Int = 0,
         devices: Int = 0,
+        users: Int = 0,
         nextPollAt: Date? = nil
     ) {
         self.database = database
@@ -257,6 +261,7 @@ public struct StatusResponse: Codable, Sendable {
         self.products = products
         self.events = events
         self.devices = devices
+        self.users = users
         self.nextPollAt = nextPollAt
     }
 }
