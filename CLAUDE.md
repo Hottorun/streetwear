@@ -293,6 +293,17 @@ builds the executable. Omitting them yields a confusing "overlapping sources" er
 - **A failed poll must still advance `next_check_at`** (`Poller.quarantine`). Without it, a
   source that errors after fetching stays "due" and every tick re-downloads the entire
   catalog — a hot loop against the brand. This actually happened; there's a test for it.
+- **A `[String]` column must be `TEXT[]` on Postgres, not JSONB.** Fluent binds a Swift
+  `[String]` as a *native* Postgres array, so a column declared `.json` (which renders as
+  JSONB) rejects every insert: `column is of type jsonb but expression is of type text[]`.
+  SQLite has no array type and JSON-encodes instead, so **this cannot reproduce locally** —
+  it only appears against the deployed Postgres, and production `ErrorMiddleware` reduces
+  it to "Something went wrong." `FixPostgresArrayColumns` converts the five affected
+  columns; `CreateSchema` is left as-is because it is already applied in production.
+  The tell: writes to tables *without* an array column (brands, sources) keep working, so
+  the deploy looks healthy while registration and the poller both silently fail.
+- **`/status` counts every table**, `users` included. It was the one table it didn't touch,
+  which is exactly why a completely broken registration path still reported green.
 - **`HTTPFetching`, not `HTTPClient`** — Vapor re-exports `AsyncHTTPClient.HTTPClient` and
   an unqualified collision in the server target is nastier than the wordier name.
 - **Don't name a test helper `withApp`.** VaporTesting exports a generic `withApp<T>` that

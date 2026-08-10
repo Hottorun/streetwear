@@ -101,12 +101,16 @@ See `BACKEND.md` for the full plan.
       `ServerSettings.defaultBaseURLString`, applied only when nothing has been stored yet,
       so a fresh install is server-backed with no setup and an explicitly cleared field
       still means standalone.
-- [ ] **Device registration 500s in production.** `POST /v1/devices` fails against the
-      deployed Postgres while brand writes on the same database succeed, so the phone never
-      gets a token and every authed route is unreachable. Not reproducible locally on
-      SQLite, and production `ErrorMiddleware` hides the reason. `/status` now counts
-      `users` too — it was the one table it never touched, which is why a broken
-      registration path still read as healthy.
+- [x] **Fixed: every Postgres write touching a `[String]` column failed.** Device
+      registration 500'd and the poller stored zero products, while brand and source
+      writes on the same database succeeded — the difference being that only the former
+      touch array columns. Fluent binds `[String]` as a native Postgres array, but
+      `CreateSchema` declares those columns `.json` → JSONB, so Postgres rejects the
+      insert. SQLite JSON-encodes instead, so it never reproduced locally, and production
+      `ErrorMiddleware` reduced it to "Something went wrong."
+      `FixPostgresArrayColumns` converts the five columns to `TEXT[]`; `/status` now also
+      counts `users`, the one table whose absence from that check let a fully broken
+      registration path report green. **Needs a deploy to take effect.**
 - [ ] Background refresh on the client so the feed is warm before the app opens
 - [ ] Device registration → APNs, size-targeted restock pushes
 - [x] **Politeness budget.** `PoliteFetcher` wraps any fetcher: robots.txt fetched once

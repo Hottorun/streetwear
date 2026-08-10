@@ -31,12 +31,15 @@ struct FixPostgresArrayColumns: AsyncMigration {
     func prepare(on database: any Database) async throws {
         guard let sql = database as? any SQLDatabase, sql.dialect.name == "postgresql" else { return }
         for (table, column) in Self.columns {
-            // The USING clause converts any rows already stored as JSON rather than
-            // failing on them; an empty array covers a NULL or a non-array value.
+            // Postgres forbids a subquery in a USING transform, which rules out
+            // `jsonb_array_elements_text`. Rewriting the JSON text form into an array
+            // literal — `["a","b"]` to `{"a","b"}` — is a plain scalar expression and
+            // keeps whatever is already stored. Both syntaxes double-quote their
+            // elements, so only the brackets differ.
             try await sql.raw("""
                 ALTER TABLE \(unsafeRaw: table) ALTER COLUMN \(unsafeRaw: column) \
                 TYPE TEXT[] USING COALESCE( \
-                    (SELECT array_agg(value) FROM jsonb_array_elements_text(\(unsafeRaw: column)) AS value), \
+                    translate(\(unsafeRaw: column)::TEXT, '[]', '{}')::TEXT[], \
                     '{}'::TEXT[] \
                 )
                 """).run()
