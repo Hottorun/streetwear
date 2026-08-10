@@ -11,6 +11,11 @@ import SwiftUI
 
 @main
 struct streetwApp: App {
+    /// Owns `BGAppRefreshTask` registration and the APNs callbacks, neither of which
+    /// SwiftUI exposes. It has to exist before `didFinishLaunching` returns.
+    @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
+    @Environment(\.scenePhase) private var scenePhase
+
     let sharedModelContainer: ModelContainer
 
     // Built here, not in a `.task`, so they exist before any view body runs. Creating
@@ -23,6 +28,7 @@ struct streetwApp: App {
 
     init() {
         Net.configureSharedCache()
+        Appearance.configure()
 
         let schema = Schema([Brand.self, BrandUpdate.self, SavedItem.self])
         let container: ModelContainer
@@ -37,10 +43,18 @@ struct streetwApp: App {
         sharedModelContainer = container
 
         let settings = ServerSettings()
+        let sizes = SizeProfileStore()
+        let remote = RemoteSync(context: container.mainContext, settings: settings)
         _settings = State(initialValue: settings)
-        _sizes = State(initialValue: SizeProfileStore())
-        _remote = State(initialValue: RemoteSync(context: container.mainContext, settings: settings))
+        _sizes = State(initialValue: sizes)
+        _remote = State(initialValue: remote)
         _engine = State(initialValue: SyncEngine(context: container.mainContext))
+
+        // The app delegate is built by UIKit and can't be handed these, so they are
+        // published here — the same moment they become valid.
+        MainActor.assumeIsolated {
+            BackgroundServices.install(remote: remote, sizes: sizes, settings: settings)
+        }
     }
 
     var body: some Scene {
@@ -53,6 +67,11 @@ struct streetwApp: App {
                 .task { await DevSeed.runIfRequested(in: sharedModelContainer.mainContext) }
         }
         .modelContainer(sharedModelContainer)
+        .onChange(of: scenePhase) { _, phase in
+            // Queue the next wake-up on the way out. Submitting while active is allowed
+            // but pointless — the system only ever runs it once we're backgrounded.
+            if phase == .background { AppDelegate.schedule() }
+        }
     }
 }
 
@@ -77,6 +96,7 @@ enum DevSeed {
                 websiteURL: BrandDiscovery.normalizedURL(site)
             )
             brand.sources = found.sources
+            brand.logoURLString = found.logoURL?.absoluteString
             brand.usesGeneratedName = true
             context.insert(brand)
             brands.append(brand)

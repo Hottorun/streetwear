@@ -81,7 +81,14 @@ final class SyncEngine {
         }
 
         apply(outcomes, to: brand)
-        brand.lastSyncedAt = Date()
+
+        // Only a sync that actually reached something counts. `lastSyncedAt` is both the
+        // incremental cursor *and* the "have we baselined this brand" flag, so stamping
+        // it after a total failure spends the baseline on a sync that stored nothing —
+        // and the first batch that does arrive is then announced as a back catalogue of
+        // new drops. The server had exactly this bug; this is the same rule.
+        let reachedSomething = outcomes.contains { if case .success = $0.1 { true } else { false } }
+        if reachedSomething { brand.lastSyncedAt = Date() }
     }
 
     // MARK: - Applying results

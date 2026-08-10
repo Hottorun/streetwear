@@ -18,6 +18,9 @@ final class BrandModel: Model, @unchecked Sendable {
     @OptionalField(key: "website") var website: String?
     @OptionalField(key: "instagram_handle") var instagramHandle: String?
     @OptionalField(key: "currency") var currency: String?
+    /// The icon the brand's own site publishes. Global like the rest of the catalog —
+    /// one lookup serves every follower.
+    @OptionalField(key: "logo_url") var logoURL: String?
     @Field(key: "locked_for_drop") var lockedForDrop: Bool
     /// True while `name` is still derived from the hostname, so the first successful
     /// poll may replace it with the storefront's real name.
@@ -52,6 +55,11 @@ final class SourceModel: Model, @unchecked Sendable {
     @Field(key: "failure_count") var failureCount: Int
     @OptionalField(key: "last_error") var lastError: String?
     @OptionalField(key: "last_checked_at") var lastCheckedAt: Date?
+    /// When this source first *successfully stored* a batch. Distinct from
+    /// `lastCheckedAt`, which is stamped when a poll begins and therefore survives a
+    /// failure — using that to decide "is this the baseline" spends the baseline on a
+    /// poll that stored nothing, and the real first batch then goes out as news.
+    @OptionalField(key: "baselined_at") var baselinedAt: Date?
     /// The poll queue is `ORDER BY next_check_at`, so cadence lives in the row rather
     /// than in a scheduler that would have to be rebuilt on restart.
     @Field(key: "next_check_at") var nextCheckAt: Date
@@ -168,6 +176,10 @@ final class EventModel: Model, @unchecked Sendable {
     @Field(key: "kind") var kind: String
     @Field(key: "sizes") var sizes: [String]
     @Timestamp(key: "created_at", on: .create) var createdAt: Date?
+    /// When this event was fanned out to push, or nil if it hasn't been. Held in the row
+    /// for the same reason as `next_check_at`: a restart must not re-notify, and a
+    /// second instance can later claim rows without a shared cache.
+    @OptionalField(key: "notified_at") var notifiedAt: Date?
 
     init() {}
 

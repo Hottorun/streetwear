@@ -4,6 +4,7 @@
 import StreetwCore
 import SwiftData
 import SwiftUI
+import UserNotifications
 
 struct ServerSettingsSection: View {
     @Environment(ServerSettings.self) private var settings: ServerSettings
@@ -27,6 +28,10 @@ struct ServerSettingsSection: View {
         var products: Int
         var pollerRunning: Bool
         var databaseError: String?
+        /// Whether the server holds an APNs key. Without one it can poll and serve the
+        /// feed perfectly while never sending a single alert — worth saying, because
+        /// "notifications are on" on this end looks identical either way.
+        var apnsConfigured = false
     }
 
     var body: some View {
@@ -87,6 +92,11 @@ struct ServerSettingsSection: View {
                                 .font(.caption)
                                 .foregroundStyle(.orange)
                         }
+                        if !summary.apnsConfigured {
+                            Text("Server has no push key, so alerts won't be sent.")
+                                .font(.caption)
+                                .foregroundStyle(.orange)
+                        }
                     }
                     .font(.subheadline)
                 case .failed(let message):
@@ -124,7 +134,8 @@ struct ServerSettingsSection: View {
                     brands: status.brands,
                     products: status.products,
                     pollerRunning: status.pollerRunning,
-                    databaseError: status.databaseError
+                    databaseError: status.databaseError,
+                    apnsConfigured: status.apnsConfigured ?? false
                 )
             )
             // Registering here means the first sync isn't the thing that discovers a
@@ -133,5 +144,55 @@ struct ServerSettingsSection: View {
         } catch {
             probe = .failed(error.localizedDescription)
         }
+    }
+}
+
+/// Alerts. Separate from the server row because the two fail independently: the server
+/// can be reachable with notifications denied, and granted with no key on the server.
+struct NotificationsSection: View {
+    @Environment(ServerSettings.self) private var settings: ServerSettings
+
+    @State private var status: UNAuthorizationStatus = .notDetermined
+    @State private var isRequesting = false
+
+    var body: some View {
+        Section {
+            switch status {
+            case .authorized, .provisional, .ephemeral:
+                Label("Alerts on", systemImage: "bell.fill")
+                    .foregroundStyle(.green)
+            case .denied:
+                // Once denied, the prompt never comes back — only Settings can undo it,
+                // so offering the button again would be a dead end.
+                VStack(alignment: .leading, spacing: 4) {
+                    Label("Alerts off", systemImage: "bell.slash")
+                        .foregroundStyle(.secondary)
+                    if let url = URL(string: UIApplication.openSettingsURLString) {
+                        Link("Turn on in Settings", destination: url)
+                            .font(.caption)
+                    }
+                }
+            default:
+                Button {
+                    Task {
+                        isRequesting = true
+                        await PushAuthorization.request()
+                        status = await PushAuthorization.current()
+                        isRequesting = false
+                    }
+                } label: {
+                    Label("Turn on drop alerts", systemImage: "bell.badge")
+                }
+                .buttonStyle(.borderless)
+                .disabled(isRequesting || !settings.isConfigured)
+            }
+        } header: {
+            Text("Alerts")
+        } footer: {
+            Text(settings.isConfigured
+                 ? "Get told when a brand you follow drops, restocks in your size, or locks its storefront."
+                 : "Alerts need a server — the phone can't watch brands while the app is closed.")
+        }
+        .task { status = await PushAuthorization.current() }
     }
 }

@@ -33,6 +33,9 @@ struct ContentView: View {
                 StyleView()
             }
         }
+        // Ink, not the system blue: the accent is reserved for things that are happening
+        // now, so it must never be spent on ordinary controls.
+        .tint(.ink)
         // Sync at the root, not in FeedView: a configured server should be live
         // whichever tab the app happens to open on.
         .task(id: settings.baseURLString) {

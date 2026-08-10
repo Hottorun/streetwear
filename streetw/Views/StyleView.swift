@@ -14,7 +14,6 @@ struct StyleView: View {
         NavigationStack {
             List {
                 SizeProfileSection()
-                ServerSettingsSection()
 
                 if profile.isEmpty {
                     Section {
@@ -37,6 +36,8 @@ struct StyleView: View {
                     FacetSection(title: "Brands", facets: profile.brands)
                 }
             }
+            .scrollContentBackground(.hidden)
+            .background(Color.paper)
             .navigationTitle("Style")
         }
     }

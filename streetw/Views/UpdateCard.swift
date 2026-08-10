@@ -1,186 +1,323 @@
 // UpdateCard.swift
-// The visual unit of the whole app: one product / post, with a save action.
+// The visual units of the app. There are three, and the split is deliberate.
+//
+// `FeedLead` and `FeedTile` belong to the hype feed: they carry time, price, stock and
+// the accent. `CollectionTile` belongs to the archive and carries none of that — no
+// badge, no count, no "new" dot, per the positioning in ROADMAP. One shared card
+// serving both rooms is exactly what that document says won't survive, so it doesn't.
+//
+// All three share `SaveAction` and `UpdateImage` so behaviour stays in one place.
 
 import StreetwCore
 import SwiftData
 import SwiftUI
 
+// MARK: - Feed: the lead
+
+/// One brand's most recent item, printed large. The image is the argument; everything
+/// else is a caption under it.
+struct FeedLead: View {
+    @Environment(\.openURL) private var openURL
+    @Environment(SizeProfileStore.self) private var sizes: SizeProfileStore
+
+    let update: BrandUpdate
+
+    private var runEntries: [SizeRun.Entry] {
+        SizeRun.entries(for: update, profile: sizes.profile)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            // No photograph, no photo block. A collection announcement or a page change
+            // has nothing to show, and a full-width grey rectangle is worse than none —
+            // it reads as a broken image rather than as a text item.
+            if update.primaryImageURL != nil {
+                ZStack(alignment: .topTrailing) {
+                    // Square, not the 4:5 a lookbook would use. Storefront product shots
+                    // are a centred object in a big white field, so a portrait crop
+                    // mostly enlarges the emptiness — and pushed the size run, the one
+                    // thing worth reading, below the fold on a large phone.
+                    UpdateImage(
+                        url: update.primaryImageURL,
+                        kind: update.kind,
+                        aspect: 1,
+                        contentMode: .fit
+                    )
+                    SaveAction(update: update)
+                        .padding(12)
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 7) {
+                if let state = FeedState(update: update, profile: sizes.profile) {
+                    HStack(spacing: 6) {
+                        Circle()
+                            .fill(Color.signal)
+                            .frame(width: 5, height: 5)
+                        Text(state.text)
+                            .font(.data(11, .medium))
+                            .tracking(0.6)
+                            .foregroundStyle(Color.signal)
+                    }
+                }
+
+                Text(update.title)
+                    .font(.editorial(21))
+                    .foregroundStyle(Color.ink)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                HStack(alignment: .firstTextBaseline) {
+                    SizeRun(entries: runEntries)
+                    Spacer(minLength: 12)
+                    if let price = update.priceText {
+                        Text(price)
+                            .font(.data(12, .medium))
+                            .foregroundStyle(Color.ink)
+                            .fixedSize()
+                            // The price is short and never worth eliding; if anything
+                            // has to give, it's the tail of the size run.
+                            .layoutPriority(1)
+                    }
+                }
+                .clipped()
+            }
+            .padding(.top, 14)
+            .padding(.horizontal, 20)
+        }
+        .contentShape(.rect)
+        .onTapGesture { if let link = update.linkURL { openURL(link) } }
+        .contextMenu { UpdateMenu(update: update) }
+    }
+}
+
+// MARK: - Feed: the briefs
+
+/// Everything else the brand posted. Small, cropped square, title only — enough to
+/// recognise something, not enough to compete with the lead.
+struct FeedTile: View {
+    @Environment(\.openURL) private var openURL
+    @Environment(SizeProfileStore.self) private var sizes: SizeProfileStore
+
+    let update: BrandUpdate
+
+    private var isMine: Bool { update.isInMySize(sizes.profile) }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            UpdateImage(url: update.primaryImageURL, kind: update.kind, aspect: 1)
+                .overlay(alignment: .bottomLeading) {
+                    // The accent again, at the smallest possible dose: a rule along the
+                    // bottom edge means "your size is in there".
+                    if isMine {
+                        Rectangle()
+                            .fill(Color.signal)
+                            .frame(height: 2)
+                    }
+                }
+
+            Text(update.title)
+                .font(.editorial(12))
+                .foregroundStyle(Color.ink)
+                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .contentShape(.rect)
+        .onTapGesture { if let link = update.linkURL { openURL(link) } }
+        .contextMenu { UpdateMenu(update: update) }
+    }
+}
+
+// MARK: - Collection
+
+/// The archive. No price, no stock, no time, no accent — a thing you kept, on a wall.
+/// Resisting the urge to badge these is the whole difference between the two rooms.
+struct CollectionTile: View {
+    @Environment(\.openURL) private var openURL
+
+    let update: BrandUpdate
+    /// Varying heights are what make the wall read as a collection rather than a table.
+    var aspect: CGFloat = 1
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            UpdateImage(url: update.primaryImageURL, kind: update.kind, aspect: aspect)
+
+            VStack(alignment: .leading, spacing: 3) {
+                if let brand = update.brand {
+                    Wordmark(name: brand.name, size: 9, color: .muted)
+                }
+                Text(update.title)
+                    .font(.editorial(12))
+                    .foregroundStyle(Color.ink)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .contentShape(.rect)
+        .onTapGesture { if let link = update.linkURL { openURL(link) } }
+        .contextMenu { UpdateMenu(update: update) }
+    }
+}
+
+// MARK: - State
+
+/// The one line of urgency a feed item is allowed. Nil means there is nothing
+/// time-critical to say, and the card stays silent rather than inventing a status.
+struct FeedState {
+    let text: String
+
+    init?(update: BrandUpdate, profile: SizeProfile) {
+        if update.brand?.isLockedForDrop == true {
+            self.text = "LOCKED · DROP IMMINENT"
+            return
+        }
+        switch update.kind {
+        case .restock:
+            let mine = update.restockedSizes(matching: profile)
+            let shown = (mine.isEmpty ? update.restockedSizes : mine)
+                .filter { $0 != "Default Title" && !$0.isEmpty }
+            self.text = shown.isEmpty
+                ? "BACK IN STOCK"
+                : "BACK IN \(shown.prefix(3).joined(separator: ", ").uppercased())"
+        case .dropLock:
+            self.text = "LOCKED · DROP IMMINENT"
+        case .collection:
+            self.text = "NEW COLLECTION"
+        default:
+            guard update.isInMySize(profile) else { return nil }
+            self.text = "IN YOUR SIZE"
+        }
+    }
+}
+
+// MARK: - Shared pieces
+
+/// A photograph at a fixed aspect ratio, full width.
+///
+/// Sized by a transparent spacer with `.fit`, not by putting `.aspectRatio(_:.fill)` on
+/// the image itself: with `.fill`, a flexible placeholder has no height to fill *to* and
+/// grows without bound — one un-loaded lead image took over the entire screen.
+struct UpdateImage: View {
+    let url: URL?
+    var kind: BrandUpdate.Kind = .product
+    var aspect: CGFloat = 1
+    /// `.fit` shows the whole garment on the wash, never cropped — right for a lead,
+    /// where the object *is* the argument. `.fill` keeps a grid of thumbnails on a
+    /// consistent rhythm, which matters more than seeing every shoelace.
+    var contentMode: ContentMode = .fill
+
+    var body: some View {
+        Color.clear
+            .aspectRatio(aspect, contentMode: .fit)
+            .overlay {
+                if let url {
+                    AsyncImage(url: url, transaction: Transaction(animation: .easeIn(duration: 0.25))) { phase in
+                        switch phase {
+                        case .success(let image):
+                            image.resizable().aspectRatio(contentMode: contentMode)
+                        case .failure:
+                            symbol
+                        default:
+                            Color.clear
+                        }
+                    }
+                } else {
+                    symbol
+                }
+            }
+            .background(Color.wash)
+            .clipped()
+    }
+
+    private var symbol: some View {
+        Image(systemName: kind.symbol)
+            .font(.system(size: 15, weight: .light))
+            .foregroundStyle(Color.muted)
+    }
+}
+
+/// Save toggle. Deliberately unlabelled and quiet — it sits on a photograph.
+struct SaveAction: View {
+    @Environment(\.modelContext) private var context
+    let update: BrandUpdate
+
+    private var isSaved: Bool { update.save != nil }
+
+    var body: some View {
+        Button {
+            if isSaved { removeSave(update, in: context) } else { setSave(update, .inspiration, in: context) }
+        } label: {
+            Image(systemName: isSaved ? "bookmark.fill" : "bookmark")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(isSaved ? Color.signal : Color.ink)
+                .frame(width: 30, height: 30)
+                .background(Color.paper.opacity(0.92), in: Circle())
+        }
+        .buttonStyle(.borderless)
+        .sensoryFeedback(.selection, trigger: isSaved)
+        .accessibilityLabel(isSaved ? "Remove from saved" : "Save")
+    }
+}
+
+/// One menu for all three cards, so the actions never drift apart.
+struct UpdateMenu: View {
+    @Environment(\.modelContext) private var context
+    let update: BrandUpdate
+
+    var body: some View {
+        Button("Save to Inspiration", systemImage: "bookmark") { setSave(update, .inspiration, in: context) }
+        Button("Add to Wardrobe", systemImage: "tshirt") { setSave(update, .wardrobe, in: context) }
+        if update.save != nil {
+            Button("Remove", systemImage: "trash", role: .destructive) { removeSave(update, in: context) }
+        }
+        if let link = update.linkURL {
+            Divider()
+            Link("Open on site", destination: link)
+        }
+    }
+}
+
+@MainActor
+private func setSave(_ update: BrandUpdate, _ type: SavedItem.SaveType, in context: ModelContext) {
+    if let save = update.save {
+        save.type = type
+    } else {
+        context.insert(SavedItem(update: update, type: type))
+    }
+    update.isSeen = true
+    try? context.save()
+}
+
+@MainActor
+private func removeSave(_ update: BrandUpdate, in context: ModelContext) {
+    guard let save = update.save else { return }
+    context.delete(save)
+    try? context.save()
+}
+
+// MARK: - Compatibility
+
+/// Still used by `BrandDetailView`'s horizontal strips.
 struct UpdateCarousel: View {
     let updates: [BrandUpdate]
     var width: CGFloat = 150
 
     var body: some View {
         ScrollView(.horizontal) {
-            LazyHStack(spacing: 12) {
+            LazyHStack(alignment: .top, spacing: 14) {
                 ForEach(updates) { update in
-                    UpdateCard(update: update, width: width)
+                    FeedTile(update: update)
+                        .frame(width: width)
                 }
             }
-            .padding(.horizontal)
+            .padding(.horizontal, 20)
             .scrollTargetLayout()
         }
         .scrollTargetBehavior(.viewAligned)
         .scrollIndicators(.hidden)
-    }
-}
-
-struct UpdateCard: View {
-    @Environment(\.modelContext) private var context
-    @Environment(\.openURL) private var openURL
-    @Environment(SizeProfileStore.self) private var sizes: SizeProfileStore
-
-    let update: BrandUpdate
-    var width: CGFloat = 150
-
-    private var save: SavedItem? { update.save }
-
-    /// "Back in M, L" beats a bare "Back" — the size is the whole point of a restock.
-    /// Narrowed to the user's sizes when they've set them.
-    private var restockLabel: String {
-        let profile = sizes.profile
-        let mine = update.restockedSizes(matching: profile)
-        let shown = (mine.isEmpty ? update.restockedSizes : mine)
-            .filter { $0 != "Default Title" && !$0.isEmpty }
-        guard !shown.isEmpty else { return "Back" }
-        return "Back in \(shown.prefix(3).joined(separator: ", "))"
-    }
-
-    /// Only worth a badge once the user has actually told us their sizes.
-    private var isInMySize: Bool { update.isInMySize(sizes.profile) }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            ZStack(alignment: .topTrailing) {
-                UpdateImage(url: update.primaryImageURL, kind: update.kind)
-                    .frame(width: width, height: width * 1.25)
-                    .clipShape(RoundedRectangle(cornerRadius: 12))
-
-                SaveButton(isSaved: save != nil) { toggleSave() }
-                    .padding(8)
-
-                if isInMySize {
-                    Text("Your size")
-                        .font(.caption2.weight(.semibold))
-                        .padding(.horizontal, 7)
-                        .padding(.vertical, 3)
-                        .background(.thinMaterial, in: Capsule())
-                        .padding(8)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
-                }
-            }
-
-            Text(update.title)
-                .font(.caption)
-                .lineLimit(2)
-                .frame(width: width, alignment: .leading)
-
-            HStack(spacing: 6) {
-                if let price = update.priceText {
-                    Text(price)
-                        .font(.caption2.weight(.medium))
-                }
-                if update.isAvailable == false {
-                    Text("Sold out")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                }
-                if update.kind == .restock {
-                    Label(restockLabel, systemImage: "arrow.clockwise")
-                        .font(.caption2)
-                        .foregroundStyle(.green)
-                        .labelStyle(.titleAndIcon)
-                        .lineLimit(1)
-                }
-            }
-            .foregroundStyle(.secondary)
-        }
-        .contentShape(.rect)
-        .onTapGesture {
-            if let link = update.linkURL { openURL(link) }
-        }
-        .contextMenu {
-            Button("Save to Inspiration", systemImage: "bookmark") { setSave(.inspiration) }
-            Button("Add to Wardrobe", systemImage: "tshirt") { setSave(.wardrobe) }
-            if save != nil {
-                Button("Remove", systemImage: "trash", role: .destructive) { removeSave() }
-            }
-            if let link = update.linkURL {
-                Divider()
-                Link("Open on site", destination: link)
-            }
-        }
-    }
-
-    private func toggleSave() {
-        if save != nil { removeSave() } else { setSave(.inspiration) }
-    }
-
-    private func setSave(_ type: SavedItem.SaveType) {
-        if let save {
-            save.type = type
-        } else {
-            context.insert(SavedItem(update: update, type: type))
-        }
-        update.isSeen = true
-        try? context.save()
-    }
-
-    private func removeSave() {
-        guard let save else { return }
-        context.delete(save)
-        try? context.save()
-    }
-}
-
-// MARK: - Pieces
-
-struct UpdateImage: View {
-    let url: URL?
-    var kind: BrandUpdate.Kind = .product
-
-    var body: some View {
-        Group {
-            if let url {
-                AsyncImage(url: url, transaction: Transaction(animation: .easeIn(duration: 0.2))) { phase in
-                    switch phase {
-                    case .success(let image):
-                        image.resizable().scaledToFill()
-                    case .failure:
-                        placeholder
-                    default:
-                        placeholder.overlay(ProgressView())
-                    }
-                }
-            } else {
-                placeholder.overlay(
-                    Image(systemName: kind.symbol)
-                        .font(.title2)
-                        .foregroundStyle(.tertiary)
-                )
-            }
-        }
-        .clipped()
-    }
-
-    private var placeholder: some View {
-        Rectangle().fill(.quaternary)
-    }
-}
-
-struct SaveButton: View {
-    let isSaved: Bool
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            Image(systemName: isSaved ? "bookmark.fill" : "bookmark")
-                .font(.footnote.weight(.semibold))
-                .foregroundStyle(isSaved ? Color.accentColor : .white)
-                .padding(7)
-                .background(.ultraThinMaterial, in: Circle())
-        }
-        .buttonStyle(.plain)
-        .sensoryFeedback(.selection, trigger: isSaved)
     }
 }
 
@@ -190,10 +327,6 @@ struct EmptyStateView: View {
     let message: String
 
     var body: some View {
-        ContentUnavailableView {
-            Label(title, systemImage: symbol)
-        } description: {
-            Text(message)
-        }
+        EditorialEmptyState(title: title, action: message)
     }
 }

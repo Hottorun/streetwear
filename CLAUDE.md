@@ -51,6 +51,23 @@ xcrun simctl list devices available | sed -n '/-- iOS 26.5 --/,/^--/p'
 **Xcode holds a lock on the shared DerivedData build.db.** If Xcode is open, a CLI build dies with
 "database is locked"; pass `-derivedDataPath` to build somewhere else.
 
+**`swift test` also needs `DEVELOPER_DIR`.** The swift-testing `Testing` module ships with Xcode's
+toolchain, not CommandLineTools, so without it every test file fails with `no such module 'Testing'`
+before anything runs.
+
+**Not every Info.plist key can be a build setting.** The target uses `GENERATE_INFOPLIST_FILE`, but
+Xcode silently ignores `INFOPLIST_KEY_UIBackgroundModes` and
+`INFOPLIST_KEY_BGTaskSchedulerPermittedIdentifiers` — the build succeeds and the keys are simply
+absent, which surfaces much later as `BGTaskScheduler` refusing the identifier at runtime. Those two
+live in `streetw-Info.plist`, which `INFOPLIST_FILE` points at and Xcode merges the generated keys
+over. It sits beside the `.xcodeproj` rather than in `streetw/`, because that directory is a
+synchronized root group and an Info.plist inside it would also be copied in as a resource. Verify
+additions landed by reading the built bundle, never by trusting the setting:
+
+```bash
+plutil -p /tmp/streetw-dd/Build/Products/Debug-iphonesimulator/streetw.app/Info.plist
+```
+
 ### Build and run
 
 ```bash
@@ -118,7 +135,7 @@ The Xcode project uses `PBXFileSystemSynchronizedRootGroup`. Any `.swift` file a
 ### Tests
 
 ```bash
-swift test                                    # all 40
+swift test                                    # all 57
 swift test --filter "Size normalisation"      # one suite
 swift test --filter relockFiresAgain          # one test
 ```
@@ -175,6 +192,12 @@ Changing these silently will break intended behavior:
 - **A brand's first sync is a baseline, not news.** `SyncEngine.merge` checks
   `brand.lastSyncedAt == nil` and inserts that batch pre-marked `isSeen`, so adding a brand doesn't
   dump 250 back-catalogue products into the feed.
+- **Only a sync that reached something may spend the baseline.** The flag that says "already
+  baselined" is also the incremental cursor, so stamping it after a sync that stored nothing means
+  the first batch that *does* arrive is announced as news. `SyncEngine.sync` sets `lastSyncedAt`
+  only when at least one source succeeded; the server keeps a separate `sources.baselined_at`
+  rather than reusing `last_checked_at`, which is stamped before the fetch and survives a failure.
+  This is not theoretical — it dumped 250 Kith products into the feed as new drops.
 - **`PageWatchSource` hashes visible text, not raw HTML** — after stripping scripts, styles,
   comments, tags and hex-looking tokens. Raw HTML changes on every load (CSRF tokens, cache
   busters), which would make every check look like a change. The first sight of a page stores a
@@ -207,6 +230,11 @@ Changing these silently will break intended behavior:
   not scale to a grid.
 - Images are stored as `[String]` (`imageURLStrings`) with a computed `imageURLs`; SwiftData is
   happier with those than `[URL]`.
+- **A Codable struct stored in a `@Model` must decode leniently.** SwiftData decodes those with an
+  internal `try!`, so a field added to `BrandSource` after a store was written is not a migration
+  problem — it is a crash on launch for anyone holding the older data, which is exactly what
+  `failureCount` did on device. `BrandSource.init(from:)` defaults every field but `kind` and `url`;
+  keep it that way, and add new fields the same way.
 
 ### Client/server wiring
 
@@ -233,6 +261,7 @@ the local path in the `else`. Adding a new one means adding both halves:
 | "check site" preview | `GET /v1/brands/probe` (dry run — creates nothing) |
 | delete / unfollow | `DELETE /v1/follows/:id` |
 | size profile change | `PATCH /v1/devices/me` |
+| APNs token / environment | `PATCH /v1/devices/me` |
 
 Two traps worth knowing. Deleting a brand locally without unfollowing looks like it worked
 and then the next sync **restores it** from the server's follow list. And the launch sync
@@ -304,6 +333,26 @@ builds the executable. Omitting them yields a confusing "overlapping sources" er
   the deploy looks healthy while registration and the poller both silently fail.
 - **`/status` counts every table**, `users` included. It was the one table it didn't touch,
   which is exactly why a completely broken registration path still reported green.
+- **One push per brand per pass, never one per event.** A brand publishing a collection
+  writes hundreds of events in a single poll; fanning those out one-to-one is both a
+  terrible experience and a fast route to being muted. `Notifier` groups by brand and
+  sends a counted summary.
+- **`events.notified_at` is the push ledger**, in the row for the same reason as
+  `next_check_at`. Events are marked even when nothing was sent — when no APNs key is
+  configured, and when they are older than the 6h freshness window. Skipping that would
+  mean the first deploy with credentials notifies every event ever recorded, and coming
+  back from an outage fires a burst about drops that already sold out.
+- **Push delivery is behind `PushSending`.** `Notifier` never imports APNs, so the whole
+  fan-out — follows, size targeting, batching, dead-token pruning — is tested with no
+  certificate and no network. Only `APNSPushSender` talks to Apple.
+- **Retention prunes events before products, never the reverse.** `events.product_id` is
+  `ON DELETE CASCADE`, so pruning a product takes feed history with it; and deleting a
+  product the source still lists makes the next poll announce it as a new drop. Only
+  products unseen for `PRODUCT_RETENTION_DAYS` *with no events left* are eligible.
+- **The poll queue claim is a lease, not a select.** `FOR UPDATE SKIP LOCKED` plus
+  pushing `next_check_at` forward in the same statement, before any network call — so a
+  second instance can't double-fetch a storefront and a crash mid-poll costs one lease.
+  Postgres only; SQLite keeps the plain query.
 - **`HTTPFetching`, not `HTTPClient`** — Vapor re-exports `AsyncHTTPClient.HTTPClient` and
   an unqualified collision in the server target is nastier than the wordier name.
 - **Don't name a test helper `withApp`.** VaporTesting exports a generic `withApp<T>` that
@@ -335,8 +384,9 @@ belongs in `streetw/`, not here.
 
 See `ROADMAP.md` for the planned work and what's explicitly out of scope. The near-term ones:
 
-- No background refresh or push; updates only arrive while the app is open. The project has
-  committed to a server-backed poller for this — `BGAppRefreshTask` is too throttled for drops.
+- Push is built but not switched on: it needs an APNs key on the server (`APNS_*`) and the Push
+  Notifications capability on the app target, which requires a paid team. Until then `/status`
+  reports `apnsConfigured: false` and the app says so in Settings rather than pretending.
 - `StyleProfile` derives colors/categories/silhouettes from title and tag text only. Image-based
   color extraction via Vision is the intended upgrade.
 - No size profile yet, so per-variant restock data is displayed but not filtered on.

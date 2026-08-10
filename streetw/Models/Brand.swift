@@ -9,6 +9,9 @@ final class Brand {
     var id: UUID = UUID()
     var name: String = ""
     var websiteURL: URL?
+    /// The brand's mark, taken from the icon its site publishes for home screens.
+    /// A string rather than a URL for the same reason the image lists are.
+    var logoURLString: String?
     var instagramHandle: String?
     var styleDescription: String?
     var myRating: Int?
@@ -60,6 +63,11 @@ final class Brand {
 
     var unseenCount: Int {
         updates.count { !$0.isSeen }
+    }
+
+    /// Stored as a string like the image lists, for the same SwiftData reason.
+    var logoURL: URL? {
+        logoURLString.flatMap(URL.init(string:))
     }
 
     var instagramURL: URL? {

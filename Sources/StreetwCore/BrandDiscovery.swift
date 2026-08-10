@@ -6,6 +6,8 @@ import Foundation
 public struct DiscoveredSources: Sendable {
     public var sources: [BrandSource] = []
     public var suggestedName: String?
+    /// The brand's own mark, taken from the icon the site publishes for home screens.
+    public var logoURL: URL?
 
     public init() {}
 
@@ -39,6 +41,9 @@ public enum BrandDiscovery {
             if result.sources.isEmpty {
                 result.sources.append(BrandSource(kind: .page, url: base))
             }
+
+            // One extra request, once, when a brand is added — never on a poll.
+            result.logoURL = await BrandMark.discover(at: base, http: http)
         }
 
         if let handle = normalizedHandle(instagramHandle),

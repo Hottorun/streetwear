@@ -68,9 +68,14 @@ server target unchanged. `UpdateKind` and `VariantInfo` were extracted out of th
 `BrandUpdate` for exactly this reason — `BrandUpdate.Kind` is now just a typealias. The layer
 compiles standalone with no shim; keep it that way.
 
-## Phase 2 — the backend
+## Phase 2 — the backend ✅
 
-See `BACKEND.md` for the full plan.
+Done. See `BACKEND.md` for the reasoning and `Server/README.md` for how to run it.
+
+Two things are built but not yet switched on, and neither is code: the server needs an
+APNs key in its environment, and the app target needs the Push Notifications capability
+(a paid team). Until then the whole pipeline runs and `/status` reports
+`apnsConfigured: false` rather than pretending.
 
 - [x] **SwiftPM monorepo + `StreetwCore` extraction.** Adapters, sizing and discovery moved to
       `Sources/StreetwCore/`; the app links it as a local package. Adapters now take an injected
@@ -86,7 +91,7 @@ See `BACKEND.md` for the full plan.
       Verified end to end against live Kith and BBC: discovery → 1,461 products / 25k variants
       stored → **zero events on the first poll** (baseline) → a forced restock produced one
       event with `restockedSizes: ["M"]` and `availableInMySize: true` for a matching device.
-      12 tests, no network.
+      Now 32 tests, no network.
 - [x] **Client syncs from the server.** Wire types moved to `StreetwCore` so app and
       server share one contract. The app registers a device, follows brands server-side,
       and fills its SwiftData store from `/v1/feed` — the whole UI, saving, style profile
@@ -110,17 +115,55 @@ See `BACKEND.md` for the full plan.
       `ErrorMiddleware` reduced it to "Something went wrong."
       `FixPostgresArrayColumns` converts the five columns to `TEXT[]`; `/status` now also
       counts `users`, the one table whose absence from that check let a fully broken
-      registration path report green. **Needs a deploy to take effect.**
-- [ ] Background refresh on the client so the feed is warm before the app opens
-- [ ] Device registration → APNs, size-targeted restock pushes
+      registration path report green. Deployed and confirmed live: `POST /v1/devices`
+      returns a token and `users`/`devices` count up, where before it 500'd.
+- [x] **Background refresh on the client.** `BGAppRefreshTask` registered in an
+      `AppDelegate` and re-queued whenever the app backgrounds, so the feed is warm
+      before it is opened. Explicitly the *fallback*, not the mechanism — the system
+      grants a handful of wakeups a day, which is fine for staleness and useless for a
+      drop. `UIBackgroundModes` and `BGTaskSchedulerPermittedIdentifiers` had to move
+      into a real `streetw-Info.plist`: Xcode silently drops both as `INFOPLIST_KEY_*`
+      settings, and the failure only shows up as a refused registration at runtime.
+- [x] **Device registration → APNs, size-targeted restock pushes.** The server holds the
+      size profile, so it can decide that a restock in M is news for one follower and
+      not another — that targeting is the whole reason the profile lives server-side.
+      Fan-out is behind a `PushSending` protocol, so who-gets-what is covered by 10 tests
+      with no certificate and no network. Two rules shaped it: **one push per brand per
+      pass** (a collection drop writes hundreds of events in one poll, and that has to be
+      one notification), and **`notified_at` as a ledger in the row**, so a restart can't
+      re-notify and a backlog older than 6 h is marked without being sent rather than
+      fired as a burst about drops that already sold out. A token APNs rejects is
+      forgotten; the device row survives, because it owns the follows.
+      **Not yet live:** needs an APNs key on the server (`APNS_KEY_P8`/`_KEY_ID`/`_TEAM_ID`)
+      and the Push Notifications capability on the app target, which needs a paid team.
+      Without either, everything else works and `/status` says `apnsConfigured: false`.
+- [x] **Fixed: a failed poll silently spent the brand's baseline.** Fallout from the
+      array-column bug rather than a separate mistake — while writes were failing, Kith
+      polled repeatedly and stamped `last_checked_at` each time without storing anything.
+      The baseline rule keyed off that field, so the first working poll looked incremental
+      and wrote **250 back-catalogue products as new-drop events**. Sources now carry
+      `baselined_at`, set only once a fetch has completed and its batch is stored, and
+      `SyncEngine` on the client got the same rule: `lastSyncedAt` is stamped only when a
+      source actually succeeded. Two regression tests cover it.
 - [x] **Politeness budget.** `PoliteFetcher` wraps any fetcher: robots.txt fetched once
       per host and obeyed (longest-match Allow/Disallow, wildcards, Crawl-delay, named
       groups), plus a reserved-slot limiter that spaces requests per host even under
       concurrency. The browser-spoofing User-Agent is gone — an honest
       `streetw/1.0 (+repo url)` was verified to get 200s from the storefronts we actually
       poll, so impersonation bought nothing and being identifiable is what keeps access.
-- [ ] `FOR UPDATE SKIP LOCKED` on the poll queue, once there's more than one instance
-- [ ] Retention server-side; the phone then keeps a much smaller window
+- [x] **`FOR UPDATE SKIP LOCKED` on the poll queue.** The claim is a *lease*: a single
+      statement takes the due batch and pushes `next_check_at` five minutes out before
+      any network call, so two instances can never fetch the same storefront (which would
+      multiply the politeness budget by the instance count) and a process killed
+      mid-poll costs one lease rather than stranding the brand. Postgres only; SQLite has
+      neither the syntax nor a second instance to protect against.
+- [x] **Retention server-side.** Events past 30 days that have already been notified,
+      then products unseen for 180 days with no events left. The ordering is
+      load-bearing in both directions: `events.product_id` is `ON DELETE CASCADE`, so
+      pruning a product first would silently delete feed history — and deleting a product
+      the source still lists makes the next poll announce it as a new drop, i.e.
+      retention manufacturing a fake release. The phone already keeps far less (400 per
+      brand, never dropping saved or unread) and pages the rest from here.
 
 ## Phase 3 — alerts and the round app
 

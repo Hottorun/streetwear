@@ -17,7 +17,8 @@ func routes(_ app: Application) throws {
         var status = StatusResponse(
             database: req.application.storage[DatabaseKindKey.self] ?? "unknown",
             environment: req.application.environment.name,
-            pollerRunning: req.application.storage[PollLoopKey.self] != nil
+            pollerRunning: req.application.storage[PollLoopKey.self] != nil,
+            apnsConfigured: req.application.storage[APNSConfiguredKey.self] ?? false
         )
         do {
             status.brands = try await BrandModel.query(on: req.db).count()
@@ -26,6 +27,9 @@ func routes(_ app: Application) throws {
             status.events = try await EventModel.query(on: req.db).count()
             status.devices = try await DeviceModel.query(on: req.db).count()
             status.users = try await UserModel.query(on: req.db).count()
+            status.pendingPushes = try await EventModel.query(on: req.db)
+                .filter(\.$notifiedAt == nil)
+                .count()
             status.databaseConnected = true
             if let next = try await SourceModel.query(on: req.db)
                 .sort(\.$nextCheckAt).first() {
@@ -70,6 +74,7 @@ func routes(_ app: Application) throws {
         let body = try req.content.decode(UpdateDevice.self)
 
         if let token = body.apnsToken { device.apnsToken = token }
+        if let environment = body.environment { device.environment = environment }
         try await device.save(on: req.db)
 
         if let sizes = body.sizes {
@@ -133,6 +138,7 @@ func routes(_ app: Application) throws {
             instagramHandle: BrandDiscovery.normalizedHandle(body.instagram),
             usesGeneratedName: body.name == nil
         )
+        brand.logoURL = found.logoURL?.absoluteString
         try await brand.save(on: req.db)
 
         let brandID = try brand.requireID()
@@ -221,5 +227,19 @@ func routes(_ app: Application) throws {
         guard let poller = req.application.poller else { throw Abort(.serviceUnavailable) }
         let count = await poller.tick()
         return "checked \(count)"
+    }
+
+    /// Fan out anything pending without waiting for the loop. Reports what it did, so
+    /// "did my push actually go anywhere" has an answer that isn't a log grep.
+    app.post("admin", "notify") { req async throws -> String in
+        guard let notifier = req.application.notifier else { throw Abort(.serviceUnavailable) }
+        let result = await notifier.dispatch()
+        return "events \(result.events), sent \(result.sent), failed \(result.failed), pruned \(result.prunedTokens)"
+    }
+
+    app.post("admin", "sweep") { req async throws -> String in
+        guard let reaper = req.application.reaper else { throw Abort(.serviceUnavailable) }
+        let result = await reaper.sweep()
+        return "pruned \(result.events) events, \(result.products) products"
     }
 }

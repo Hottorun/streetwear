@@ -263,4 +263,95 @@ struct BrandSourceTests {
         source.failureCount = 99
         #expect(source.isReadyToCheck(now: now.addingTimeInterval(6 * 3600 + 1)))
     }
+
+    /// `Brand.sources` is a Codable array inside SwiftData, and SwiftData decodes those
+    /// with an internal `try!` — so a payload written before a field existed crashes the
+    /// app on launch rather than failing softly. It shipped that way once, with
+    /// `failureCount`. Every operational field must survive being absent.
+    @Test("Decodes a payload written before the operational fields existed")
+    func decodesLegacyPayload() throws {
+        let legacy = """
+        {"id":"3F2504E0-4F89-11D3-9A0C-0305E82C3301","kind":"shopify","url":"https://kith.com/products.json"}
+        """
+        let source = try JSONDecoder().decode(BrandSource.self, from: Data(legacy.utf8))
+
+        #expect(source.kind == .shopify)
+        #expect(source.failureCount == 0)
+        #expect(source.enabled)
+        #expect(source.fingerprint == nil)
+        #expect(source.etag == nil)
+        #expect(source.isReadyToCheck)
+    }
+
+    @Test("A full payload still round-trips")
+    func roundTrips() throws {
+        var source = BrandSource.shopify()
+        source.etag = "W/\"abc\""
+        source.fingerprint = "deadbeef"
+        source.failureCount = 3
+        source.lastError = "timed out"
+
+        let data = try JSONEncoder().encode(source)
+        let decoded = try JSONDecoder().decode(BrandSource.self, from: data)
+
+        #expect(decoded == source)
+    }
+}
+
+@Suite("Brand marks")
+struct BrandMarkTests {
+    private let base = URL(string: "https://kith.com")!
+
+    @Test("Prefers the apple-touch-icon — the mark the brand chose for a home screen")
+    func prefersAppleTouchIcon() {
+        let html = """
+        <head>
+        <link rel="shortcut icon" href="/favicon.ico">
+        <link rel="icon" type="image/png" sizes="32x32" href="/icon-32.png">
+        <link rel="apple-touch-icon" sizes="180x180" href="/cdn/shop/files/touch.png?v=2">
+        </head>
+        """
+        let found = BrandMark.find(in: html, base: base)
+        #expect(found?.absoluteString == "https://kith.com/cdn/shop/files/touch.png?v=2")
+    }
+
+    @Test("Falls back to the largest declared icon when there's no apple-touch-icon")
+    func largestIconWins() {
+        let html = """
+        <link rel="icon" sizes="16x16" href="/small.png">
+        <link rel="icon" sizes="192x192" href="/large.png">
+        """
+        #expect(BrandMark.find(in: html, base: base)?.absoluteString == "https://kith.com/large.png")
+    }
+
+    /// A mask-icon is a monochrome silhouette for Safari's tab bar and renders as a
+    /// black blob wherever a logo is expected.
+    @Test("Ignores mask-icon")
+    func ignoresMaskIcon() {
+        let html = "<link rel=\"mask-icon\" href=\"/safari.svg\" color=\"black\">"
+        #expect(BrandMark.find(in: html, base: base) == nil)
+    }
+
+    @Test("Handles absolute hrefs, single quotes and unquoted attributes")
+    func attributeShapes() {
+        let absolute = "<link rel='apple-touch-icon' href='https://cdn.example.com/a.png'>"
+        #expect(BrandMark.find(in: absolute, base: base)?.host == "cdn.example.com")
+
+        let unquoted = "<link rel=icon href=/b.png>"
+        #expect(BrandMark.find(in: unquoted, base: base)?.absoluteString == "https://kith.com/b.png")
+    }
+
+    /// An inlined icon can't be handed to an image loader, so it must not win over a
+    /// real file — or be returned at all.
+    @Test("Skips data: URIs")
+    func skipsDataURIs() {
+        let html = #"<link rel="icon" href="data:image/png;base64,iVBORw0KGgo=">"#
+        #expect(BrandMark.find(in: html, base: base) == nil)
+    }
+
+    @Test("A page declaring nothing falls back to /favicon.ico")
+    func fallsBackToFavicon() {
+        #expect(BrandMark.find(in: "<head></head>", base: base) == nil)
+        #expect(BrandMark.fallback(for: base)?.absoluteString == "https://kith.com/favicon.ico")
+    }
 }

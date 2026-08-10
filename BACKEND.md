@@ -1,6 +1,10 @@
 # streetw backend — plan
 
-Status: **plan, not built.** Phase 2 of `ROADMAP.md`.
+Status: **built and deployed.** Phase 2 of `ROADMAP.md` is complete — Vapor + Postgres on
+Railway, polling, feed, follows, retention and size-targeted push. `Server/README.md` is
+the operational guide; this file is the reasoning. The one piece not switched on is APNs
+delivery itself, which needs a key on the server and the Push capability on the app
+target (a paid team) — everything above it is written and tested.
 
 ## Why there is a backend at all
 

@@ -48,7 +48,7 @@ final class RemoteSync {
             let anonymous = StreetwAPI(baseURL: baseURL, token: nil)
             let response = try await anonymous.register(
                 RegisterDevice(
-                    environment: "sandbox",
+                    environment: BackgroundServices.apnsEnvironment,
                     locale: Locale.current.identifier,
                     sizes: SizePayload(sizes)
                 )
@@ -56,6 +56,23 @@ final class RemoteSync {
             settings.token = response.token
         } else {
             try await api?.updateDevice(UpdateDevice(sizes: SizePayload(sizes)))
+        }
+    }
+
+    /// Hands APNs' device token to the server, which is what turns this install from a
+    /// puller into something that can be told.
+    ///
+    /// The environment goes up with it: the same install produces a sandbox token from a
+    /// debug build and a production one from TestFlight, and sending to the wrong host is
+    /// a silent no-delivery rather than an error.
+    func pushDeviceToken(_ token: String) async {
+        guard settings.isRegistered, let api else { return }
+        do {
+            try await api.updateDevice(
+                UpdateDevice(apnsToken: token, environment: BackgroundServices.apnsEnvironment)
+            )
+        } catch {
+            lastError = error.localizedDescription
         }
     }
 
@@ -150,6 +167,7 @@ final class RemoteSync {
                 brand.name = dto.name
                 brand.currencyCode = dto.currency
                 brand.isLockedForDrop = dto.lockedForDrop
+                if let logo = dto.logoURL { brand.logoURLString = logo }
             } else {
                 let brand = Brand(
                     name: dto.name,
@@ -159,6 +177,7 @@ final class RemoteSync {
                 brand.remoteID = id
                 brand.currencyCode = dto.currency
                 brand.isLockedForDrop = dto.lockedForDrop
+                brand.logoURLString = dto.logoURL
                 context.insert(brand)
                 byRemoteID[id] = brand
             }

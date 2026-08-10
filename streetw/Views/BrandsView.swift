@@ -18,10 +18,9 @@ struct BrandsView: View {
         NavigationStack {
             Group {
                 if brands.isEmpty {
-                    EmptyStateView(
-                        symbol: "tag",
-                        title: "No brands yet",
-                        message: "Paste a brand's website and streetw figures out what it can watch."
+                    EditorialEmptyState(
+                        title: "No brands on watch",
+                        action: "PASTE A BRAND'S WEBSITE AND STREETW WORKS OUT WHAT IT CAN WATCH"
                     )
                 } else {
                     List {
@@ -31,12 +30,23 @@ struct BrandsView: View {
                             } label: {
                                 BrandRow(brand: brand)
                             }
+                            .listRowBackground(Color.paper)
+                            .listRowSeparatorTint(Color.hairline)
+                            .listRowInsets(EdgeInsets(top: 14, leading: 20, bottom: 14, trailing: 20))
+                            // Rules run the full measure. Left alone, the separator
+                            // indents to the text and starts halfway past the monogram,
+                            // which reads as a misalignment rather than as a decision.
+                            .alignmentGuide(.listRowSeparatorLeading) { _ in 0 }
                         }
                         .onDelete(perform: delete)
                     }
+                    .listStyle(.plain)
+                    .scrollContentBackground(.hidden)
                 }
             }
+            .background(Color.paper)
             .navigationTitle("Brands")
+            .toolbarTitleDisplayMode(.inlineLarge)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Add brand", systemImage: "plus") { isAdding = true }
@@ -46,6 +56,7 @@ struct BrandsView: View {
                 AddBrandView()
             }
         }
+        .tint(.ink)
     }
 
     private func delete(at offsets: IndexSet) {
@@ -61,49 +72,50 @@ struct BrandsView: View {
     }
 }
 
+/// A brand, set as an index entry: wordmark, what we watch it with, and the count —
+/// the count printed rather than badged, because this is a list of things you follow,
+/// not a set of notifications to clear.
 struct BrandRow: View {
     let brand: Brand
 
+    private var watching: String {
+        let kinds = brand.sources.filter(\.enabled).map { $0.kind.label.uppercased() }
+        return kinds.isEmpty ? "NOT WATCHED" : kinds.joined(separator: " · ")
+    }
+
     var body: some View {
-        HStack(spacing: 12) {
-            BrandMonogram(name: brand.name)
+        HStack(alignment: .center, spacing: 14) {
+            BrandMonogram(name: brand.name, logoURL: brand.logoURL)
 
-            VStack(alignment: .leading, spacing: 2) {
-                Text(brand.name)
-                    .font(.body.weight(.medium))
-                HStack(spacing: 6) {
-                    ForEach(brand.sources) { source in
-                        Image(systemName: source.kind.symbol)
-                            .font(.caption2)
-                    }
-                    if let style = brand.styleDescription, !style.isEmpty {
-                        Text(style).font(.caption).lineLimit(1)
-                    }
-                }
-                .foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 5) {
+                Wordmark(name: brand.name, size: 14)
+                DataLabel(
+                    text: brand.isLockedForDrop ? "LOCKED · DROP IMMINENT" : watching,
+                    size: 10,
+                    color: brand.isLockedForDrop ? .signal : .muted
+                )
             }
 
-            Spacer()
+            Spacer(minLength: 8)
 
-            if brand.isLockedForDrop {
-                Image(systemName: "lock.fill")
-                    .font(.caption)
-                    .foregroundStyle(.orange)
-            }
             if brand.unseenCount > 0 {
                 Text("\(brand.unseenCount)")
-                    .font(.caption2.weight(.semibold))
-                    .padding(.horizontal, 7)
-                    .padding(.vertical, 3)
-                    .background(Color.accentColor, in: Capsule())
-                    .foregroundStyle(.white)
+                    .font(.data(12, .medium))
+                    .foregroundStyle(Color.ink)
             }
         }
     }
 }
 
+/// The brand's own mark, taken from the icon its site publishes for home screens —
+/// a file the brand chose, at a size meant to be looked at.
+///
+/// Falls back to initials rather than to a broken-image box, because plenty of sites
+/// serve a generic platform favicon or nothing at all, and a wrong logo is worse than
+/// no logo. `.fit` with padding so a wide wordmark isn't cropped to its middle.
 struct BrandMonogram: View {
     let name: String
+    var logoURL: URL?
 
     private var initials: String {
         let words = name.split(separator: " ").prefix(2)
@@ -111,14 +123,33 @@ struct BrandMonogram: View {
     }
 
     var body: some View {
-        RoundedRectangle(cornerRadius: 10)
-            .fill(.quaternary)
-            .frame(width: 42, height: 42)
-            .overlay(
-                Text(initials)
-                    .font(.caption.weight(.bold))
-                    .foregroundStyle(.secondary)
-            )
+        Rectangle()
+            .fill(Color.wash)
+            .frame(width: 44, height: 44)
+            .overlay {
+                if let logoURL {
+                    AsyncImage(url: logoURL, transaction: Transaction(animation: .easeIn(duration: 0.2))) { phase in
+                        switch phase {
+                        case .success(let image):
+                            image.resizable().scaledToFit().padding(5)
+                        case .failure:
+                            monogram
+                        default:
+                            Color.clear
+                        }
+                    }
+                } else {
+                    monogram
+                }
+            }
+            .clipped()
+    }
+
+    private var monogram: some View {
+        Text(initials)
+            .font(.wordmark(12, .medium))
+            .tracking(0.8)
+            .foregroundStyle(Color.muted)
     }
 }
 

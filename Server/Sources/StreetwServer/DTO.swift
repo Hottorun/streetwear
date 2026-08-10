@@ -29,7 +29,8 @@ extension BrandDTO {
             website: brand.website,
             instagramHandle: brand.instagramHandle,
             currency: brand.currency,
-            lockedForDrop: brand.lockedForDrop
+            lockedForDrop: brand.lockedForDrop,
+            logoURL: brand.logoURL
         )
     }
 }

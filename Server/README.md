@@ -56,6 +56,17 @@ an unchanged catalog produces nothing, and a failing source backs off.
 | `POLITE_INTERVAL` | `2.0` | Minimum seconds between requests to one host |
 | `PORT` | 8080 | Read in `configure.swift`; hosts assign this at runtime |
 | `HOST` | `0.0.0.0` | Must not be localhost inside a container |
+| `APNS_KEY_P8` | — | Contents of the `.p8`. `\n` escapes are accepted, so it pastes as one line |
+| `APNS_KEY_ID` | — | Key ID from the developer portal |
+| `APNS_TEAM_ID` | — | Team ID from the developer portal |
+| `APNS_TOPIC` | `functional.streetw` | The app's bundle ID |
+| `EVENT_RETENTION_DAYS` | `30` | Events older than this, already notified, are pruned |
+| `PRODUCT_RETENTION_DAYS` | `180` | Products unseen this long *and* with no events left are pruned |
+
+**Push is optional.** With no `APNS_*` set the server logs `apns: not configured` and runs
+exactly as before — polling, feed, registration — it just never delivers an alert.
+`/status` reports `apnsConfigured`, and the app surfaces that as "Server has no push key",
+because a server that silently never notifies looks identical to one that does.
 
 ## Deploying to Railway
 
@@ -111,7 +122,22 @@ I/O-bound and mostly receives 304s, so one instance goes a long way.
 - **Cadence is deliberately uneven** — 60s while a storefront is locked for a drop,
   5 min after recent activity, 20 min normally, 2 h when quiet, exponential backoff on
   failure. Uniform polling is how you get blocked.
-- **Politeness budget**: conditional GETs everywhere, and before this faces real traffic
-  it needs a per-domain concurrency limit, `robots.txt` handling and a `User-Agent`
-  naming a contact URL. Currently it inherits the app's browser-ish UA — see
-  `Net.userAgent`.
+- **Politeness budget**: conditional GETs everywhere, `robots.txt` obeyed per host, and
+  requests to one host spaced by `POLITE_INTERVAL` even under concurrency — see
+  `PoliteFetcher`. `Net.userAgent` is honest on purpose.
+- **`notified_at` is the push ledger.** One notification per brand per pass, never one
+  per event: a brand dropping a collection writes hundreds of events in a single poll.
+  Anything older than the notifier's freshness window (6 h) is marked without being sent,
+  so coming back from an outage doesn't fire a burst about drops that already sold out.
+- **Retention deletes events before products, never the reverse.** `events.product_id`
+  is `ON DELETE CASCADE`, so pruning a product would silently take feed history with it —
+  and deleting a product the source still lists makes the next poll announce it as new.
+  Only products unseen for `PRODUCT_RETENTION_DAYS` with no events left are eligible.
+
+```bash
+# Fan out anything pending, and report what happened
+curl -X POST localhost:8080/admin/notify
+
+# Run retention now rather than waiting for the 6-hourly sweep
+curl -X POST localhost:8080/admin/sweep
+```

@@ -7,6 +7,7 @@
 
 import Fluent
 import Foundation
+import SQLKit
 import StreetwCore
 import Vapor
 
@@ -41,16 +42,9 @@ actor Poller {
         isRunning = true
         defer { isRunning = false }
 
-        let db = app.db
         let due: [SourceModel]
         do {
-            due = try await SourceModel.query(on: db)
-                .filter(\.$enabled == true)
-                .filter(\.$nextCheckAt <= Date())
-                .sort(\.$nextCheckAt)
-                .limit(limit)
-                .with(\.$brand)
-                .all()
+            due = try await claimDue(limit: limit)
         } catch {
             app.logger.error("poller: queue query failed: \(error)")
             return 0
@@ -72,6 +66,67 @@ actor Poller {
             }
         }
         return polled
+    }
+
+    /// How long a claimed source stays off the queue before another instance may retry
+    /// it. Long enough for the slowest first sweep (Kith's ten pages take ~11s), short
+    /// enough that a process killed mid-poll doesn't strand a brand for an hour.
+    private static let leaseDuration: TimeInterval = 5 * 60
+
+    /// Takes the next batch of due sources *and claims them in the same statement*, so
+    /// two instances polling the same database cannot both fetch the same storefront —
+    /// which would double the request rate against a brand and put the politeness budget
+    /// out by a factor of the instance count.
+    ///
+    /// The claim is a lease: `next_check_at` is pushed forward before any network call,
+    /// and `poll` overwrites it with the real cadence when it finishes. A crash in
+    /// between costs one lease period rather than losing the source.
+    ///
+    /// SQLite has no `SKIP LOCKED` and no second instance to protect against, so it
+    /// keeps the plain query.
+    private func claimDue(limit: Int) async throws -> [SourceModel] {
+        let db = app.db
+        guard let sql = db as? any SQLDatabase, sql.dialect.name == "postgresql" else {
+            return try await dueWithoutClaim(limit: limit)
+        }
+
+        let now = Date()
+        let ids: [UUID]
+        do {
+            ids = try await sql.raw("""
+                UPDATE sources SET next_check_at = \(bind: now.addingTimeInterval(Self.leaseDuration)) \
+                WHERE id IN ( \
+                    SELECT id FROM sources \
+                    WHERE enabled = true AND next_check_at <= \(bind: now) \
+                    ORDER BY next_check_at LIMIT \(bind: limit) \
+                    FOR UPDATE SKIP LOCKED \
+                ) RETURNING id
+                """).all(decodingColumn: "id", as: UUID.self)
+        } catch {
+            // This statement is the one piece of the poller that no local test can
+            // reach — SQLite has no `SKIP LOCKED`, so it is only ever exercised against
+            // the deployed database. Degrading to the unclaimed query keeps polling
+            // alive if it turns out to be wrong there; a single instance behaves exactly
+            // as it did before claiming existed.
+            app.logger.error("poller: claim failed, falling back to plain queue: \(error)")
+            return try await dueWithoutClaim(limit: limit)
+        }
+
+        guard !ids.isEmpty else { return [] }
+        return try await SourceModel.query(on: db)
+            .filter(\.$id ~~ ids)
+            .with(\.$brand)
+            .all()
+    }
+
+    private func dueWithoutClaim(limit: Int) async throws -> [SourceModel] {
+        try await SourceModel.query(on: app.db)
+            .filter(\.$enabled == true)
+            .filter(\.$nextCheckAt <= Date())
+            .sort(\.$nextCheckAt)
+            .limit(limit)
+            .with(\.$brand)
+            .all()
     }
 
     /// Best-effort schedule bump for a source we failed to update normally.
@@ -97,8 +152,11 @@ actor Poller {
         let kind = BrandSource.Kind(rawValue: source.kind) ?? .page
         guard kind.isAutomatic, let adapter = SourceAdapters.adapter(for: kind, http: http) else { return }
 
-        // A source that has never succeeded has no baseline yet.
-        let isFirstPoll = source.lastCheckedAt == nil
+        // A source that has never *stored* anything has no baseline yet. Deliberately
+        // not `lastCheckedAt == nil`: that is stamped below before the fetch and survives
+        // a failure, so a source that errored once would count its first real batch as
+        // news and announce a whole back catalogue.
+        let isFirstPoll = source.baselinedAt == nil
         let since = source.lastCheckedAt
 
         var hadEvent = false
@@ -134,6 +192,12 @@ actor Poller {
                     isBaseline: isFirstPoll
                 )
             }
+
+            // Only now, once a fetch has completed and its batch is stored, is the
+            // baseline genuinely spent. A source that emits nothing on a first sight —
+            // a page watch storing its opening fingerprint — counts too: it has seen
+            // the "before", which is exactly what a baseline is.
+            if source.baselinedAt == nil { source.baselinedAt = Date() }
         } catch {
             source.failureCount += 1
             source.lastError = String(describing: error)
@@ -260,25 +324,63 @@ actor Poller {
 
 /// Runs `tick()` on an interval for as long as the app is up. One process, no Redis —
 /// `next_check_at` in the database is the schedule, so a restart loses nothing.
+///
+/// Notification and retention ride along on the same loop rather than getting timers of
+/// their own: both are driven by what polling produced, and a single sequential loop
+/// means they can never overlap a poll pass or each other.
 actor PollLoop {
     private let poller: Poller
+    private let notifier: Notifier?
+    private let reaper: Reaper?
     private let interval: Duration
+    /// Retention is a table scan; it has no business running every 30 seconds.
+    private let sweepInterval: TimeInterval
+    private var lastSweep: Date?
     private var task: Task<Void, Never>?
 
-    init(poller: Poller, interval: Duration = .seconds(30)) {
+    init(
+        poller: Poller,
+        notifier: Notifier? = nil,
+        reaper: Reaper? = nil,
+        interval: Duration = .seconds(30),
+        sweepInterval: TimeInterval = 6 * 3600
+    ) {
         self.poller = poller
+        self.notifier = notifier
+        self.reaper = reaper
         self.interval = interval
+        self.sweepInterval = sweepInterval
     }
 
     func start(logger: Logger) {
         guard task == nil else { return }
-        task = Task { [poller, interval] in
+        task = Task { [poller, notifier, reaper, interval] in
             while !Task.isCancelled {
                 let count = await poller.tick()
                 if count > 0 { logger.info("poller: checked \(count) sources") }
+
+                // Runs every pass, not only after a poll: an event can be left unsent by
+                // a crash or a transient APNs failure, and this is what picks it back up.
+                if let notifier { await notifier.dispatch() }
+
+                if let reaper, await self.isSweepDue() { await reaper.sweep() }
+
                 try? await Task.sleep(for: interval)
             }
         }
+    }
+
+    private func isSweepDue() -> Bool {
+        let now = Date()
+        // The first sweep waits a full interval so a crash-looping deploy can't turn
+        // retention into a delete-on-every-boot.
+        guard let lastSweep else {
+            self.lastSweep = now
+            return false
+        }
+        guard now.timeIntervalSince(lastSweep) >= sweepInterval else { return false }
+        self.lastSweep = now
+        return true
     }
 
     func stop() {

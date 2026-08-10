@@ -1,5 +1,11 @@
 // FeedView.swift
-// "New since yesterday" — updates grouped by brand, newest brand first.
+// The hype room: what changed, newest brand first.
+//
+// Laid out as a magazine front page rather than a list — each brand gets a wordmark
+// header, one lead item printed large, and the rest as briefs. That is not only a look:
+// a brand can publish an entire collection in one poll (Kith wrote 250 items in a single
+// sweep), and a flat list of 250 equal rows is unreadable. Lead-plus-briefs stays
+// legible at any batch size, and the "+N more" link is the honest overflow.
 
 import StreetwCore
 import SwiftData
@@ -14,6 +20,9 @@ struct FeedView: View {
 
     @Query(filter: #Predicate<Brand> { $0.followed }, sort: \Brand.name)
     private var brands: [Brand]
+
+    /// How many briefs sit under a lead before the rest go behind "+N more".
+    private static let briefLimit = 6
 
     private var isFiltering: Bool {
         sizes.filterFeedToMySize && !sizes.profile.isEmpty
@@ -46,24 +55,24 @@ struct FeedView: View {
         NavigationStack {
             Group {
                 if brands.isEmpty {
-                    EmptyStateView(
-                        symbol: "tag",
-                        title: "No brands yet",
-                        message: "Add a brand and streetw starts watching its catalog and feeds for new drops."
+                    EditorialEmptyState(
+                        title: "Nothing on watch yet",
+                        action: "ADD A BRAND AND STREETW STARTS WATCHING ITS CATALOG"
                     )
                 } else if groups.isEmpty {
-                    EmptyStateView(
-                        symbol: "checkmark.circle",
+                    EditorialEmptyState(
                         title: "All caught up",
-                        message: engine.lastSyncedAt == nil
-                            ? "Pull down to check your brands for the first time."
-                            : "Nothing new since you last looked. Pull to refresh."
+                        action: engine.lastSyncedAt == nil
+                            ? "PULL TO CHECK YOUR BRANDS FOR THE FIRST TIME"
+                            : "PULL TO REFRESH"
                     )
                 } else {
-                    feedList
+                    stream
                 }
             }
+            .background(Color.paper)
             .navigationTitle("Feed")
+            .toolbarTitleDisplayMode(.inlineLarge)
             .toolbar {
                 if !sizes.profile.isEmpty {
                     ToolbarItem(placement: .topBarLeading) {
@@ -88,48 +97,49 @@ struct FeedView: View {
             .refreshable { await refresh() }
             .overlay(alignment: .bottom) { syncStatus }
         }
+        .tint(.ink)
     }
 
-    private var feedList: some View {
-        List {
-            Section {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("\(totalNew) new \(totalNew == 1 ? "thing" : "things") from \(groups.count) \(groups.count == 1 ? "brand" : "brands")")
-                    if isFiltering {
-                        Text("Filtered to \(sizes.profile.summary)")
-                            .font(.caption)
-                            .foregroundStyle(.tertiary)
-                    }
-                }
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-                .listRowSeparator(.hidden)
-            }
+    private var stream: some View {
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: 0, pinnedViews: []) {
+                masthead
 
-            ForEach(groups) { group in
-                Section {
-                    UpdateCarousel(updates: group.updates)
-                        .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 12, trailing: 0))
-                        .listRowSeparator(.hidden)
-                } header: {
-                    FeedSectionHeader(group: group) {
+                ForEach(groups) { group in
+                    BrandSpread(group: group, briefLimit: Self.briefLimit) {
                         markSeen(group)
                     }
                 }
             }
+            .padding(.bottom, 32)
         }
-        .listStyle(.plain)
+        .scrollIndicators(.hidden)
+    }
+
+    /// The count, set as a standfirst. Says what's true and how it's narrowed — no
+    /// decoration, because it is the one piece of chrome above the photographs.
+    private var masthead: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("\(totalNew) new from \(groups.count) \(groups.count == 1 ? "brand" : "brands")")
+                .font(.editorial(15))
+                .foregroundStyle(Color.ink)
+            if isFiltering {
+                DataLabel(text: "FILTERED TO \(sizes.profile.summary.uppercased())")
+            }
+        }
+        .padding(.horizontal, 20)
+        .padding(.top, 4)
+        .padding(.bottom, 20)
     }
 
     @ViewBuilder
     private var syncStatus: some View {
         if engine.isSyncing, let progress = engine.progress {
-            Text("Checking \(progress)…")
-                .font(.caption)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 6)
-                .background(.thinMaterial, in: Capsule())
-                .padding(.bottom, 8)
+            DataLabel(text: "CHECKING \(progress.uppercased())", color: .paper)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 8)
+                .background(Color.ink, in: Capsule())
+                .padding(.bottom, 10)
                 .transition(.opacity)
         }
     }
@@ -147,6 +157,98 @@ struct FeedView: View {
         for update in group.updates { update.isSeen = true }
         group.brand.lastOpenedAt = Date()
         try? context.save()
+    }
+}
+
+// MARK: - One brand's spread
+
+private struct BrandSpread: View {
+    let group: BrandGroup
+    let briefLimit: Int
+    let onDismiss: () -> Void
+
+    /// The newest item *that has a photograph*. A lead is carried by its image, and the
+    /// newest thing a brand posts is often a collection announcement or a page change
+    /// with nothing to show — leading on that wastes the biggest slot on the page.
+    private var lead: BrandUpdate? {
+        group.updates.first { $0.primaryImageURL != nil } ?? group.updates.first
+    }
+
+    private var briefs: [BrandUpdate] {
+        Array(group.updates.filter { $0.id != lead?.id }.prefix(briefLimit))
+    }
+
+    private var overflow: Int { max(0, group.updates.count - 1 - briefLimit) }
+
+    private let columns = [GridItem(.flexible(), spacing: 14), GridItem(.flexible(), spacing: 14), GridItem(.flexible())]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Rule()
+                .padding(.horizontal, 20)
+                .padding(.bottom, 14)
+
+            header
+
+            if let lead {
+                FeedLead(update: lead)
+                    .padding(.bottom, briefs.isEmpty ? 0 : 20)
+            }
+
+            if !briefs.isEmpty {
+                LazyVGrid(columns: columns, alignment: .leading, spacing: 16) {
+                    ForEach(briefs) { update in
+                        FeedTile(update: update)
+                    }
+                }
+                .padding(.horizontal, 20)
+            }
+
+            if overflow > 0 {
+                NavigationLink {
+                    BrandDetailView(brand: group.brand)
+                } label: {
+                    DataLabel(text: "+\(overflow) MORE FROM \(group.brand.name.uppercased())", color: .ink)
+                        .padding(.top, 16)
+                        .padding(.horizontal, 20)
+                }
+            }
+        }
+        .padding(.bottom, 36)
+    }
+
+    private var header: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 10) {
+            NavigationLink {
+                BrandDetailView(brand: group.brand)
+            } label: {
+                VStack(alignment: .leading, spacing: 5) {
+                    Wordmark(name: group.brand.name, size: 15)
+                    DataLabel(
+                        text: group.headline.uppercased(),
+                        color: group.brand.isLockedForDrop ? .signal : .muted
+                    )
+                }
+            }
+
+            Spacer(minLength: 0)
+
+            if let latest = group.latest {
+                DataLabel(text: Stamp.short(latest).uppercased())
+            }
+
+            Button(action: onDismiss) {
+                Image(systemName: "checkmark")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(Color.muted)
+                    .frame(width: 28, height: 28)
+                    .overlay(Circle().stroke(Color.hairline, lineWidth: 0.5))
+            }
+            .buttonStyle(.borderless)
+            .accessibilityLabel("Mark \(group.brand.name) seen")
+        }
+        .padding(.horizontal, 20)
+        .padding(.bottom, 14)
     }
 }
 
@@ -175,38 +277,6 @@ struct BrandGroup: Identifiable {
         case .pageChange: return "Page changed"
         case .dropLock: return "Locked — drop incoming"
         }
-    }
-}
-
-private struct FeedSectionHeader: View {
-    let group: BrandGroup
-    let onDismiss: () -> Void
-
-    var body: some View {
-        HStack(alignment: .firstTextBaseline) {
-            NavigationLink {
-                BrandDetailView(brand: group.brand)
-            } label: {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(group.brand.name)
-                        .font(.headline)
-                        .foregroundStyle(.primary)
-                    Text(group.headline)
-                        .font(.subheadline)
-                        .foregroundStyle(group.brand.isLockedForDrop ? .orange : .secondary)
-                }
-            }
-
-            Spacer()
-
-            Button("Mark seen", systemImage: "checkmark") { onDismiss() }
-                .labelStyle(.iconOnly)
-                .buttonStyle(.bordered)
-                .buttonBorderShape(.circle)
-                .controlSize(.small)
-        }
-        .textCase(nil)
-        .padding(.vertical, 4)
     }
 }
 

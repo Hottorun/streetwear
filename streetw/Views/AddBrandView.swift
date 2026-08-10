@@ -160,6 +160,7 @@ struct AddBrandView: View {
             styleDescription: styleDescription.isEmpty ? nil : styleDescription
         )
         brand.sources = discovery?.sources ?? []
+        brand.logoURLString = discovery?.logoURL?.absoluteString
         // Only let the first sync overwrite the name if the user kept our guess.
         brand.usesGeneratedName = (typed == discovery?.suggestedName)
         context.insert(brand)

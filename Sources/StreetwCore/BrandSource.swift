@@ -69,6 +69,27 @@ public struct BrandSource: Codable, Hashable, Identifiable, Sendable {
         self.failureCount = failureCount
     }
 
+    /// Decoded leniently: every field except `kind` and `url` falls back to its default.
+    ///
+    /// `Brand.sources` is a Codable array persisted inside SwiftData, and SwiftData
+    /// decodes those with an internal `try!` — so a key added to this struct after a
+    /// store was written is not a migration problem, it is a **crash on launch** for
+    /// anyone holding the older data (this happened with `failureCount`). None of these
+    /// fields carry meaning worth refusing to load a brand over: a missing fingerprint
+    /// or etag costs one extra fetch, a missing failure count restarts the backoff.
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        kind = try container.decode(Kind.self, forKey: .kind)
+        url = try container.decode(URL.self, forKey: .url)
+        enabled = try container.decodeIfPresent(Bool.self, forKey: .enabled) ?? true
+        fingerprint = try container.decodeIfPresent(String.self, forKey: .fingerprint)
+        etag = try container.decodeIfPresent(String.self, forKey: .etag)
+        lastCheckedAt = try container.decodeIfPresent(Date.self, forKey: .lastCheckedAt)
+        lastError = try container.decodeIfPresent(String.self, forKey: .lastError)
+        failureCount = try container.decodeIfPresent(Int.self, forKey: .failureCount) ?? 0
+    }
+
     /// Backs off 2^failures minutes, capped at 6 hours.
     public func isReadyToCheck(now: Date = Date()) -> Bool {
         guard failureCount > 0, let lastCheckedAt else { return true }

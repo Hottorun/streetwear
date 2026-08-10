@@ -57,10 +57,15 @@ public struct RegisterDevice: Codable, Sendable {
 
 public struct UpdateDevice: Codable, Sendable {
     public var apnsToken: String?
+    /// "production" or "sandbox". Sent on update as well as registration because the
+    /// same install can move between them — a debug build and a TestFlight build get
+    /// tokens from different APNs environments, and a token is only valid at its own.
+    public var environment: String?
     public var sizes: SizePayload?
 
-    public init(apnsToken: String? = nil, sizes: SizePayload? = nil) {
+    public init(apnsToken: String? = nil, environment: String? = nil, sizes: SizePayload? = nil) {
         self.apnsToken = apnsToken
+        self.environment = environment
         self.sizes = sizes
     }
 }
@@ -105,6 +110,9 @@ public struct BrandDTO: Codable, Sendable, Hashable, Identifiable {
     public var instagramHandle: String?
     public var currency: String?
     public var lockedForDrop: Bool
+    /// The brand's own mark, from the icon its site publishes. Optional so a client can
+    /// still decode a response from a server that predates it.
+    public var logoURL: String?
 
     public init(
         id: UUID?,
@@ -113,7 +121,8 @@ public struct BrandDTO: Codable, Sendable, Hashable, Identifiable {
         website: String? = nil,
         instagramHandle: String? = nil,
         currency: String? = nil,
-        lockedForDrop: Bool = false
+        lockedForDrop: Bool = false,
+        logoURL: String? = nil
     ) {
         self.id = id
         self.name = name
@@ -122,6 +131,7 @@ public struct BrandDTO: Codable, Sendable, Hashable, Identifiable {
         self.instagramHandle = instagramHandle
         self.currency = currency
         self.lockedForDrop = lockedForDrop
+        self.logoURL = logoURL
     }
 }
 
@@ -236,6 +246,12 @@ public struct StatusResponse: Codable, Sendable {
     /// if that table is the broken one, every other count still looks healthy.
     public var users: Int
     public var nextPollAt: Date?
+    /// Optional so a client can still decode a response from a server that predates
+    /// them — the same reason every field added here from now on should be.
+    public var apnsConfigured: Bool?
+    /// Events written but not yet fanned out. Persistently non-zero means the notifier
+    /// is stuck, which is otherwise invisible: polling and the feed both look fine.
+    public var pendingPushes: Int?
 
     public init(
         database: String,
@@ -249,7 +265,9 @@ public struct StatusResponse: Codable, Sendable {
         events: Int = 0,
         devices: Int = 0,
         users: Int = 0,
-        nextPollAt: Date? = nil
+        nextPollAt: Date? = nil,
+        apnsConfigured: Bool? = nil,
+        pendingPushes: Int? = nil
     ) {
         self.database = database
         self.environment = environment
@@ -263,6 +281,8 @@ public struct StatusResponse: Codable, Sendable {
         self.devices = devices
         self.users = users
         self.nextPollAt = nextPollAt
+        self.apnsConfigured = apnsConfigured
+        self.pendingPushes = pendingPushes
     }
 }
 

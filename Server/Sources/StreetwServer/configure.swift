@@ -62,6 +62,9 @@ func configure(_ app: Application) async throws {
     app.migrations.add(CreateSchema())
     app.migrations.add(AddIndexes())
     app.migrations.add(FixPostgresArrayColumns())
+    app.migrations.add(AddPushLedger())
+    app.migrations.add(AddSourceBaseline())
+    app.migrations.add(AddBrandLogo())
     if Environment.get("AUTO_MIGRATE") != "false" {
         try await app.autoMigrate()
     }
@@ -79,8 +82,19 @@ func configure(_ app: Application) async throws {
     let poller = Poller(app: app, http: PoliteFetcher(minInterval: interval))
     app.storage[PollerKey.self] = poller
 
+    // Push is optional: with no key the notifier still runs and still walks its ledger
+    // forward, it just doesn't deliver. That keeps the "first deploy with credentials"
+    // case from firing every event ever recorded.
+    let sender = app.configureAPNS()
+    app.storage[APNSConfiguredKey.self] = sender != nil
+    let notifier = Notifier(app: app, sender: sender)
+    app.storage[NotifierKey.self] = notifier
+
+    let reaper = Reaper(app: app)
+    app.storage[ReaperKey.self] = reaper
+
     if Environment.get("DISABLE_POLLER") != "true" {
-        let loop = PollLoop(poller: poller)
+        let loop = PollLoop(poller: poller, notifier: notifier, reaper: reaper)
         app.storage[PollLoopKey.self] = loop
         await loop.start(logger: app.logger)
     }
@@ -133,6 +147,20 @@ struct PollLoopKey: StorageKey {
     typealias Value = PollLoop
 }
 
+struct NotifierKey: StorageKey {
+    typealias Value = Notifier
+}
+
+struct ReaperKey: StorageKey {
+    typealias Value = Reaper
+}
+
+struct APNSConfiguredKey: StorageKey {
+    typealias Value = Bool
+}
+
 extension Application {
     var poller: Poller? { storage[PollerKey.self] }
+    var notifier: Notifier? { storage[NotifierKey.self] }
+    var reaper: Reaper? { storage[ReaperKey.self] }
 }
