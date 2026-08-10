@@ -29,7 +29,11 @@ public enum BrandMark {
         return find(in: html, base: resolved) ?? fallback(for: resolved)
     }
 
-    /// Every site answers this path, so it is the floor rather than a guess.
+    /// The conventional path, tried only when a page declares no icon at all.
+    ///
+    /// Genuinely a guess: Shopify serves its favicon from the CDN and 404s this path —
+    /// both brands measured against do. Callers must treat the result as "might exist",
+    /// which the client does by falling back to a monogram when the image fails.
     public static func fallback(for base: URL) -> URL? {
         URL(string: "/favicon.ico", relativeTo: base)?.absoluteURL
     }
@@ -52,7 +56,30 @@ public enum BrandMark {
             )
         }
 
-        return candidates.max(by: Candidate.isWorse)?.url
+        return candidates.max(by: Candidate.isWorse).map { upscaled($0.url) }
+    }
+
+    /// Asks Shopify's CDN for a bigger rendition of the same file.
+    ///
+    /// Worth a special case because most storefronts we watch are Shopify, and nearly
+    /// all of them declare only a 32×32 favicon — which is a blurry smear at 44pt on a
+    /// 3× screen. The CDN resizes from `width`/`height` query parameters, so this is the
+    /// documented way to ask, not a trick. Only rewrites parameters that are already
+    /// there: a URL without them is served at its natural size and must be left alone.
+    static func upscaled(_ url: URL, to pixels: Int = 180) -> URL {
+        guard url.path.contains("/cdn/shop/"),
+              var components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              let items = components.queryItems,
+              items.contains(where: { $0.name == "width" || $0.name == "height" })
+        else { return url }
+
+        components.queryItems = items.map { item in
+            switch item.name {
+            case "width", "height": URLQueryItem(name: item.name, value: String(pixels))
+            default: item
+            }
+        }
+        return components.url ?? url
     }
 
     private struct Candidate {
@@ -61,13 +88,17 @@ public enum BrandMark {
         var pixels: Int
         var isVector: Bool
 
-        /// True when `a` is the weaker choice. Intent first, then resolution — a vector
-        /// counts as large because it scales to whatever the view needs.
+        /// True when `a` is the weaker choice: intent first, then decodability, then
+        /// resolution.
+        ///
+        /// Raster beats vector despite vectors scaling perfectly, because `UIImage`
+        /// cannot decode SVG — a vector would load as nothing and silently become a
+        /// monogram. A site that declares *only* an SVG still returns it: it is the real
+        /// mark, the server can use it, and the client's fallback already covers the miss.
         static func isWorse(_ a: Candidate, _ b: Candidate) -> Bool {
             if a.isAppleTouch != b.isAppleTouch { return b.isAppleTouch }
-            let aSize = a.isVector ? max(a.pixels, 512) : a.pixels
-            let bSize = b.isVector ? max(b.pixels, 512) : b.pixels
-            return aSize < bSize
+            if a.isVector != b.isVector { return a.isVector }
+            return a.pixels < b.pixels
         }
     }
 

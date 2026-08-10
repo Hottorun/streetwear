@@ -349,6 +349,29 @@ struct BrandMarkTests {
         #expect(BrandMark.find(in: html, base: base) == nil)
     }
 
+    /// Nearly every Shopify storefront declares only a 32×32 favicon, which is a blur at
+    /// 44pt on a 3× screen. Both brands measured against ship exactly that.
+    @Test("Asks Shopify's CDN for a bigger rendition")
+    func upscalesShopifyIcons() {
+        let html = """
+        <link rel="icon" href="//kith.com/cdn/shop/files/favicon3_32x32.png?v=161&width=32&height=32">
+        """
+        let found = try? #require(BrandMark.find(in: html, base: base))
+        #expect(found?.query?.contains("width=180") == true)
+        #expect(found?.query?.contains("height=180") == true)
+        // The cache-busting version must survive, or the CDN serves a different asset.
+        #expect(found?.query?.contains("v=161") == true)
+    }
+
+    @Test("A URL with no size parameters is served at its natural size and left alone")
+    func leavesUnsizedURLsAlone() {
+        let url = URL(string: "https://kith.com/cdn/shop/files/logo.png?v=1")!
+        #expect(BrandMark.upscaled(url) == url)
+
+        let offCDN = URL(string: "https://example.com/icon.png?width=32")!
+        #expect(BrandMark.upscaled(offCDN) == offCDN)
+    }
+
     @Test("A page declaring nothing falls back to /favicon.ico")
     func fallsBackToFavicon() {
         #expect(BrandMark.find(in: "<head></head>", base: base) == nil)
