@@ -39,7 +39,13 @@ final class BrandSuggestions {
     }
 
     func loadIfNeeded(force: Bool = false) async {
-        guard settings.isConfigured, !isLoading else { return }
+        // Registration has to have happened: `/v1/brands/popular` is authenticated, and
+        // on a cold launch this runs concurrently with the sync that registers the
+        // device. Without the guard the first attempt 401s, returns nothing, and — since
+        // a `.task` fires once per appearance — never retries, so the block stays empty
+        // for the whole session. Callers key their task on `settings.token` so this reruns
+        // the moment registration lands.
+        guard settings.isConfigured, settings.isRegistered, !isLoading else { return }
         if !force, let lastLoadedAt, Date().timeIntervalSince(lastLoadedAt) < Self.freshness {
             return
         }
@@ -68,19 +74,70 @@ struct BrandRecommendations: View {
     @Environment(SizeProfileStore.self) private var sizes: SizeProfileStore
 
     @Query private var followed: [Brand]
+    @Query(sort: \SavedItem.savedAt, order: .reverse) private var saves: [SavedItem]
 
     var title: String = "Also worth watching"
     var blurb: String = "WHAT OTHER PEOPLE ON STREETW FOLLOW"
 
+    /// Below this many saves there isn't a taste to speak of, and re-ranking on three
+    /// items would be confidently wrong rather than usefully personal.
+    private static let minimumSavesToReRank = 8
+
     /// Anything already followed locally is filtered out here as well as server-side —
     /// the server's answer can be a few seconds stale, and recommending someone a brand
     /// they just added reads as broken.
-    private var visible: [PopularBrand] {
+    private var candidates: [PopularBrand] {
         let mine = Set(followed.compactMap(\.remoteID))
         return suggestions.brands.filter { dto in
             guard let id = dto.brand.id else { return false }
             return !mine.contains(id)
         }
+    }
+
+    /// Re-ranked against a taste profile built **on this device** from what has been
+    /// saved.
+    ///
+    /// This is the sharpest signal the app has — what someone keeps says far more than
+    /// what they follow — and it is also the most personal. Sending saves to the server
+    /// would rank better and would quietly undo the thing the collection is for, so the
+    /// server ships the candidates *with their vectors* and the comparison happens here.
+    /// Nothing about a save ever leaves the phone.
+    private var visible: [PopularBrand] {
+        let pool = candidates
+        let usable = saves.compactMap(\.update)
+        guard usable.count >= Self.minimumSavesToReRank else { return pool }
+
+        let vectors = pool.compactMap(\.vector)
+        guard !vectors.isEmpty else { return pool }
+
+        let taste = BrandVectorBuilder.taste(
+            from: usable.map {
+                ProductSummary(
+                    title: $0.title,
+                    productType: $0.productType,
+                    tags: $0.tags,
+                    priceAmount: $0.priceAmount,
+                    publishedAt: $0.publishedAt
+                )
+            },
+            comparedWith: vectors
+        )
+        guard !taste.isEmpty else { return pool }
+
+        return pool
+            .map { item -> (item: PopularBrand, score: Double) in
+                guard let vector = item.vector else {
+                    // No vector to judge by. Keep whatever the server thought rather than
+                    // dropping the brand to the bottom for a gap in the data.
+                    return (item, item.affinity ?? 0)
+                }
+                // The server already blended its own affinity with popularity; this
+                // nudges rather than replaces, so a brand everyone follows doesn't vanish
+                // because one wardrobe leans elsewhere.
+                return (item, 0.6 * taste.similarity(to: vector) + 0.4 * (item.affinity ?? 0.5))
+            }
+            .sorted { $0.score > $1.score }
+            .map(\.item)
     }
 
     var body: some View {

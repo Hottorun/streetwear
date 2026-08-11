@@ -89,31 +89,40 @@ struct OnboardingView: View {
             Group {
                 if step.isList {
                     ScrollView {
-                        VStack(alignment: .leading, spacing: 0) {
-                            masthead
+                        VStack(alignment: .leading, spacing: 26) {
+                            header
                             brandStep
                         }
+                        .padding(.top, 8)
                         .padding(.bottom, 32)
                     }
                     .scrollIndicators(.hidden)
                 } else {
-                    // Balanced rather than top-aligned. Every step used to stack its
-                    // content under the title and leave the bottom two-thirds of the
-                    // screen empty, which made a two-line question look like a page that
-                    // had failed to load.
-                    VStack(alignment: .leading, spacing: 30) {
-                        Spacer(minLength: 8)
-                        masthead
+                    // One anchor, not two.
+                    //
+                    // The title used to be a large navigation title *and* the content was
+                    // centred in what was left, which produced a heading pinned to the top
+                    // and a block of controls floating in the middle with a screen's worth
+                    // of nothing between them. The title is now part of the content, so
+                    // the whole step reads as a single object — and it sits above centre
+                    // rather than on it, because a page that starts in the middle of the
+                    // screen looks like it failed to load.
+                    VStack(alignment: .leading, spacing: 34) {
+                        // Capped, not free. An uncapped spacer centres the block and
+                        // leaves a quarter of the screen empty above the step marker,
+                        // which reads as a page that hasn't finished loading. Slack
+                        // belongs at the bottom, above the button, where empty space is
+                        // unremarkable.
+                        Spacer(minLength: 0).frame(maxHeight: 64)
+                        header
                         currentStep
-                        Spacer(minLength: 8)
+                        Spacer(minLength: 0)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
             .background(Color.paper)
             .safeAreaInset(edge: .bottom) { actions }
-            .navigationTitle(title)
-            .toolbarTitleDisplayMode(.inlineLarge)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     // Every step is skippable. The brand step is the only one where
@@ -121,6 +130,7 @@ struct OnboardingView: View {
                     // call to make.
                     Button(step == .alerts ? "Not now" : "Skip") { advance(skipping: true) }
                         .disabled(isAdding)
+                        .font(.data(12))
                 }
             }
         }
@@ -151,17 +161,20 @@ struct OnboardingView: View {
 
     // MARK: - Steps
 
-    private var masthead: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(blurb)
-                .font(.editorial(16))
+    /// Step marker, title and blurb as one block — the thing the page is about, set once.
+    private var header: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            DataLabel(text: "STEP \(step.rawValue + 1) OF \(Step.allCases.count)")
+            Text(title)
+                .font(.editorial(30))
                 .foregroundStyle(Color.ink)
                 .fixedSize(horizontal: false, vertical: true)
-            DataLabel(text: "STEP \(step.rawValue + 1) OF \(Step.allCases.count) · CHANGE ANY OF THIS LATER IN SETTINGS")
+            Text(blurb)
+                .font(.editorial(16))
+                .foregroundStyle(Color.muted)
+                .fixedSize(horizontal: false, vertical: true)
         }
         .padding(.horizontal, 20)
-        .padding(.top, 4)
-        .padding(.bottom, step.isList ? 24 : 0)
     }
 
     private var blurb: String {
@@ -173,7 +186,7 @@ struct OnboardingView: View {
         case .brands:
             "Pick a few brands and streetw watches their catalogs for drops, restocks and the moment a storefront locks down."
         case .howItWorks:
-            "Four things worth knowing."
+            "Four things that are easy to miss."
         case .alerts:
             "A drop resolves in minutes. streetw can tell you the moment one of your brands releases something or restocks in your size."
         }
@@ -181,43 +194,31 @@ struct OnboardingView: View {
 
     /// The features that are otherwise invisible. The share extension especially: it lives
     /// outside the app entirely, so nothing in the interface can hint that it exists.
+    ///
+    /// One line each, set at a readable size. The first version explained each feature in
+    /// two or three sentences of 11pt monospace — a wall of small text on the screen where
+    /// someone is least invested in reading. A person skims this once; it has to be
+    /// glanceable, and what it really needs to do is tell them these things *exist*.
     private var howItWorksStep: some View {
-        VStack(alignment: .leading, spacing: 20) {
+        VStack(alignment: .leading, spacing: 22) {
             ForEach([
-                (
-                    "bookmark",
-                    "Save what you like",
-                    "Tap the bookmark on anything in the feed. Swipe a card left to file it, right to clear it."
-                ),
-                (
-                    "square.grid.2x2",
-                    "Group saves into boards and fits",
-                    "Boards are filters, not folders — one thing can sit on several. Fits are outfits built from what you've kept."
-                ),
-                (
-                    "square.and.arrow.up",
-                    "Share anything into streetw",
-                    "Found something in Safari or Instagram? Share it to streetw and it lands in your collection with its price and photo."
-                ),
-                (
-                    "bell",
-                    "Watch a sold-out size",
-                    "Open a product, pick your size and colour, and streetw tells you the moment it comes back."
-                )
+                ("bookmark", "Save what you like", "Swipe a card left to file it, right to clear it."),
+                ("square.and.arrow.up", "Share links in", "From Safari, Instagram, anywhere."),
+                ("square.grid.2x2", "Build boards and fits", "Group what you keep into outfits."),
+                ("bell", "Watch a sold-out size", "Get told the moment it's back.")
             ], id: \.1) { symbol, heading, detail in
-                HStack(alignment: .top, spacing: 14) {
+                HStack(alignment: .top, spacing: 16) {
                     Image(systemName: symbol)
-                        .font(.system(size: 14))
+                        .font(.system(size: 17))
                         .foregroundStyle(Color.ink)
-                        .frame(width: 22)
+                        .frame(width: 26)
                     VStack(alignment: .leading, spacing: 3) {
                         Text(heading)
-                            .font(.editorial(16))
+                            .font(.editorial(18))
                             .foregroundStyle(Color.ink)
                         Text(detail)
-                            .font(.data(11))
+                            .font(.editorial(14))
                             .foregroundStyle(Color.muted)
-                            .lineSpacing(2)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }

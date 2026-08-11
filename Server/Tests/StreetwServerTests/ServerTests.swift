@@ -1238,6 +1238,90 @@ struct DiscoveryTests {
             }
         }
     }
+
+    /// The point of the whole vector machinery: someone who follows a skate brand should
+    /// be shown the *other* skate brand ahead of a workwear label that more people follow.
+    @Test("Recommendations follow taste, not only headcount")
+    func recommendationsUseTaste() async throws {
+        try await withServer { app in
+            let skateA = try await brand(app, name: "Skate A", slug: "skatea.com")
+            let skateB = try await brand(app, name: "Skate B", slug: "skateb.com")
+            let workwear = try await brand(app, name: "Workwear", slug: "workwear.com")
+            let shoes = try await brand(app, name: "Shoes", slug: "shoes.com")
+
+            func stock(_ id: UUID, type: String, tags: [String], price: Double) async throws {
+                for index in 0..<8 {
+                    try await ProductModel(
+                        brandID: id,
+                        sourceID: nil,
+                        item: FetchedItem(
+                            externalID: "\(id)-\(index)",
+                            title: "Item \(index)",
+                            publishedAt: Date(),
+                            kind: .product,
+                            priceAmount: price,
+                            tags: tags,
+                            productType: type
+                        )
+                    ).save(on: app.db)
+                }
+            }
+            try await stock(skateA, type: "T-Shirts", tags: ["skate", "graphic"], price: 45)
+            try await stock(skateB, type: "T-Shirts", tags: ["skate", "deck"], price: 50)
+            try await stock(workwear, type: "Jackets", tags: ["workwear", "utility"], price: 220)
+            try await stock(shoes, type: "Footwear", tags: ["running"], price: 130)
+
+            // Workwear is the most-followed brand by a distance, so a pure popularity
+            // ranking would put it first.
+            for _ in 0..<6 {
+                let user = UserModel()
+                try await user.save(on: app.db)
+                try await FollowModel(userID: try user.requireID(), brandID: workwear).save(on: app.db)
+            }
+            for _ in 0..<2 {
+                let user = UserModel()
+                try await user.save(on: app.db)
+                try await FollowModel(userID: try user.requireID(), brandID: skateB).save(on: app.db)
+                try await FollowModel(userID: try user.requireID(), brandID: shoes).save(on: app.db)
+            }
+
+            // Our user follows the other skate brand and nothing else.
+            let auth = try await register(app)
+            let device = try #require(
+                try await DeviceModel.query(on: app.db).filter(\.$authToken == auth.token).first()
+            )
+            try await FollowModel(userID: device.$user.id, brandID: skateA).save(on: app.db)
+
+            try await app.testing().test(.GET, "v1/brands/popular", headers: auth.headers) { res async throws in
+                let popular = try res.content.decode([PopularBrand].self)
+                #expect(popular.first?.brand.name == "Skate B",
+                        "taste should beat headcount — got \(popular.map(\.brand.name))")
+                #expect(popular.first?.vector != nil, "the client needs the vector to re-rank")
+                #expect(try #require(popular.first?.affinity) > 0)
+            }
+        }
+    }
+
+    /// Someone with no follows has no taste on record, and popularity is the correct
+    /// answer for them rather than a degraded one.
+    @Test("A user who follows nothing gets the popular list, not an empty one")
+    func noFollowsFallsBackToPopularity() async throws {
+        try await withServer { app in
+            let loud = try await brand(app, name: "Loud", slug: "loud.com")
+            for _ in 0..<3 {
+                let user = UserModel()
+                try await user.save(on: app.db)
+                try await FollowModel(userID: try user.requireID(), brandID: loud).save(on: app.db)
+            }
+
+            let auth = try await register(app).headers
+            try await app.testing().test(.GET, "v1/brands/popular", headers: auth) { res async throws in
+                let popular = try res.content.decode([PopularBrand].self)
+                #expect(popular.map(\.brand.name) == ["Loud"])
+                #expect(popular.first?.affinity == nil, "no taste on record means no affinity claimed")
+            }
+        }
+    }
 }
 
 @Suite("Stock watches")

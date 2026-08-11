@@ -24,6 +24,7 @@ import SwiftUI
 struct StyleView: View {
     @Environment(\.modelContext) private var context
     @Environment(BrandSuggestions.self) private var suggestions: BrandSuggestions
+    @Environment(ServerSettings.self) private var settings: ServerSettings
 
     @Query(sort: \SavedItem.savedAt, order: .reverse) private var saves: [SavedItem]
     @Query(sort: \Fit.createdAt, order: .reverse) private var fits: [Fit]
@@ -72,7 +73,7 @@ struct StyleView: View {
             .sheet(isPresented: $isShowingSettings) { SettingsSheet() }
             .sheet(isPresented: $isComposing) { FitComposer(fit: nil) }
             .sheet(item: $editing) { FitComposer(fit: $0) }
-            .task { await suggestions.loadIfNeeded() }
+            .task(id: settings.token) { await suggestions.loadIfNeeded() }
         }
         // Ink, not the system blue. Every other tab does this; without it the controls on
         // this page are the only chroma in the app outside a photograph, which is exactly

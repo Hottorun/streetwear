@@ -84,17 +84,12 @@ struct FeedView: View {
         let feed = self.feed
 
         return NavigationStack {
-            Group {
-                if brands.isEmpty {
-                    EditorialEmptyState(
-                        title: "Nothing on watch yet",
-                        action: "ADD A BRAND AND STREETW STARTS WATCHING ITS CATALOG"
-                    )
-                } else {
-                    stream(feed)
-                }
-            }
-            .background(Color.paper)
+            // One path, always. There is no state of this screen where a list of brands
+            // worth following is the wrong thing to show — least of all the empty one,
+            // where somebody has nothing at all and the old copy just told them to go
+            // find a brand themselves.
+            stream(feed)
+                .background(Color.paper)
             .navigationTitle("Feed")
             .toolbarTitleDisplayMode(.inlineLarge)
             .toolbar {
@@ -157,27 +152,38 @@ struct FeedView: View {
             .padding(.bottom, 32)
         }
         .scrollIndicators(.hidden)
-        .task { await suggestions.loadIfNeeded() }
+        // Keyed on the token so it reruns the moment registration completes — on a cold
+        // launch this view appears before the device has one.
+        .task(id: settings.token) { await suggestions.loadIfNeeded() }
     }
 
-    /// The top of a finished feed. Short, because the recommendations under it are the
-    /// actual answer to "what now".
+    /// The top of a feed with nothing in it. Short, because the recommendations under it
+    /// are the actual answer to "what now".
     private var caughtUp: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(filteredToNothing ? "Nothing matches your filter" : "All caught up")
+            Text(headline)
                 .font(.editorial(22))
                 .foregroundStyle(Color.ink)
-            DataLabel(
-                text: filteredToNothing
-                    ? "SHOWING \(sizes.profile.gender.label.uppercased()) ONLY — CHANGE IT IN SETTINGS"
-                    : engine.lastSyncedAt == nil && remote.lastSyncedAt == nil
-                        ? "PULL TO CHECK YOUR BRANDS FOR THE FIRST TIME"
-                        : "PULL TO REFRESH"
-            )
+            DataLabel(text: subhead)
         }
         .padding(.horizontal, 20)
         .padding(.top, 8)
         .padding(.bottom, 28)
+    }
+
+    private var headline: String {
+        if brands.isEmpty { return "Nothing on watch yet" }
+        return filteredToNothing ? "Nothing matches your filter" : "All caught up"
+    }
+
+    private var subhead: String {
+        if brands.isEmpty { return "FOLLOW A BRAND AND STREETW STARTS WATCHING ITS CATALOG" }
+        if filteredToNothing {
+            return "SHOWING \(sizes.profile.gender.label.uppercased()) ONLY — CHANGE IT IN SETTINGS"
+        }
+        return engine.lastSyncedAt == nil && remote.lastSyncedAt == nil
+            ? "PULL TO CHECK YOUR BRANDS FOR THE FIRST TIME"
+            : "PULL TO REFRESH"
     }
 
     /// The count, set as a standfirst. Says what's true and how it's narrowed — no

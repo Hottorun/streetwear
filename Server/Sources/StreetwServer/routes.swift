@@ -144,11 +144,38 @@ func routes(_ app: Application) throws {
         let mine = Set(
             follows.filter { $0.$user.id == device.$user.id }.map(\.$brand.id)
         )
-        let ranked = counts
-            .filter { !mine.contains($0.key) }
-            .sorted { ($0.value, $1.key.uuidString) > ($1.value, $0.key.uuidString) }
+        let candidates = counts.filter { !mine.contains($0.key) }
+        guard !candidates.isEmpty else { return [] }
+
+        // How close each candidate is to the centroid of what this user already follows.
+        // Empty when they follow nothing yet, in which case the ranking below falls back
+        // to pure popularity — which is the correct answer for someone with no taste on
+        // record, not a degraded one.
+        let affinities = await req.application.similarity?
+            .affinities(for: Array(candidates.keys), followed: Array(mine)) ?? [:]
+
+        // Popularity is normalised so the blend is between two 0…1 quantities rather than
+        // between a similarity and a raw headcount, which would let one brand with forty
+        // followers swamp the signal entirely.
+        let mostFollowed = Double(candidates.values.max() ?? 1)
+
+        func score(_ id: UUID, _ followers: Int) -> Double {
+            let popularity = Double(followers) / max(1, mostFollowed)
+            guard let affinity = affinities[id] else { return popularity }
+            // Taste leads, popularity floors it. Similarity here measures catalog
+            // composition, which is a decent proxy for aesthetic and not the same thing —
+            // so a brand nobody follows never outranks a well-liked one on vibes alone.
+            return 0.65 * affinity + 0.35 * popularity
+        }
+
+        let ranked = candidates
+            .sorted { a, b in
+                let sa = score(a.key, a.value), sb = score(b.key, b.value)
+                // Tie-broken on the id so the list is stable between calls rather than
+                // reshuffling on every refresh.
+                return sa == sb ? a.key.uuidString > b.key.uuidString : sa > sb
+            }
             .prefix(limit)
-        guard !ranked.isEmpty else { return [] }
 
         let brands = try await BrandModel.query(on: req.db)
             .filter(\.$id ~~ ranked.map(\.key))
@@ -170,12 +197,18 @@ func routes(_ app: Application) throws {
             previews[id, default: []].append(image)
         }
 
+        let vectors = await req.application.similarity?.all() ?? [:]
+
         return ranked.compactMap { entry in
             guard let brand = byID[entry.key] else { return nil }
             return PopularBrand(
                 brand: BrandDTO(brand),
                 followers: entry.value,
-                previewImageURLs: previews[entry.key] ?? []
+                previewImageURLs: previews[entry.key] ?? [],
+                // Sent so the client can re-rank against a taste profile built from its
+                // own saves. Those never leave the phone — only the comparison crosses.
+                vector: vectors[entry.key],
+                affinity: affinities[entry.key]
             )
         }
     }

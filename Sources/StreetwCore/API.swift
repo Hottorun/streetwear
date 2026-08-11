@@ -204,13 +204,28 @@ public struct PopularBrand: Codable, Sendable, Hashable, Identifiable {
     /// A few recent product shots, so a recommendation shows clothes rather than asking
     /// someone to take a wordmark on faith.
     public var previewImageURLs: [String]
+    /// What the brand is like, so the *client* can re-rank against a taste profile built
+    /// from its own saves — which never leave the phone. Optional so a client can still
+    /// decode a response from a server that predates it.
+    public var vector: BrandVector?
+    /// How close the server judged this to what the user already follows, 0…1. Nil when
+    /// they follow nothing yet and the list is pure popularity.
+    public var affinity: Double?
 
     public var id: UUID { brand.id ?? UUID() }
 
-    public init(brand: BrandDTO, followers: Int, previewImageURLs: [String] = []) {
+    public init(
+        brand: BrandDTO,
+        followers: Int,
+        previewImageURLs: [String] = [],
+        vector: BrandVector? = nil,
+        affinity: Double? = nil
+    ) {
         self.brand = brand
         self.followers = followers
         self.previewImageURLs = previewImageURLs
+        self.vector = vector
+        self.affinity = affinity
     }
 }
 

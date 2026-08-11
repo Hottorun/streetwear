@@ -151,7 +151,11 @@ struct AddBrandView: View {
     @ViewBuilder
     private var notFound: some View {
         VStack(alignment: .leading, spacing: 18) {
-            Text("Nobody's watching “\(trimmed)” yet.")
+            // Says what was actually searched. The first version read "Nobody's watching
+            // X yet", which describes *follows* — but this searches the catalog, so it
+            // claimed something it hadn't checked and read as a bug whenever the real
+            // cause was that the search never ran.
+            Text("No brand called “\(trimmed)” in the catalog yet.")
                 .font(.editorial(19))
                 .foregroundStyle(Color.ink)
                 .fixedSize(horizontal: false, vertical: true)
@@ -199,10 +203,13 @@ struct AddBrandView: View {
     private func search() async {
         let term = trimmed
         guard !term.isEmpty else { return }
-        // Without a server there is no shared catalog to search, so every brand is a new
-        // one and the search step has nothing to do.
+        // Without a server there is no shared catalog to search. Reported rather than
+        // silently returning nothing: an empty result is indistinguishable from "we
+        // looked and it isn't there", which is how a connection problem ends up reading
+        // as a missing brand.
         guard settings.isConfigured else {
             results = []
+            searchError = "Not connected to the streetw catalog."
             return
         }
 

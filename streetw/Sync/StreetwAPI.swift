@@ -39,22 +39,26 @@ final class ServerSettings {
         didSet { UserDefaults.standard.set(token, forKey: "serverToken") }
     }
 
-    /// The deployed server, so a fresh install is server-backed without anyone
-    /// typing a URL. Applied only when *nothing* has been stored yet: clearing the
-    /// field in Settings persists an empty string, which is a deliberate choice to
-    /// run standalone and must not snap back to this on the next launch.
+    /// The deployed server. There is exactly one, and it is not user-configurable.
     static let defaultBaseURLString = "selfless-exploration-production-86b2.up.railway.app"
 
     init() {
-        // `nil` means "never configured" — an explicitly cleared field reads as "".
-        baseURLString = UserDefaults.standard.string(forKey: "serverBaseURL")
-            ?? Self.defaultBaseURLString
+        // An empty stored value used to mean "deliberately standalone", because Settings
+        // had a field you could clear. That field is gone — so an empty value is no
+        // longer a choice anyone can make on purpose, and treating it as one strands the
+        // app offline forever with no way back. Anyone who cleared it while the field
+        // still existed is silently unrecoverable: the catalog search returns nothing,
+        // brand recommendations never load, and watches never reach the server.
+        //
+        // So: empty falls back to the default, and opting out is an explicit dev flag
+        // that cannot be reached by accident.
+        let stored = UserDefaults.standard.string(forKey: "serverBaseURL") ?? ""
+        let isStandalone = UserDefaults.standard.bool(forKey: "standalone")
+
+        baseURLString = isStandalone ? "" : (stored.isEmpty ? Self.defaultBaseURLString : stored)
         token = UserDefaults.standard.string(forKey: "serverToken")
 
         // Assigning the stored property in `init` bypasses `didSet`, so persist here.
-        // This covers both the shipped default and `-serverBaseURL`, whose value lives
-        // only in the volatile argument domain — writing it back makes the flag behave
-        // like the other dev flags and survive a relaunch.
         if !baseURLString.isEmpty {
             UserDefaults.standard.set(baseURLString, forKey: "serverBaseURL")
         }

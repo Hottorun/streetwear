@@ -96,6 +96,11 @@ func configure(_ app: Application) async throws {
     let reaper = Reaper(app: app)
     app.storage[ReaperKey.self] = reaper
 
+    // Built lazily on first use and cached — nothing here needs it at boot, and doing the
+    // pass during startup would delay the health check for a value no request has asked
+    // for yet.
+    app.similarity = BrandSimilarity(app: app)
+
     if Environment.get("DISABLE_POLLER") != "true" {
         let loop = PollLoop(poller: poller, notifier: notifier, reaper: reaper)
         app.storage[PollLoopKey.self] = loop
