@@ -304,21 +304,36 @@ actor Poller {
             && product.isAvailable == false
             && item.isAvailable == true
 
+        // Checked before the incoming price overwrites the stored one.
+        let dropped = PriceChange.isDrop(from: product.priceAmount, to: item.priceAmount)
+
         product.isAvailable = item.isAvailable
         product.priceText = item.priceText
+        product.priceAmount = item.priceAmount
         product.lastSeenAt = Date()
         if product.imageURLs.isEmpty { product.imageURLs = item.imageURLStrings }
         try await product.save(on: db)
 
-        guard !isBaseline, !returnedSizes.isEmpty || wholeProductReturned else { return false }
+        guard !isBaseline else { return false }
 
-        try await EventModel(
-            brandID: brandID,
-            productID: productID,
-            kind: .restock,
-            sizes: returnedSizes.filter { $0 != "Default Title" && !$0.isEmpty }
-        ).save(on: db)
-        return true
+        // A restock outranks a markdown: something coming *back* matters more than the
+        // same thing getting cheaper, and one product should never write two events for
+        // one poll.
+        if !returnedSizes.isEmpty || wholeProductReturned {
+            try await EventModel(
+                brandID: brandID,
+                productID: productID,
+                kind: .restock,
+                sizes: returnedSizes.filter { $0 != "Default Title" && !$0.isEmpty }
+            ).save(on: db)
+            return true
+        }
+
+        if dropped {
+            try await EventModel(brandID: brandID, productID: productID, kind: .priceDrop).save(on: db)
+            return true
+        }
+        return false
     }
 }
 

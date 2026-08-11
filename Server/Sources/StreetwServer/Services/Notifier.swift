@@ -219,6 +219,8 @@ actor Notifier {
                 // The shock-drop signal: a storefront locking down usually means minutes,
                 // not hours — so this one is worded to get someone off the sofa.
                 return (brand, "Storefront just locked — a drop looks imminent")
+            case .priceDrop:
+                return (brand, name.map { "Price drop: \($0)" } ?? "Something you follow just got cheaper")
             case .pageChange:
                 return (brand, "Something changed on the site")
             case .post:
@@ -234,6 +236,7 @@ actor Notifier {
         if let collections = byKind[.collection]?.count {
             parts.append("\(collections) new collection\(collections == 1 ? "" : "s")")
         }
+        if let drops = byKind[.priceDrop]?.count { parts.append("\(drops) price drop\(drops == 1 ? "" : "s")") }
         if byKind[.dropLock] != nil { parts.append("a storefront lock") }
         if parts.isEmpty { parts.append("\(events.count) updates") }
 

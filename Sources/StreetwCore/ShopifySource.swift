@@ -146,6 +146,10 @@ public struct ShopifySource: SourceAdapter {
             publishedAt: product.publishedAt ?? product.createdAt ?? Date(),
             kind: .product,
             priceText: variants.compactMap(\.price).first,
+            // The lowest variant price, not the first: a product whose S is on sale and
+            // whose XL is not should read as the sale price, which is what a shopper
+            // sees on the storefront too.
+            priceAmount: (product.variants ?? []).compactMap { $0.price.flatMap(Double.init) }.min(),
             isAvailable: variants.contains { $0.available },
             tags: product.tags ?? [],
             productType: product.productType,

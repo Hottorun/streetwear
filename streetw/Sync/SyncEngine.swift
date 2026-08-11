@@ -165,11 +165,13 @@ final class SyncEngine {
             publishedAt: item.publishedAt,
             kind: item.kind,
             priceText: item.priceText,
+            priceAmount: item.priceAmount,
             isAvailable: item.isAvailable,
             tags: item.tags,
             productType: item.productType,
             variants: item.variants
         )
+        update.releaseDate = item.releaseDate
         update.isSeen = markSeen
         context.insert(update)
         if !markSeen { newItemCount += 1 }
@@ -192,9 +194,20 @@ final class SyncEngine {
             && update.isAvailable == false
             && item.isAvailable == true
 
+        // A markdown on something already in the catalogue. Checked before the restock
+        // branch overwrites `kind`, but ranked below it: a thing coming *back* matters
+        // more than the same thing getting cheaper, so a restock wins when both happen.
+        let dropped = PriceChange.isDrop(from: update.priceAmount, to: item.priceAmount)
+
         if !returned.isEmpty || wholeProductReturned {
             update.kind = .restock
             update.restockedSizes = returned
+            update.publishedAt = Date()
+            update.isSeen = false
+            newItemCount += 1
+        } else if dropped {
+            update.kind = .priceDrop
+            update.previousPriceText = update.priceText
             update.publishedAt = Date()
             update.isSeen = false
             newItemCount += 1
@@ -202,6 +215,7 @@ final class SyncEngine {
 
         update.variants = item.variants
         update.isAvailable = item.isAvailable
+        update.priceAmount = item.priceAmount
         update.priceText = item.priceText
         if update.imageURLStrings.isEmpty { update.imageURLStrings = item.imageURLStrings }
         if update.tags.isEmpty { update.tags = item.tags }

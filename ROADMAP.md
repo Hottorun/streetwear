@@ -192,15 +192,45 @@ APNs key in its environment, and the app target needs the Push Notifications cap
 - [ ] **Shock-drop alerts** — mostly built already: `PageWatchSource` plus the `dropLock` signal
       (401/403 or redirect to `/password`) is exactly the unannounced-release detector. It only
       needs push behind it.
-- [ ] Drop calendar — upcoming releases, filterable by brand/category; needs `releaseDate` on
-      `BrandUpdate`
-- [ ] **Share Extension** — save from any site in Safari, not just tracked brands. This is what
-      makes it an archive rather than a feed reader.
-- [ ] Onboarding starter pack — the empty state is currently a dead end
-- [ ] Search across saves
+- [x] **Drop calendar.** Built without inventing data, which is the whole difficulty:
+      nobody publishes a machine-readable release calendar, and the ones that exist are
+      hand-edited by people. So it shows three clearly-labelled kinds of claim — a
+      **locked** storefront (observed, and the strongest signal there is), a **scheduled**
+      product whose publication date is in the future (the brand's own date), and an
+      **expected** drop derived from the brand's own history. `DropCadence` reads the
+      modal weekday and hour out of hundreds of publication timestamps, counting a *day*
+      rather than a product so one 60-item collection can't decide the answer, and stays
+      silent below 6 drops or 40% confidence. Reported as a pattern with its sample size,
+      never as a promise. No `releaseDate` field was needed — `publishedAt` in the future
+      already is one.
+- [x] **Share Extension.** A new target plus an App Group inbox: the extension writes a
+      link and returns immediately, the app enriches it from the page's own Open Graph
+      and files it into the collection. Links from anywhere now become cards, which is
+      what makes this an archive rather than a feed reader. Two traps worth remembering,
+      both in CLAUDE.md: reading and deleting the inbox must be separate steps or a
+      hanging fetch loses the save, and adding the App Group silently relocated the
+      SwiftData store into the shared container — which looks exactly like the database
+      being wiped.
+- [x] **Onboarding starter pack.** Ten brands with a line each on *why* they're worth
+      watching, running the same discovery the add-brand flow runs. Replaces an empty
+      state that told you to paste a website while assuming you knew which website.
+- [x] **Search across saves.** Across title, brand, type, tags, note and host — so a
+      thing shared from kith.com is findable as "kith" before that brand is even
+      followed. Filtered in memory rather than as a `#Predicate`, because the fields
+      worth searching live across a relationship and in arrays.
 - [ ] Widget + Live Activity for countdowns
+- [x] **Announced release times, where a page actually states one.** The obvious approach
+      — hunt for a countdown — does not work: on the storefronts that use them the target
+      lives in JavaScript, and the ISO timestamps that *are* in the markup are blog dates,
+      asset versions and analytics beacons. Verified against a live locked Corteiz page,
+      which contains the word "countdown" and four unrelated timestamps and no labelled
+      start time. So `DropDateParser` reads only *labelled* dates — `<time datetime>`,
+      schema.org `availabilityStarts`/`releaseDate`/`startDate`, and release-named `<meta>`
+      tags — and returns nil otherwise. A drop calendar that lies about times is worse
+      than one that stays quiet. A locked storefront that also names a time is now the
+      strongest entry the calendar can hold: observed *and* exact.
 
-## Phase 4 — the collection, properly
+## Phase 4 — the collection, properly ✅
 
 - [x] **Split `UpdateCard`.** Done early, because the restyle forced the issue: `FeedLead`
       and `FeedTile` carry time, price, stock and the accent, while `CollectionTile`
@@ -211,19 +241,85 @@ APNs key in its environment, and the app target needs the Push Notifications cap
       and flattens a wall back into a table. Still driven by a deterministic hash of the
       item id rather than by real image dimensions; deterministic on purpose, because a
       collection that reflows while you look at it is the opposite of calm.
-- [ ] Quick-save gesture — swipe from feed straight to a board, no modal
-- [ ] Auto-tagging via Vision (dominant colour, silhouette) — replaces the text-vocabulary guessing
-      in `StyleProfile` and is what makes boards self-organise
-- [ ] Boards, private by default
-- [ ] Notes and size annotations per saved item
+- [x] **Boards, private by default.** `isPrivate` is on the model from the first row
+      rather than implied by there being no sharing yet — so privacy is a property of the
+      data, not something retrofitted the day sharing arrives and defaults the wrong way.
+      Deliberately orthogonal to Inspiration/Wardrobe: that answers "do I own this", a
+      board answers "what does this belong with", and an item can be both. Boards are
+      therefore a *filter*, never a folder, which is also why deleting one nullifies
+      rather than cascades — losing an archive because a grouping was tidied away is the
+      worst thing this app could do.
+- [x] **Quick-save gesture.** Swipe right to keep, left to file on the first board, with
+      the destination named under your thumb as you drag. The point is that it replaces a
+      *decision*, not a tap: a sheet asking "which board?" turns an impulse into admin.
+      Hand-rolled rather than `.swipeActions`, which belong to `List` — the feed is a
+      `ScrollView` of photographs, and moving the card under the finger is what makes
+      direction feel like a choice.
+- [x] **Notes and size annotations.** A catalogue knows what a garment costs; it cannot
+      know you bought the L because the M ran short, or that you're waiting on a 9.5.
+      Size is free text on purpose — brands run their own scales and "44" must be as
+      storable as "M". The size shows on the wall; the note stays on the item's own page,
+      because the collection is meant to be looked at rather than read.
+- [x] **Auto-tagging via Vision.** Dominant colour off the photograph plus categories from
+      Vision's on-device classifier, preferred over the text vocabulary, which stays as
+      the fallback for anything not yet analysed. The text approach was guessing: a brand
+      calling a shoe "Triple White" is naming a colourway, "Nocturne" describes nothing,
+      and a shared-in link may have a two-word title and no tags. Verified against real
+      Kith and BBC shots — a Velour Soccer Jersey reads **Burgundy** from its picture,
+      which no title-parsing would ever have found.
+      Two things learned the hard way and written into the code: the seamless sweep is
+      70–85% of a product shot, so the vote had to be **centre-cropped** or every item
+      came back "White" including a black Air Jordan; and tightening the backdrop
+      threshold to exclude the grey sweep also ate the near-white pixels of genuinely
+      white garments, leaving only their shadows to vote "Grey" — measured, reverted, and
+      documented at the threshold.
+      Only *saved* items are analysed; running this over a 250-item catalogue sweep would
+      burn battery describing things nobody kept.
 
 ## Known gaps not yet scheduled
 
-- Real image dimensions for the collection wall, so tile heights match the photographs
-- An entry point for server settings and the notification prompt: both were removed from
-  the Style tab, so there is currently no way in the app to change the server URL or grant
-  notification permission. The shipped default server means nothing is broken today, but
-  push cannot be switched on without a prompt somewhere.
-- Sitemap-based discovery for non-Shopify brands
-- Shopify `/collections.json` for collection-level drops
-- `updated_at` for silent product edits (price changes, description rewrites)
+### Closed
+
+- [x] **Real image dimensions for the collection wall.** `ImageTagger` already decodes
+      each saved image, so the aspect comes free; the wall lays tiles out at the shape of
+      the actual photograph and falls back to the deterministic guess until measured.
+      Clamped both ways, because one panoramic shot would otherwise blow a column out.
+- [x] **Price drops** (was "`updated_at` for silent product edits"). Most silent edits are
+      noise; a markdown is the exception, and it is invisible in `published_at` because
+      that doesn't change. `FetchedItem` now carries a numeric `priceAmount` — display
+      text like "€180" cannot be compared — and `PriceChange` requires a 5% fall before it
+      counts, which clears the exchange-rate drift multi-currency storefronts recompute
+      several times a day. Only *drops* exist as a case: a brand raising a price is not
+      something anyone wants pushed to their phone. A restock outranks a markdown, so one
+      product never writes two events for one poll. Both client and server detect it.
+- [x] **Shopify `/collections.json`.** A 60-piece release arrives through the product
+      endpoint as 60 unrelated rows; through this one it is a single named event, which is
+      what brands actually announce. Built as its own source kind rather than a second
+      request inside `ShopifySource`, because one source = one URL = its own ETag, failure
+      count and place in the poll queue. Structural collections ("all", "frontpage") and
+      empty ones are skipped — the first are navigation, the second are pages a
+      merchandiser made but hasn't filled. Verified against the live Kith endpoint, which
+      caught a real bug: this endpoint calls the field `description` where
+      `/products.json` calls it `body_html`, and decoding the wrong key loses every
+      summary silently.
+- [x] **Sitemap-based discovery for non-Shopify brands.** Previously those fell straight
+      to a page watch, which can only say "something on this page changed" and fires as
+      loudly for a swapped banner as for a release. A sitemap is a brand-maintained list
+      of every product URL with a `<lastmod>` on each, so `since` filtering works exactly
+      as it does elsewhere and no extra state is needed — dedupe is already handled
+      upstream by `externalID`. Follows a sitemap index to its product children only,
+      capped, and refuses entries with no `lastmod` rather than assuming "now", which
+      would resurface the whole catalogue every poll. It cannot supply a price or a
+      photograph; titles come from the slug.
+
+### Still open
+
+- Enriching sitemap-discovered products through `PageMetadataParser`, so those cards get a
+  title and photograph instead of a slug. One fetch per new product, so it belongs behind
+  the politeness budget rather than inside the adapter.
+- Vision's image classifier cannot initialise in the Simulator ("Failed to create espresso
+  context"), so categories only populate on a real device. The colour path works in both,
+  and the text vocabulary covers the gap — but it means simulator screenshots understate
+  what the profile knows.
+- Silhouette (oversized / boxy / cropped) is still read from text only. Vision's taxonomy
+  doesn't carry fit, so this would need aspect-ratio heuristics or a trained model.

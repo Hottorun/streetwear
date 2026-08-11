@@ -105,6 +105,9 @@ final class ProductModel: Model, @unchecked Sendable {
     @Field(key: "image_urls") var imageURLs: [String]
     @Field(key: "kind") var kind: String
     @OptionalField(key: "price_text") var priceText: String?
+    /// The numeric price, so a markdown is detectable. `price_text` is formatted for
+    /// display and two different strings say nothing about direction.
+    @OptionalField(key: "price_amount") var priceAmount: Double?
     @OptionalField(key: "is_available") var isAvailable: Bool?
     @Field(key: "tags") var tags: [String]
     @OptionalField(key: "product_type") var productType: String?
@@ -126,6 +129,7 @@ final class ProductModel: Model, @unchecked Sendable {
         self.imageURLs = item.imageURLStrings
         self.kind = item.kind.rawValue
         self.priceText = item.priceText
+        self.priceAmount = item.priceAmount
         self.isAvailable = item.isAvailable
         self.tags = item.tags
         self.productType = item.productType

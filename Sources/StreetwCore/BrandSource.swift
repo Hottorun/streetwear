@@ -8,6 +8,12 @@ public struct BrandSource: Codable, Hashable, Identifiable, Sendable {
         case feed
         case page
         case instagram
+        /// Shopify's `/collections.json` — releases as named events rather than as
+        /// dozens of unrelated products.
+        case collections
+        /// `/sitemap.xml` — the fallback for brands that are neither Shopify nor
+        /// publishing a feed. Strictly better than watching a page for any change.
+        case sitemap
 
         public var label: String {
             switch self {
@@ -15,6 +21,8 @@ public struct BrandSource: Codable, Hashable, Identifiable, Sendable {
             case .feed: "Feed"
             case .page: "Page watch"
             case .instagram: "Instagram"
+            case .collections: "Collections"
+            case .sitemap: "Sitemap"
             }
         }
 
@@ -24,6 +32,8 @@ public struct BrandSource: Codable, Hashable, Identifiable, Sendable {
             case .feed: "dot.radiowaves.up.forward"
             case .page: "eye"
             case .instagram: "camera"
+            case .collections: "square.grid.2x2"
+            case .sitemap: "list.bullet.rectangle"
             }
         }
 

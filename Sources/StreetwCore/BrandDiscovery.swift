@@ -32,12 +32,23 @@ public enum BrandDiscovery {
 
             if await ShopifySource.detect(at: base, http: http) {
                 result.sources.append(BrandSource(kind: .shopify, url: base))
+                // Only worth probing on a store we already know is Shopify — the
+                // endpoint doesn't exist anywhere else, so this costs nothing elsewhere.
+                if let collections = await CollectionsSource.detect(at: base, http: http) {
+                    result.sources.append(BrandSource(kind: .collections, url: collections))
+                }
             }
             if let feed = await FeedSource.detect(at: base, http: http) {
                 result.sources.append(BrandSource(kind: .feed, url: feed))
             }
-            // Page watching is only worth it when there's no structured source;
-            // otherwise it just fires on every marketing banner swap.
+            // A sitemap is the fallback *before* page watching: it names individual
+            // products, where a page watch can only say "something changed".
+            if result.sources.isEmpty, let sitemap = await SitemapSource.detect(at: base, http: http) {
+                result.sources.append(BrandSource(kind: .sitemap, url: sitemap))
+            }
+
+            // Page watching is the last resort, and only when there's no structured
+            // source; otherwise it just fires on every marketing banner swap.
             if result.sources.isEmpty {
                 result.sources.append(BrandSource(kind: .page, url: base))
             }

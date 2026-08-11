@@ -22,6 +22,16 @@ public struct FetchedItem: Sendable, Hashable {
     public var publishedAt: Date
     public var kind: UpdateKind
     public var priceText: String?
+    /// The same price as a number, in the shop's own currency.
+    ///
+    /// `priceText` is formatted for display ("€180") and cannot be compared: a markdown
+    /// from 180 to 120 is two different strings and nothing more. Carrying the amount is
+    /// what makes a *price drop* detectable, which is the one silent product edit worth
+    /// telling someone about.
+    public var priceAmount: Double?
+    /// An announced start time, when the page explicitly labels one. Nil is the normal
+    /// case — most storefronts never publish a machine-readable release time.
+    public var releaseDate: Date?
     public var isAvailable: Bool?
     public var tags: [String]
     public var productType: String?
@@ -36,6 +46,8 @@ public struct FetchedItem: Sendable, Hashable {
         publishedAt: Date,
         kind: UpdateKind,
         priceText: String? = nil,
+        priceAmount: Double? = nil,
+        releaseDate: Date? = nil,
         isAvailable: Bool? = nil,
         tags: [String] = [],
         productType: String? = nil,
@@ -49,6 +61,8 @@ public struct FetchedItem: Sendable, Hashable {
         self.publishedAt = publishedAt
         self.kind = kind
         self.priceText = priceText
+        self.priceAmount = priceAmount
+        self.releaseDate = releaseDate
         self.isAvailable = isAvailable
         self.tags = tags
         self.productType = productType
@@ -119,6 +133,8 @@ public enum SourceAdapters {
     ) -> (any SourceAdapter)? {
         switch kind {
         case .shopify: ShopifySource(http: http)
+        case .collections: CollectionsSource(http: http)
+        case .sitemap: SitemapSource(http: http)
         case .feed: FeedSource(http: http)
         case .page: PageWatchSource(http: http)
         case .instagram: nil // link-out only, by design

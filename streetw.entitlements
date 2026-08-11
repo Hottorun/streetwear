@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  The App Group is the only thing the app and the share extension have in common: the
+  extension writes a link into the group container, the app drains it. The identifier
+  must be identical in both entitlement files — a mismatch is silent, because the
+  container URL simply comes back nil and every share disappears without an error.
+-->
+<plist version="1.0">
+<dict>
+	<key>com.apple.security.application-groups</key>
+	<array>
+		<string>group.com.kern.functional.streetw</string>
+	</array>
+</dict>
+</plist>

@@ -88,6 +88,7 @@ struct FeedLead: View {
         .contentShape(.rect)
         .onTapGesture { if let link = update.linkURL { openURL(link) } }
         .contextMenu { UpdateMenu(update: update) }
+        .quickSave(update)
     }
 }
 
@@ -134,31 +135,40 @@ struct FeedTile: View {
 /// The archive. No price, no stock, no time, no accent — a thing you kept, on a wall.
 /// Resisting the urge to badge these is the whole difference between the two rooms.
 struct CollectionTile: View {
-    @Environment(\.openURL) private var openURL
-
-    let update: BrandUpdate
+    let save: SavedItem
     /// Varying heights are what make the wall read as a collection rather than a table.
     var aspect: CGFloat = 1
+    /// Tapping opens the item's own page, not the storefront. In the feed the question
+    /// is "can I buy this"; here it is "what did I think", and the note lives there.
+    var onOpen: () -> Void = {}
+
+    private var update: BrandUpdate? { save.update }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 7) {
-            UpdateImage(url: update.primaryImageURL, kind: update.kind, aspect: aspect)
+            UpdateImage(url: update?.primaryImageURL, kind: update?.kind ?? .product, aspect: aspect)
 
             VStack(alignment: .leading, spacing: 3) {
-                if let brand = update.brand {
+                if let brand = update?.brand {
                     Wordmark(name: brand.name, size: 9, color: .muted)
                 }
-                Text(update.title)
+                Text(update?.title ?? "Saved item")
                     .font(.editorial(12))
                     .foregroundStyle(Color.ink)
                     .lineLimit(2)
                     .fixedSize(horizontal: false, vertical: true)
+                // The one annotation worth showing on the wall: which size this is to
+                // you. A note stays private to the item's own page — the collection is
+                // meant to be looked at, not read.
+                if let size = save.sizeNote, !size.isEmpty {
+                    DataLabel(text: size.uppercased(), size: 9)
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .contentShape(.rect)
-        .onTapGesture { if let link = update.linkURL { openURL(link) } }
-        .contextMenu { UpdateMenu(update: update) }
+        .onTapGesture { onOpen() }
+        .contextMenu { if let update { UpdateMenu(update: update) } }
     }
 }
 
@@ -184,6 +194,12 @@ struct FeedState {
                 : "BACK IN \(shown.prefix(3).joined(separator: ", ").uppercased())"
         case .dropLock:
             self.text = "LOCKED · DROP IMMINENT"
+        case .priceDrop:
+            if let was = update.previousPriceText {
+                self.text = "PRICE DROP · WAS \(was.uppercased())"
+            } else {
+                self.text = "PRICE DROP"
+            }
         case .collection:
             self.text = "NEW COLLECTION"
         default:
@@ -265,11 +281,29 @@ struct SaveAction: View {
 /// One menu for all three cards, so the actions never drift apart.
 struct UpdateMenu: View {
     @Environment(\.modelContext) private var context
+    @Query(sort: [SortDescriptor(\Board.sortIndex), SortDescriptor(\Board.createdAt)])
+    private var boards: [Board]
+
     let update: BrandUpdate
 
     var body: some View {
         Button("Save to Inspiration", systemImage: "bookmark") { setSave(update, .inspiration, in: context) }
         Button("Add to Wardrobe", systemImage: "tshirt") { setSave(update, .wardrobe, in: context) }
+
+        if !boards.isEmpty {
+            Menu("Add to board", systemImage: "square.grid.2x2") {
+                ForEach(boards) { board in
+                    Button {
+                        file(update, on: board)
+                    } label: {
+                        // A tick rather than a separate "remove from board" action:
+                        // the menu shows where this already is, and tapping toggles it.
+                        Label(board.name, systemImage: update.save?.board?.id == board.id ? "checkmark" : "square")
+                    }
+                }
+            }
+        }
+
         if update.save != nil {
             Button("Remove", systemImage: "trash", role: .destructive) { removeSave(update, in: context) }
         }
@@ -277,6 +311,16 @@ struct UpdateMenu: View {
             Divider()
             Link("Open on site", destination: link)
         }
+    }
+
+    /// Filing something that isn't saved yet saves it first — putting an item on a board
+    /// is a stronger statement of intent than a bookmark, so it shouldn't require two
+    /// actions in sequence.
+    private func file(_ update: BrandUpdate, on board: Board) {
+        if update.save == nil { setSave(update, .inspiration, in: context) }
+        guard let save = update.save else { return }
+        save.board = save.board?.id == board.id ? nil : board
+        try? context.save()
     }
 }
 

@@ -30,12 +30,22 @@ struct streetwApp: App {
         Net.configureSharedCache()
         Appearance.configure()
 
-        let schema = Schema([Brand.self, BrandUpdate.self, SavedItem.self])
+        let schema = Schema([Brand.self, BrandUpdate.self, SavedItem.self, Board.self])
         let container: ModelContainer
         do {
+            // The store location is pinned explicitly, and that is load-bearing.
+            //
+            // A default `ModelConfiguration` picks its own location — and once the app
+            // gained an App Group entitlement (for the share extension), SwiftData
+            // started placing the store in the *shared group container* instead of the
+            // app's own. The app then opens an empty database and every brand and save
+            // appears to have been wiped, while the real data sits untouched in the old
+            // location. Naming the URL keeps existing installs pointed at their data,
+            // and stops an unrelated capability from silently moving the database again.
+            let storeURL = URL.applicationSupportDirectory.appending(path: "default.store")
             container = try ModelContainer(
                 for: schema,
-                configurations: [ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)]
+                configurations: [ModelConfiguration(schema: schema, url: storeURL)]
             )
         } catch {
             fatalError("Could not create ModelContainer: \(error)")
@@ -71,6 +81,14 @@ struct streetwApp: App {
             // Queue the next wake-up on the way out. Submitting while active is allowed
             // but pointless — the system only ever runs it once we're backgrounded.
             if phase == .background { AppDelegate.schedule() }
+
+            // Anything shared while the app was closed is filed on the way back in.
+            // On becoming active rather than on launch, because the usual path is
+            // share-from-Safari and then switch straight to an app that never quit.
+            if phase == .active {
+                let context = sharedModelContainer.mainContext
+                Task { await SharedSaveImporter.drain(into: context) }
+            }
         }
     }
 }

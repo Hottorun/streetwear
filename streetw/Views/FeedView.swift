@@ -21,6 +21,8 @@ struct FeedView: View {
     @Query(filter: #Predicate<Brand> { $0.followed }, sort: \Brand.name)
     private var brands: [Brand]
 
+    @State private var isShowingCalendar = false
+
     /// How many briefs sit under a lead before the rest go behind "+N more".
     private static let briefLimit = 6
 
@@ -85,6 +87,9 @@ struct FeedView: View {
                     }
                 }
                 ToolbarItem(placement: .topBarTrailing) {
+                    Button("Upcoming", systemImage: "calendar") { isShowingCalendar = true }
+                }
+                ToolbarItem(placement: .topBarTrailing) {
                     if engine.isSyncing || remote.isSyncing {
                         ProgressView()
                     } else {
@@ -96,6 +101,7 @@ struct FeedView: View {
             }
             .refreshable { await refresh() }
             .overlay(alignment: .bottom) { syncStatus }
+            .sheet(isPresented: $isShowingCalendar) { DropCalendarView() }
         }
         .tint(.ink)
     }
@@ -206,9 +212,14 @@ private struct BrandSpread: View {
 
             if overflow > 0 {
                 NavigationLink {
-                    BrandDetailView(brand: group.brand)
+                    BrandFeedView(brand: group.brand)
                 } label: {
+                    // Underlined so it reads as the link it is; a bare mono line looked
+                    // like another caption.
                     DataLabel(text: "+\(overflow) MORE FROM \(group.brand.name.uppercased())", color: .ink)
+                        .overlay(alignment: .bottom) {
+                            Rectangle().fill(Color.ink).frame(height: 1).offset(y: 3)
+                        }
                         .padding(.top, 16)
                         .padding(.horizontal, 20)
                 }
@@ -276,6 +287,7 @@ struct BrandGroup: Identifiable {
         case .post: return count == 1 ? "New post" : "\(count) new posts"
         case .pageChange: return "Page changed"
         case .dropLock: return "Locked — drop incoming"
+        case .priceDrop: return count == 1 ? "Price drop" : "\(count) price drops"
         }
     }
 }

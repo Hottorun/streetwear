@@ -15,7 +15,9 @@ Package.swift            StreetwCore library + tests
 Sources/StreetwCore/     adapters, sizing, discovery — no SwiftData/SwiftUI/UIKit
 Tests/StreetwCoreTests/  swift-testing, fixture-driven, no network
 streetw/                 the iOS app (Models/, Views/, Sync/)
-streetw.xcodeproj        app target; links StreetwCore as a local package
+Shared/                  in BOTH app and extension targets — the App Group inbox contract
+ShareExtension/          share-sheet extension target
+streetw.xcodeproj        app + ShareExtension targets; links StreetwCore as a local package
 Server/                  SEPARATE SwiftPM package: Vapor + Fluent poller and API
 ```
 
@@ -135,7 +137,7 @@ The Xcode project uses `PBXFileSystemSynchronizedRootGroup`. Any `.swift` file a
 ### Tests
 
 ```bash
-swift test                                    # all 57
+swift test                                    # all 98
 swift test --filter "Size normalisation"      # one suite
 swift test --filter relockFiresAgain          # one test
 ```
@@ -176,8 +178,17 @@ Adapters live in `streetw/Sources/` and are resolved through `SourceAdapters.ada
 
 - `ShopifySource` — public `/products.json`. The highest-value source by far; most streetwear
   brands run Shopify, giving structured products, images, prices, tags and stock for free.
+- `CollectionsSource` — public `/collections.json`, so a release is one named event rather
+  than sixty product rows. **This endpoint calls the body field `description`, where
+  `/products.json` calls it `body_html`** — the wrong key loses every summary silently.
 - `FeedSource` — one `XMLParser` delegate handling both RSS `<item>` and Atom `<entry>`.
-- `PageWatchSource` — fallback for brands with neither.
+- `SitemapSource` — `/sitemap.xml` for brands that are neither Shopify nor feed-publishing.
+  Uses `<lastmod>` as `published_at`, so `since` filtering needs no extra state. Skips
+  entries with no `lastmod`: assuming "now" would resurface the whole catalogue every poll.
+- `PageWatchSource` — last resort, only when nothing structured was found.
+
+Discovery prefers them in that order, so a page watch is now genuinely a fallback rather
+than the common case for non-Shopify brands.
 
 `BrandDiscovery` (in `Sync/`) probes a bare domain, attaches whatever it finds, and falls back to a
 page watch so every brand yields some signal.
@@ -209,6 +220,11 @@ Changing these silently will break intended behavior:
   `lockedFingerprint` in place of the content hash while locked, so polling through a drop adds one
   event, and reopening (which restores a real hash) lets the *next* drop fire again. Keying the
   event id on the source alone made a lock a once-ever occurrence.
+- **Only a price *drop* is an event, and only past 5%.** Storefronts recompute prices
+  from exchange rates several times a day; treating every edit as news would bury the one
+  real markdown. A rise is never announced. `FetchedItem.priceAmount` exists because
+  `priceText` is formatted for display and two strings say nothing about direction.
+  A restock outranks a drop, so one product writes at most one event per poll.
 - **Restock is the only reason a seen item resurfaces.** `SyncEngine.refresh` re-flags an update
   only when a *variant* goes false→true, recording which sizes returned in `restockedSizes`
   (falling back to whole-product `isAvailable` for sources without variants).
@@ -218,6 +234,28 @@ Changing these silently will break intended behavior:
 - **`ShopifySource` stops paginating early** once a page ends older than `since`. Only the first
   page carries the `ETag`, which is sufficient — if the newest products are unchanged, nothing
   further back can have moved.
+
+### The share extension
+
+- **`Shared/` is compiled into both targets.** `SharedInbox` is the contract between
+  them, so it is listed in each target's `fileSystemSynchronizedGroups` rather than
+  duplicated. `ShareExtension/` belongs to the extension alone.
+- **The extension does no networking and touches no SwiftData.** It extracts the URL,
+  writes one JSON file into the App Group container, and returns. Extensions run under a
+  hard memory limit and are expected back immediately; the app enriches the link with its
+  Open Graph title, price and image on the next foreground (`SharedSaveImporter`).
+- **The inbox is one file per save, and reading is separate from deleting.** Two
+  processes are involved, so a read-modify-write on a shared array loses saves. Nothing
+  is removed until the item is committed to the store — otherwise a fetch that hangs, or
+  a kill mid-import, throws the save away.
+- **Adding the App Group silently moved the SwiftData store.** A default
+  `ModelConfiguration` puts the store in the *shared group container* once the app has an
+  App Group entitlement, so the app opens an empty database and every brand and save
+  appears wiped while the real data sits in the old location. `streetwApp` now pins the
+  store URL explicitly to `URL.applicationSupportDirectory`. Don't remove that.
+- The App Group id must be identical in `streetw.entitlements` and
+  `ShareExtension.entitlements`. A mismatch fails silently — the container URL is nil and
+  every share vanishes without an error.
 
 ### SwiftData specifics
 
@@ -360,6 +398,23 @@ builds the executable. Omitting them yields a confusing "overlapping sources" er
   `test(...)`'s discardable return and silently pick that overload — the app comes up with
   no routes and everything 404s, while multi-statement closures resolve to yours and pass.
   The local helper is called `withServer`.
+
+### The collection
+
+- **Boards are filters, not folders.** `SavedItem.board` is optional and
+  `Board.items` deletes with `.nullify` — removing a board must never take the saved
+  things with it. `SaveType` (Inspiration/Wardrobe) is a separate axis and an item can be
+  on both.
+- **Only saved items get image analysis.** `ImageTagger` runs from the Saved tab, bounded
+  per pass, and stamps `analyzedAt` even on failure so a dead image URL isn't retried
+  forever. Running it over a catalogue sweep would analyse 250 items nobody kept.
+- **Dominant colour is centre-cropped before voting.** A seamless studio sweep is 70–85%
+  of a product shot; without the crop every item resolves to "White". The backdrop
+  brightness threshold is 0.93 and was measured — 0.88 excludes the grey sweep but also
+  eats a white garment's own pixels, leaving its shadows to vote "Grey".
+- **Vision's classifier does not work in the Simulator** ("Failed to create espresso
+  context"). Categories are device-only; the code degrades to the text vocabulary, so
+  this looks like nothing happening rather than an error.
 
 ### SwiftUI gotcha
 

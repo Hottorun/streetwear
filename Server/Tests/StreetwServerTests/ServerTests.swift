@@ -59,7 +59,7 @@ final class StubHTTP: HTTPFetching, @unchecked Sendable {
 }
 
 /// A one-product Shopify catalog whose single variant's stock can be flipped.
-private func catalog(available: Bool, size: String = "M") -> String {
+private func catalog(available: Bool, size: String = "M", price: String = "180.00") -> String {
     """
     {"products": [{
       "id": 1, "title": "Test Hoodie", "handle": "test-hoodie",
@@ -67,7 +67,7 @@ private func catalog(available: Bool, size: String = "M") -> String {
       "tags": ["hoodie"], "product_type": "Hoodies",
       "options": [{"name": "Size", "position": 1}],
       "variants": [{"id": 11, "title": "\(size)", "option1": "\(size)",
-                    "available": \(available), "price": "180.00"}],
+                    "available": \(available), "price": "\(price)"}],
       "images": [{"src": "https://cdn.example.com/a.jpg"}]
     }]}
     """
@@ -271,6 +271,55 @@ struct PollerTests {
             let events = try await EventModel.query(on: app.db).all()
             #expect(events.count == 1)
             #expect(events.first?.kind == UpdateKind.product.rawValue)
+        }
+    }
+
+    /// Silent product edits are mostly noise, but a markdown on something you follow is
+    /// the exception — and it is invisible in `published_at`, which does not change.
+    @Test("A price cut produces one priceDrop event")
+    func priceCutProducesEvent() async throws {
+        try await withServer { app in
+            let http = StubHTTP()
+            http.stub("/meta.json", body: #"{"name": "Example", "currency": "USD"}"#)
+            http.stub("/products.json?limit=250&page=1", body: catalog(available: true, price: "180.00"))
+            _ = try await seedBrand(app, http: http)
+
+            let poller = Poller(app: app, http: http)
+            await poller.tick()
+            #expect(try await EventModel.query(on: app.db).count() == 0)
+
+            let source = try #require(try await SourceModel.query(on: app.db).first())
+            source.nextCheckAt = Date().addingTimeInterval(-1)
+            try await source.save(on: app.db)
+            http.stub("/products.json?limit=250&page=1", body: catalog(available: true, price: "120.00"))
+
+            await poller.tick()
+
+            let events = try await EventModel.query(on: app.db).all()
+            #expect(events.count == 1)
+            #expect(events.first?.kind == UpdateKind.priceDrop.rawValue)
+        }
+    }
+
+    /// Exchange-rate drift on a multi-currency storefront must not read as a sale.
+    @Test("A trivial price wobble produces nothing")
+    func priceWobbleIsIgnored() async throws {
+        try await withServer { app in
+            let http = StubHTTP()
+            http.stub("/meta.json", body: #"{"name": "Example", "currency": "USD"}"#)
+            http.stub("/products.json?limit=250&page=1", body: catalog(available: true, price: "180.00"))
+            _ = try await seedBrand(app, http: http)
+
+            let poller = Poller(app: app, http: http)
+            await poller.tick()
+
+            let source = try #require(try await SourceModel.query(on: app.db).first())
+            source.nextCheckAt = Date().addingTimeInterval(-1)
+            try await source.save(on: app.db)
+            http.stub("/products.json?limit=250&page=1", body: catalog(available: true, price: "178.50"))
+
+            await poller.tick()
+            #expect(try await EventModel.query(on: app.db).count() == 0)
         }
     }
 

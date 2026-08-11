@@ -26,6 +26,14 @@ final class BrandUpdate {
     var kind: Kind = Kind.product
 
     var priceText: String?
+    /// The numeric price, kept so a markdown can be *detected*. `priceText` is formatted
+    /// for display and two different strings tell you nothing about direction.
+    var priceAmount: Double?
+    /// A start time the source explicitly announced. Nil is the normal case — most
+    /// storefronts never publish a machine-readable release time.
+    var releaseDate: Date?
+    /// What it cost before the most recent drop, so a card can say "was €180".
+    var previousPriceText: String?
     var isAvailable: Bool?
     var tags: [String] = []
     var productType: String?
@@ -37,6 +45,19 @@ final class BrandUpdate {
     var restockedSizes: [String] = []
 
     var isSeen: Bool = false
+
+    /// Dominant colour read off the photograph rather than out of the title — a brand
+    /// calling a shoe "Triple White" is naming a colourway, not a colour.
+    var visionColor: String?
+    /// Wardrobe categories from Vision's on-device classifier.
+    var visionCategories: [String] = []
+    /// Width ÷ height of the primary image, measured when it was analysed. Lets the
+    /// collection wall lay tiles out at the shape of the actual photograph instead of
+    /// guessing.
+    var imageAspect: Double?
+    /// When the image was last analysed. Nil means "not yet"; set even when analysis
+    /// fails, so a dead image URL isn't retried on every launch forever.
+    var analyzedAt: Date?
 
     /// Set by the server, which matched this item against the device's size profile.
     /// Server-mode items carry no variants, so the local check can't answer this.
@@ -60,6 +81,7 @@ final class BrandUpdate {
         publishedAt: Date = Date(),
         kind: Kind,
         priceText: String? = nil,
+        priceAmount: Double? = nil,
         isAvailable: Bool? = nil,
         tags: [String] = [],
         productType: String? = nil,
@@ -76,6 +98,7 @@ final class BrandUpdate {
         self.discoveredAt = Date()
         self.kind = kind
         self.priceText = priceText
+        self.priceAmount = priceAmount
         self.isAvailable = isAvailable
         self.tags = tags
         self.productType = productType

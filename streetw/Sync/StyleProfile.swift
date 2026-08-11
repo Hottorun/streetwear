@@ -1,9 +1,14 @@
 // StyleProfile.swift
 // Derives a style profile from what the user has saved.
 //
-// Everything here comes from text the catalog already gives us — titles, tags and
-// product types. No image analysis yet; that's the natural next step (Vision can pull
-// dominant colours straight off the product shots) but this works from save #1.
+// Two sources, in a deliberate order. **What the photograph says wins** — `ImageTagger`
+// reads a dominant colour and categories off the product shot, and that is a fact about
+// the garment. The text vocabulary below is the fallback for anything not yet analysed,
+// and it is genuinely a guess: a brand naming a shoe "Triple White" is describing a
+// colourway, "Nocturne" describes nothing, and a link shared in from elsewhere may have
+// a two-word title and no tags at all.
+//
+// The fallback stays because it works from save #1, before any image has been fetched.
 
 import Foundation
 
@@ -39,11 +44,24 @@ struct StyleProfile {
                 .joined(separator: " ")
                 .lowercased()
 
-            for term in Vocabulary.colors where haystack.contains(term) {
-                colors[term.capitalized, default: 0] += 1
+            // One colour per item either way, so an analysed save doesn't outvote an
+            // unanalysed one purely by having a longer title.
+            if let seen = update.visionColor {
+                colors[seen, default: 0] += 1
+            } else {
+                for term in Vocabulary.colors where haystack.contains(term) {
+                    colors[term.capitalized, default: 0] += 1
+                }
             }
-            for (term, label) in Vocabulary.categories where haystack.contains(term) {
-                categories[label, default: 0] += 1
+
+            if !update.visionCategories.isEmpty {
+                for label in update.visionCategories {
+                    categories[label, default: 0] += 1
+                }
+            } else {
+                for (term, label) in Vocabulary.categories where haystack.contains(term) {
+                    categories[label, default: 0] += 1
+                }
             }
             for term in Vocabulary.silhouettes where haystack.contains(term) {
                 silhouettes[term.capitalized, default: 0] += 1

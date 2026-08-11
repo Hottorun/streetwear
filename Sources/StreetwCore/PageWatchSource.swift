@@ -32,13 +32,22 @@ public struct PageWatchSource: SourceAdapter {
             guard source.fingerprint != Self.lockedFingerprint else {
                 return FetchResult(fingerprint: Self.lockedFingerprint, isLocked: true)
             }
+            // A locked page sometimes still says *when*. Most don't — the countdown is
+            // usually JavaScript — but when the markup labels a start time explicitly,
+            // that turns "a drop is close" into an actual entry in the calendar.
+            let announced = String(data: response.data, encoding: .utf8)
+                .flatMap { DropDateParser.find(in: $0) }
+
             let item = FetchedItem(
                 externalID: "lock:\(source.id.uuidString):\(Int(Date().timeIntervalSince1970))",
                 title: "Storefront locked",
-                summary: "The page is password protected or refusing requests — usually a drop is close.",
+                summary: announced == nil
+                    ? "The page is password protected or refusing requests — usually a drop is close."
+                    : "The page is locked and names a start time.",
                 linkURL: source.url,
                 publishedAt: Date(),
-                kind: .dropLock
+                kind: .dropLock,
+                releaseDate: announced
             )
             return FetchResult(items: [item], fingerprint: Self.lockedFingerprint, isLocked: true)
         }

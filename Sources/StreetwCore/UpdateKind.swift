@@ -12,6 +12,12 @@ public enum UpdateKind: String, Codable, Sendable, CaseIterable {
     case post
     case pageChange
     case dropLock
+    /// A price cut on something already in the catalogue.
+    ///
+    /// Only *drops* exist as a case, deliberately. A brand raising a price is a fact
+    /// nobody wants pushed to their phone, and treating every edit as an event would
+    /// turn the feed into a changelog — the thing this app is trying not to be.
+    case priceDrop
 
     public var label: String {
         switch self {
@@ -21,6 +27,7 @@ public enum UpdateKind: String, Codable, Sendable, CaseIterable {
         case .post: "Post"
         case .pageChange: "Page changed"
         case .dropLock: "Locked for drop"
+        case .priceDrop: "Price drop"
         }
     }
 
@@ -34,6 +41,7 @@ public enum UpdateKind: String, Codable, Sendable, CaseIterable {
         case .post: "camera"
         case .pageChange: "eye"
         case .dropLock: "lock"
+        case .priceDrop: "arrow.down.right"
         }
     }
 }
