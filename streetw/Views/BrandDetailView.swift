@@ -1,5 +1,5 @@
 // BrandDetailView.swift
-// One brand: links, your rating, recent updates, and what you've saved from it.
+// One brand: links, recent updates, what you've saved from it, and what we watch it with.
 
 import StreetwCore
 import SwiftData
@@ -53,9 +53,12 @@ struct BrandDetailView: View {
                 .font(.subheadline)
             }
 
-            Section("My take") {
-                TextField("Style, in your words", text: styleBinding, axis: .vertical)
-                RatingPicker(rating: $brand.myRating)
+            // "My take" is gone — a free-text style note and a five-star rating on a
+            // brand were both asking the user to do data entry that nothing ever read.
+            // The style profile is derived from what you actually save, which is a truer
+            // signal than a rating nobody revisits, and following is a one-tap decision
+            // that doesn't need a section around it.
+            Section {
                 Toggle("Following", isOn: $brand.followed)
                     .onChange(of: brand.followed) { _, following in
                         guard settings.isConfigured, let id = brand.remoteID else { return }
@@ -141,32 +144,4 @@ struct BrandDetailView: View {
         }
     }
 
-    private var styleBinding: Binding<String> {
-        Binding(
-            get: { brand.styleDescription ?? "" },
-            set: { brand.styleDescription = $0.isEmpty ? nil : $0 }
-        )
-    }
-}
-
-struct RatingPicker: View {
-    @Binding var rating: Int?
-
-    var body: some View {
-        HStack {
-            Text("My rating")
-            Spacer()
-            HStack(spacing: 2) {
-                ForEach(1...5, id: \.self) { value in
-                    Button {
-                        rating = (rating == value) ? nil : value
-                    } label: {
-                        Image(systemName: (rating ?? 0) >= value ? "star.fill" : "star")
-                            .foregroundStyle((rating ?? 0) >= value ? Color.yellow : Color.secondary)
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-        }
-    }
 }

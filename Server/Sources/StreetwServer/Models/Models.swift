@@ -202,9 +202,21 @@ final class UserModel: Model, @unchecked Sendable {
     @Timestamp(key: "created_at", on: .create) var createdAt: Date?
 
     // Size profile, stored inline — it is one small value per user.
+    //
+    // Discrete columns rather than an encoded blob, which means a new field on
+    // `SizeProfile` is *not* automatically persisted: it round-trips through the
+    // accessor below and is silently dropped on write. Anything added to the struct
+    // needs a column and a line in both halves of `sizeProfile`.
     @Field(key: "apparel_sizes") var apparelSizes: [String]
     @Field(key: "shoe_sizes") var shoeSizes: [String]
+    /// Vestigial. One-size items fit everyone, so the preference was removed and this is
+    /// now always true — kept only because the column is `NOT NULL` in a schema that is
+    /// already applied in production, and dropping it would be a migration bought for
+    /// nothing.
     @Field(key: "include_one_size") var includeOneSize: Bool
+    /// Nullable: absent means "everything", which is the default for a new profile and
+    /// the honest reading of someone who has never expressed a preference.
+    @OptionalField(key: "gender") var gender: String?
 
     init() {
         self.apparelSizes = []
@@ -217,13 +229,14 @@ final class UserModel: Model, @unchecked Sendable {
             var profile = SizeProfile()
             profile.apparel = Set(apparelSizes)
             profile.shoe = Set(shoeSizes)
-            profile.includeOneSize = includeOneSize
+            profile.gender = gender.flatMap(GenderPreference.init(rawValue:)) ?? .everything
             return profile
         }
         set {
             apparelSizes = Array(newValue.apparel)
             shoeSizes = Array(newValue.shoe)
-            includeOneSize = newValue.includeOneSize
+            includeOneSize = true
+            gender = newValue.gender.rawValue
         }
     }
 }
@@ -265,4 +278,43 @@ final class FollowModel: Model, @unchecked Sendable {
         self.$user.id = userID
         self.$brand.id = brandID
     }
+}
+
+/// "Tell me when this specific thing comes back", per user.
+///
+/// The one personal row that points at a catalog product. That is not a violation of the
+/// global-catalog rule — the *product* stays one row for everyone, and this is a person's
+/// interest in it, exactly like `FollowModel` is a person's interest in a brand.
+final class WatchModel: Model, @unchecked Sendable {
+    static let schema = "watches"
+
+    @ID(key: .id) var id: UUID?
+    @Parent(key: "user_id") var user: UserModel
+    @Parent(key: "brand_id") var brand: BrandModel
+    @Parent(key: "product_id") var product: ProductModel
+    /// Nil means "any size" / "any colour". Raw catalogue text; `WatchTarget` normalises
+    /// at comparison time so both ends agree.
+    @OptionalField(key: "size") var size: String?
+    @OptionalField(key: "color") var color: String?
+    @Timestamp(key: "created_at", on: .create) var createdAt: Date?
+    /// The ledger, in the row for the same reason `events.notified_at` is: a restart must
+    /// not re-fire a watch, and a watch that has fired is a record worth keeping rather
+    /// than a row to delete.
+    @OptionalField(key: "fired_at") var firedAt: Date?
+    @Field(key: "fired_sizes") var firedSizes: [String]
+
+    init() {
+        self.firedSizes = []
+    }
+
+    init(userID: UUID, brandID: UUID, productID: UUID, size: String?, color: String?) {
+        self.$user.id = userID
+        self.$brand.id = brandID
+        self.$product.id = productID
+        self.size = size
+        self.color = color
+        self.firedSizes = []
+    }
+
+    var target: WatchTarget { WatchTarget(size: size, color: color) }
 }

@@ -104,6 +104,26 @@ final class RemoteSync {
         return try await api.probe(url: url)
     }
 
+    func searchBrands(_ query: String) async throws -> [BrandDTO] {
+        guard let api else { throw APIError.notConfigured }
+        return try await api.searchBrands(query)
+    }
+
+    func popularBrands(limit: Int = 12) async throws -> [PopularBrand] {
+        guard let api else { throw APIError.notConfigured }
+        return try await api.popularBrands(limit: limit)
+    }
+
+    /// Follows a brand the catalog already has, and pulls it straight into the local
+    /// store so the UI reflects it without waiting for a full sync.
+    func followExisting(_ dto: BrandDTO, sizes: SizeProfile) async throws {
+        try await ensureRegistered(sizes: sizes)
+        guard let api, let id = dto.id else { throw APIError.notConfigured }
+        try await api.follow(brandID: id)
+        mergeBrands([dto])
+        try? context.save()
+    }
+
     func follow(brandID: UUID) async throws {
         guard let api else { throw APIError.notConfigured }
         try await api.follow(brandID: brandID)
@@ -115,6 +135,63 @@ final class RemoteSync {
             try await api.unfollow(brandID: remoteID)
         } catch {
             lastError = error.localizedDescription
+        }
+    }
+
+    // MARK: - Watches
+
+    /// Mirrors a local watch onto the server, which is what lets it fire while the app is
+    /// closed. Failure is survivable: the local watch still fires on the next sync, so
+    /// this reports rather than throws.
+    func createWatch(_ watch: StockWatch) async {
+        guard settings.isConfigured,
+              let api,
+              let brandID = watch.update?.brand?.remoteID,
+              let externalID = watch.update?.externalID
+        else { return }
+
+        do {
+            let created = try await api.createWatch(
+                CreateWatch(
+                    brandID: brandID,
+                    productExternalID: externalID,
+                    size: watch.size,
+                    color: watch.color
+                )
+            )
+            watch.remoteID = created.id
+            try? context.save()
+        } catch {
+            lastError = error.localizedDescription
+        }
+    }
+
+    func deleteWatch(_ watch: StockWatch) async {
+        guard let remoteID = watch.remoteID, let api else { return }
+        do {
+            try await api.deleteWatch(id: remoteID)
+        } catch {
+            lastError = error.localizedDescription
+        }
+    }
+
+    /// Pulls the server's verdict on every watch and marks the fired ones locally, so a
+    /// restock that happened while the app was closed is reflected rather than waiting
+    /// for the phone to observe the transition itself.
+    private func mergeWatches() async {
+        guard let api, let remote = try? await api.watches() else { return }
+
+        let byID = Dictionary(
+            remote.map { ($0.id, $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
+        let local = (try? context.fetch(FetchDescriptor<StockWatch>())) ?? []
+
+        for watch in local {
+            guard let id = watch.remoteID, let dto = byID[id] else { continue }
+            guard watch.firedAt == nil, let firedAt = dto.firedAt else { continue }
+            watch.firedAt = firedAt
+            watch.firedSizes = dto.firedSizes
         }
     }
 
@@ -146,7 +223,13 @@ final class RemoteSync {
             if let next = response.nextCursor {
                 cursor = next
             }
+            await mergeWatches()
             try? context.save()
+
+            // Also checked locally, not only trusted from the server: the app has the
+            // variant data in hand and a push can be missed, denied or throttled. Firing
+            // is edge-triggered, so the two paths can't produce two alerts.
+            await WatchNotifier.run(in: context)
         } catch {
             lastError = error.localizedDescription
         }
@@ -204,9 +287,16 @@ final class RemoteSync {
 
         // One row per event. The server already decided what is worth surfacing, so the
         // client does no diffing of its own.
-        let existingIDs = Set(
-            ((try? context.fetch(FetchDescriptor<BrandUpdate>())) ?? []).map(\.externalID)
+        //
+        // Fetching only the ids we are about to check, rather than every `BrandUpdate` in
+        // the store. The old version loaded and faulted in the entire table — thousands of
+        // rows after a few weeks — on every sync, to test membership of at most 200.
+        let incoming = items.map { "event:\($0.eventID.uuidString)" }
+        var descriptor = FetchDescriptor<BrandUpdate>(
+            predicate: #Predicate { incoming.contains($0.externalID) }
         )
+        descriptor.propertiesToFetch = [\.externalID]
+        let existingIDs = Set(((try? context.fetch(descriptor)) ?? []).map(\.externalID))
 
         for item in items {
             let externalID = "event:\(item.eventID.uuidString)"
@@ -226,10 +316,28 @@ final class RemoteSync {
                 isAvailable: item.isAvailable
             )
             update.restockedSizes = item.restockedSizes
-            // The server already matched against this device's profile; keep its answer
-            // so the badge doesn't need every variant shipped down.
+            // The server already matched against this device's profile. Kept as a
+            // fallback for items that genuinely have no variants — a collection
+            // announcement, a page change — where the local check can't answer.
             update.serverSaysInMySize = item.availableInMySize
+            // Variants are what make the size run print, the "my size" filter mean
+            // anything, and colourways exist at all. A server that predates the field
+            // sends nil, and the app degrades exactly as it did before rather than
+            // storing an empty list that reads as "no sizes".
+            update.variants = item.variants ?? []
             context.insert(update)
+
+            if let gender = item.gender {
+                update.genderRaw = gender
+                update.genderVersion = GenderClassifier.version
+            } else {
+                // A server that predates the field sends nothing, and a nil gender reads
+                // as `.unknown`, which no filter hides — so a "menswear only" feed would
+                // quietly show everything. Classifying locally from the title and the URL
+                // handle recovers exactly the tier that catches a name like
+                // "WMNS Dunk Low", without waiting on a deploy.
+                update.refreshGender()
+            }
             newItemCount += 1
         }
     }

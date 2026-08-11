@@ -121,6 +121,38 @@ struct StreetwAPI: Sendable {
         try await sendVoid(path: "v1/follows/\(brandID.uuidString)", method: "DELETE", body: Optional<Never>.none)
     }
 
+    /// Search the shared catalog. One field takes a name or an address.
+    func searchBrands(_ query: String) async throws -> [BrandDTO] {
+        try await send(
+            path: "v1/brands",
+            method: "GET",
+            body: Optional<Never>.none,
+            query: [URLQueryItem(name: "q", value: query)],
+            authenticated: false
+        )
+    }
+
+    func popularBrands(limit: Int = 12) async throws -> [PopularBrand] {
+        try await send(
+            path: "v1/brands/popular",
+            method: "GET",
+            body: Optional<Never>.none,
+            query: [URLQueryItem(name: "limit", value: String(limit))]
+        )
+    }
+
+    func createWatch(_ body: CreateWatch) async throws -> WatchDTO {
+        try await send(path: "v1/watches", method: "POST", body: body)
+    }
+
+    func deleteWatch(id: UUID) async throws {
+        try await sendVoid(path: "v1/watches/\(id.uuidString)", method: "DELETE", body: Optional<Never>.none)
+    }
+
+    func watches() async throws -> [WatchDTO] {
+        try await send(path: "v1/watches", method: "GET", body: Optional<Never>.none)
+    }
+
     func feed(since: Date?, limit: Int = 200) async throws -> FeedResponse {
         var query = [URLQueryItem(name: "limit", value: String(limit))]
         if let since {

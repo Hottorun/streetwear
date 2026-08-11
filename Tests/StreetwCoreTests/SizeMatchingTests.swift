@@ -40,14 +40,45 @@ struct SizeNormalizerTests {
         #expect(SizeNormalizer.normalize(raw)?.kind == .oneSize)
     }
 
-    /// The important one. Classing these as US shoe sizes would let a US-9 profile
-    /// *hide* every EU-sized or waist-sized product — the one failure mode a drop
-    /// tracker must never have.
-    @Test("Non-US numeric sizing is not mistaken for a shoe size", arguments: [
-        "44", "EU 44", "32", "28", "2"
+    /// The important one. Classing an *unlabelled* number as a US shoe size would let a
+    /// US-9 profile hide every EU-sized or waist-sized product — the one failure mode a
+    /// drop tracker must never have. A bare "44" is just as likely a waist, an EU jacket
+    /// or an EU shoe, so it stays permissive.
+    @Test("Unlabelled numeric sizing is not mistaken for a shoe size", arguments: [
+        "44", "32", "28", "2", "50"
     ])
     func outOfRangeNumbersAreNotShoes(raw: String) {
         #expect(SizeNormalizer.normalize(raw)?.kind == .other)
+    }
+
+    /// A size that *names* its scale is a different matter: there is nothing to guess, so
+    /// converting it is strictly better than treating it as unknown.
+    @Test("An explicitly regioned size converts to its US equivalent", arguments: [
+        ("EU 44", "10"), ("eu 42.5", "9"), ("EUR 43", "9.5"), ("44 EU", "10"),
+        ("UK 8", "9"), ("uk 9", "10"), ("UK 10.5", "11.5")
+    ])
+    func regionedSizesConvert(raw: String, token: String) {
+        let size = SizeNormalizer.normalize(raw)
+        #expect(size?.kind == .shoe)
+        #expect(size?.token == token, "\(raw) should be US \(token)")
+        #expect(size?.isConverted == true)
+    }
+
+    /// The bug this fixes: both region codes used to be stripped and the remainder read
+    /// as US, so a UK 9 — a US 10 — was highlighted as the user's US 9.
+    @Test("A UK size is not read as the same number in US")
+    func ukIsNotUS() {
+        #expect(SizeNormalizer.normalize("UK 9")?.token == "10")
+        #expect(SizeNormalizer.normalize("US 9")?.token == "9")
+        #expect(SizeNormalizer.normalize("9")?.token == "9")
+    }
+
+    /// A region code is only a region code where a size actually is one — otherwise a
+    /// colourway called "Ukiyo" or a fabric named "Eucalyptus" changes the scale.
+    @Test("A region code is only read next to a number")
+    func regionCodeNeedsANumber() {
+        #expect(SizeNormalizer.normalize("Ukiyo")?.scale == .us)
+        #expect(SizeNormalizer.normalize("Eucalyptus")?.scale == .us)
     }
 
     @Test("Empty input yields nothing")
@@ -86,13 +117,14 @@ struct SizeProfileTests {
         #expect(!profile.matches("10"))
     }
 
-    @Test("One-size items follow the toggle")
-    func oneSizeToggle() {
-        var p = profile
-        #expect(p.includeOneSize)
-        #expect(p.matches("OS"))
-        p.includeOneSize = false
-        #expect(!p.matches("OS"))
+    /// A one-size item fits everyone by definition, so it is never filtered out. The
+    /// toggle that could exclude them was one more thing to explain in exchange for
+    /// hiding most of the accessories in the feed.
+    @Test("One-size items always match")
+    func oneSizeAlwaysMatches() {
+        for raw in ["OS", "O/S", "One Size", "Default Title"] {
+            #expect(profile.matches(raw))
+        }
     }
 
     @Test("Unrecognised sizing is shown, never hidden")
@@ -100,6 +132,54 @@ struct SizeProfileTests {
         #expect(profile.matches("44"))
         #expect(profile.matches("Youth L"))
         #expect(profile.matches("32"))
+    }
+
+    /// A converted size is a good estimate, not a fact — Nike and adidas disagree by half
+    /// a size on the same foot — so it matches within one rung of the ladder. Without the
+    /// tolerance this filter would start hiding real results, which is exactly what the
+    /// permissive rules above exist to prevent.
+    @Test("A converted shoe size matches within half a size")
+    func convertedSizesAreTolerant() {
+        // Profile is US 9 and 9.5.
+        #expect(profile.matches("EU 42.5"), "EU 42.5 is US 9 exactly")
+        #expect(profile.matches("EU 43"), "EU 43 is US 9.5 exactly")
+        #expect(profile.matches("EU 44"), "EU 44 is US 10 — within half a size of the owned 9.5")
+        #expect(!profile.matches("EU 45"), "EU 45 is US 11 — genuinely not this foot")
+        #expect(!profile.matches("EU 40"), "EU 40 is US 7 — genuinely not this foot")
+    }
+
+    /// The tolerance must not leak into sizes that were never converted, or the whole
+    /// profile becomes a size wider than the user asked for.
+    @Test("An exact US size gets no tolerance")
+    func nativeSizesAreExact() {
+        #expect(!profile.matches("10"))
+        #expect(!profile.matches("US 10"))
+        #expect(!profile.matches("8.5"))
+    }
+
+    @Test("Shoe sizes are stored in US and displayed in the chosen scale")
+    func scaleIsDisplayOnly() {
+        var european = profile
+        european.shoeScale = .eu
+
+        #expect(european.shoe == ["9", "9.5"], "changing scale must not rewrite storage")
+        #expect(european.summary.contains("EU"))
+        #expect(european.summary.contains("42.5"))
+        // Matching is unaffected: the scale is a reading preference, not a filter.
+        #expect(european.matches("US 9"))
+        #expect(!european.matches("US 11"))
+    }
+
+    /// A profile written before `shoeScale` existed is sitting in UserDefaults on a real
+    /// phone. SwiftData/JSON decoding of a missing non-optional key throws.
+    @Test("A profile stored before the scale existed still decodes")
+    func decodesLegacyProfile() throws {
+        let legacy = #"{"apparel":["M"],"shoe":["9"],"includeOneSize":true}"#
+        let decoded = try JSONDecoder().decode(SizeProfile.self, from: Data(legacy.utf8))
+
+        #expect(decoded.apparel == ["M"])
+        #expect(decoded.shoe == ["9"])
+        #expect(decoded.shoeScale == .us)
     }
 
     @Test("Matching a variant uses the size axis, not the joined title")

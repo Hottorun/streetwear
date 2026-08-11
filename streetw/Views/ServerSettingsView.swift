@@ -1,166 +1,67 @@
 // ServerSettingsView.swift
-// Point the app at a streetw server, and show honestly whether it's actually working.
+// The alerts row, and the honest reporting behind it.
+//
+// This file used to also hold an editable server address. That is gone: the app ships
+// pointing at its own backend, there is one correct value, and a text field inviting
+// someone to change it offered a way to break the app in exchange for nothing. The
+// diagnostics it carried were worth keeping and live in the alerts section now.
 
 import StreetwCore
 import SwiftData
 import SwiftUI
 import UserNotifications
 
-struct ServerSettingsSection: View {
-    @Environment(ServerSettings.self) private var settings: ServerSettings
-    @Environment(RemoteSync.self) private var remote: RemoteSync
-    @Environment(SizeProfileStore.self) private var sizes: SizeProfileStore
-
-    @State private var draft = ""
-    @State private var probe: ProbeState = .idle
-
-    private enum ProbeState: Equatable {
-        case idle
-        case checking
-        case ok(StatusSummary)
-        case failed(String)
-    }
-
-    struct StatusSummary: Equatable {
-        var database: String
-        var connected: Bool
-        var brands: Int
-        var products: Int
-        var pollerRunning: Bool
-        var databaseError: String?
-        /// Whether the server holds an APNs key. Without one it can poll and serve the
-        /// feed perfectly while never sending a single alert — worth saying, because
-        /// "notifications are on" on this end looks identical either way.
-        var apnsConfigured = false
-    }
-
-    var body: some View {
-        Section {
-                TextField(ServerSettings.defaultBaseURLString, text: $draft)
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
-                    .keyboardType(.URL)
-                    .onSubmit(save)
-
-                HStack {
-                    Button("Connect", systemImage: "antenna.radiowaves.left.and.right", action: save)
-                        .buttonStyle(.borderless)
-                        .disabled(draft.trimmingCharacters(in: .whitespaces).isEmpty)
-                    // Clearing the field is sticky, so without this there'd be no way
-                    // back to the shipped server short of retyping it.
-                    if draft.trimmingCharacters(in: .whitespaces).isEmpty {
-                        Button("Use default") { draft = ServerSettings.defaultBaseURLString; save() }
-                            .buttonStyle(.borderless)
-                    }
-                    Spacer()
-                    if settings.isRegistered {
-                        Label("Device registered", systemImage: "checkmark.seal.fill")
-                            .font(.caption)
-                            .foregroundStyle(.green)
-                    }
-                }
-
-                switch probe {
-                case .idle:
-                    EmptyView()
-                case .checking:
-                    HStack {
-                        ProgressView()
-                        Text("Checking…").foregroundStyle(.secondary)
-                    }
-                case .ok(let summary):
-                    VStack(alignment: .leading, spacing: 3) {
-                        Label(
-                            "Connected · \(summary.database)",
-                            systemImage: summary.connected ? "checkmark.circle.fill" : "exclamationmark.triangle.fill"
-                        )
-                        .foregroundStyle(summary.connected ? .green : .orange)
-                        Text("\(summary.brands) brands · \(summary.products) products · poller \(summary.pollerRunning ? "running" : "off")")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        // `databaseConnected == false` still returns 200, so without
-                        // this a broken schema reads as a healthy connection.
-                        if let dbError = summary.databaseError {
-                            Text(dbError)
-                                .font(.caption)
-                                .foregroundStyle(.red)
-                        }
-                        // Ephemeral SQLite in production silently loses everything on
-                        // redeploy, so say it out loud rather than showing a green tick.
-                        if summary.database != "postgres" {
-                            Text("Server is not using Postgres — data will be lost on redeploy.")
-                                .font(.caption)
-                                .foregroundStyle(.orange)
-                        }
-                        if !summary.apnsConfigured {
-                            Text("Server has no push key, so alerts won't be sent.")
-                                .font(.caption)
-                                .foregroundStyle(.orange)
-                        }
-                    }
-                    .font(.subheadline)
-                case .failed(let message):
-                    Label(message, systemImage: "xmark.circle.fill")
-                        .font(.caption)
-                        .foregroundStyle(.red)
-                }
-            } header: {
-                Text("Server")
-            } footer: {
-                Text(settings.isConfigured
-                     ? "Brands are watched by the server, so drops arrive even when the app is closed."
-                     : "Without a server the app checks brands itself, and only while it's open.")
-            }
-        .task(id: settings.baseURLString) {
-            if draft.isEmpty { draft = settings.baseURLString }
-            if settings.isConfigured { await check() }
-        }
-    }
-
-    private func save() {
-        settings.baseURLString = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        Task { await check() }
-    }
-
-    private func check() async {
-        guard let baseURL = settings.baseURL else { return }
-        probe = .checking
-        do {
-            let status = try await StreetwAPI(baseURL: baseURL, token: settings.token).status()
-            probe = .ok(
-                StatusSummary(
-                    database: status.database,
-                    connected: status.databaseConnected,
-                    brands: status.brands,
-                    products: status.products,
-                    pollerRunning: status.pollerRunning,
-                    databaseError: status.databaseError,
-                    apnsConfigured: status.apnsConfigured ?? false
-                )
-            )
-            // Registering here means the first sync isn't the thing that discovers a
-            // broken URL.
-            try? await remote.ensureRegistered(sizes: sizes.profile)
-        } catch {
-            probe = .failed(error.localizedDescription)
-        }
-    }
-}
-
-/// Alerts. Separate from the server row because the two fail independently: the server
-/// can be reachable with notifications denied, and granted with no key on the server.
+/// Alerts, and whether they can actually arrive.
+///
+/// Three things have to line up and they fail independently: iOS has to have granted
+/// permission, the phone has to have handed a token to the server, and the server has to
+/// hold an APNs key. Any one missing means total silence, and from this screen all three
+/// look identical unless they are reported separately — which is exactly how the app
+/// shipped with no `aps-environment` entitlement and eleven tokenless devices while every
+/// status indicator read green.
 struct NotificationsSection: View {
     @Environment(ServerSettings.self) private var settings: ServerSettings
 
     @State private var status: UNAuthorizationStatus = .notDetermined
     @State private var isRequesting = false
+    @State private var delivery: DeliveryState = .unknown
+
+    private enum DeliveryState: Equatable {
+        case unknown
+        case ok
+        /// The server has no APNs key, so nothing is ever sent.
+        case noKey
+        /// No device has handed over a token — this end of the pipe is the broken one.
+        case noToken
+        case unreachable
+    }
 
     var body: some View {
         Section {
             switch status {
             case .authorized, .provisional, .ephemeral:
-                Label("Alerts on", systemImage: "bell.fill")
-                    .foregroundStyle(.green)
+                VStack(alignment: .leading, spacing: 4) {
+                    Label("Alerts on", systemImage: "bell.fill")
+                        .foregroundStyle(.green)
+                    // Permission granted is not the same as deliverable, and saying
+                    // "Alerts on" while nothing can arrive is the lie worth avoiding.
+                    switch delivery {
+                    case .noKey:
+                        Text("The server has no push key, so nothing is being sent.")
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                    case .noToken:
+                        Text("This device hasn't registered for push yet — reopen the app to retry.")
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                    case .unreachable:
+                        Text("Can't reach the server right now.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    case .ok, .unknown:
+                        EmptyView()
+                    }
+                }
             case .denied:
                 // Once denied, the prompt never comes back — only Settings can undo it,
                 // so offering the button again would be a dead end.
@@ -189,10 +90,26 @@ struct NotificationsSection: View {
         } header: {
             Text("Alerts")
         } footer: {
-            Text(settings.isConfigured
-                 ? "Get told when a brand you follow drops, restocks in your size, or locks its storefront."
-                 : "Alerts need a server — the phone can't watch brands while the app is closed.")
+            Text("Get told when a brand you follow drops, restocks in your size, or locks its storefront.")
         }
-        .task { status = await PushAuthorization.current() }
+        .task {
+            status = await PushAuthorization.current()
+            delivery = await checkDelivery()
+        }
+    }
+
+    /// Asks the server whether a push could actually reach anyone.
+    private func checkDelivery() async -> DeliveryState {
+        guard let baseURL = settings.baseURL else { return .unreachable }
+        do {
+            let status = try await StreetwAPI(baseURL: baseURL, token: settings.token).status()
+            if status.apnsConfigured != true { return .noKey }
+            // Nil rather than zero on a server that predates the field — not knowing is
+            // not the same as knowing it's broken, so stay quiet.
+            if let tokens = status.devicesWithToken, tokens == 0 { return .noToken }
+            return .ok
+        } catch {
+            return .unreachable
+        }
     }
 }

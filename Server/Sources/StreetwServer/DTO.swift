@@ -9,6 +9,9 @@ import StreetwCore
 import Vapor
 
 extension SizePayload: @retroactive Content {}
+extension CreateWatch: @retroactive Content {}
+extension WatchDTO: @retroactive Content {}
+extension PopularBrand: @retroactive Content {}
 extension RegisterDevice: @retroactive Content {}
 extension UpdateDevice: @retroactive Content {}
 extension DiscoverBrand: @retroactive Content {}
@@ -62,7 +65,49 @@ extension FeedItem {
             restockedSizes: profile.isEmpty ? event.sizes : mine,
             availableInMySize: variants.isEmpty
                 ? false
-                : variants.contains { $0.available && profile.matches($0.asVariantInfo) }
+                : variants.contains { $0.available && profile.matches($0.asVariantInfo) },
+            // Sent in full so the client's size run, colourway swatches and restock
+            // watcher have something to work with. Withholding these is what made the
+            // whole size feature inert in the app's default server-backed mode.
+            variants: variants.map(\.asVariantInfo),
+            gender: product?.gender.rawValue
+        )
+    }
+}
+
+extension WatchDTO {
+    /// Takes the product rather than just its title: the client keys its local watches on
+    /// `externalID`, so a response without one cannot be matched back to anything.
+    init(_ watch: WatchModel, product: ProductModel) {
+        self.init(
+            id: watch.id ?? UUID(),
+            brandID: watch.$brand.id,
+            productExternalID: product.externalID,
+            productTitle: product.title,
+            size: watch.size,
+            color: watch.color,
+            createdAt: watch.createdAt ?? Date(),
+            firedAt: watch.firedAt,
+            firedSizes: watch.firedSizes
+        )
+    }
+}
+
+extension ProductModel {
+    /// Who this is cut for, decided here rather than on the phone so every client agrees
+    /// and the notifier can target on the same answer the feed shows.
+    ///
+    /// Computed rather than stored: it is pure text classification over columns the row
+    /// already has, so a stored copy would need a migration *and* a backfill, and would
+    /// then go stale the moment the classifier improves.
+    var gender: Gender {
+        GenderClassifier.classify(
+            title: title,
+            productType: productType,
+            tags: tags,
+            // Shopify links are `/products/<handle>`, and the handle often carries the
+            // distinction when the visible title doesn't.
+            handle: linkURL.flatMap { URL(string: $0)?.lastPathComponent }
         )
     }
 }

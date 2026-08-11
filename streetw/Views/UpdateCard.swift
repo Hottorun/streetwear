@@ -17,7 +17,6 @@ import SwiftUI
 /// One brand's most recent item, printed large. The image is the argument; everything
 /// else is a caption under it.
 struct FeedLead: View {
-    @Environment(\.openURL) private var openURL
     @Environment(SizeProfileStore.self) private var sizes: SizeProfileStore
 
     let update: BrandUpdate
@@ -37,56 +36,72 @@ struct FeedLead: View {
                     // are a centred object in a big white field, so a portrait crop
                     // mostly enlarges the emptiness — and pushed the size run, the one
                     // thing worth reading, below the fold on a large phone.
-                    UpdateImage(
-                        url: update.primaryImageURL,
-                        kind: update.kind,
-                        aspect: 1,
-                        contentMode: .fit
-                    )
+                    //
+                    // All of the brand's photographs, not just the first: they were
+                    // always fetched and stored, and the front of a garment is rarely the
+                    // whole argument for it. Paging lives here and quick-save lives on
+                    // the caption below, so the two never fight for the same swipe.
+                    ImageGallery(urls: update.imageURLs, kind: update.kind, drawnWidth: 400)
                     SaveAction(update: update)
                         .padding(12)
                 }
             }
 
-            VStack(alignment: .leading, spacing: 7) {
-                if let state = FeedState(update: update, profile: sizes.profile) {
-                    HStack(spacing: 6) {
-                        Circle()
-                            .fill(Color.signal)
-                            .frame(width: 5, height: 5)
-                        Text(state.text)
-                            .font(.data(11, .medium))
-                            .tracking(0.6)
-                            .foregroundStyle(Color.signal)
+            // Tapping opens the app's own page rather than ejecting to Safari. The
+            // caption is also where quick-save listens, so the two coexist: a tap opens,
+            // a horizontal drag files or dismisses, and the photograph above keeps its
+            // paging.
+            NavigationLink {
+                ProductDetailView(update: update)
+            } label: {
+                VStack(alignment: .leading, spacing: 7) {
+                    if let state = FeedState(update: update, profile: sizes.profile) {
+                        HStack(spacing: 6) {
+                            // The dot is the "this is live" marker, so it only appears
+                            // when the line is actually about you.
+                            if state.isForMe {
+                                Circle()
+                                    .fill(Color.signal)
+                                    .frame(width: 5, height: 5)
+                            }
+                            Text(state.text)
+                                .font(.data(11, .medium))
+                                .tracking(0.6)
+                                .foregroundStyle(state.color)
+                        }
                     }
-                }
 
-                Text(update.title)
-                    .font(.editorial(21))
-                    .foregroundStyle(Color.ink)
-                    .lineLimit(2)
-                    .fixedSize(horizontal: false, vertical: true)
+                    Text(update.title)
+                        .font(.editorial(21))
+                        .foregroundStyle(Color.ink)
+                        .lineLimit(2)
+                        .multilineTextAlignment(.leading)
+                        .fixedSize(horizontal: false, vertical: true)
 
-                HStack(alignment: .firstTextBaseline) {
-                    SizeRun(entries: runEntries)
-                    Spacer(minLength: 12)
-                    if let price = update.priceText {
-                        Text(price)
-                            .font(.data(12, .medium))
-                            .foregroundStyle(Color.ink)
-                            .fixedSize()
-                            // The price is short and never worth eliding; if anything
-                            // has to give, it's the tail of the size run.
-                            .layoutPriority(1)
+                    HStack(alignment: .firstTextBaseline) {
+                        SizeRun(entries: runEntries)
+                        Spacer(minLength: 12)
+                        if let price = update.priceText {
+                            Text(price)
+                                .font(.data(12, .medium))
+                                .foregroundStyle(Color.ink)
+                                .fixedSize()
+                                // The price is short and never worth eliding; if anything
+                                // has to give, it's the tail of the size run.
+                                .layoutPriority(1)
+                        }
                     }
+                    .clipped()
                 }
-                .clipped()
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.top, 14)
+                .padding(.horizontal, 20)
+                .contentShape(.rect)
             }
-            .padding(.top, 14)
-            .padding(.horizontal, 20)
+            .buttonStyle(.plain)
+            .quickSaveHandle()
         }
         .contentShape(.rect)
-        .onTapGesture { if let link = update.linkURL { openURL(link) } }
         .contextMenu { UpdateMenu(update: update) }
         .quickSave(update)
     }
@@ -97,7 +112,6 @@ struct FeedLead: View {
 /// Everything else the brand posted. Small, cropped square, title only — enough to
 /// recognise something, not enough to compete with the lead.
 struct FeedTile: View {
-    @Environment(\.openURL) private var openURL
     @Environment(SizeProfileStore.self) private var sizes: SizeProfileStore
 
     let update: BrandUpdate
@@ -105,27 +119,35 @@ struct FeedTile: View {
     private var isMine: Bool { update.isInMySize(sizes.profile) }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            UpdateImage(url: update.primaryImageURL, kind: update.kind, aspect: 1)
-                .overlay(alignment: .bottomLeading) {
-                    // The accent again, at the smallest possible dose: a rule along the
-                    // bottom edge means "your size is in there".
-                    if isMine {
-                        Rectangle()
-                            .fill(Color.signal)
-                            .frame(height: 2)
+        NavigationLink {
+            ProductDetailView(update: update)
+        } label: {
+            VStack(alignment: .leading, spacing: 6) {
+                // Three to a row: a third of the screen, so the smallest rendition.
+                // No gallery on a tile — at this size a second photograph is unreadable,
+                // and it would put a paging gesture inside a grid that scrolls.
+                UpdateImage(url: update.primaryImageURL, kind: update.kind, aspect: 1, drawnWidth: 130)
+                    .overlay(alignment: .bottomLeading) {
+                        // The accent again, at the smallest possible dose: a rule along
+                        // the bottom edge means "your size is in there".
+                        if isMine {
+                            Rectangle()
+                                .fill(Color.signal)
+                                .frame(height: 2)
+                        }
                     }
-                }
 
-            Text(update.title)
-                .font(.editorial(12))
-                .foregroundStyle(Color.ink)
-                .lineLimit(2)
-                .fixedSize(horizontal: false, vertical: true)
-                .frame(maxWidth: .infinity, alignment: .leading)
+                Text(update.title)
+                    .font(.editorial(12))
+                    .foregroundStyle(Color.ink)
+                    .lineLimit(2)
+                    .multilineTextAlignment(.leading)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .contentShape(.rect)
         }
-        .contentShape(.rect)
-        .onTapGesture { if let link = update.linkURL { openURL(link) } }
+        .buttonStyle(.plain)
         .contextMenu { UpdateMenu(update: update) }
     }
 }
@@ -146,7 +168,13 @@ struct CollectionTile: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 7) {
-            UpdateImage(url: update?.primaryImageURL, kind: update?.kind ?? .product, aspect: aspect)
+            // Two to a row on the collection wall.
+            UpdateImage(
+                url: update?.primaryImageURL,
+                kind: update?.kind ?? .product,
+                aspect: aspect,
+                drawnWidth: 200
+            )
 
             VStack(alignment: .leading, spacing: 3) {
                 if let brand = update?.brand {
@@ -178,82 +206,61 @@ struct CollectionTile: View {
 /// time-critical to say, and the card stays silent rather than inventing a status.
 struct FeedState {
     let text: String
+    /// Whether this is happening *to you*, which is the only thing allowed to spend the
+    /// accent. A restock in a size you don't wear is still a fact worth printing — it is
+    /// just not news, and printing it in vermilion said it was.
+    let isForMe: Bool
 
     init?(update: BrandUpdate, profile: SizeProfile) {
         if update.brand?.isLockedForDrop == true {
             self.text = "LOCKED · DROP IMMINENT"
+            self.isForMe = true
             return
         }
         switch update.kind {
         case .restock:
-            let mine = update.restockedSizes(matching: profile)
-            let shown = (mine.isEmpty ? update.restockedSizes : mine)
-                .filter { $0 != "Default Title" && !$0.isEmpty }
+            let printable = update.restockedSizes.filter { $0 != "Default Title" && !$0.isEmpty }
+            let mine = printable.filter { profile.matches($0) }
+
+            // The bug this replaces: when nothing that came back was a size the user
+            // wears, the card fell back to printing *every* returned size in the accent —
+            // so a profile of S, M, L was told "BACK IN XL" in the colour reserved for
+            // things that are happening to you. Now the sizes still print, because a
+            // restock is genuinely news about the product, but the card only claims it is
+            // yours when it is.
+            let isMine = !mine.isEmpty
+            let shown = isMine ? mine : printable
+
+            self.isForMe = isMine
             self.text = shown.isEmpty
                 ? "BACK IN STOCK"
                 : "BACK IN \(shown.prefix(3).joined(separator: ", ").uppercased())"
         case .dropLock:
             self.text = "LOCKED · DROP IMMINENT"
+            self.isForMe = true
         case .priceDrop:
             if let was = update.previousPriceText {
                 self.text = "PRICE DROP · WAS \(was.uppercased())"
             } else {
                 self.text = "PRICE DROP"
             }
+            // A markdown on something you can't buy in your size isn't yours either.
+            self.isForMe = profile.isEmpty || update.isInMySize(profile)
         case .collection:
             self.text = "NEW COLLECTION"
+            self.isForMe = false
         default:
             guard update.isInMySize(profile) else { return nil }
             self.text = "IN YOUR SIZE"
+            self.isForMe = true
         }
     }
+
+    /// Vermilion only when it is actually about you; otherwise this is metadata.
+    var color: Color { isForMe ? .signal : .muted }
 }
 
 // MARK: - Shared pieces
-
-/// A photograph at a fixed aspect ratio, full width.
-///
-/// Sized by a transparent spacer with `.fit`, not by putting `.aspectRatio(_:.fill)` on
-/// the image itself: with `.fill`, a flexible placeholder has no height to fill *to* and
-/// grows without bound — one un-loaded lead image took over the entire screen.
-struct UpdateImage: View {
-    let url: URL?
-    var kind: BrandUpdate.Kind = .product
-    var aspect: CGFloat = 1
-    /// `.fit` shows the whole garment on the wash, never cropped — right for a lead,
-    /// where the object *is* the argument. `.fill` keeps a grid of thumbnails on a
-    /// consistent rhythm, which matters more than seeing every shoelace.
-    var contentMode: ContentMode = .fill
-
-    var body: some View {
-        Color.clear
-            .aspectRatio(aspect, contentMode: .fit)
-            .overlay {
-                if let url {
-                    AsyncImage(url: url, transaction: Transaction(animation: .easeIn(duration: 0.25))) { phase in
-                        switch phase {
-                        case .success(let image):
-                            image.resizable().aspectRatio(contentMode: contentMode)
-                        case .failure:
-                            symbol
-                        default:
-                            Color.clear
-                        }
-                    }
-                } else {
-                    symbol
-                }
-            }
-            .background(Color.wash)
-            .clipped()
-    }
-
-    private var symbol: some View {
-        Image(systemName: kind.symbol)
-            .font(.system(size: 15, weight: .light))
-            .foregroundStyle(Color.muted)
-    }
-}
 
 /// Save toggle. Deliberately unlabelled and quiet — it sits on a photograph.
 struct SaveAction: View {

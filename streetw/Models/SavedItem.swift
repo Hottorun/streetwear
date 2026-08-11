@@ -38,6 +38,11 @@ final class SavedItem {
     /// run their own scales and "44" or "Youth L" must be as storable as "M".
     var sizeNote: String?
 
+    /// Outfits this item appears in. Many-to-many, and *not* a cascade in either
+    /// direction: deleting a fit must not delete the clothes, and un-saving something
+    /// leaves the fits it was in rather than silently rewriting them.
+    var fits: [Fit] = []
+
     init(update: BrandUpdate?, savedAt: Date = Date(), type: SaveType = .inspiration, note: String? = nil) {
         self.id = UUID()
         self.update = update

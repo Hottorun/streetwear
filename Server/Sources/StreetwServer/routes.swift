@@ -3,6 +3,7 @@
 
 import Fluent
 import Foundation
+import SQLKit
 import StreetwCore
 import Vapor
 
@@ -26,6 +27,9 @@ func routes(_ app: Application) throws {
             status.products = try await ProductModel.query(on: req.db).count()
             status.events = try await EventModel.query(on: req.db).count()
             status.devices = try await DeviceModel.query(on: req.db).count()
+            status.devicesWithToken = try await DeviceModel.query(on: req.db)
+                .filter(\.$apnsToken != nil)
+                .count()
             status.users = try await UserModel.query(on: req.db).count()
             status.pendingPushes = try await EventModel.query(on: req.db)
                 .filter(\.$notifiedAt == nil)
@@ -87,13 +91,93 @@ func routes(_ app: Application) throws {
 
     // MARK: Brands
 
+    /// Search the shared catalog by name *or* address.
+    ///
+    /// One field for both because a person adding a brand has one of two things in hand —
+    /// its name, or a link they copied — and making them say which is a question with no
+    /// interesting answer. A pasted URL is reduced to its host and matched against `slug`,
+    /// which is exactly what discovery keys on, so "https://www.kith.com/products/foo"
+    /// finds the Kith that is already here rather than proposing to create a second one.
     v1.get("brands") { req async throws -> [BrandDTO] in
-        let query = try? req.query.get(String.self, at: "q")
+        let raw = (try? req.query.get(String.self, at: "q"))?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+
         var builder = BrandModel.query(on: req.db)
-        if let query, !query.isEmpty {
-            builder = builder.filter(\.$name, .custom("ILIKE"), "%\(query)%")
+        if !raw.isEmpty {
+            // `ILIKE` is Postgres-only; SQLite's LIKE is already case-insensitive for
+            // ASCII, so the local test database needs the plain operator.
+            let insensitive: DatabaseQuery.Filter.Method =
+                (req.db as? any SQLDatabase)?.dialect.name == "postgresql"
+                    ? .custom("ILIKE")
+                    : .custom("LIKE")
+
+            if let host = BrandDiscovery.normalizedURL(raw)?.host()?.replacingOccurrences(of: "www.", with: ""),
+               raw.contains(".") {
+                builder = builder.group(.or) { group in
+                    group
+                        .filter(\.$slug, insensitive, "%\(host)%")
+                        .filter(\.$name, insensitive, "%\(raw)%")
+                }
+            } else {
+                builder = builder.filter(\.$name, insensitive, "%\(raw)%")
+            }
         }
-        return try await builder.sort(\.$name).limit(50).all().map(BrandDTO.init)
+        return try await builder.sort(\.$name).limit(25).all().map(BrandDTO.init)
+    }
+
+    /// What other people are watching, most-followed first.
+    ///
+    /// The only place the app reads across users, and it reads a count and nothing else —
+    /// no identities, no per-person lists. It exists so the feed is never a dead end:
+    /// somebody caught up on their own brands should be shown what else is worth watching
+    /// rather than an empty page.
+    authed.get("brands", "popular") { req async throws -> [PopularBrand] in
+        let device = try await req.authenticatedDevice()
+        let limit = min((try? req.query.get(Int.self, at: "limit")) ?? 12, 40)
+
+        let follows = try await FollowModel.query(on: req.db).all()
+        var counts: [UUID: Int] = [:]
+        for follow in follows { counts[follow.$brand.id, default: 0] += 1 }
+
+        // Exclude what this user already has — recommending someone their own brands is
+        // the one thing this list must never do.
+        let mine = Set(
+            follows.filter { $0.$user.id == device.$user.id }.map(\.$brand.id)
+        )
+        let ranked = counts
+            .filter { !mine.contains($0.key) }
+            .sorted { ($0.value, $1.key.uuidString) > ($1.value, $0.key.uuidString) }
+            .prefix(limit)
+        guard !ranked.isEmpty else { return [] }
+
+        let brands = try await BrandModel.query(on: req.db)
+            .filter(\.$id ~~ ranked.map(\.key))
+            .all()
+        let byID = Dictionary(brands.compactMap { b in b.id.map { ($0, b) } }, uniquingKeysWith: { a, _ in a })
+
+        // A few recent images per brand, so a recommendation shows the clothes rather
+        // than asking someone to take a wordmark on faith.
+        let products = try await ProductModel.query(on: req.db)
+            .filter(\.$brand.$id ~~ ranked.map(\.key))
+            .sort(\.$publishedAt, .descending)
+            .limit(ranked.count * 12)
+            .all()
+
+        var previews: [UUID: [String]] = [:]
+        for product in products {
+            let id = product.$brand.id
+            guard previews[id, default: []].count < 3, let image = product.imageURLs.first else { continue }
+            previews[id, default: []].append(image)
+        }
+
+        return ranked.compactMap { entry in
+            guard let brand = byID[entry.key] else { return nil }
+            return PopularBrand(
+                brand: BrandDTO(brand),
+                followers: entry.value,
+                previewImageURLs: previews[entry.key] ?? []
+            )
+        }
     }
 
     /// Dry run: what would we watch here? Creates nothing. Exists so the client's
@@ -220,6 +304,83 @@ func routes(_ app: Application) throws {
         return FeedResponse(items: items, nextCursor: events.first?.createdAt)
     }
 
+    // MARK: Watches
+
+    /// Create a watch on a product, identified by the external id the client already
+    /// holds — it is what dedupes the feed, so the client never needs a second identity
+    /// for the same thing.
+    authed.post("watches") { req async throws -> WatchDTO in
+        let device = try await req.authenticatedDevice()
+        let body = try req.content.decode(CreateWatch.self)
+
+        guard let product = try await ProductModel.query(on: req.db)
+            .filter(\.$brand.$id == body.brandID)
+            .filter(\.$externalID == body.productExternalID)
+            .first()
+        else { throw Abort(.notFound, reason: "No such product") }
+
+        let productID = try product.requireID()
+        let userID = device.$user.id
+
+        // Idempotent: tapping the button twice is a mis-tap, not a request for two
+        // notifications. Returns the existing row rather than 409ing, because from the
+        // client's side "I am watching this" is already true.
+        if let existing = try await WatchModel.query(on: req.db)
+            .filter(\.$user.$id == userID)
+            .filter(\.$product.$id == productID)
+            .group(.and, { group in
+                group.filter(\.$size == body.size).filter(\.$color == body.color)
+            })
+            .first() {
+            return WatchDTO(existing, product: product)
+        }
+
+        let watch = WatchModel(
+            userID: userID,
+            brandID: body.brandID,
+            productID: productID,
+            size: body.size,
+            color: body.color
+        )
+        try await watch.save(on: req.db)
+
+        // Watching something implies wanting the brand's signal too, and a watch that
+        // outlives its follow would otherwise be a row nothing ever polls.
+        let alreadyFollows = try await FollowModel.query(on: req.db)
+            .filter(\.$user.$id == userID)
+            .filter(\.$brand.$id == body.brandID)
+            .first() != nil
+        if !alreadyFollows {
+            try await FollowModel(userID: userID, brandID: body.brandID).save(on: req.db)
+        }
+
+        return WatchDTO(watch, product: product)
+    }
+
+    authed.get("watches") { req async throws -> [WatchDTO] in
+        let device = try await req.authenticatedDevice()
+        let watches = try await WatchModel.query(on: req.db)
+            .filter(\.$user.$id == device.$user.id)
+            .sort(\.$createdAt, .descending)
+            .with(\.$product)
+            .all()
+        return watches.map { WatchDTO($0, product: $0.product) }
+    }
+
+    authed.delete("watches", ":watchID") { req async throws -> HTTPStatus in
+        let device = try await req.authenticatedDevice()
+        guard let watchID = req.parameters.get("watchID", as: UUID.self) else {
+            throw Abort(.badRequest)
+        }
+        // Scoped to the caller's own rows: the id alone must not be enough to delete
+        // somebody else's watch.
+        try await WatchModel.query(on: req.db)
+            .filter(\.$user.$id == device.$user.id)
+            .filter(\.$id == watchID)
+            .delete()
+        return .noContent
+    }
+
     // MARK: Ops
 
     /// Manual kick, for development and for verifying a new brand without waiting.
@@ -235,6 +396,16 @@ func routes(_ app: Application) throws {
         guard let notifier = req.application.notifier else { throw Abort(.serviceUnavailable) }
         let result = await notifier.dispatch()
         return "events \(result.events), sent \(result.sent), failed \(result.failed), pruned \(result.prunedTokens)"
+    }
+
+    /// Send a test push right now, to every registered device or to one named device.
+    ///
+    /// Answers "does APNs work" without waiting for a storefront to restock something.
+    /// Writes nothing, so it can be run repeatedly and cannot swallow a real alert.
+    app.post("admin", "push-test") { req async throws -> String in
+        guard let notifier = req.application.notifier else { throw Abort(.serviceUnavailable) }
+        let deviceID = try? req.query.get(UUID.self, at: "device")
+        return await notifier.probe(deviceID: deviceID).summary
     }
 
     app.post("admin", "sweep") { req async throws -> String in

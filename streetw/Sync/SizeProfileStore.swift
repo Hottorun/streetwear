@@ -15,11 +15,6 @@ final class SizeProfileStore {
         didSet { save() }
     }
 
-    /// When on, the feed hides items with nothing available in your size.
-    var filterFeedToMySize: Bool {
-        didSet { UserDefaults.standard.set(filterFeedToMySize, forKey: "filterFeedToMySize") }
-    }
-
     init() {
         let defaults = UserDefaults.standard
         if let data = defaults.data(forKey: Self.key),
@@ -28,7 +23,6 @@ final class SizeProfileStore {
         } else {
             profile = SizeProfile()
         }
-        filterFeedToMySize = defaults.bool(forKey: "filterFeedToMySize")
     }
 
     private func save() {
@@ -50,5 +44,15 @@ final class SizeProfileStore {
         } else {
             profile.shoe.insert(size)
         }
+    }
+
+    /// Display preference only — stored sizes stay canonically US, so switching scales
+    /// never rewrites the profile or needs re-sending to the server.
+    func setShoeScale(_ scale: SizeScale) {
+        profile.shoeScale = scale
+    }
+
+    func setGender(_ gender: GenderPreference) {
+        profile.gender = gender
     }
 }

@@ -25,12 +25,15 @@ struct streetwApp: App {
     @State private var sizes: SizeProfileStore
     @State private var remote: RemoteSync
     @State private var engine: SyncEngine
+    @State private var suggestions: BrandSuggestions
 
     init() {
         Net.configureSharedCache()
         Appearance.configure()
 
-        let schema = Schema([Brand.self, BrandUpdate.self, SavedItem.self, Board.self])
+        let schema = Schema([
+            Brand.self, BrandUpdate.self, SavedItem.self, Board.self, StockWatch.self, Fit.self
+        ])
         let container: ModelContainer
         do {
             // The store location is pinned explicitly, and that is load-bearing.
@@ -59,6 +62,7 @@ struct streetwApp: App {
         _sizes = State(initialValue: sizes)
         _remote = State(initialValue: remote)
         _engine = State(initialValue: SyncEngine(context: container.mainContext))
+        _suggestions = State(initialValue: BrandSuggestions(remote: remote, settings: settings))
 
         // The app delegate is built by UIKit and can't be handed these, so they are
         // published here — the same moment they become valid.
@@ -74,6 +78,7 @@ struct streetwApp: App {
                 .environment(sizes)
                 .environment(remote)
                 .environment(engine)
+                .environment(suggestions)
                 .task { await DevSeed.runIfRequested(in: sharedModelContainer.mainContext) }
         }
         .modelContainer(sharedModelContainer)

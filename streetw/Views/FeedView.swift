@@ -17,28 +17,56 @@ struct FeedView: View {
     @Environment(SizeProfileStore.self) private var sizes: SizeProfileStore
     @Environment(RemoteSync.self) private var remote: RemoteSync
     @Environment(ServerSettings.self) private var settings: ServerSettings
+    @Environment(BrandSuggestions.self) private var suggestions: BrandSuggestions
 
     @Query(filter: #Predicate<Brand> { $0.followed }, sort: \Brand.name)
     private var brands: [Brand]
 
     @State private var isShowingCalendar = false
+    @State private var isShowingWatches = false
+
+    /// Only active watches count — a bell that stays filled forever after one has fired
+    /// stops meaning anything.
+    @Query(filter: #Predicate<StockWatch> { $0.firedAt == nil })
+    private var activeWatches: [StockWatch]
+
+    private var watchCount: Int { activeWatches.count }
 
     /// How many briefs sit under a lead before the rest go behind "+N more".
     private static let briefLimit = 6
 
-    private var isFiltering: Bool {
-        sizes.filterFeedToMySize && !sizes.profile.isEmpty
+    /// Gender is the only filter the feed applies now.
+    ///
+    /// The "my size" toggle is gone. It lived in the toolbar as a fourth icon competing
+    /// with watching, upcoming and refresh, and it was the wrong shape for the job:
+    /// something sold out in your size today is back in it tomorrow, and a filter that
+    /// *hides* it means you never find out. The size profile still does its real work —
+    /// the size run marks your sizes, the state line says "in your size", and a watch
+    /// tells you when one returns.
+    private var isFilteringGender: Bool {
+        sizes.profile.gender != .everything
     }
 
-    private var groups: [BrandGroup] {
-        let profile = sizes.profile
-        let filtering = isFiltering
+    /// Computed once per render rather than per access.
+    ///
+    /// This was a computed property, and every one of `groups`, `totalNew` and the two
+    /// `groups.isEmpty` checks in `body` re-walked every update of every brand — four full
+    /// passes over as many as 400 rows per brand on each render. SwiftUI evaluates `body`
+    /// often and for reasons that have nothing to do with this data.
+    private struct Feed {
+        var groups: [BrandGroup] = []
+        var total: Int = 0
+    }
 
-        return brands
-            .compactMap { brand in
+    private var feed: Feed {
+        let profile = sizes.profile
+        let filterGender = isFilteringGender
+
+        let groups = brands
+            .compactMap { brand -> BrandGroup? in
                 var unseen = brand.updates.filter { !$0.isSeen }
-                if filtering {
-                    unseen = unseen.filter { $0.isAvailable(in: profile) }
+                if filterGender {
+                    unseen = unseen.filter { profile.allows($0.gender) }
                 }
                 guard !unseen.isEmpty else { return nil }
                 return BrandGroup(
@@ -47,43 +75,32 @@ struct FeedView: View {
                 )
             }
             .sorted { ($0.latest ?? .distantPast) > ($1.latest ?? .distantPast) }
-    }
 
-    private var totalNew: Int {
-        groups.reduce(0) { $0 + $1.updates.count }
+        return Feed(groups: groups, total: groups.reduce(0) { $0 + $1.updates.count })
     }
 
     var body: some View {
-        NavigationStack {
+        // One evaluation, reused by every branch below.
+        let feed = self.feed
+
+        return NavigationStack {
             Group {
                 if brands.isEmpty {
                     EditorialEmptyState(
                         title: "Nothing on watch yet",
                         action: "ADD A BRAND AND STREETW STARTS WATCHING ITS CATALOG"
                     )
-                } else if groups.isEmpty {
-                    EditorialEmptyState(
-                        title: "All caught up",
-                        action: engine.lastSyncedAt == nil
-                            ? "PULL TO CHECK YOUR BRANDS FOR THE FIRST TIME"
-                            : "PULL TO REFRESH"
-                    )
                 } else {
-                    stream
+                    stream(feed)
                 }
             }
             .background(Color.paper)
             .navigationTitle("Feed")
             .toolbarTitleDisplayMode(.inlineLarge)
             .toolbar {
-                if !sizes.profile.isEmpty {
-                    ToolbarItem(placement: .topBarLeading) {
-                        @Bindable var sizes = sizes
-                        Toggle(isOn: $sizes.filterFeedToMySize) {
-                            Label("My size", systemImage: "line.3.horizontal.decrease")
-                        }
-                        .toggleStyle(.button)
-                        .labelStyle(.iconOnly)
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Watching", systemImage: watchCount > 0 ? "bell.fill" : "bell") {
+                        isShowingWatches = true
                     }
                 }
                 ToolbarItem(placement: .topBarTrailing) {
@@ -102,35 +119,76 @@ struct FeedView: View {
             .refreshable { await refresh() }
             .overlay(alignment: .bottom) { syncStatus }
             .sheet(isPresented: $isShowingCalendar) { DropCalendarView() }
+            .sheet(isPresented: $isShowingWatches) { WatchesView() }
         }
         .tint(.ink)
     }
 
-    private var stream: some View {
+    /// What the feed is currently narrowed by, as one readable line. Nil when nothing is.
+    private var narrowing: String? {
+        isFilteringGender ? sizes.profile.gender.label : nil
+    }
+
+    /// True when there is unseen material but every bit of it was filtered away.
+    private var filteredToNothing: Bool {
+        guard isFilteringGender else { return false }
+        return brands.contains { brand in brand.updates.contains { !$0.isSeen } }
+    }
+
+    private func stream(_ feed: Feed) -> some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 0, pinnedViews: []) {
-                masthead
-
-                ForEach(groups) { group in
-                    BrandSpread(group: group, briefLimit: Self.briefLimit) {
-                        markSeen(group)
+                if feed.groups.isEmpty {
+                    caughtUp
+                } else {
+                    masthead(feed)
+                    ForEach(feed.groups) { group in
+                        BrandSpread(group: group, briefLimit: Self.briefLimit) {
+                            markSeen(group)
+                        }
                     }
                 }
+
+                // Always the tail of the feed, not only its empty state. Finishing your
+                // brands is the moment you have attention to spare, and "pull to refresh"
+                // was the app's way of saying there is nothing else here.
+                BrandRecommendations()
             }
             .padding(.bottom, 32)
         }
         .scrollIndicators(.hidden)
+        .task { await suggestions.loadIfNeeded() }
+    }
+
+    /// The top of a finished feed. Short, because the recommendations under it are the
+    /// actual answer to "what now".
+    private var caughtUp: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(filteredToNothing ? "Nothing matches your filter" : "All caught up")
+                .font(.editorial(22))
+                .foregroundStyle(Color.ink)
+            DataLabel(
+                text: filteredToNothing
+                    ? "SHOWING \(sizes.profile.gender.label.uppercased()) ONLY — CHANGE IT IN SETTINGS"
+                    : engine.lastSyncedAt == nil && remote.lastSyncedAt == nil
+                        ? "PULL TO CHECK YOUR BRANDS FOR THE FIRST TIME"
+                        : "PULL TO REFRESH"
+            )
+        }
+        .padding(.horizontal, 20)
+        .padding(.top, 8)
+        .padding(.bottom, 28)
     }
 
     /// The count, set as a standfirst. Says what's true and how it's narrowed — no
     /// decoration, because it is the one piece of chrome above the photographs.
-    private var masthead: some View {
+    private func masthead(_ feed: Feed) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("\(totalNew) new from \(groups.count) \(groups.count == 1 ? "brand" : "brands")")
+            Text("\(feed.total) new from \(feed.groups.count) \(feed.groups.count == 1 ? "brand" : "brands")")
                 .font(.editorial(15))
                 .foregroundStyle(Color.ink)
-            if isFiltering {
-                DataLabel(text: "FILTERED TO \(sizes.profile.summary.uppercased())")
+            if let narrowing {
+                DataLabel(text: "FILTERED TO \(narrowing.uppercased())")
             }
         }
         .padding(.horizontal, 20)

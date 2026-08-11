@@ -66,6 +66,8 @@ func configure(_ app: Application) async throws {
     app.migrations.add(AddSourceBaseline())
     app.migrations.add(AddBrandLogo())
     app.migrations.add(AddProductPriceAmount())
+    app.migrations.add(AddUserGender())
+    app.migrations.add(CreateWatches())
     if Environment.get("AUTO_MIGRATE") != "false" {
         try await app.autoMigrate()
     }

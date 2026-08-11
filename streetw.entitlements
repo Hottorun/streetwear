@@ -12,5 +12,19 @@
 	<array>
 		<string>group.com.kern.functional.streetw</string>
 	</array>
+	<!--
+	  Without this key iOS refuses `registerForRemoteNotifications()` outright — the
+	  delegate takes the `didFailToRegister` path, no device token is ever issued, and
+	  `RemoteSync.pushDeviceToken` is never called. The server then holds device rows with
+	  a null token, so `Notifier` finds followers, has nobody to send to, and stamps
+	  `notified_at` anyway. Every layer reports healthy and not one notification exists.
+
+	  `development` is correct here even for a build that will ship: Xcode's export step
+	  replaces it with `production` using the distribution profile's own entitlement. It
+	  matches `BackgroundServices.apnsEnvironment`, which reports "sandbox" for DEBUG, so
+	  the token and the host the server sends it to agree.
+	-->
+	<key>aps-environment</key>
+	<string>development</string>
 </dict>
 </plist>

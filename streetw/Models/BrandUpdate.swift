@@ -60,8 +60,53 @@ final class BrandUpdate {
     var analyzedAt: Date?
 
     /// Set by the server, which matched this item against the device's size profile.
-    /// Server-mode items carry no variants, so the local check can't answer this.
+    /// Only consulted for items that genuinely carry no variants.
     var serverSaysInMySize: Bool = false
+
+    /// Who the garment is cut for, as a raw string so a value added to `Gender` later
+    /// can't fail to decode against a store written today.
+    var genderRaw: String?
+
+    /// Which revision of the classifier produced `genderRaw`.
+    ///
+    /// Gender is a heuristic over catalogue text, so it will keep improving — and a
+    /// stored answer from an older revision is worse than no answer, because nothing
+    /// would ever revisit it. A row written before this field existed decodes as 0 and is
+    /// therefore always stale, which is exactly right.
+    var genderVersion: Int = 0
+
+    /// Never nil. An unclassifiable product is `.unknown`, which no filter hides.
+    ///
+    /// Falls back to classifying on the spot when the stored answer is missing or stale —
+    /// which covers a row written by an older build, and a feed from a server that
+    /// doesn't send a gender yet. Sync backfills the stored value, so the live path is
+    /// transient rather than the steady state.
+    var gender: Gender {
+        if genderVersion == GenderClassifier.version, let genderRaw {
+            return Gender(rawValue: genderRaw) ?? .unknown
+        }
+        return classifyGender()
+    }
+
+    /// Pure string work over fields this row already holds.
+    func classifyGender() -> Gender {
+        GenderClassifier.classify(
+            title: title,
+            productType: productType,
+            tags: tags,
+            handle: linkURL?.lastPathComponent
+        )
+    }
+
+    /// Writes the current classifier's answer, so `gender` stops recomputing.
+    func refreshGender() {
+        genderRaw = classifyGender().rawValue
+        genderVersion = GenderClassifier.version
+    }
+
+    /// Colourways this comes in, or empty when there is only one — which is most
+    /// products, and why a single colour deliberately isn't a colourway.
+    var colorways: [Colorway] { Colorways.from(variants) }
 
     /// Inverse of `SavedItem.update`, so a card can check its saved state directly
     /// instead of running a per-card query.
@@ -70,6 +115,13 @@ final class BrandUpdate {
 
     /// There is at most one save per update; `setSave` updates rather than duplicates.
     var save: SavedItem? { saves.first }
+
+    /// Restock watches on this product. Several are legitimate — a person may want an M
+    /// in black *or* an L in sand — so unlike saves this is genuinely a list.
+    @Relationship(deleteRule: .cascade, inverse: \StockWatch.update)
+    var watches: [StockWatch] = []
+
+    var activeWatches: [StockWatch] { watches.filter(\.isActive) }
 
     init(
         externalID: String,
@@ -130,6 +182,13 @@ final class BrandUpdate {
     func isAvailable(in profile: SizeProfile) -> Bool {
         guard !variants.isEmpty else { return true }
         return variants.contains { $0.available && profile.matches($0) }
+    }
+
+    /// Everything the feed filter asks of one item: is it in a size I wear, and is it cut
+    /// for me. Kept together so the two halves can't drift apart between the feed, the
+    /// brand page and anywhere else that filters.
+    func passes(_ profile: SizeProfile) -> Bool {
+        profile.allows(gender) && isAvailable(in: profile)
     }
 
     /// Sizes from this restock that the user actually wears.

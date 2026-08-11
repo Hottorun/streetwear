@@ -163,6 +163,106 @@ struct RouteTests {
             }
         }
     }
+
+    /// The regression that made the whole size feature inert in the app's default mode.
+    ///
+    /// The feed used to send `availableInMySize` and nothing else. With no variants on the
+    /// client, `isAvailable(in:)` returns true for everything — so the "my size" filter
+    /// matched every item — and the size run had nothing to print, so the app's signature
+    /// element rendered as blank space on every product that wasn't a restock.
+    @Test("The feed ships variants and a gender, not just a badge")
+    func feedCarriesVariantsAndGender() async throws {
+        try await withServer { app in
+            let brand = BrandModel(
+                name: "Kith", slug: "kith.com", website: "https://kith.com",
+                instagramHandle: nil, usesGeneratedName: false
+            )
+            try await brand.save(on: app.db)
+            let brandID = try brand.requireID()
+
+            let product = ProductModel(
+                brandID: brandID,
+                sourceID: nil,
+                item: FetchedItem(
+                    externalID: "shopify:1",
+                    title: "Nathan Cargo Pant",
+                    publishedAt: Date(),
+                    kind: .product,
+                    tags: ["mens"]
+                )
+            )
+            try await product.save(on: app.db)
+            let productID = try product.requireID()
+            for (size, available) in [("S", true), ("M", false), ("L", true)] {
+                try await VariantModel(
+                    productID: productID,
+                    info: VariantInfo(
+                        id: "v-\(size)", title: size, available: available,
+                        size: size, color: "Black"
+                    )
+                ).save(on: app.db)
+            }
+            try await EventModel(brandID: brandID, productID: productID, kind: .product)
+                .save(on: app.db)
+
+            var token = ""
+            try await app.testing().test(.POST, "v1/devices", beforeRequest: { req in
+                try req.content.encode(RegisterDevice())
+            }, afterResponse: { res async throws in
+                token = try res.content.decode(DeviceResponse.self).token
+            })
+            let auth = HTTPHeaders([("Authorization", "Bearer \(token)")])
+            try await app.testing().test(.POST, "v1/follows", headers: auth, beforeRequest: { req in
+                try req.content.encode(FollowBrand(brandID: brandID))
+            }, afterResponse: { _ in })
+
+            try await app.testing().test(.GET, "v1/feed", headers: auth) { res async throws in
+                let item = try #require(try res.content.decode(FeedResponse.self).items.first)
+
+                let variants = try #require(item.variants)
+                #expect(variants.count == 3)
+                #expect(variants.filter(\.available).map(\.displaySize) == ["S", "L"])
+                #expect(item.itemGender == .mens)
+            }
+        }
+    }
+
+    /// The gender preference is stored in discrete columns rather than an encoded blob,
+    /// so a new field on `SizeProfile` is not automatically a new field in the row — it
+    /// round-trips through the accessor and is silently dropped. This catches that.
+    @Test("A gender preference survives a round trip through the database")
+    func genderPreferencePersists() async throws {
+        try await withServer { app in
+            var token = ""
+            try await app.testing().test(.POST, "v1/devices", beforeRequest: { req in
+                try req.content.encode(RegisterDevice(
+                    sizes: SizePayload(apparel: ["M"], shoe: [], gender: "mens")
+                ))
+            }, afterResponse: { res async throws in
+                token = try res.content.decode(DeviceResponse.self).token
+            })
+
+            let device = try #require(
+                try await DeviceModel.query(on: app.db).filter(\.$authToken == token).first()
+            )
+            let user = try await device.$user.get(on: app.db)
+            #expect(user.sizeProfile.gender == .mens)
+
+            // And again through the update path, which is what a settings change uses.
+            try await app.testing().test(
+                .PATCH, "v1/devices/me",
+                headers: HTTPHeaders([("Authorization", "Bearer \(token)")]),
+                beforeRequest: { req in
+                    try req.content.encode(UpdateDevice(
+                        sizes: SizePayload(apparel: ["M"], shoe: [], gender: "womens")
+                    ))
+                }, afterResponse: { _ in }
+            )
+
+            let reloaded = try #require(try await UserModel.find(user.id, on: app.db))
+            #expect(reloaded.sizeProfile.gender == .womens)
+        }
+    }
 }
 
 @Suite("Poller")
@@ -675,6 +775,72 @@ struct NotifierTests {
         }
     }
 
+    /// Being woken at 7am for a women's hoodie is worse than merely seeing one in the
+    /// feed, so the gender filter has to apply here first — and to every kind, not just
+    /// to restocks the way size targeting does.
+    @Test("A push respects the follower's gender preference")
+    func pushIsGenderTargeted() async throws {
+        try await withServer { app in
+            var menswear = SizeProfile()
+            menswear.gender = .mens
+            let (brandID, _, _) = try await seed(app, profile: menswear)
+
+            let product = ProductModel(
+                brandID: brandID,
+                sourceID: nil,
+                item: FetchedItem(
+                    externalID: "shopify:1",
+                    title: "Cargo Pant",
+                    linkURL: URL(string: "https://kith.com/products/womens-cargo-pant"),
+                    publishedAt: Date(),
+                    kind: .product,
+                    tags: ["womens"]
+                )
+            )
+            try await product.save(on: app.db)
+            try await EventModel(
+                brandID: brandID, productID: try product.requireID(), kind: .product, sizes: []
+            ).save(on: app.db)
+
+            let sender = RecordingSender()
+            let result = await Notifier(app: app, sender: sender).dispatch()
+
+            #expect(result.sent == 0)
+            #expect(sender.sent.isEmpty)
+        }
+    }
+
+    /// The other half, and the one that matters more: a brand whose tags say nothing must
+    /// still get through, or the filter deletes most of the catalogue.
+    @Test("An unclassifiable product is still pushed to a filtered follower")
+    func unknownGenderStillPushes() async throws {
+        try await withServer { app in
+            var menswear = SizeProfile()
+            menswear.gender = .mens
+            let (brandID, _, _) = try await seed(app, profile: menswear)
+
+            // Billionaire Boys Club's real tags: nothing here says who it is for.
+            let product = ProductModel(
+                brandID: brandID,
+                sourceID: nil,
+                item: FetchedItem(
+                    externalID: "shopify:2",
+                    title: "Arch Logo Hoodie",
+                    publishedAt: Date(),
+                    kind: .product,
+                    tags: ["2026", "F26", "Final Sale"]
+                )
+            )
+            try await product.save(on: app.db)
+            try await EventModel(
+                brandID: brandID, productID: try product.requireID(), kind: .product, sizes: []
+            ).save(on: app.db)
+
+            let sender = RecordingSender()
+            #expect(await Notifier(app: app, sender: sender).dispatch().sent == 1)
+        }
+    }
+
     /// The rule that keeps this app installable: a brand dropping a collection writes
     /// hundreds of events in one poll, and that must be one notification.
     @Test("A batch of events is one push per device, not one per event")
@@ -926,6 +1092,562 @@ struct RetentionTests {
             #expect(result.products == 1)
             #expect(try await ProductModel.query(on: app.db).count() == 0)
             #expect(try await VariantModel.query(on: app.db).count() == 0, "orphaned variants must go too")
+        }
+    }
+}
+
+@Suite("Discovery")
+struct DiscoveryTests {
+    private func brand(_ app: Application, name: String, slug: String) async throws -> UUID {
+        let brand = BrandModel(
+            name: name, slug: slug, website: "https://\(slug)",
+            instagramHandle: nil, usesGeneratedName: false
+        )
+        try await brand.save(on: app.db)
+        return try brand.requireID()
+    }
+
+    private func register(_ app: Application) async throws -> (token: String, headers: HTTPHeaders) {
+        var token = ""
+        try await app.testing().test(.POST, "v1/devices", beforeRequest: { req in
+            try req.content.encode(RegisterDevice())
+        }, afterResponse: { res async throws in
+            token = try res.content.decode(DeviceResponse.self).token
+        })
+        return (token, HTTPHeaders([("Authorization", "Bearer \(token)")]))
+    }
+
+    /// One field takes a name or a link, because a person adding a brand has one of the
+    /// two in hand and asking which is a question with no interesting answer.
+    @Test("Search matches a name or a pasted URL", arguments: [
+        "kith", "KITH", "kith.com", "https://www.kith.com/products/some-tee"
+    ])
+    func searchMatchesNameOrURL(query: String) async throws {
+        try await withServer { app in
+            _ = try await brand(app, name: "Kith", slug: "kith.com")
+            _ = try await brand(app, name: "Noah", slug: "noahny.com")
+
+            try await app.testing().test(.GET, "v1/brands?q=\(query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed)!)") { res async throws in
+                let found = try res.content.decode([BrandDTO].self)
+                #expect(found.map(\.name) == ["Kith"], "\(query) should find Kith and only Kith")
+            }
+        }
+    }
+
+    /// The whole point of a shared catalog: the second person to add Kith follows the
+    /// existing row rather than creating a duplicate.
+    @Test("A URL for a brand already in the catalog finds it rather than proposing a new one")
+    func searchDedupesByHost() async throws {
+        try await withServer { app in
+            _ = try await brand(app, name: "Billionaire Boys Club", slug: "bbcicecream.com")
+
+            try await app.testing().test(.GET, "v1/brands?q=bbcicecream.com") { res async throws in
+                #expect(try res.content.decode([BrandDTO].self).count == 1)
+            }
+        }
+    }
+
+    @Test("Popular brands are ranked by follower count")
+    func popularIsRanked() async throws {
+        try await withServer { app in
+            let quiet = try await brand(app, name: "Quiet", slug: "quiet.com")
+            let loud = try await brand(app, name: "Loud", slug: "loud.com")
+
+            // Three followers for one, one for the other.
+            for _ in 0..<3 {
+                let user = UserModel()
+                try await user.save(on: app.db)
+                try await FollowModel(userID: try user.requireID(), brandID: loud).save(on: app.db)
+            }
+            let single = UserModel()
+            try await single.save(on: app.db)
+            try await FollowModel(userID: try single.requireID(), brandID: quiet).save(on: app.db)
+
+            let auth = try await register(app).headers
+            try await app.testing().test(.GET, "v1/brands/popular", headers: auth) { res async throws in
+                let popular = try res.content.decode([PopularBrand].self)
+                #expect(popular.map(\.brand.name) == ["Loud", "Quiet"])
+                #expect(popular.first?.followers == 3)
+            }
+        }
+    }
+
+    /// The one thing this list must never do. Recommending someone a brand they already
+    /// watch reads as broken, and it is the most likely thing to happen by accident
+    /// because their own follows are what make a brand popular in the first place.
+    @Test("Your own brands are never recommended back to you")
+    func popularExcludesOwnFollows() async throws {
+        try await withServer { app in
+            let mine = try await brand(app, name: "Mine", slug: "mine.com")
+            let theirs = try await brand(app, name: "Theirs", slug: "theirs.com")
+
+            let auth = try await register(app)
+            let device = try #require(
+                try await DeviceModel.query(on: app.db).filter(\.$authToken == auth.token).first()
+            )
+            try await FollowModel(userID: device.$user.id, brandID: mine).save(on: app.db)
+
+            let other = UserModel()
+            try await other.save(on: app.db)
+            try await FollowModel(userID: try other.requireID(), brandID: theirs).save(on: app.db)
+
+            try await app.testing().test(.GET, "v1/brands/popular", headers: auth.headers) { res async throws in
+                let popular = try res.content.decode([PopularBrand].self)
+                #expect(popular.map(\.brand.name) == ["Theirs"])
+            }
+        }
+    }
+
+    /// A recommendation without clothes in it asks someone to judge a wordmark.
+    @Test("A recommendation carries a few recent images")
+    func popularCarriesPreviews() async throws {
+        try await withServer { app in
+            let brandID = try await brand(app, name: "Kith", slug: "kith.com")
+            for index in 0..<4 {
+                let product = ProductModel(
+                    brandID: brandID,
+                    sourceID: nil,
+                    item: FetchedItem(
+                        externalID: "shopify:\(index)",
+                        title: "Item \(index)",
+                        imageURLStrings: ["https://cdn.shopify.com/\(index).jpg"],
+                        publishedAt: Date(),
+                        kind: .product
+                    )
+                )
+                try await product.save(on: app.db)
+            }
+
+            let follower = UserModel()
+            try await follower.save(on: app.db)
+            try await FollowModel(userID: try follower.requireID(), brandID: brandID).save(on: app.db)
+
+            let auth = try await register(app).headers
+            try await app.testing().test(.GET, "v1/brands/popular", headers: auth) { res async throws in
+                let popular = try res.content.decode([PopularBrand].self)
+                #expect(popular.first?.previewImageURLs.count == 3, "capped at three")
+            }
+        }
+    }
+
+    @Test("Popular refuses anonymous callers")
+    func popularNeedsAuth() async throws {
+        try await withServer { app in
+            try await app.testing().test(.GET, "v1/brands/popular") { res async in
+                #expect(res.status == .unauthorized)
+            }
+        }
+    }
+}
+
+@Suite("Stock watches")
+struct WatchTests {
+    /// A brand, a product with variants, and a user following it with a device token.
+    private func seed(
+        _ app: Application,
+        variants: [(size: String, color: String, available: Bool)]
+    ) async throws -> (brandID: UUID, productID: UUID, userID: UUID) {
+        let brand = BrandModel(
+            name: "Kith", slug: "kith.com", website: "https://kith.com",
+            instagramHandle: nil, usesGeneratedName: false
+        )
+        try await brand.save(on: app.db)
+        let brandID = try brand.requireID()
+
+        let product = ProductModel(
+            brandID: brandID,
+            sourceID: nil,
+            item: FetchedItem(
+                externalID: "shopify:1",
+                title: "Nathan Cargo Pant",
+                publishedAt: Date(),
+                kind: .product
+            )
+        )
+        try await product.save(on: app.db)
+        let productID = try product.requireID()
+
+        for variant in variants {
+            try await VariantModel(
+                productID: productID,
+                info: VariantInfo(
+                    id: "\(variant.color)-\(variant.size)",
+                    title: "\(variant.color) / \(variant.size)",
+                    available: variant.available,
+                    size: variant.size,
+                    color: variant.color
+                )
+            ).save(on: app.db)
+        }
+
+        let user = UserModel()
+        try await user.save(on: app.db)
+        let userID = try user.requireID()
+        try await DeviceModel(userID: userID, apnsToken: "token-a", environment: "sandbox", locale: nil)
+            .save(on: app.db)
+        try await FollowModel(userID: userID, brandID: brandID).save(on: app.db)
+
+        return (brandID, productID, userID)
+    }
+
+    @Test("A watch fires when its exact size and colour come back")
+    func firesOnMatch() async throws {
+        try await withServer { app in
+            let seeded = try await seed(app, variants: [
+                ("M", "Black", true), ("L", "Black", false)
+            ])
+            let watch = WatchModel(
+                userID: seeded.userID, brandID: seeded.brandID, productID: seeded.productID,
+                size: "M", color: "Black"
+            )
+            try await watch.save(on: app.db)
+            try await EventModel(
+                brandID: seeded.brandID, productID: seeded.productID, kind: .restock, sizes: ["M"]
+            ).save(on: app.db)
+
+            let sender = RecordingSender()
+            let result = await Notifier(app: app, sender: sender).dispatch()
+
+            #expect(result.sent == 1)
+            #expect(sender.sent.first?.body == "Back in M — Nathan Cargo Pant")
+
+            let reloaded = try #require(try await WatchModel.find(watch.requireID(), on: app.db))
+            #expect(reloaded.firedAt != nil)
+            #expect(reloaded.firedSizes == ["M"])
+        }
+    }
+
+    /// The reason a watch is pinned at all. Watching "this product" on a garment that runs
+    /// XS–XXL in four colourways fires on somebody else's size and trains you to ignore it.
+    @Test("A watch does not fire on a size or colour it didn't ask for")
+    func ignoresOtherVariants() async throws {
+        try await withServer { app in
+            let seeded = try await seed(app, variants: [
+                ("M", "Black", false), ("XL", "Black", true), ("M", "Sand", true)
+            ])
+            try await WatchModel(
+                userID: seeded.userID, brandID: seeded.brandID, productID: seeded.productID,
+                size: "M", color: "Black"
+            ).save(on: app.db)
+            try await EventModel(
+                brandID: seeded.brandID, productID: seeded.productID, kind: .restock, sizes: ["XL"]
+            ).save(on: app.db)
+
+            let sender = RecordingSender()
+            await Notifier(app: app, sender: sender).dispatch()
+
+            // The generic brand summary may still go out; what must not happen is a watch
+            // alert claiming the watched variant is back.
+            #expect(!sender.sent.contains { $0.body.contains("Back in M") })
+        }
+    }
+
+    @Test("An unpinned watch fires on anything coming back")
+    func anySizeAnyColor() async throws {
+        try await withServer { app in
+            let seeded = try await seed(app, variants: [("XL", "Sand", true)])
+            try await WatchModel(
+                userID: seeded.userID, brandID: seeded.brandID, productID: seeded.productID,
+                size: nil, color: nil
+            ).save(on: app.db)
+            try await EventModel(
+                brandID: seeded.brandID, productID: seeded.productID, kind: .restock, sizes: ["XL"]
+            ).save(on: app.db)
+
+            let sender = RecordingSender()
+            #expect(await Notifier(app: app, sender: sender).dispatch().sent == 1)
+            #expect(sender.sent.first?.body == "Back in XL — Nathan Cargo Pant")
+        }
+    }
+
+    /// `fired_at` is the ledger, in the row for the same reason `events.notified_at` is:
+    /// a restart or a second pass must not re-fire what already went out.
+    @Test("A fired watch never fires again")
+    func firesOnlyOnce() async throws {
+        try await withServer { app in
+            let seeded = try await seed(app, variants: [("M", "Black", true)])
+            try await WatchModel(
+                userID: seeded.userID, brandID: seeded.brandID, productID: seeded.productID,
+                size: "M", color: "Black"
+            ).save(on: app.db)
+            try await EventModel(
+                brandID: seeded.brandID, productID: seeded.productID, kind: .restock, sizes: ["M"]
+            ).save(on: app.db)
+
+            let watch = try #require(try await WatchModel.query(on: app.db).first())
+            let first = RecordingSender()
+            #expect(await Notifier(app: app, sender: first).dispatch().sent == 1)
+            let firedAt = try #require(
+                try await WatchModel.find(watch.requireID(), on: app.db)?.firedAt
+            )
+
+            // A second restock of the same product, with the watch already spent.
+            try await EventModel(
+                brandID: seeded.brandID, productID: seeded.productID, kind: .restock, sizes: ["M"]
+            ).save(on: app.db)
+
+            let second = RecordingSender()
+            await Notifier(app: app, sender: second).dispatch()
+
+            // The ordinary brand summary is still allowed through — a restock is real news
+            // for a follower. What must not happen is a *watch* alert, and the two are
+            // told apart by the collapse id: a summary collapses onto the brand, a watch
+            // deliberately does not.
+            #expect(!second.sent.contains { $0.collapseID == nil },
+                    "the spent watch must not fire a second time")
+            #expect(
+                try await WatchModel.find(watch.requireID(), on: app.db)?.firedAt == firedAt,
+                "the ledger entry must not be rewritten"
+            )
+        }
+    }
+
+    /// A watch is a much stronger statement than a follow. When both would fire, the user
+    /// gets the specific one — not the item buried inside "3 restocks", and not both.
+    @Test("A watch alert replaces the generic brand summary rather than doubling it")
+    func watchSuppressesSummary() async throws {
+        try await withServer { app in
+            let seeded = try await seed(app, variants: [("M", "Black", true)])
+            try await WatchModel(
+                userID: seeded.userID, brandID: seeded.brandID, productID: seeded.productID,
+                size: "M", color: "Black"
+            ).save(on: app.db)
+            try await EventModel(
+                brandID: seeded.brandID, productID: seeded.productID, kind: .restock, sizes: ["M"]
+            ).save(on: app.db)
+            // Plenty of other noise from the same brand in the same pass.
+            for index in 0..<5 {
+                try await EventModel(
+                    brandID: seeded.brandID, productID: nil, kind: .product, sizes: []
+                ).save(on: app.db)
+                _ = index
+            }
+
+            let sender = RecordingSender()
+            let result = await Notifier(app: app, sender: sender).dispatch()
+
+            #expect(result.sent == 1, "one push, and it should be the watch")
+            #expect(sender.sent.first?.body.contains("Nathan Cargo Pant") == true)
+        }
+    }
+
+    /// A user with no token must not bank a watch that fires the instant they register
+    /// one, months after the restock sold out.
+    @Test("A watch with no reachable device is still spent")
+    func firesWithoutADevice() async throws {
+        try await withServer { app in
+            let seeded = try await seed(app, variants: [("M", "Black", true)])
+            try await DeviceModel.query(on: app.db).delete()
+
+            let watch = WatchModel(
+                userID: seeded.userID, brandID: seeded.brandID, productID: seeded.productID,
+                size: "M", color: "Black"
+            )
+            try await watch.save(on: app.db)
+            try await EventModel(
+                brandID: seeded.brandID, productID: seeded.productID, kind: .restock, sizes: ["M"]
+            ).save(on: app.db)
+
+            await Notifier(app: app, sender: RecordingSender()).dispatch()
+
+            let reloaded = try #require(try await WatchModel.find(watch.requireID(), on: app.db))
+            #expect(reloaded.firedAt != nil)
+        }
+    }
+
+    @Test("Creating a watch is idempotent and implies a follow")
+    func createIsIdempotent() async throws {
+        try await withServer { app in
+            let seeded = try await seed(app, variants: [("M", "Black", false)])
+            try await FollowModel.query(on: app.db).delete()
+
+            var token = ""
+            try await app.testing().test(.POST, "v1/devices", beforeRequest: { req in
+                try req.content.encode(RegisterDevice())
+            }, afterResponse: { res async throws in
+                token = try res.content.decode(DeviceResponse.self).token
+            })
+            let auth = HTTPHeaders([("Authorization", "Bearer \(token)")])
+
+            let body = CreateWatch(
+                brandID: seeded.brandID, productExternalID: "shopify:1", size: "M", color: "Black"
+            )
+            var firstID: UUID?
+            for _ in 0..<2 {
+                try await app.testing().test(.POST, "v1/watches", headers: auth, beforeRequest: { req in
+                    try req.content.encode(body)
+                }, afterResponse: { res async throws in
+                    let dto = try res.content.decode(WatchDTO.self)
+                    #expect(dto.productExternalID == "shopify:1")
+                    if let firstID { #expect(dto.id == firstID) } else { firstID = dto.id }
+                })
+            }
+
+            #expect(try await WatchModel.query(on: app.db).count() == 1, "a double tap is not two watches")
+            // Watching implies following, or nothing ever polls the product.
+            #expect(try await FollowModel.query(on: app.db).count() == 1)
+        }
+    }
+
+    @Test("A watch cannot be deleted by someone who doesn't own it")
+    func deleteIsScopedToOwner() async throws {
+        try await withServer { app in
+            let seeded = try await seed(app, variants: [("M", "Black", false)])
+            let watch = WatchModel(
+                userID: seeded.userID, brandID: seeded.brandID, productID: seeded.productID,
+                size: "M", color: "Black"
+            )
+            try await watch.save(on: app.db)
+
+            // A different device, i.e. a different user.
+            var token = ""
+            try await app.testing().test(.POST, "v1/devices", beforeRequest: { req in
+                try req.content.encode(RegisterDevice())
+            }, afterResponse: { res async throws in
+                token = try res.content.decode(DeviceResponse.self).token
+            })
+
+            try await app.testing().test(
+                .DELETE, "v1/watches/\(try watch.requireID())",
+                headers: HTTPHeaders([("Authorization", "Bearer \(token)")])
+            ) { res async in
+                #expect(res.status == .noContent)
+            }
+
+            #expect(try await WatchModel.query(on: app.db).count() == 1,
+                    "someone else's watch must survive")
+        }
+    }
+}
+
+/// The probe exists to answer "does push actually work" without waiting for a storefront
+/// to restock something. These check it reports the *reason* rather than a count, since
+/// "sent 0" is true for three unrelated failures and the whole point is telling them apart.
+@Suite("Push probe")
+struct ProbeTests {
+    /// One device, optionally holding a token. No follows and no events: the probe must
+    /// not need either.
+    private func device(
+        _ app: Application,
+        apnsToken: String?,
+        environment: String = "sandbox"
+    ) async throws -> DeviceModel {
+        let user = UserModel()
+        try await user.save(on: app.db)
+        let device = DeviceModel(
+            userID: try user.requireID(),
+            apnsToken: apnsToken,
+            environment: environment,
+            locale: nil
+        )
+        try await device.save(on: app.db)
+        return device
+    }
+
+    @Test("A registered device with a token receives the test push")
+    func sendsToRegisteredDevice() async throws {
+        try await withServer { app in
+            _ = try await device(app, apnsToken: "token-a")
+
+            let sender = RecordingSender()
+            let result = await Notifier(app: app, sender: sender).probe()
+
+            #expect(result.sent == 1)
+            #expect(sender.sent.map(\.deviceToken) == ["token-a"])
+            #expect(sender.sent.first?.collapseID == nil,
+                    "repeated tests must each be visible, not collapse onto each other")
+        }
+    }
+
+    /// The failure this whole feature was built to diagnose. The app shipped without an
+    /// `aps-environment` entitlement, so iOS refused to issue a token, so every device row
+    /// carried a null one — and `/status` still reported `apnsConfigured: true` with a
+    /// running poller and a filling feed.
+    @Test("A device that never registered a token is reported as such, not as a failure")
+    func distinguishesMissingTokenFromFailure() async throws {
+        try await withServer { app in
+            _ = try await device(app, apnsToken: nil)
+
+            let sender = RecordingSender()
+            let result = await Notifier(app: app, sender: sender).probe()
+
+            #expect(result.sent == 0)
+            #expect(result.withToken == 0)
+            #expect(result.devices.map(\.outcome) == [.noToken])
+            #expect(sender.sent.isEmpty)
+            #expect(result.summary.contains("aps-environment"),
+                    "the summary is the whole deliverable — it must name the actual cause")
+        }
+    }
+
+    @Test("No APNs key is reported distinctly from having no devices")
+    func distinguishesUnconfiguredFromEmpty() async throws {
+        try await withServer { app in
+            _ = try await device(app, apnsToken: "token-a")
+
+            let unconfigured = await Notifier(app: app, sender: nil).probe()
+            #expect(unconfigured.senderConfigured == false)
+            #expect(unconfigured.summary.contains("apns not configured"))
+
+            // Same summary shape, different cause: a key exists but nobody is registered.
+            try await DeviceModel.query(on: app.db).delete()
+            let empty = await Notifier(app: app, sender: RecordingSender()).probe()
+            #expect(empty.senderConfigured == true)
+            #expect(empty.summary.contains("no devices registered"))
+        }
+    }
+
+    @Test("A token Apple rejects is forgotten, exactly as in a real pass")
+    func prunesDeadToken() async throws {
+        try await withServer { app in
+            let row = try await device(app, apnsToken: "dead")
+
+            let sender = RecordingSender()
+            sender.markDead("dead")
+            let result = await Notifier(app: app, sender: sender).probe()
+
+            #expect(result.devices.map(\.outcome) == [.invalidToken])
+            let reloaded = try await DeviceModel.find(row.requireID(), on: app.db)
+            #expect(reloaded?.apnsToken == nil, "a dead token must not be retried forever")
+        }
+    }
+
+    @Test("Probing one device leaves the others alone")
+    func targetsASingleDevice() async throws {
+        try await withServer { app in
+            let wanted = try await device(app, apnsToken: "wanted")
+            _ = try await device(app, apnsToken: "other")
+
+            let sender = RecordingSender()
+            let result = await Notifier(app: app, sender: sender)
+                .probe(deviceID: try wanted.requireID())
+
+            #expect(result.devices.count == 1)
+            #expect(sender.sent.map(\.deviceToken) == ["wanted"])
+        }
+    }
+
+    /// A probe must be runnable at any time, including mid-drop, without consequence.
+    @Test("Probing writes nothing to the push ledger")
+    func leavesPendingEventsAlone() async throws {
+        try await withServer { app in
+            _ = try await device(app, apnsToken: "token-a")
+
+            let brand = BrandModel(
+                name: "Kith", slug: "kith.com", website: "https://kith.com",
+                instagramHandle: nil, usesGeneratedName: false
+            )
+            try await brand.save(on: app.db)
+            let event = EventModel(
+                brandID: try brand.requireID(), productID: nil, kind: .product, sizes: []
+            )
+            try await event.save(on: app.db)
+
+            _ = await Notifier(app: app, sender: RecordingSender()).probe()
+
+            let reloaded = try await EventModel.find(event.requireID(), on: app.db)
+            #expect(reloaded?.notifiedAt == nil,
+                    "a test push must never mark a real event as already notified")
         }
     }
 }

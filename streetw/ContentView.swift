@@ -24,6 +24,17 @@ struct ContentView: View {
     /// someone who intends to add one brand by hand shouldn't be asked twice.
     @AppStorage("didOfferStarterPack") private var didOfferStarterPack = false
 
+    /// Latched, **not** derived from `brands.isEmpty`.
+    ///
+    /// This used to be `.constant(brands.isEmpty && !didOfferStarterPack)`, which meant
+    /// onboarding dismissed itself the instant it added a brand — its own side effect
+    /// flipped the condition holding it open, and the alerts step was never reachable
+    /// because the flow was torn down before it could get there.
+    @State private var isOnboarding = false
+    /// The decision is made once per launch. Without this, a returning user in server
+    /// mode would be shown onboarding for the moment before their follows arrive.
+    @State private var hasDecidedOnboarding = false
+
     var body: some View {
         TabView(selection: $selection) {
             Tab("Feed", systemImage: "square.stack", value: "feed") {
@@ -45,8 +56,14 @@ struct ContentView: View {
         // Sync at the root, not in FeedView: a configured server should be live
         // whichever tab the app happens to open on.
         .task(id: settings.baseURLString) {
-            guard settings.isConfigured, remote.lastSyncedAt == nil else { return }
-            await remote.sync(sizes: sizes.profile)
+            if settings.isConfigured, remote.lastSyncedAt == nil {
+                await remote.sync(sizes: sizes.profile)
+            }
+            // Only after that sync has had its chance to populate `brands`, so a
+            // returning user isn't shown a starter pack while their follows are in
+            // flight. In standalone mode there is nothing to wait for and this is
+            // immediate.
+            decideOnboarding()
         }
         // Also here, not only on `scenePhase`: `onChange` fires on *changes*, and a cold
         // launch has no previous phase to change from — so anything shared while the app
@@ -56,9 +73,18 @@ struct ContentView: View {
         // Only when there is genuinely nothing to show. A returning user who has removed
         // all their brands is a deliberate act, which is what `didOfferStarterPack`
         // remembers.
-        .fullScreenCover(isPresented: .constant(brands.isEmpty && !didOfferStarterPack)) {
-            OnboardingView { didOfferStarterPack = true }
+        .fullScreenCover(isPresented: $isOnboarding) {
+            OnboardingView {
+                didOfferStarterPack = true
+                isOnboarding = false
+            }
         }
+    }
+
+    private func decideOnboarding() {
+        guard !hasDecidedOnboarding else { return }
+        hasDecidedOnboarding = true
+        isOnboarding = brands.isEmpty && !didOfferStarterPack
     }
 }
 

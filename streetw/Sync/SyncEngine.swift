@@ -52,6 +52,10 @@ final class SyncEngine {
 
         prune(brands)
         try? context.save()
+
+        // After the save, so a watch that fires sees committed variant data — and after
+        // pruning, so it can't fire on a product that is about to be dropped.
+        await WatchNotifier.run(in: context)
     }
 
     func sync(brand: Brand) async {
@@ -172,6 +176,10 @@ final class SyncEngine {
             variants: item.variants
         )
         update.releaseDate = item.releaseDate
+        // Classified at write time rather than on every read: it is pure text work over
+        // fields that never change after insert, and the feed re-evaluates its filter on
+        // every render pass.
+        update.refreshGender()
         update.isSeen = markSeen
         context.insert(update)
         if !markSeen { newItemCount += 1 }
@@ -219,6 +227,11 @@ final class SyncEngine {
         update.priceText = item.priceText
         if update.imageURLStrings.isEmpty { update.imageURLStrings = item.imageURLStrings }
         if update.tags.isEmpty { update.tags = item.tags }
+        // Re-derived whenever the stored answer came from an older revision of the
+        // classifier, which also covers rows written before it existed at all. Without
+        // this an improvement to the rules would only ever reach products discovered
+        // after the update.
+        if update.genderVersion != GenderClassifier.version { update.refreshGender() }
     }
 
     // MARK: - Retention

@@ -10,6 +10,13 @@
 // The asymmetry is the point: the frequent, decisionless action is instant, and the rare
 // one that needs a choice gets a choice. Both name what they'll do under your thumb while
 // you drag, so neither has to be explained.
+//
+// **The card moves as one piece, but only the caption listens.** Product photographs page
+// horizontally now, and that is the same gesture. Attaching the drag to the whole card
+// would mean the photograph could never page; attaching it to nothing would lose the
+// actions. So the modifier offsets the entire card — it has to, or the hint appears
+// beside a card that hasn't moved — while `quickSaveHandle()` marks the region that
+// actually recognises the drag. In practice that is everything below the image.
 
 import SwiftData
 import SwiftUI
@@ -46,33 +53,45 @@ struct QuickSaveModifier: ViewModifier {
 
     func body(content: Content) -> some View {
         content
+            .environment(\.quickSaveDrag, drag)
             .offset(x: offset)
             .background(alignment: offset > 0 ? .leading : .trailing) { hint }
             .animation(.interactiveSpring(duration: 0.25), value: offset)
-            .gesture(
-                DragGesture(minimumDistance: 18)
-                    .onChanged { value in
-                        // Horizontal intent only. Without this the vertical scroll and
-                        // the card fight each other and neither feels right.
-                        guard abs(value.translation.width) > abs(value.translation.height) else { return }
-                        // Resists past the threshold rather than following the finger
-                        // forever, so the commit point is felt instead of guessed.
-                        let raw = value.translation.width
-                        offset = abs(raw) <= Self.threshold
-                            ? raw
-                            : raw / abs(raw) * (Self.threshold + (abs(raw) - Self.threshold) / 4)
-                    }
-                    .onEnded { _ in
-                        if abs(offset) >= Self.threshold, let pending {
-                            commit(pending)
-                        }
-                        offset = 0
-                    }
-            )
             .sensoryFeedback(.success, trigger: didMarkRead)
             .sheet(isPresented: $isChoosingBoard) {
                 BoardPicker(update: update)
                     .presentationDetents([.medium])
+            }
+    }
+
+    /// Handed down the view tree rather than attached here, so the caller decides which
+    /// part of the card is draggable. Attaching it at this level would swallow the
+    /// photograph's paging gesture.
+    ///
+    /// Type-erased to `AnyGesture<Void>` because it travels through the environment,
+    /// which needs a concrete type; the value it produces is never read.
+    private var drag: AnyGesture<Void> {
+        AnyGesture(rawDrag.map { _ in () })
+    }
+
+    private var rawDrag: some Gesture {
+        DragGesture(minimumDistance: 18)
+            .onChanged { value in
+                // Horizontal intent only. Without this the vertical scroll and
+                // the card fight each other and neither feels right.
+                guard abs(value.translation.width) > abs(value.translation.height) else { return }
+                // Resists past the threshold rather than following the finger
+                // forever, so the commit point is felt instead of guessed.
+                let raw = value.translation.width
+                offset = abs(raw) <= Self.threshold
+                    ? raw
+                    : raw / abs(raw) * (Self.threshold + (abs(raw) - Self.threshold) / 4)
+            }
+            .onEnded { _ in
+                if abs(offset) >= Self.threshold, let pending {
+                    commit(pending)
+                }
+                offset = 0
             }
     }
 
@@ -225,9 +244,48 @@ struct BoardPicker: View {
     }
 }
 
+/// Carries the card's drag gesture down to whichever subview should recognise it.
+///
+/// An environment value rather than a parameter because the handle is usually several
+/// layers below the modifier — inside a caption stack, inside a card — and threading a
+/// gesture through every intermediate view's signature would be worse than this.
+private struct QuickSaveDragKey: EnvironmentKey {
+    static let defaultValue: AnyGesture<Void>? = nil
+}
+
+extension EnvironmentValues {
+    var quickSaveDrag: AnyGesture<Void>? {
+        get { self[QuickSaveDragKey.self] }
+        set { self[QuickSaveDragKey.self] = newValue }
+    }
+}
+
+private struct QuickSaveHandle: ViewModifier {
+    @Environment(\.quickSaveDrag) private var drag
+
+    func body(content: Content) -> some View {
+        if let drag {
+            content.gesture(drag)
+        } else {
+            // No enclosing `quickSave` — the brand page's gallery cards before they were
+            // given one, and previews. The view is simply undraggable rather than broken.
+            content
+        }
+    }
+}
+
 extension View {
     /// Swipe right to mark read, left to choose a board.
+    ///
+    /// Pair with `quickSaveHandle()` on the region that should recognise the drag; without
+    /// one the card renders normally and simply isn't swipeable.
     func quickSave(_ update: BrandUpdate) -> some View {
         modifier(QuickSaveModifier(update: update))
+    }
+
+    /// Marks this view as the part of the card that recognises the quick-save drag.
+    /// Everything outside it — notably the photograph — keeps its own gestures.
+    func quickSaveHandle() -> some View {
+        modifier(QuickSaveHandle())
     }
 }

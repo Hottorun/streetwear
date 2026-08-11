@@ -128,15 +128,15 @@ struct BrandMonogram: View {
             .frame(width: 44, height: 44)
             .overlay {
                 if let logoURL {
-                    AsyncImage(url: logoURL, transaction: Transaction(animation: .easeIn(duration: 0.2))) { phase in
-                        switch phase {
-                        case .success(let image):
-                            image.resizable().scaledToFit().padding(5)
-                        case .failure:
-                            monogram
-                        default:
-                            Color.clear
-                        }
+                    // `BrandMark` has already asked the CDN for 180px, so this must not
+                    // re-request a width and undo that — hence the explicit size rather
+                    // than the 44pt this is drawn at.
+                    CachedImage(url: logoURL, width: 60) { image in
+                        image.resizable().scaledToFit().padding(5)
+                    } placeholder: {
+                        Color.clear
+                    } failure: {
+                        monogram
                     }
                 } else {
                     monogram

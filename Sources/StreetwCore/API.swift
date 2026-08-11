@@ -11,19 +11,24 @@ import Foundation
 
 public struct SizePayload: Codable, Sendable, Hashable {
     public var apparel: [String]
+    /// Always US tokens — `SizeProfile` stores them canonically, whatever scale the user
+    /// reads them in, so this needs no scale of its own.
     public var shoe: [String]
-    public var includeOneSize: Bool?
+    /// Which genders the user wants pushed. Held server-side for the same reason the
+    /// sizes are: the server decides whether a drop is news for this person, and it can
+    /// only do that if it knows. Optional for back-compatibility.
+    public var gender: String?
 
-    public init(apparel: [String], shoe: [String], includeOneSize: Bool? = nil) {
+    public init(apparel: [String], shoe: [String], gender: String? = nil) {
         self.apparel = apparel
         self.shoe = shoe
-        self.includeOneSize = includeOneSize
+        self.gender = gender
     }
 
     public init(_ profile: SizeProfile) {
         self.apparel = Array(profile.apparel)
         self.shoe = Array(profile.shoe)
-        self.includeOneSize = profile.includeOneSize
+        self.gender = profile.gender.rawValue
     }
 
     /// Normalises on the way in, so "medium" and "M" can't both end up stored.
@@ -31,7 +36,7 @@ public struct SizePayload: Codable, Sendable, Hashable {
         var profile = SizeProfile()
         profile.apparel = Set(apparel.compactMap { SizeNormalizer.normalize($0)?.token })
         profile.shoe = Set(shoe.compactMap { SizeNormalizer.normalize($0)?.token })
-        profile.includeOneSize = includeOneSize ?? true
+        profile.gender = gender.flatMap(GenderPreference.init(rawValue:)) ?? .everything
         return profile
     }
 }
@@ -90,6 +95,62 @@ public struct FollowBrand: Codable, Sendable {
     }
 }
 
+/// "Tell me when this comes back", pinned to a size and/or a colour.
+///
+/// Identified by the product's `externalID` rather than a server UUID because the client
+/// knows that string — it is what dedupes the feed — and looking the product up server-
+/// side keeps the client from having to hold a second identity for the same thing.
+public struct CreateWatch: Codable, Sendable, Hashable {
+    public var brandID: UUID
+    public var productExternalID: String
+    /// Nil means "any size". Raw catalogue text; the server normalises when matching.
+    public var size: String?
+    /// Nil means "any colour".
+    public var color: String?
+
+    public init(brandID: UUID, productExternalID: String, size: String? = nil, color: String? = nil) {
+        self.brandID = brandID
+        self.productExternalID = productExternalID
+        self.size = size
+        self.color = color
+    }
+}
+
+public struct WatchDTO: Codable, Sendable, Hashable, Identifiable {
+    public var id: UUID
+    public var brandID: UUID
+    public var productExternalID: String
+    public var productTitle: String?
+    public var size: String?
+    public var color: String?
+    public var createdAt: Date
+    /// Set once it has fired, so a client can show it as satisfied rather than pending.
+    public var firedAt: Date?
+    public var firedSizes: [String]
+
+    public init(
+        id: UUID,
+        brandID: UUID,
+        productExternalID: String,
+        productTitle: String? = nil,
+        size: String? = nil,
+        color: String? = nil,
+        createdAt: Date = Date(),
+        firedAt: Date? = nil,
+        firedSizes: [String] = []
+    ) {
+        self.id = id
+        self.brandID = brandID
+        self.productExternalID = productExternalID
+        self.productTitle = productTitle
+        self.size = size
+        self.color = color
+        self.createdAt = createdAt
+        self.firedAt = firedAt
+        self.firedSizes = firedSizes
+    }
+}
+
 // MARK: - Responses
 
 public struct DeviceResponse: Codable, Sendable {
@@ -132,6 +193,24 @@ public struct BrandDTO: Codable, Sendable, Hashable, Identifiable {
         self.currency = currency
         self.lockedForDrop = lockedForDrop
         self.logoURL = logoURL
+    }
+}
+
+/// A brand other people follow, with enough to show it without a round trip per card.
+public struct PopularBrand: Codable, Sendable, Hashable, Identifiable {
+    public var brand: BrandDTO
+    /// How many people watch it. A count only — the app never learns who.
+    public var followers: Int
+    /// A few recent product shots, so a recommendation shows clothes rather than asking
+    /// someone to take a wordmark on faith.
+    public var previewImageURLs: [String]
+
+    public var id: UUID { brand.id ?? UUID() }
+
+    public init(brand: BrandDTO, followers: Int, previewImageURLs: [String] = []) {
+        self.brand = brand
+        self.followers = followers
+        self.previewImageURLs = previewImageURLs
     }
 }
 
@@ -181,13 +260,36 @@ public struct FeedItem: Codable, Sendable, Hashable, Identifiable {
     public var isAvailable: Bool?
     /// Sizes that came back in a restock, already narrowed to ones the user wears.
     public var restockedSizes: [String]
-    /// Whether anything is currently buyable in the user's sizes — lets the client badge
-    /// without shipping every variant down the wire.
+    /// Whether anything is currently buyable in the user's sizes.
     public var availableInMySize: Bool
+    /// The product's full variant list.
+    ///
+    /// This used to be deliberately withheld — the client got `availableInMySize` and was
+    /// expected to badge from that alone. It made the whole size feature inert in the mode
+    /// the app actually ships in: with no variants, `isAvailable(in:)` returns true for
+    /// everything so the "my size" filter matched every item, and the size run had nothing
+    /// to print, so the app's signature element rendered as blank space on every product
+    /// that wasn't a restock.
+    ///
+    /// The saving was never real either. A product carries tens of variants, not
+    /// thousands — the 25k figure is the whole catalogue across every product — and the
+    /// feed page is capped at 200 events.
+    ///
+    /// Optional so a client can still decode a response from a server that predates it.
+    public var variants: [VariantInfo]?
+    /// Who the garment is cut for, decided server-side so both platforms agree.
+    /// Optional for the same back-compatibility reason.
+    public var gender: String?
 
     public var id: UUID { eventID }
 
     public var updateKind: UpdateKind { UpdateKind(rawValue: kind) ?? .product }
+
+    /// Never nil: an absent or unrecognised value means we don't know, which is a real
+    /// answer and one that is never filtered out.
+    public var itemGender: Gender {
+        gender.flatMap(Gender.init(rawValue:)) ?? .unknown
+    }
 
     public init(
         eventID: UUID,
@@ -202,7 +304,9 @@ public struct FeedItem: Codable, Sendable, Hashable, Identifiable {
         priceText: String? = nil,
         isAvailable: Bool? = nil,
         restockedSizes: [String] = [],
-        availableInMySize: Bool = false
+        availableInMySize: Bool = false,
+        variants: [VariantInfo]? = nil,
+        gender: String? = nil
     ) {
         self.eventID = eventID
         self.kind = kind
@@ -217,6 +321,8 @@ public struct FeedItem: Codable, Sendable, Hashable, Identifiable {
         self.isAvailable = isAvailable
         self.restockedSizes = restockedSizes
         self.availableInMySize = availableInMySize
+        self.variants = variants
+        self.gender = gender
     }
 }
 
@@ -252,6 +358,14 @@ public struct StatusResponse: Codable, Sendable {
     /// Events written but not yet fanned out. Persistently non-zero means the notifier
     /// is stuck, which is otherwise invisible: polling and the feed both look fine.
     public var pendingPushes: Int?
+    /// How many of `devices` actually handed over an APNs token.
+    ///
+    /// Counted separately for the same reason `users` is: `apnsConfigured: true` with a
+    /// healthy poller and a filling feed still delivers nothing at all if this is zero,
+    /// and nothing else in this response would say so. Zero here means the *app* never
+    /// registered for remote notifications — usually a missing `aps-environment`
+    /// entitlement — not that the server is misconfigured.
+    public var devicesWithToken: Int?
 
     public init(
         database: String,
@@ -267,7 +381,8 @@ public struct StatusResponse: Codable, Sendable {
         users: Int = 0,
         nextPollAt: Date? = nil,
         apnsConfigured: Bool? = nil,
-        pendingPushes: Int? = nil
+        pendingPushes: Int? = nil,
+        devicesWithToken: Int? = nil
     ) {
         self.database = database
         self.environment = environment
@@ -283,6 +398,7 @@ public struct StatusResponse: Codable, Sendable {
         self.nextPollAt = nextPollAt
         self.apnsConfigured = apnsConfigured
         self.pendingPushes = pendingPushes
+        self.devicesWithToken = devicesWithToken
     }
 }
 

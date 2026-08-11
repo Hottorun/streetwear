@@ -186,12 +186,23 @@ extension SizeRun {
         let meaningful = update.variants.filter(\.isMeaningfulSize)
 
         if meaningful.isEmpty {
-            // Server-mode items ship without variants. What we do know is which sizes
-            // just came back, and those are all available by definition.
+            // Items with no variant data at all — a collection announcement, a page
+            // change, or a feed from a server too old to send them. What we do know is
+            // which sizes just came back, and those are available by definition.
             return update.restockedSizes
                 .filter { $0 != "Default Title" && !$0.isEmpty }
                 .map { Entry(token: $0.uppercased(), isAvailable: true, isMine: profile.matches($0)) }
         }
+
+        return entries(for: update.variants, profile: profile)
+    }
+
+    /// The same run over an explicit set of variants, so the detail page can narrow it to
+    /// one colourway — "which sizes are left in black" is a different question from
+    /// "which sizes are left", and on a product page it is usually the one being asked.
+    static func entries(for variants: [VariantInfo], profile: SizeProfile) -> [Entry] {
+        let meaningful = variants.filter(\.isMeaningfulSize)
+        guard !meaningful.isEmpty else { return [] }
 
         // Collapse duplicates: a product with a colour axis repeats every size once per
         // colour, and printing "M M M L L L" would be nonsense. A size counts as

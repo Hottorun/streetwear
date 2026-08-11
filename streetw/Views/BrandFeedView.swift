@@ -55,8 +55,12 @@ struct BrandFeedView: View {
 }
 
 /// One product, with every photograph the brand published for it.
+///
+/// Behaves exactly like a feed lead, deliberately: same gallery, same tap target, same
+/// swipe actions. This page used to be the one place a card couldn't be filed or
+/// dismissed, which made "+39 more" a dead end — you could look at the rest of a drop but
+/// not act on any of it.
 struct GalleryCard: View {
-    @Environment(\.openURL) private var openURL
     @Environment(SizeProfileStore.self) private var sizes: SizeProfileStore
 
     let update: BrandUpdate
@@ -64,78 +68,105 @@ struct GalleryCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             ZStack(alignment: .topTrailing) {
-                ImageGallery(urls: update.imageURLs, kind: update.kind)
+                ImageGallery(urls: update.imageURLs, kind: update.kind, drawnWidth: 400)
                 SaveAction(update: update)
                     .padding(12)
             }
 
-            VStack(alignment: .leading, spacing: 7) {
-                if let state = FeedState(update: update, profile: sizes.profile) {
-                    DataLabel(text: state.text, size: 11, color: .signal)
-                }
-                Text(update.title)
-                    .font(.editorial(19))
-                    .foregroundStyle(Color.ink)
-                    .fixedSize(horizontal: false, vertical: true)
-
-                HStack(alignment: .firstTextBaseline) {
-                    SizeRun(entries: SizeRun.entries(for: update, profile: sizes.profile))
-                    Spacer(minLength: 12)
-                    if let price = update.priceText {
-                        Text(price)
-                            .font(.data(12, .medium))
-                            .foregroundStyle(Color.ink)
-                            .fixedSize()
-                            .layoutPriority(1)
+            NavigationLink {
+                ProductDetailView(update: update)
+            } label: {
+                VStack(alignment: .leading, spacing: 7) {
+                    if let state = FeedState(update: update, profile: sizes.profile) {
+                        DataLabel(text: state.text, size: 11, color: state.color)
                     }
-                }
-                .clipped()
+                    Text(update.title)
+                        .font(.editorial(19))
+                        .foregroundStyle(Color.ink)
+                        .multilineTextAlignment(.leading)
+                        .fixedSize(horizontal: false, vertical: true)
 
-                if let link = update.linkURL {
-                    Button("Open on site") { openURL(link) }
-                        .font(.data(11, .medium))
-                        .foregroundStyle(Color.muted)
-                        .buttonStyle(.borderless)
-                        .padding(.top, 2)
+                    HStack(alignment: .firstTextBaseline) {
+                        SizeRun(entries: SizeRun.entries(for: update, profile: sizes.profile))
+                        Spacer(minLength: 12)
+                        if let price = update.priceText {
+                            Text(price)
+                                .font(.data(12, .medium))
+                                .foregroundStyle(Color.ink)
+                                .fixedSize()
+                                .layoutPriority(1)
+                        }
+                    }
+                    .clipped()
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.top, 14)
+                .padding(.horizontal, 20)
+                .contentShape(.rect)
             }
-            .padding(.top, 14)
-            .padding(.horizontal, 20)
+            .buttonStyle(.plain)
+            .quickSaveHandle()
         }
         .contextMenu { UpdateMenu(update: update) }
+        .quickSave(update)
     }
 }
 
 /// A horizontally paged set of photographs.
 ///
-/// Paging is safe here in a way it wouldn't be on the feed card: nothing else on this
-/// screen claims a horizontal swipe. On the feed, left and right already mean "file" and
-/// "mark read", and a gallery there would fight them for the same gesture.
+/// The gesture question this settles: horizontal swipe is claimed twice in this app —
+/// by paging through a product's photographs, and by `quickSave`'s file/mark-read. Both
+/// are worth having and they cannot share a direction.
+///
+/// The resolution is by *region*, not by screen. The photograph pages; everything below
+/// it — the title, the size run, the price — carries the quick-save drag. That reads
+/// naturally (you swipe the picture to see more pictures, you swipe the card to deal with
+/// the card), it works identically on the feed and on a brand page, and neither gesture
+/// has to be dropped. `ImageGallery` therefore stops being brand-page-only.
 struct ImageGallery: View {
     let urls: [URL]
     var kind: BrandUpdate.Kind = .product
+    /// Off for a single image, and off where the caller wants the whole card to drag as
+    /// one piece regardless.
+    var isPagingEnabled: Bool = true
+    var drawnWidth: Int = 400
 
     @State private var index = 0
 
     var body: some View {
-        if urls.count <= 1 {
-            UpdateImage(url: urls.first, kind: kind, aspect: 1, contentMode: .fit)
+        if urls.count <= 1 || !isPagingEnabled {
+            UpdateImage(
+                url: urls.first,
+                kind: kind,
+                aspect: 1,
+                contentMode: .fit,
+                drawnWidth: drawnWidth
+            )
         } else {
-            VStack(spacing: 10) {
-                TabView(selection: $index) {
-                    ForEach(Array(urls.enumerated()), id: \.offset) { position, url in
-                        UpdateImage(url: url, kind: kind, aspect: 1, contentMode: .fit)
-                            .tag(position)
-                    }
+            TabView(selection: $index) {
+                ForEach(Array(urls.enumerated()), id: \.offset) { position, url in
+                    UpdateImage(
+                        url: url,
+                        kind: kind,
+                        aspect: 1,
+                        contentMode: .fit,
+                        drawnWidth: drawnWidth
+                    )
+                    .tag(position)
                 }
-                .tabViewStyle(.page(indexDisplayMode: .never))
-                .aspectRatio(1, contentMode: .fit)
-
+            }
+            .tabViewStyle(.page(indexDisplayMode: .never))
+            .aspectRatio(1, contentMode: .fit)
+            .overlay(alignment: .bottomTrailing) {
                 // A printed count rather than dots: it says how many there are, which
                 // dots only imply, and it matches the mono metadata everywhere else.
-                DataLabel(text: "\(index + 1) / \(urls.count)", size: 10)
-                    .padding(.horizontal, 20)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                // Laid over the photograph rather than under it so the caption block
+                // below stays a clean drag target for quick-save.
+                DataLabel(text: "\(index + 1)/\(urls.count)", size: 10, color: .ink)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 4)
+                    .background(Color.paper.opacity(0.92), in: Capsule())
+                    .padding(12)
             }
         }
     }
