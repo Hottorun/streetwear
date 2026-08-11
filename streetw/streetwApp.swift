@@ -26,6 +26,7 @@ struct streetwApp: App {
     @State private var remote: RemoteSync
     @State private var engine: SyncEngine
     @State private var suggestions: BrandSuggestions
+    @State private var route: PushRoute
 
     init() {
         Net.configureSharedCache()
@@ -58,16 +59,21 @@ struct streetwApp: App {
         let settings = ServerSettings()
         let sizes = SizeProfileStore()
         let remote = RemoteSync(context: container.mainContext, settings: settings)
+        // Built here for the same reason as the rest, and one more: a push that
+        // cold-launches the app delivers its tap before any view exists, so the
+        // destination has to have somewhere to land before `ContentView` appears.
+        let route = MainActor.assumeIsolated { PushRoute() }
         _settings = State(initialValue: settings)
         _sizes = State(initialValue: sizes)
         _remote = State(initialValue: remote)
         _engine = State(initialValue: SyncEngine(context: container.mainContext))
         _suggestions = State(initialValue: BrandSuggestions(remote: remote, settings: settings))
+        _route = State(initialValue: route)
 
         // The app delegate is built by UIKit and can't be handed these, so they are
         // published here — the same moment they become valid.
         MainActor.assumeIsolated {
-            BackgroundServices.install(remote: remote, sizes: sizes, settings: settings)
+            BackgroundServices.install(remote: remote, sizes: sizes, settings: settings, route: route)
         }
     }
 
@@ -79,6 +85,7 @@ struct streetwApp: App {
                 .environment(remote)
                 .environment(engine)
                 .environment(suggestions)
+                .environment(route)
                 .task { await DevSeed.runIfRequested(in: sharedModelContainer.mainContext) }
         }
         .modelContainer(sharedModelContainer)

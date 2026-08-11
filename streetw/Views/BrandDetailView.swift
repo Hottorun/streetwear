@@ -1,5 +1,25 @@
 // BrandDetailView.swift
-// One brand: links, recent updates, what you've saved from it, and what we watch it with.
+// One brand: its mark, what it has been doing, what you kept from it, and how we watch it.
+//
+// This was the last screen in the app still built out of a stock `List` — grey grouped
+// sections, `.bordered` buttons, a system toggle, `LabeledContent`. Every other surface is
+// paper, serif headings and mono data labels, so opening a brand fell out of the app and
+// into Settings.app for a moment. The information was right; none of the presentation was.
+//
+// What it is now, in reading order:
+//
+// - **The brand.** Its own mark at a size worth looking at, its name set as a wordmark,
+//   and the one urgent fact — a locked storefront — in the accent, because that is the
+//   signal people open this page hoping to see.
+// - **A line of counts.** Drops, unseen, kept. Printed as data, not badged: this is a page
+//   about a brand, not an inbox to clear.
+// - **Recent, and yours.** The two carousels, which were the only part already in the
+//   app's voice.
+// - **The machinery**, last and quietest: which sources we poll, what they last said, when
+//   they last ran. Worth having and never worth leading with.
+//
+// Following moved to the bottom and became a word rather than a switch. It is a decision
+// you make once, and a toggle at the top of a page invites fiddling with it.
 
 import StreetwCore
 import SwiftData
@@ -7,6 +27,7 @@ import SwiftUI
 
 struct BrandDetailView: View {
     @Environment(\.modelContext) private var context
+    @Environment(\.openURL) private var openURL
     @Environment(SyncEngine.self) private var engine: SyncEngine
     @Environment(RemoteSync.self) private var remote: RemoteSync
     @Environment(ServerSettings.self) private var settings: ServerSettings
@@ -22,101 +43,42 @@ struct BrandDetailView: View {
             .sorted { ($0.save?.savedAt ?? .distantPast) > ($1.save?.savedAt ?? .distantPast) }
     }
 
+    private var automatic: [BrandSource] {
+        brand.sources.filter { $0.kind.isAutomatic }
+    }
+
     var body: some View {
-        List {
-            if brand.isLockedForDrop {
-                Section {
-                    Label(
-                        "The storefront is locked right now — usually a sign a release is close.",
-                        systemImage: "lock.fill"
-                    )
-                    .foregroundStyle(.orange)
-                    .font(.subheadline)
-                }
-            }
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: 34) {
+                masthead
+                if brand.isLockedForDrop { lockNotice }
+                counts
+                links
 
-            Section {
-                HStack(spacing: 12) {
-                    if let url = brand.websiteURL {
-                        Link(destination: url) {
-                            Label("Website", systemImage: "safari")
-                        }
-                        .buttonStyle(.bordered)
-                    }
-                    if let url = brand.instagramURL {
-                        Link(destination: url) {
-                            Label("Instagram", systemImage: "camera")
-                        }
-                        .buttonStyle(.bordered)
-                    }
-                }
-                .font(.subheadline)
-            }
-
-            // "My take" is gone — a free-text style note and a five-star rating on a
-            // brand were both asking the user to do data entry that nothing ever read.
-            // The style profile is derived from what you actually save, which is a truer
-            // signal than a rating nobody revisits, and following is a one-tap decision
-            // that doesn't need a section around it.
-            Section {
-                Toggle("Following", isOn: $brand.followed)
-                    .onChange(of: brand.followed) { _, following in
-                        guard settings.isConfigured, let id = brand.remoteID else { return }
-                        Task {
-                            // The server decides what gets polled, so following has to
-                            // be recorded there, not just flagged locally.
-                            if following {
-                                try? await remote.follow(brandID: id)
-                            } else {
-                                await remote.unfollow(brand)
-                            }
-                        }
-                    }
-            }
-
-            Section("Recent") {
                 if recent.isEmpty {
-                    Text(brand.lastSyncedAt == nil ? "Not checked yet." : "Nothing found yet.")
-                        .foregroundStyle(.secondary)
-                        .font(.subheadline)
+                    nothingYet
                 } else {
-                    UpdateCarousel(updates: recent)
-                        .listRowInsets(EdgeInsets(top: 4, leading: 0, bottom: 4, trailing: 0))
-                }
-            }
-
-            if !savedFromBrand.isEmpty {
-                Section("My favourites") {
-                    UpdateCarousel(updates: savedFromBrand, width: 110)
-                        .listRowInsets(EdgeInsets(top: 4, leading: 0, bottom: 4, trailing: 0))
-                }
-            }
-
-            Section("Sources") {
-                ForEach(brand.sources) { source in
-                    VStack(alignment: .leading, spacing: 4) {
-                        SourceRow(source: source)
-                        if let error = source.lastError {
-                            Label(error, systemImage: "exclamationmark.triangle.fill")
-                                .font(.caption2)
-                                .foregroundStyle(.orange)
-                            if source.failureCount > 1 {
-                                Text("Failed \(source.failureCount)× — backing off before retrying.")
-                                    .font(.caption2)
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
+                    section("Recent", "\(recent.count) MOST RECENT") {
+                        UpdateCarousel(updates: recent)
                     }
                 }
-                if let date = brand.lastSyncedAt {
-                    LabeledContent("Last checked", value: date.formatted(.relative(presentation: .named)))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+
+                if !savedFromBrand.isEmpty {
+                    section("Kept from here", "\(savedFromBrand.count) IN YOUR COLLECTION") {
+                        UpdateCarousel(updates: savedFromBrand, width: 110)
+                    }
                 }
+
+                sources
+                followingRow
             }
+            .padding(.top, 8)
+            .padding(.bottom, 40)
         }
+        .scrollIndicators(.hidden)
+        .background(Color.paper)
         .navigationTitle(brand.name)
-        .navigationBarTitleDisplayMode(.inline)
+        .toolbarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 if engine.isSyncing || remote.isSyncing {
@@ -135,6 +97,226 @@ struct BrandDetailView: View {
         }
     }
 
+    // MARK: - Sections
+
+    /// The mark at 64pt rather than the 44 the list row uses. On a page *about* one brand,
+    /// its own logo is the most useful thing on screen and the cheapest to give room to.
+    private var masthead: some View {
+        HStack(alignment: .center, spacing: 16) {
+            BrandMonogram(name: brand.name, logoURL: brand.logoURL, size: 64)
+
+            VStack(alignment: .leading, spacing: 6) {
+                Wordmark(name: brand.name, size: 17)
+                if let host = brand.websiteURL?.host()?.replacingOccurrences(of: "www.", with: "") {
+                    DataLabel(text: host.uppercased(), size: 10)
+                }
+                DataLabel(
+                    text: brand.lastSyncedAt.map { "CHECKED \(Stamp.short($0).uppercased())" }
+                        ?? "NOT CHECKED YET",
+                    size: 9
+                )
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 20)
+    }
+
+    /// The one thing on this page allowed to be loud. A storefront going dark usually means
+    /// minutes, not hours.
+    private var lockNotice: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "lock.fill")
+                .font(.system(size: 11))
+                .foregroundStyle(Color.signal)
+            Text("Storefront is locked — usually a release is close.")
+                .font(.editorial(14))
+                .foregroundStyle(Color.ink)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.wash)
+        .overlay(alignment: .leading) { Rectangle().fill(Color.signal).frame(width: 2) }
+        .padding(.horizontal, 20)
+    }
+
+    private var counts: some View {
+        HStack(alignment: .top, spacing: 0) {
+            count(brand.updates.count, "DROPS SEEN")
+            count(brand.unseenCount, "UNREAD", accent: brand.unseenCount > 0)
+            count(savedFromBrand.count, "KEPT")
+        }
+        .padding(.horizontal, 20)
+        .overlay(alignment: .top) { Rule().padding(.horizontal, 20) }
+        .overlay(alignment: .bottom) { Rule().padding(.horizontal, 20) }
+    }
+
+    private func count(_ value: Int, _ label: String, accent: Bool = false) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("\(value)")
+                .font(.data(20, .medium))
+                .foregroundStyle(accent ? Color.signal : Color.ink)
+            DataLabel(text: label, size: 9)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.vertical, 14)
+    }
+
+    @ViewBuilder
+    private var links: some View {
+        let destinations: [(label: String, symbol: String, url: URL)] = [
+            brand.websiteURL.map { ("SHOP", "arrow.up.right", $0) },
+            brand.instagramURL.map { ("INSTAGRAM", "arrow.up.right", $0) }
+        ].compactMap { $0 }
+
+        if !destinations.isEmpty {
+            HStack(spacing: 10) {
+                ForEach(destinations, id: \.label) { destination in
+                    Button { openURL(destination.url) } label: {
+                        HStack(spacing: 6) {
+                            Text(destination.label)
+                                .font(.data(11, .semibold))
+                                .tracking(1.1)
+                            Image(systemName: destination.symbol)
+                                .font(.system(size: 8, weight: .semibold))
+                        }
+                        .foregroundStyle(Color.ink)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 10)
+                        .overlay { Rectangle().stroke(Color.hairline, lineWidth: 1) }
+                    }
+                    .buttonStyle(.borderless)
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 20)
+        }
+    }
+
+    private var nothingYet: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(brand.lastSyncedAt == nil ? "Not checked yet" : "Nothing found yet")
+                .font(.editorial(19))
+                .foregroundStyle(Color.ink)
+            Text(
+                automatic.isEmpty
+                    ? "Nothing on this site can be watched automatically — it's here as a link."
+                    : "streetw is watching \(automatic.map { $0.kind.label.lowercased() }.joined(separator: " and ")). New drops will appear here."
+            )
+            .font(.editorial(14))
+            .foregroundStyle(Color.muted)
+            .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.horizontal, 20)
+    }
+
+    /// Last, and deliberately dry. This is the only place a source's error is visible, so
+    /// it has to be legible — but nobody opens a brand page to read about a sitemap.
+    private var sources: some View {
+        section("How it's watched", "\(brand.sources.count) \(brand.sources.count == 1 ? "SOURCE" : "SOURCES")") {
+            VStack(alignment: .leading, spacing: 0) {
+                ForEach(brand.sources) { source in
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack(spacing: 10) {
+                            Text(source.kind.label.uppercased())
+                                .font(.data(11, .medium))
+                                .foregroundStyle(source.kind.isAutomatic ? Color.ink : Color.muted)
+                            Spacer(minLength: 8)
+                            DataLabel(
+                                text: source.lastError != nil
+                                    ? "FAILING"
+                                    : (source.kind.isAutomatic ? "WATCHING" : "LINK ONLY"),
+                                size: 9,
+                                color: source.lastError != nil ? .signal : .muted
+                            )
+                        }
+
+                        Text(source.url.absoluteString)
+                            .font(.data(10))
+                            .foregroundStyle(Color.muted)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+
+                        if let error = source.lastError {
+                            Text(
+                                source.failureCount > 1
+                                    ? "\(error) — failed \(source.failureCount)×, backing off."
+                                    : error
+                            )
+                            .font(.data(10))
+                            .foregroundStyle(Color.signal)
+                            .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                    .padding(.vertical, 12)
+                    .overlay(alignment: .bottom) { Rule() }
+                }
+            }
+            .padding(.horizontal, 20)
+        }
+    }
+
+    /// A word, not a switch. Unfollowing is rare, deliberate, and reversible — and a toggle
+    /// at the top of the page made it the most prominent control on a screen that is about
+    /// looking at clothes.
+    private var followingRow: some View {
+        Button {
+            brand.followed.toggle()
+            try? context.save()
+            syncFollowState()
+        } label: {
+            HStack {
+                Text(brand.followed ? "Stop following" : "Follow again")
+                    .font(.data(12, .medium))
+                    .foregroundStyle(brand.followed ? Color.muted : Color.ink)
+                Spacer()
+                Image(systemName: brand.followed ? "bell.slash" : "bell")
+                    .font(.system(size: 11))
+                    .foregroundStyle(brand.followed ? Color.muted : Color.ink)
+            }
+            .padding(.horizontal, 20)
+            .padding(.vertical, 16)
+            .contentShape(.rect)
+        }
+        .buttonStyle(.borderless)
+        .overlay(alignment: .top) { Rule().padding(.horizontal, 20) }
+    }
+
+    private func section(
+        _ title: String,
+        _ detail: String,
+        @ViewBuilder content: () -> some View
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: 5) {
+                Text(title)
+                    .font(.editorial(19))
+                    .foregroundStyle(Color.ink)
+                DataLabel(text: detail)
+            }
+            .padding(.horizontal, 20)
+
+            content()
+        }
+    }
+
+    // MARK: - Actions
+
+    /// The server decides what gets polled, so following has to be recorded there, not
+    /// just flagged locally.
+    private func syncFollowState() {
+        guard settings.isConfigured, let id = brand.remoteID else { return }
+        let following = brand.followed
+        Task {
+            if following {
+                try? await remote.follow(brandID: id)
+            } else {
+                await remote.unfollow(brand)
+            }
+        }
+    }
+
     /// In server mode the phone never polls storefronts itself.
     private func refresh() async {
         if settings.isConfigured {
@@ -143,5 +325,4 @@ struct BrandDetailView: View {
             await engine.sync(brands: [brand])
         }
     }
-
 }

@@ -29,6 +29,12 @@ struct PushMessage: Sendable, Hashable {
     var title: String
     var body: String
     var brandID: UUID
+    /// The one event this is about, when there is one. Tapping the notification opens that
+    /// item's page rather than dropping the user on a tab to find it themselves — which
+    /// for a restock in a size they wear is the entire point of the alert.
+    ///
+    /// Nil for a counted summary, where no single product is *the* one.
+    var eventID: UUID?
     /// Lets APNs replace an unread notification for the same brand rather than stacking.
     var collapseID: String?
 }
@@ -334,6 +340,15 @@ actor Notifier {
                 .all()
             let devicesByUser = Dictionary(grouping: devices, by: { $0.$user.id })
 
+            // The restock event that satisfied each watch, so the alert can open the exact
+            // product rather than the brand it belongs to.
+            let restockEvent = Dictionary(
+                events
+                    .filter { UpdateKind(rawValue: $0.kind) == .restock }
+                    .compactMap { event in event.$product.id.map { ($0, event) } },
+                uniquingKeysWith: { first, _ in first }
+            )
+
             for watch in watches {
                 let variants = watch.product.variants.map(\.asVariantInfo)
                 let back = watch.target.availableSizes(in: variants)
@@ -356,6 +371,7 @@ actor Notifier {
                         title: watch.brand.name,
                         body: Self.watchCopy(product: watch.product.title, sizes: back),
                         brandID: watch.$brand.id,
+                        eventID: restockEvent[watch.$product.id]?.id,
                         // Not collapsed onto the brand's other notifications: this is the
                         // one the user explicitly asked for and it must not be replaced by
                         // a later generic summary.
@@ -431,6 +447,10 @@ actor Notifier {
                 let profile = user.sizeProfile
                 let relevant = events.filter { Self.isRelevant($0, to: profile) }
                 guard let copy = Self.summary(brand: brandName, events: relevant) else { continue }
+                // Only when the alert names one thing. A counted summary ("3 restocks and
+                // 2 new items") has no single product behind it, and picking one of them
+                // to open would be arbitrary — the brand is the honest destination.
+                let single = relevant.count == 1 ? relevant.first?.id : nil
 
                 for device in userDevices {
                     guard let token = device.apnsToken else { continue }
@@ -440,6 +460,7 @@ actor Notifier {
                         title: copy.title,
                         body: copy.body,
                         brandID: brandID,
+                        eventID: single,
                         collapseID: brandID.uuidString
                     )
                     do {

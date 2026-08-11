@@ -168,11 +168,17 @@ struct CollectionTile: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 7) {
-            // Two to a row on the collection wall.
+            // Two to a row on the collection wall, and never cropped. The feed fills its
+            // tiles because a grid of thumbnails needs one rhythm; the archive is the
+            // opposite — you kept these particular photographs, so they keep their own
+            // proportions and a lookbook shot doesn't lose its top and bottom to a
+            // square. The tile takes the picture's shape, so `.fit` letterboxes nothing
+            // in the normal case and only rescues the extremes the clamp catches.
             UpdateImage(
                 url: update?.primaryImageURL,
                 kind: update?.kind ?? .product,
                 aspect: aspect,
+                contentMode: .fit,
                 drawnWidth: 200
             )
 

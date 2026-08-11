@@ -58,6 +58,19 @@ final class BrandUpdate {
     /// When the image was last analysed. Nil means "not yet"; set even when analysis
     /// fails, so a dead image URL isn't retried on every launch forever.
     var analyzedAt: Date?
+    /// Filename of the subject lifted off this item's photograph, in `Cutout.directory`.
+    ///
+    /// A name rather than the bytes: a cutout is a few hundred KB of RGBA and there is one
+    /// per saved item, which is not a thing to keep in a row that gets faulted in to draw a
+    /// feed. Nil is normal and permanent for anything with no single subject to lift — a
+    /// flat-lay, a lookbook shot, a size chart — and the canvas falls back to the original.
+    var cutoutFile: String?
+
+    /// The sticker, when there is one. Read as a file each time rather than cached here:
+    /// `UIImage(contentsOfFile:)` is lazily decoded and the canvas draws at most a dozen.
+    var cutoutURL: URL? {
+        cutoutFile.map { Cutout.url(for: $0) }
+    }
 
     /// Set by the server, which matched this item against the device's size profile.
     /// Only consulted for items that genuinely carry no variants.

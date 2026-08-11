@@ -227,6 +227,12 @@ final class SyncEngine {
         update.priceText = item.priceText
         if update.imageURLStrings.isEmpty { update.imageURLStrings = item.imageURLStrings }
         if update.tags.isEmpty { update.tags = item.tags }
+        // A name can arrive late: a sitemap row stored before the adapter learned to read
+        // the image extension holds a randomised handle where the product name should be.
+        // Only ever an upgrade — a real title is never replaced by a hash.
+        if SitemapSource.isProvisional(update.title), !SitemapSource.isProvisional(item.title) {
+            update.title = item.title
+        }
         // Re-derived whenever the stored answer came from an older revision of the
         // classifier, which also covers rows written before it existed at all. Without
         // this an improvement to the rules would only ever reach products discovered

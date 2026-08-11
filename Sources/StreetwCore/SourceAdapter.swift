@@ -109,6 +109,11 @@ public enum SourceError: LocalizedError, Equatable {
     case notThisKind
     case emptyPayload
     case disallowedByRobots(String)
+    /// An edge sat in front of the origin and refused us — a bot challenge, not the
+    /// storefront's own answer. Its own case because the fix is completely different from
+    /// every other failure here: there is nothing wrong with the source, and nothing a
+    /// retry will change.
+    case blockedByEdge
 
     public var errorDescription: String? {
         switch self {
@@ -116,6 +121,7 @@ public enum SourceError: LocalizedError, Equatable {
         case .notThisKind: "Not a supported source"
         case .emptyPayload: "Nothing returned"
         case .disallowedByRobots(let path): "robots.txt disallows \(path)"
+        case .blockedByEdge: "Blocked by the site's bot protection"
         }
     }
 }
@@ -160,9 +166,58 @@ public struct HTTPResponse: Sendable {
     public var notModified: Bool { status == 304 }
 
     /// Storefronts lock down before a drop; that's a signal, not a failure.
+    ///
+    /// **A bot wall is not a lock**, and conflating the two was expensive. `yeezy.com`
+    /// sits behind a Cloudflare challenge that answers 403 to everything, forever — under
+    /// the old rule that read as "drop imminent", so the brand showed permanently locked
+    /// *and* the poller's locked cadence hammered it every 60 seconds, against a site that
+    /// was already refusing us. A challenge is a failure: we cannot see the storefront, and
+    /// the honest report is a failing source that backs off.
+    ///
+    /// 401 and a redirect to `/password` still mean locked outright — those are Shopify
+    /// saying "this store is closed", which is the actual signal. A bare 403 with nothing
+    /// challenge-shaped about it is left as a lock, because that is what it meant before
+    /// and there is no evidence to the contrary.
     public var isLocked: Bool {
-        status == 401 || status == 403 || finalURL?.path.contains("password") == true
+        if isChallenged { return false }
+        return status == 401 || status == 403 || finalURL?.path.contains("password") == true
     }
+
+    /// Whether an edge protected the origin from us rather than the origin answering.
+    ///
+    /// Read off the body, because the status code alone cannot tell a WAF apart from a
+    /// storefront: both are 403. The markers here are the interstitials themselves —
+    /// Cloudflare's "Just a moment…" challenge, Akamai's reference page, PerimeterX's
+    /// block — which are stable, distinctive, and never present on a real product page.
+    public var isChallenged: Bool {
+        guard status == 403 || status == 429 || status == 503 else { return false }
+        guard let text = String(data: data.prefix(4_096), encoding: .utf8)?.lowercased() else {
+            return false
+        }
+        return Self.challengeMarkers.contains { text.contains($0) }
+    }
+
+    /// The one place a non-200 becomes an error, so "blocked" can never quietly decay
+    /// into a generic bad response at one of five call sites.
+    public func requireOK() throws {
+        if isChallenged { throw SourceError.blockedByEdge }
+        guard status == 200 else { throw SourceError.badResponse(status) }
+    }
+
+    private static let challengeMarkers = [
+        "just a moment",            // Cloudflare's interstitial title
+        "cf-browser-verification",
+        "challenge-platform",
+        "__cf_chl",
+        "cf_chl_opt",
+        "attention required",       // Cloudflare block page
+        "enable javascript and cookies to continue",
+        "access denied",            // Akamai / generic WAF
+        "reference #",              // Akamai error reference
+        "px-captcha",               // PerimeterX
+        "are you a robot",
+        "unusual traffic"
+    ]
 }
 
 /// Seam for tests and for swapping in a server-side client with its own rate limiting.

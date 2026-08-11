@@ -225,6 +225,37 @@ struct BrandDiscoveryTests {
         #expect(SourceAdapters.adapter(for: .instagram) == nil)
     }
 
+    /// Palace's shape: the apex runs Hydrogen and knows nothing about `/products.json`,
+    /// while the classic origin still serves the whole catalog on `www.`. Probing only
+    /// what was typed demoted a full storefront to a sitemap of randomised handles.
+    @Test("A catalog served only on www. is still found, and the sources point at it")
+    func findsCatalogOnWWW() async {
+        let http = MockHTTPClient()
+        http.stub(host: "brand.com", "/products.json?limit=250&page=1", .init(status: 404))
+        http.stub(host: "www.brand.com", "/products.json?limit=250&page=1", fixture: "shopify_kith.json")
+        http.stub(host: "www.brand.com", "/meta.json", fixture: "shopify_meta.json")
+
+        let found = await BrandDiscovery.discover(website: "brand.com", instagramHandle: nil, http: http)
+        let shopify = found.sources.first { $0.kind == .shopify }
+
+        #expect(shopify?.url.host() == "www.brand.com")
+        // And nothing was demoted to the fallbacks by the apex's 404.
+        #expect(!found.sources.contains { $0.kind == .sitemap || $0.kind == .page })
+    }
+
+    /// Any *other* subdomain is a decision — a region, usually, with its own currency and
+    /// its own catalogue. Swapping someone off it would change every price in their feed.
+    @Test("Only www. is tried as an alternate host")
+    func onlySwapsWWW() {
+        let variant = { (host: String) in
+            ShopifySource.wwwVariant(of: URL(string: "https://\(host)")!)?.host()
+        }
+        #expect(variant("brand.com") == "www.brand.com")
+        #expect(variant("www.brand.com") == "brand.com")
+        #expect(variant("usa.brand.com") == nil)
+        #expect(variant("shop.brand.co.uk") == nil)
+    }
+
     @Test("A site with no catalog or feed still gets a page watch")
     func fallsBackToPageWatch() async {
         let http = MockHTTPClient()
@@ -295,6 +326,250 @@ struct BrandSourceTests {
         let decoded = try JSONDecoder().decode(BrandSource.self, from: data)
 
         #expect(decoded == source)
+    }
+}
+
+/// The hostname was never a name. It produced "Usa" for `usa.palaceskateboards.com` and
+/// "Bbcicecream" for Billionaire Boys Club — and because the catalog is global, whatever
+/// the first person to add a brand accepted is what everyone else inherits.
+@Suite("Brand naming")
+struct BrandNamingTests {
+    @Test("The merchant's own name beats everything")
+    func shopNameWins() {
+        #expect(
+            BrandNaming.pick(
+                shopName: "Billionaire Boys Club",
+                siteName: "BBC ICECREAM",
+                host: "shop.bbcicecream.com"
+            ) == "Billionaire Boys Club"
+        )
+    }
+
+    @Test("og:site_name is read before the title, and either beats the host")
+    func readsDeclaredName() {
+        let withOG = """
+        <head><meta property="og:site_name" content="YoungLA">
+        <title>Lifestyle Clothing Brand: Youngla.com</title></head>
+        """
+        #expect(BrandNaming.declaredName(in: withOG) == "YoungLA")
+
+        // Attribute order is theme-dependent; matching only one shape loses half of them.
+        let reversed = #"<meta content="Kith" name="og:site_name">"#
+        #expect(BrandNaming.declaredName(in: reversed) == "Kith")
+    }
+
+    /// Palace declares no `og:site_name` at all — its title is the whole answer.
+    @Test("A title is used once its marketing tail is removed")
+    func readsTitle() {
+        #expect(BrandNaming.declaredName(in: "<title>PALACE SKATEBOARDS</title>") == "Palace Skateboards")
+        #expect(BrandNaming.declaredName(in: "<title>Kith\n &ndash; Homepage</title>") == "Kith")
+        #expect(
+            BrandNaming.declaredName(in: "<title>Billionaire Boys Club &amp; ICECREAM | US Official Site</title>")
+                == "Billionaire Boys Club & ICECREAM"
+        )
+    }
+
+    /// A brand called "Home" is worse than no suggestion, because the field is pre-filled
+    /// and pre-filled fields get accepted.
+    @Test("A generic title is refused rather than adopted")
+    func refusesGenericTitles() {
+        #expect(BrandNaming.declaredName(in: "<title>Home</title>") == nil)
+        #expect(BrandNaming.declaredName(in: "<title>Official Site | Some Brand</title>") == nil)
+    }
+
+    /// The fallback, and the specific complaint that started this: a region subdomain is
+    /// not what the brand is called.
+    @Test("The host is the last resort, and drops region and shop subdomains")
+    func hostFallback() {
+        #expect(BrandNaming.pick(host: "usa.palaceskateboards.com") == "Palaceskateboards")
+        #expect(BrandNaming.pick(host: "shop.bbcicecream.com") == "Bbcicecream")
+        #expect(BrandNaming.pick(host: "www.kith.com") == "Kith")
+        // Two labels left means we've reached the registrable name — no public-suffix
+        // list needed, and "brand.co.uk" doesn't lose its brand.
+        #expect(BrandNaming.pick(host: "eu.brand.co.uk") == "Brand")
+    }
+
+    /// A logotype is not a name to store: every place a brand is drawn sets its own case,
+    /// and a stored "PALACE SKATEBOARDS" shouts in all of them.
+    @Test("Shouted names are evened out, but a one-word logotype is left alone")
+    func evensOutCapitals() {
+        #expect(BrandNaming.tidy("PALACE SKATEBOARDS") == "Palace Skateboards")
+        #expect(BrandNaming.tidy("KITH") == "KITH")
+        #expect(BrandNaming.tidy("  Aimé   Leon Dore ") == "Aimé Leon Dore")
+    }
+}
+
+/// What a shared link can be turned into. Open Graph gives a bookmark; the storefront's
+/// own product endpoint gives something you can put a stock watch on.
+@Suite("A single product from its page")
+struct SingleProductTests {
+    @Test("A product handle is recognised whatever the link carries")
+    func findsHandle() {
+        func handle(_ raw: String) -> String? {
+            ShopifySource.productHandle(in: URL(string: raw)!)
+        }
+        #expect(handle("https://kith.com/products/box-logo-hoodie") == "box-logo-hoodie")
+        // Share sheets hand over links with tracking and variant parameters attached.
+        #expect(handle("https://kith.com/products/box-logo-hoodie?variant=42&utm_source=x") == "box-logo-hoodie")
+        #expect(handle("https://kith.com/collections/new/products/tee") == "tee")
+        // Not a product page: the caller falls back to Open Graph rather than guessing.
+        #expect(handle("https://kith.com/collections/new") == nil)
+        #expect(handle("https://kith.com/products/") == nil)
+        #expect(handle("https://someblog.com/posts/kith-review") == nil)
+    }
+
+    /// The whole reason this uses `.js` and not the `.json` beside it.
+    @Test("Variants come back with their stock, and prices out of minor units")
+    func readsVariantsAndStock() async {
+        let http = MockHTTPClient()
+        http.stub("/products/box-logo-hoodie.js", .init(body: Data("""
+        {"id": 9, "title": "Box Logo Hoodie", "handle": "box-logo-hoodie",
+         "tags": ["mens"], "type": "Hoodies",
+         "images": ["//cdn.shopify.com/hoodie-1.jpg"],
+         "options": [{"name": "Size", "position": 1}],
+         "variants": [
+           {"id": 1, "title": "S", "available": false, "price": 22000, "option1": "S"},
+           {"id": 2, "title": "M", "available": true,  "price": 22000, "option1": "M"}
+         ]}
+        """.utf8)))
+        http.stub("/meta.json", .init(body: Data(#"{"name": "Kith", "currency": "USD"}"#.utf8)))
+
+        let item = await ShopifySource.product(
+            at: URL(string: "https://kith.com/products/box-logo-hoodie?variant=2")!,
+            http: http
+        )
+        let found = try? #require(item)
+
+        #expect(found?.title == "Box Logo Hoodie")
+        #expect(found?.variants.count == 2)
+        #expect(found?.variants.first { $0.size == "S" }?.available == false)
+        #expect(found?.variants.first { $0.size == "M" }?.available == true)
+        // 22000 minor units is $220, not $22,000.
+        #expect(found?.priceAmount == 220)
+        // A protocol-relative CDN path is not something an image loader can open.
+        #expect(found?.imageURLStrings == ["https://cdn.shopify.com/hoodie-1.jpg"])
+        // Keyed the way the poller keys it, so a link shared for a followed brand lands
+        // on the row that already exists.
+        #expect(found?.externalID == "shopify:9")
+        // The variant parameter must not survive into the stored link.
+        #expect(found?.linkURL?.absoluteString == "https://kith.com/products/box-logo-hoodie")
+    }
+
+    @Test("Anything that isn't a Shopify product page returns nil rather than failing")
+    func fallsBack() async {
+        let http = MockHTTPClient()   // everything 404s
+        let item = await ShopifySource.product(
+            at: URL(string: "https://someblog.com/posts/review")!,
+            http: http
+        )
+        #expect(item == nil)
+    }
+}
+
+/// Availability out of a page's own metadata — the fallback for a shared link that isn't
+/// a Shopify product.
+@Suite("Declared availability")
+struct AvailabilityTests {
+    @Test("schema.org's vocabulary, in the forms storefronts actually write it")
+    func readsAvailability() {
+        for sold in ["OutOfStock", "https://schema.org/OutOfStock", "out of stock", "sold_out"] {
+            #expect(PageMetadataParser.availability(from: sold) == false, "\(sold)")
+        }
+        for stocked in ["InStock", "http://schema.org/InStock", "in stock", "PreOrder"] {
+            #expect(PageMetadataParser.availability(from: stocked) == true, "\(stocked)")
+        }
+    }
+
+    /// Nil is a third answer and has to stay one. Presenting an unlabelled page as sold
+    /// out means an unprompted "want to be notified?" about something you could just buy.
+    @Test("An unrecognised value is unknown, not available")
+    func unknownStaysUnknown() {
+        #expect(PageMetadataParser.availability(from: "") == nil)
+        #expect(PageMetadataParser.availability(from: "LimitedTimeOffer") == nil)
+    }
+}
+
+/// Telling "the storefront closed itself" apart from "an edge refused us". They arrive as
+/// the same status code and mean opposite things.
+@Suite("Locks and bot walls")
+struct LockDetectionTests {
+    private func response(_ status: Int, _ body: String = "", finalURL: String = "https://brand.com/") -> HTTPResponse {
+        HTTPResponse(data: Data(body.utf8), status: status, finalURL: URL(string: finalURL)!)
+    }
+
+    /// The Yeezy case, exactly. A permanent Cloudflare challenge read as "drop imminent",
+    /// so the brand showed locked forever — and the locked cadence is 60 seconds, so the
+    /// poller hammered a site that was already refusing it.
+    @Test("A Cloudflare challenge is a failure, not a drop lock")
+    func challengeIsNotALock() {
+        let challenge = response(403, """
+        <!DOCTYPE html><html><head><title>Just a moment...</title>
+        <script src="/cdn-cgi/challenge-platform/h/b/orchestrate/chl_page"></script>
+        """)
+        #expect(challenge.isChallenged)
+        #expect(!challenge.isLocked)
+        #expect(throws: SourceError.blockedByEdge) { try challenge.requireOK() }
+    }
+
+    @Test("A storefront that closed itself is still a lock")
+    func realLocksSurvive() {
+        #expect(response(401).isLocked)
+        #expect(response(302, finalURL: "https://brand.com/password").isLocked)
+        // A bare 403 with nothing challenge-shaped about it keeps its old meaning; there
+        // is no evidence it was ever wrong.
+        #expect(response(403, "<html><body>Forbidden</body></html>").isLocked)
+    }
+
+    @Test("A normal page is neither")
+    func normalPage() {
+        let ok = response(200, "<html><body>Shop</body></html>")
+        #expect(!ok.isLocked)
+        #expect(!ok.isChallenged)
+        #expect(throws: Never.self) { try ok.requireOK() }
+    }
+
+    /// The Phase London shape: a storefront that answers 200 while its own markup says
+    /// you are being turned away. Status-code checking cannot see this at all.
+    @Test("Locksmith's own verdict is read out of the markup")
+    func readsLocksmith() {
+        let locked = #"<script type="application/vnd.locksmith+json" data-locksmith>{"version":"v324","locked":true,"access_granted":false,"access_denied":true,"scope":"index"}</script>"#
+        #expect(StorefrontLock.locksmithVerdict(in: locked) == true)
+        #expect(StorefrontLock.isLocked(html: locked))
+
+        let open = #"<script type="application/vnd.locksmith+json" data-locksmith>{"version":"v324","locked":false,"initialized":true,"scope":"index","access_granted":true,"access_denied":false}</script>"#
+        #expect(StorefrontLock.locksmithVerdict(in: open) == false)
+        #expect(!StorefrontLock.isLocked(html: open))
+
+        // Locked, but you hold a key — which is open, for you.
+        let granted = #"<script type="application/vnd.locksmith+json">{"locked":true,"access_granted":true,"access_denied":false}</script>"#
+        #expect(StorefrontLock.locksmithVerdict(in: granted) == false)
+
+        // No Locksmith at all is *unknown*, not "open" — which is why it isn't a Bool.
+        #expect(StorefrontLock.locksmithVerdict(in: "<html><body>Shop</body></html>") == nil)
+    }
+
+    /// "password" on its own appears in the markup of plenty of open stores — a login
+    /// form, an account link — so one marker is never enough.
+    @Test("A password page needs two markers, not one")
+    func passwordPage() {
+        #expect(StorefrontLock.isLocked(html: #"<form action="/password" class="password-page__form">"#))
+        #expect(!StorefrontLock.isLocked(html: #"<a href="/account/login">Forgot your password?</a>"#))
+        #expect(!StorefrontLock.isLocked(html: #"<form action="/password">"#))
+    }
+
+    @Test("A page that admits it is locked reports a lock even on a 200")
+    func pageWatchReadsDeclaredLock() async throws {
+        let http = MockHTTPClient()
+        http.stub("/", .init(body: Data(#"""
+        <html><head><script type="application/vnd.locksmith+json">{"locked":true,"access_denied":true}</script></head>
+        <body>Back soon</body></html>
+        """#.utf8)))
+
+        let source = BrandSource(kind: .page, url: URL(string: "https://brand.com/")!)
+        let result = try await PageWatchSource(http: http).fetch(source, since: nil)
+
+        #expect(result.isLocked)
+        #expect(result.items.first?.kind == .dropLock)
     }
 }
 
@@ -793,6 +1068,61 @@ struct SitemapSourceTests {
     func honoursETag() async throws {
         let result = try await SitemapSource(http: client(urlset)).fetch(source(etag: "W/\"s1\""), since: nil)
         #expect(result.notModified)
+    }
+
+    /// Palace's shape, trimmed: randomised handles that say nothing, with the real name
+    /// and the real photograph sitting in the image extension two lines below.
+    private let withImages = """
+    <?xml version="1.0" encoding="UTF-8"?>
+    <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"
+            xmlns:image="http://www.google.com/schemas/sitemap-image/1.1">
+      <url>
+        <loc>https://brand.com/products/av1bal6eijz1</loc>
+        <lastmod>2026-08-09T10:00:00Z</lastmod>
+        <image:image>
+          <image:loc>https://cdn.shopify.com/s/files/avirex-jacket-black-1.png</image:loc>
+          <image:title>PALACE AVIREX JACKET BLACK</image:title>
+          <image:caption></image:caption>
+        </image:image>
+        <image:image>
+          <image:loc>https://cdn.shopify.com/s/files/avirex-jacket-black-2.png</image:loc>
+          <image:title>PALACE AVIREX JACKET BLACK</image:title>
+        </image:image>
+      </url>
+      <url>
+        <loc>https://brand.com/products/e7anvz3i1psy</loc>
+        <lastmod>2026-08-08T10:00:00Z</lastmod>
+      </url>
+    </urlset>
+    """
+
+    /// The bug this fixes shipped a feed of "E7Anvz3I1Psy" over empty grey tiles while
+    /// the correct name and photograph were in the same XML entry.
+    @Test("The image extension supplies the real name and the lead photograph")
+    func readsImageExtension() async throws {
+        let result = try await SitemapSource(http: client(withImages)).fetch(source(), since: nil)
+        let jacket = try #require(result.items.first)
+
+        #expect(jacket.title == "PALACE AVIREX JACKET BLACK")
+        // The lead shot only — a product page lists every angle it has.
+        #expect(jacket.imageURLStrings == ["https://cdn.shopify.com/s/files/avirex-jacket-black-1.png"])
+        // The page URL, not the CDN's: `<image:loc>` shares a local name with `<loc>`.
+        #expect(jacket.linkURL?.absoluteString == "https://brand.com/products/av1bal6eijz1")
+    }
+
+    /// A hash is not a product name, and printing one is worse than admitting we don't
+    /// have it — the tile still links to the product either way.
+    @Test("A randomised handle with no image title doesn't become the title")
+    func refusesUnreadableSlugs() async throws {
+        let result = try await SitemapSource(http: client(withImages)).fetch(source(), since: nil)
+        #expect(result.items.last?.title == "New arrival")
+
+        #expect(!SitemapSource.isReadable("E7Anvz3I1Psy"))
+        #expect(!SitemapSource.isReadable("Av1bal6eijz1"))
+        // Words are words, however short, and a season code is genuinely a name.
+        #expect(SitemapSource.isReadable("FW26 Box Logo Hoodie"))
+        #expect(SitemapSource.isReadable("Balaclava"))
+        #expect(SitemapSource.isReadable("FW26"))
     }
 }
 

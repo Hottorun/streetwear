@@ -31,6 +31,7 @@ struct SavedView: View {
     @State private var newBoardName = ""
     @State private var renaming: Board?
     @State private var opened: SavedItem?
+    @State private var openedFit: Fit?
 
     private var visible: [SavedItem] {
         let inMode = saves.filter { save in
@@ -108,6 +109,7 @@ struct SavedView: View {
                 }
             }
             .sheet(item: $opened) { SaveDetailView(save: $0) }
+            .sheet(item: $openedFit) { FitCanvas(fit: $0) }
             // Analysing here rather than at save time: this is the one screen whose
             // whole content is saved items, so the work is done where its results are
             // about to be used, and never for the 250 catalogue items nobody kept.
@@ -172,15 +174,44 @@ struct SavedView: View {
 
     private var wall: some View {
         ScrollView {
-            HStack(alignment: .top, spacing: 14) {
-                column(columns.0, offset: 0)
-                column(columns.1, offset: 1)
+            VStack(alignment: .leading, spacing: 22) {
+                boardFits
+                HStack(alignment: .top, spacing: 14) {
+                    column(columns.0, offset: 0)
+                    column(columns.1, offset: 1)
+                }
+                .padding(.horizontal, 20)
             }
-            .padding(.horizontal, 20)
             .padding(.top, 8)
             .padding(.bottom, 32)
         }
         .scrollIndicators(.hidden)
+    }
+
+    /// Fits filed onto the board being viewed.
+    ///
+    /// A fit is its own kind of thing — it references saved items rather than containing
+    /// them — but it files onto a board exactly as an item does, so a board that has both
+    /// should show both. Only on a board: Inspiration and Wardrobe are about individual
+    /// pieces, and the Style tab is where outfits live.
+    @ViewBuilder
+    private var boardFits: some View {
+        if let board = currentBoard, !board.fits.isEmpty, query.isEmpty {
+            VStack(alignment: .leading, spacing: 10) {
+                DataLabel(text: "\(board.fits.count) \(board.fits.count == 1 ? "FIT" : "FITS")")
+                    .padding(.horizontal, 20)
+                ScrollView(.horizontal) {
+                    LazyHStack(alignment: .top, spacing: 14) {
+                        ForEach(board.fits.sorted { $0.createdAt > $1.createdAt }) { fit in
+                            Button { openedFit = fit } label: { FitCard(fit: fit, width: 140) }
+                                .buttonStyle(.plain)
+                        }
+                    }
+                    .padding(.horizontal, 20)
+                }
+                .scrollIndicators(.hidden)
+            }
+        }
     }
 
     private func column(_ items: [SavedItem], offset: Int) -> some View {
@@ -199,11 +230,16 @@ struct SavedView: View {
     ///
     /// The guess is deterministic rather than random so a tile doesn't change shape on
     /// every redraw — a collection that reflows while you look at it is the opposite of
-    /// calm. Clamped either way, because a panoramic or extremely tall product shot
-    /// would otherwise blow one column out and leave the other empty.
+    /// calm.
+    ///
+    /// A measured aspect is used as-is, because the tile is what stops the picture being
+    /// cropped: the image is drawn `.fit`, so any clamp here is a clamp on the *photo*,
+    /// and the old 0.66–1.5 window squared off every lookbook shot on the wall. The
+    /// remaining bounds are only there to stop a panorama or a size chart from blowing
+    /// one column out and leaving the other empty.
     private func aspect(for save: SavedItem, offset: Int) -> CGFloat {
         if let measured = save.update?.imageAspect, measured > 0 {
-            return min(max(CGFloat(measured), 0.66), 1.5)
+            return min(max(CGFloat(measured), 0.4), 2.2)
         }
         let ratios: [CGFloat] = [1, 0.8, 1, 0.75]
         let index = abs(save.id.hashValue &+ offset) % ratios.count

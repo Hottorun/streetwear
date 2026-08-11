@@ -90,7 +90,9 @@ public enum GenderClassifier {
     /// - 1: initial.
     /// - 2: a product's *name* now outranks the department it is filed under, so a
     ///      "WMNS Dunk Low" tagged `mens` is women's rather than unisex.
-    public static let version = 2
+    /// - 3: cut names no longer read as ages. A "baby tee" is a women's cut and has
+    ///      never been childrenswear.
+    public static let version = 3
 
     // Whole-tag forms that tokenising would destroy. "w-apparel" splits to ["w",
     // "apparel"], and a bare "w" is far too ambiguous to act on by itself.
@@ -108,6 +110,19 @@ public enum GenderClassifier {
         "toddler", "infant", "baby", "junior", "child", "children"
     ]
     private static let unisexWords: Set<String> = ["unisex", "genderless", "allgender"]
+
+    /// Phrases where one of the words above names a *cut* rather than who wears it.
+    ///
+    /// A "baby tee" is a cropped, close-fitting women's T-shirt and has never been
+    /// childrenswear — but "baby" is in `kidsWords`, and a menswear or womenswear feed
+    /// hides kids, so YoungLA's baby tees were being filed onto the children's rail and
+    /// disappearing from both. Removed before tokenising, which lets the rest of the
+    /// evidence — here `product_type: "For Her"` — answer instead.
+    ///
+    /// Only phrases belong here. A single word that is ambiguous on its own is not a
+    /// candidate: whole-token matching already handles "boyfriend jeans" and "dad hat",
+    /// because those are one token and simply aren't in any set.
+    private static let cutPhrases = ["baby tee", "baby t-shirt", "babytee"]
 
     /// What one tier of evidence says. Two tiers are gathered separately so the stronger
     /// one can win outright instead of being averaged with the weaker.
@@ -195,7 +210,11 @@ public enum GenderClassifier {
     /// Splits on anything that isn't a letter or digit, so "Women's" yields "women" and
     /// "mens-fall-24" yields "mens". Runs of noise collapse rather than producing empties.
     private static func tokens(in text: String) -> [String] {
-        text.lowercased()
+        var lowered = text.lowercased()
+        for phrase in cutPhrases {
+            lowered = lowered.replacingOccurrences(of: phrase, with: " ")
+        }
+        return lowered
             .split { !$0.isLetter && !$0.isNumber }
             .map(String.init)
     }

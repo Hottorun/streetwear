@@ -29,11 +29,18 @@ enum BackgroundServices {
     private(set) static var remote: RemoteSync?
     private(set) static var sizes: SizeProfileStore?
     private(set) static var settings: ServerSettings?
+    private(set) static var route: PushRoute?
 
-    static func install(remote: RemoteSync, sizes: SizeProfileStore, settings: ServerSettings) {
+    static func install(
+        remote: RemoteSync,
+        sizes: SizeProfileStore,
+        settings: ServerSettings,
+        route: PushRoute
+    ) {
         self.remote = remote
         self.sizes = sizes
         self.settings = settings
+        self.route = route
     }
 
     /// One sync pass, safe to call from a background wake-up.
@@ -165,12 +172,79 @@ extension AppDelegate: UNUserNotificationCenterDelegate {
         return [.banner, .sound, .list]
     }
 
-    /// Tapped. Pull first so the item that caused the notification is actually there.
+    /// Tapped. Pull first so the item that caused the notification is actually there —
+    /// the alert can arrive before the phone has the row it is about — and only then say
+    /// where to go.
     func userNotificationCenter(
         _ center: UNUserNotificationCenter,
         didReceive response: UNNotificationResponse
     ) async {
         await BackgroundServices.syncNow()
+        BackgroundServices.route?.open(
+            PushDestination(response.notification.request.content.userInfo)
+        )
+    }
+}
+
+/// Where a tapped notification should land.
+///
+/// Being told something is back in your size and then being dropped on a feed to go and
+/// find it is the notification failing at the last step — the alert already knows which
+/// product it is about.
+enum PushDestination: Equatable {
+    /// One item, keyed the way `RemoteSync` stores server-backed rows.
+    case update(externalID: String)
+    /// A brand's page. What a counted summary ("3 restocks") gets, because no single
+    /// product is the subject.
+    case brand(remoteID: UUID)
+    /// A push with nothing usable in it — a probe, or a build newer than this one.
+    case none
+
+    init(_ userInfo: [AnyHashable: Any]) {
+        if let event = userInfo["eventID"] as? String, UUID(uuidString: event) != nil {
+            self = .update(externalID: "event:\(event)")
+            return
+        }
+        if let brand = userInfo["brandID"] as? String,
+           let id = UUID(uuidString: brand),
+           id != Self.probeBrandID {
+            self = .brand(remoteID: id)
+            return
+        }
+        self = .none
+    }
+
+    /// The server's sentinel for a test push. It refers to no real brand, so navigating to
+    /// it would land on an empty page and read as a bug.
+    static let probeBrandID = UUID(uuidString: "00000000-0000-0000-0000-000000000000")!
+}
+
+/// The one place a tapped notification's destination is published.
+///
+/// Observable rather than a notification-centre broadcast so the value survives being set
+/// before the view hierarchy exists — a push that cold-launches the app delivers its tap
+/// well before `ContentView` has appeared, and a broadcast at that moment reaches nobody.
+@MainActor
+@Observable
+final class PushRoute {
+    /// Cleared by whoever handles it, so the same tap can't re-navigate on every redraw.
+    var pending: PushDestination?
+
+    /// Something just shared in that turned out to be sold out. Offered rather than
+    /// navigated to, so it is one tap to set the watch and one to ignore.
+    var watchOffer: BrandUpdate?
+
+    func open(_ destination: PushDestination) {
+        guard destination != .none else { return }
+        pending = destination
+    }
+
+    /// First one wins for the pass. Sharing five sold-out links should ask once, not
+    /// stack five sheets — and the alternative to asking is the watch section on the item
+    /// itself, which is always there.
+    func offerWatch(_ update: BrandUpdate) {
+        guard watchOffer == nil else { return }
+        watchOffer = update
     }
 }
 

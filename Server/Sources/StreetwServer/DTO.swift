@@ -70,7 +70,14 @@ extension FeedItem {
             // watcher have something to work with. Withholding these is what made the
             // whole size feature inert in the app's default server-backed mode.
             variants: variants.map(\.asVariantInfo),
-            gender: product?.gender.rawValue
+            gender: product?.gender.rawValue,
+            // Shipped alongside the verdict rather than instead of it: the server decides
+            // gender so both platforms agree, but the client re-derives whenever its own
+            // classifier moves ahead of this deploy's, and it can only do that if it was
+            // given the text the answer was read from.
+            productType: product?.productType,
+            tags: product?.tags,
+            genderVersion: product == nil ? nil : GenderClassifier.version
         )
     }
 }

@@ -147,6 +147,33 @@ actor ImageLoader {
         decoded.object(forKey: url as NSURL)
     }
 
+    /// Loads images that are about to be needed, with nobody waiting on the result.
+    ///
+    /// A paged gallery creates each page only as it is reached, so the load for photo *n*
+    /// starts at the moment you arrive on it — which is why every swipe landed on an empty
+    /// frame and then filled in. Warming the neighbours turns that into an image that is
+    /// simply already there.
+    ///
+    /// Deliberately fire-and-forget, and deliberately unstructured: a prefetch started
+    /// from a view's `.task` must **not** die when that task is cancelled, or paging
+    /// quickly — exactly when this matters most — would cancel each warm-up on its way to
+    /// the next one. It joins `inFlight`, so a page that catches up with its own prefetch
+    /// awaits the same request rather than starting a second.
+    nonisolated func prefetch(_ urls: [URL], width: Int) {
+        let resolved = urls.map { ImageRendition.sized($0, width: width) }
+        Task.detached(priority: .utility) { await self.warm(resolved) }
+    }
+
+    /// One at a time. The photograph the user is actually looking at is competing for the
+    /// same connection, and three parallel prefetches would slow down the one load that
+    /// somebody is waiting on.
+    private func warm(_ urls: [URL]) async {
+        for url in urls {
+            guard decoded.object(forKey: url as NSURL) == nil, inFlight[url] == nil else { continue }
+            _ = try? await load(url)
+        }
+    }
+
     func load(_ url: URL) async throws -> UIImage {
         if let hit = decoded.object(forKey: url as NSURL) { return hit }
 

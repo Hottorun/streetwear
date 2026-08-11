@@ -28,6 +28,18 @@ final class MockHTTPClient: HTTPFetching, @unchecked Sendable {
         stub(key, Stub(body: Fixtures.data(fixture), etag: etag))
     }
 
+    /// Keyed by host as well, for the few cases where *which* host answered is the point
+    /// — a store that serves its catalog on `www.` and 404s on the apex, say. A
+    /// host-qualified stub wins over a bare path, so existing host-blind stubs still work
+    /// as the catch-all they were written to be.
+    func stub(host: String, _ key: String, _ stub: Stub) {
+        lock.withLock { stubs["\(host)|\(key)"] = stub }
+    }
+
+    func stub(host: String, _ key: String, fixture: String, etag: String? = nil) {
+        stub(host: host, key, Stub(body: Fixtures.data(fixture), etag: etag))
+    }
+
     func setDefault(_ stub: Stub) {
         lock.withLock { defaultStub = stub }
     }
@@ -46,7 +58,9 @@ final class MockHTTPClient: HTTPFetching, @unchecked Sendable {
         // Scoped locking: NSLock's lock()/unlock() pair is unavailable in async contexts.
         let stub = lock.withLock { () -> Stub in
             requests.append((url, etag))
-            return stubs[Self.key(for: url)] ?? defaultStub
+            let path = Self.key(for: url)
+            let qualified = url.host().map { "\($0)|\(path)" }
+            return qualified.flatMap { stubs[$0] } ?? stubs[path] ?? defaultStub
         }
 
         // Honour If-None-Match the way a real origin does, so the adapter's 304 path

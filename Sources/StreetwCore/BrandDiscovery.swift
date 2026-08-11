@@ -28,15 +28,24 @@ public enum BrandDiscovery {
         var result = DiscoveredSources()
 
         if let base = normalizedURL(raw) {
-            result.suggestedName = suggestName(from: base)
+            var shopName: String?
 
-            if await ShopifySource.detect(at: base, http: http) {
-                result.sources.append(BrandSource(kind: .shopify, url: base))
+            // The catalog is not always on the host that was typed: a storefront moved to
+            // Hydrogen answers on the apex and 404s `/products.json`, while the classic
+            // origin still serves it on `www.`. Whichever one answered is the host the
+            // sources are pinned to, so every later poll goes back to the one that works.
+            if let store = await ShopifySource.resolve(at: base, http: http) {
+                result.sources.append(BrandSource(kind: .shopify, url: store))
                 // Only worth probing on a store we already know is Shopify — the
                 // endpoint doesn't exist anywhere else, so this costs nothing elsewhere.
-                if let collections = await CollectionsSource.detect(at: base, http: http) {
+                if let collections = await CollectionsSource.detect(at: store, http: http) {
                     result.sources.append(BrandSource(kind: .collections, url: collections))
                 }
+                // `/meta.json` carries the merchant's own display name, which is the most
+                // authoritative answer there is — "Billionaire Boys Club", never
+                // "Bbcicecream". Asked for here rather than waiting for the first sync,
+                // because the name is shown on the very next screen.
+                shopName = await ShopifySource.shopInfo(for: store, http: http)?.name
             }
             if let feed = await FeedSource.detect(at: base, http: http) {
                 result.sources.append(BrandSource(kind: .feed, url: feed))
@@ -53,8 +62,16 @@ public enum BrandDiscovery {
                 result.sources.append(BrandSource(kind: .page, url: base))
             }
 
-            // One extra request, once, when a brand is added — never on a poll.
-            result.logoURL = await BrandMark.discover(at: base, http: http)
+            // One extra request, once, when a brand is added — never on a poll. It answers
+            // two questions at once: the mark the site publishes for home screens, and the
+            // name it publishes for link previews.
+            let identity = await SiteIdentityProbe.discover(at: base, http: http)
+            result.logoURL = identity.logoURL
+            result.suggestedName = BrandNaming.pick(
+                shopName: shopName,
+                siteName: identity.name,
+                host: base.host()
+            )
         }
 
         if let handle = normalizedHandle(instagramHandle),
@@ -89,14 +106,4 @@ public enum BrandDiscovery {
         return handle.isEmpty ? nil : handle
     }
 
-    /// "shop.bbcicecream.com" -> "Bbcicecream". A starting point the user can edit.
-    private static func suggestName(from url: URL) -> String? {
-        guard let host = url.host() else { return nil }
-        let parts = host
-            .replacingOccurrences(of: "www.", with: "")
-            .replacingOccurrences(of: "shop.", with: "")
-            .split(separator: ".")
-        guard let first = parts.first else { return nil }
-        return first.capitalized
-    }
 }

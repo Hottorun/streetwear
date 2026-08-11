@@ -560,6 +560,147 @@ struct PollerResilienceTests {
             #expect(polled == 0)
         }
     }
+
+    /// Two sources on one brand, polled independently. The lock flag was assigned from
+    /// inside each source's poll, so whichever ran last won — a genuine lock seen by the
+    /// catalog was erased minutes later by the collections endpoint answering normally.
+    @Test("One locked source keeps the brand locked, whatever the others say")
+    func lockIsDerivedFromAllSources() async throws {
+        try await withServer { app in
+            let http = StubHTTP()
+            let brand = BrandModel(
+                name: "Example", slug: "example.com", website: "https://example.com",
+                instagramHandle: nil, usesGeneratedName: false
+            )
+            try await brand.save(on: app.db)
+            let brandID = try brand.requireID()
+
+            let catalogSource = SourceModel(brandID: brandID, kind: .shopify, url: "https://example.com")
+            try await catalogSource.save(on: app.db)
+            let collections = SourceModel(
+                brandID: brandID, kind: .collections, url: "https://example.com/collections.json?limit=250"
+            )
+            try await collections.save(on: app.db)
+
+            // The catalog is locked; collections answers normally.
+            http.stub("/products.json?limit=250&page=1", status: 401, body: "")
+            http.stub("/collections.json?limit=250", body: #"{"collections": []}"#)
+            http.stub("/meta.json", body: #"{"name": "Example", "currency": "USD"}"#)
+
+            await Poller(app: app, http: http).tick()
+
+            let after = try #require(try await BrandModel.find(brandID, on: app.db))
+            #expect(after.lockedForDrop, "the open source must not erase the locked one")
+
+            // The store reopens.
+            for source in try await SourceModel.query(on: app.db).all() {
+                source.nextCheckAt = Date().addingTimeInterval(-1)
+                try await source.save(on: app.db)
+            }
+            http.stub("/products.json?limit=250&page=1", body: catalog(available: true))
+            await Poller(app: app, http: http).tick()
+
+            let reopened = try #require(try await BrandModel.find(brandID, on: app.db))
+            #expect(!reopened.lockedForDrop)
+        }
+    }
+
+    /// The Yeezy case. A permanent bot wall answered 403, which read as "drop imminent" —
+    /// so the brand showed locked forever *and* the locked cadence retried it every 60
+    /// seconds against a site that was already refusing us.
+    @Test("A bot challenge is a failing source, not a locked brand")
+    func challengeDoesNotLock() async throws {
+        try await withServer { app in
+            let http = StubHTTP()
+            let brand = BrandModel(
+                name: "Example", slug: "example.com", website: "https://example.com",
+                instagramHandle: nil, usesGeneratedName: false
+            )
+            try await brand.save(on: app.db)
+            let source = SourceModel(brandID: try brand.requireID(), kind: .shopify, url: "https://example.com")
+            try await source.save(on: app.db)
+
+            http.stub(
+                "/products.json?limit=250&page=1",
+                status: 403,
+                body: "<!DOCTYPE html><html><head><title>Just a moment...</title></head></html>"
+            )
+
+            await Poller(app: app, http: http).tick()
+
+            let after = try #require(try await BrandModel.query(on: app.db).first())
+            #expect(!after.lockedForDrop)
+
+            let polled = try #require(try await SourceModel.query(on: app.db).first())
+            #expect(polled.failureCount == 1, "it is a failure, and must back off like one")
+            #expect(polled.lockedAt == nil)
+            // Not the 60-second locked cadence: the first failure backs off to two minutes.
+            #expect(polled.nextCheckAt > Date().addingTimeInterval(90))
+        }
+    }
+
+    /// Palace randomises its product handles until a drop is live, so a sitemap row can
+    /// be stored with a hash for a name. Dedupe is on `externalID` and the merge only
+    /// ever *refreshed* stock and price, so nothing revisited the title — a feed said
+    /// "E7Anvz3I1Psy" for as long as the product existed.
+    @Test("A product stored under a randomised handle takes its real name later")
+    func provisionalTitleIsUpgraded() async throws {
+        try await withServer { app in
+            let http = StubHTTP()
+            let brand = BrandModel(
+                name: "Palace", slug: "example.com", website: "https://example.com",
+                instagramHandle: nil, usesGeneratedName: false
+            )
+            try await brand.save(on: app.db)
+            let source = SourceModel(
+                brandID: try brand.requireID(), kind: .sitemap, url: "https://example.com/sitemap.xml"
+            )
+            try await source.save(on: app.db)
+
+            // `lastmod` advances on the second poll, because `since` filtering is how
+            // every adapter avoids resurfacing a catalogue — a row is only revisited when
+            // the storefront says it moved, which is exactly when its name can change.
+            func sitemap(withImage: Bool, modified: Date) -> String {
+                let image = withImage ? """
+                    <image:image>
+                      <image:loc>https://cdn.example.com/avirex-1.png</image:loc>
+                      <image:title>PALACE AVIREX JACKET BLACK</image:title>
+                    </image:image>
+                """ : ""
+                return """
+                <?xml version="1.0" encoding="UTF-8"?>
+                <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"
+                        xmlns:image="http://www.google.com/schemas/sitemap-image/1.1">
+                  <url>
+                    <loc>https://example.com/products/e7anvz3i1psy</loc>
+                    <lastmod>\(ISO8601DateFormatter().string(from: modified))</lastmod>
+                    \(image)
+                  </url>
+                </urlset>
+                """
+            }
+
+            http.stub("/sitemap.xml", body: sitemap(withImage: false, modified: Date()))
+            let poller = Poller(app: app, http: http)
+            await poller.tick()
+
+            var product = try #require(try await ProductModel.query(on: app.db).first())
+            #expect(product.title == "New arrival", "a hash is never printed as a name")
+            #expect(product.imageURLs.isEmpty)
+
+            source.nextCheckAt = Date().addingTimeInterval(-1)
+            try await source.save(on: app.db)
+            http.stub("/sitemap.xml", body: sitemap(withImage: true, modified: Date().addingTimeInterval(600)))
+
+            await poller.tick()
+
+            product = try #require(try await ProductModel.query(on: app.db).first())
+            #expect(product.title == "PALACE AVIREX JACKET BLACK")
+            #expect(product.imageURLs == ["https://cdn.example.com/avirex-1.png"])
+            // Renaming a product is not news — it is the same drop, better described.
+            #expect(try await EventModel.query(on: app.db).count() == 0)
+        }
+    }
 }
 
 @Suite("Status")

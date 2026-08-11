@@ -71,8 +71,8 @@ struct StyleView: View {
                 }
             }
             .sheet(isPresented: $isShowingSettings) { SettingsSheet() }
-            .sheet(isPresented: $isComposing) { FitComposer(fit: nil) }
-            .sheet(item: $editing) { FitComposer(fit: $0) }
+            .sheet(isPresented: $isComposing) { FitCanvas(fit: nil) }
+            .sheet(item: $editing) { FitCanvas(fit: $0) }
             .task(id: settings.token) { await suggestions.loadIfNeeded() }
         }
         // Ink, not the system blue. Every other tab does this; without it the controls on
@@ -105,11 +105,12 @@ struct StyleView: View {
                 LazyHStack(alignment: .top, spacing: 14) {
                     ForEach(fits) { fit in
                         Button { editing = fit } label: {
-                            FitCard(images: fit.imageURLs, title: fit.displayName)
+                            FitCard(fit: fit)
                         }
                         .buttonStyle(.plain)
                         .contextMenu {
                             Button("Delete fit", systemImage: "trash", role: .destructive) {
+                                if let render = fit.renderFile { FitRender.remove(render) }
                                 context.delete(fit)
                                 try? context.save()
                             }
@@ -132,9 +133,9 @@ struct StyleView: View {
                         Button {
                             keep(fit)
                         } label: {
-                            FitCard(
-                                images: fit.ordered.compactMap { $0.update?.primaryImageURL },
-                                title: fit.ordered.compactMap { $0.slot.label }.joined(separator: " · ")
+                            SuggestedFitCard(
+                                items: fit.ordered,
+                                title: fit.ordered.map(\.slot.label).joined(separator: " · ")
                             )
                         }
                         .buttonStyle(.plain)
@@ -183,24 +184,66 @@ struct StyleView: View {
 
 // MARK: - Pieces
 
-/// A fit, drawn as its clothes. Stacked head-down so it reads as an outfit rather than a
-/// row of products.
+/// A fit, drawn as it was arranged.
+///
+/// The flattened render when there is one, which is the whole reason it is written: a row
+/// of these would otherwise compose a canvas per card, and each canvas decodes every
+/// cutout in it. The live surface is the fallback for fits made before renders existed and
+/// for the moment between saving and the file landing.
 struct FitCard: View {
-    let images: [URL]
+    let fit: Fit
+    var width: CGFloat = 168
+
+    private var render: UIImage? {
+        fit.renderURL.flatMap { UIImage(contentsOfFile: $0.path(percentEncoded: false)) }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Group {
+                if let render {
+                    Image(uiImage: render).resizable().scaledToFit()
+                } else {
+                    FitCanvasSurface(fit: fit)
+                }
+            }
+            .frame(width: width, height: width)
+            .background(Color.wash.opacity(0.4))
+
+            Text(fit.displayName)
+                .font(.editorial(12))
+                .foregroundStyle(Color.ink)
+                .lineLimit(2)
+                .multilineTextAlignment(.leading)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(width: width)
+    }
+}
+
+/// A proposal, which has no canvas yet — so it is drawn as its pieces, overlapped in the
+/// order a fit is read. Deliberately looser than a real fit's card: this is something the
+/// app is offering, and it should not pretend to be an arrangement somebody made.
+struct SuggestedFitCard: View {
+    let items: [SavedItem]
     let title: String
     var width: CGFloat = 168
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            VStack(spacing: 2) {
-                ForEach(Array(images.prefix(3).enumerated()), id: \.offset) { _, url in
-                    UpdateImage(url: url, aspect: 1.55, contentMode: .fill, drawnWidth: 200)
-                }
-                if images.isEmpty {
-                    Color.wash.aspectRatio(1, contentMode: .fit)
+            ZStack {
+                ForEach(Array(items.prefix(4).enumerated()), id: \.offset) { index, item in
+                    FitPieceImage(item: item)
+                        .frame(width: width * 0.55, height: width * 0.55)
+                        .offset(
+                            x: CGFloat(index % 2 == 0 ? -1 : 1) * width * 0.14,
+                            y: CGFloat(index) * width * 0.13 - width * 0.2
+                        )
                 }
             }
+            .frame(width: width, height: width)
             .clipped()
+            .background(Color.wash.opacity(0.4))
 
             Text(title)
                 .font(.editorial(12))

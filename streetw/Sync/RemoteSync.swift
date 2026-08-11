@@ -292,15 +292,20 @@ final class RemoteSync {
         // the store. The old version loaded and faulted in the entire table — thousands of
         // rows after a few weeks — on every sync, to test membership of at most 200.
         let incoming = items.map { "event:\($0.eventID.uuidString)" }
-        var descriptor = FetchDescriptor<BrandUpdate>(
+        let descriptor = FetchDescriptor<BrandUpdate>(
             predicate: #Predicate { incoming.contains($0.externalID) }
         )
-        descriptor.propertiesToFetch = [\.externalID]
-        let existingIDs = Set(((try? context.fetch(descriptor)) ?? []).map(\.externalID))
+        let held = Dictionary(
+            ((try? context.fetch(descriptor)) ?? []).map { ($0.externalID, $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
 
         for item in items {
             let externalID = "event:\(item.eventID.uuidString)"
-            guard !existingIDs.contains(externalID) else { continue }
+            if let existing = held[externalID] {
+                backfill(existing, from: item)
+                continue
+            }
             guard let brand = byRemoteID[item.brandID] else { continue }
 
             let update = BrandUpdate(
@@ -313,7 +318,9 @@ final class RemoteSync {
                 publishedAt: item.createdAt,
                 kind: item.updateKind,
                 priceText: item.priceText,
-                isAvailable: item.isAvailable
+                isAvailable: item.isAvailable,
+                tags: item.tags ?? [],
+                productType: item.productType
             )
             update.restockedSizes = item.restockedSizes
             // The server already matched against this device's profile. Kept as a
@@ -329,16 +336,53 @@ final class RemoteSync {
 
             if let gender = item.gender {
                 update.genderRaw = gender
-                update.genderVersion = GenderClassifier.version
+                // The server's revision, not ours. Claiming ours froze the verdict
+                // forever the moment the phone shipped a better classifier than the
+                // deployment — `gender` only re-derives on a version *mismatch*, so
+                // stamping the local number is a promise that this build produced the
+                // answer. A server that doesn't say reads as revision 0, which is stale
+                // by definition and re-derived on first read.
+                update.genderVersion = item.genderVersion ?? 0
             } else {
                 // A server that predates the field sends nothing, and a nil gender reads
                 // as `.unknown`, which no filter hides — so a "menswear only" feed would
-                // quietly show everything. Classifying locally from the title and the URL
-                // handle recovers exactly the tier that catches a name like
-                // "WMNS Dunk Low", without waiting on a deploy.
+                // quietly show everything. Classifying locally recovers the answer from
+                // the title, the URL handle and — since the feed now carries them — the
+                // product type and tags, without waiting on a deploy.
                 update.refreshGender()
             }
             newItemCount += 1
+        }
+    }
+
+    /// Fills in classification text on a row this device already holds.
+    ///
+    /// Rows written before the feed carried `productType` and `tags` hold neither, and a
+    /// gender stamped by an older revision therefore re-derives from a title alone —
+    /// which for a brand that files its womenswear as `product_type: "For Her"` and names
+    /// its products `W2156` can only ever answer "unknown". Unknown is never filtered, so
+    /// every one of those reappeared in a menswear feed. They cannot heal on their own:
+    /// the merge below skips ids it already has, so without this they keep that answer
+    /// until they age out of the feed window.
+    ///
+    /// Only ever adds. It does not touch `isSeen`, the save, or anything the person did —
+    /// this is the same event, better described, not a new one.
+    private func backfill(_ update: BrandUpdate, from item: FeedItem) {
+        var changed = false
+        if update.productType == nil, let productType = item.productType {
+            update.productType = productType
+            changed = true
+        }
+        if update.tags.isEmpty, let tags = item.tags, !tags.isEmpty {
+            update.tags = tags
+            changed = true
+        }
+        guard changed else { return }
+        if let gender = item.gender {
+            update.genderRaw = gender
+            update.genderVersion = item.genderVersion ?? 0
+        } else {
+            update.refreshGender()
         }
     }
 }

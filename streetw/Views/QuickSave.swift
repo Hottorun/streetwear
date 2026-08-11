@@ -17,23 +17,36 @@
 // actions. So the modifier offsets the entire card — it has to, or the hint appears
 // beside a card that hasn't moved — while `quickSaveHandle()` marks the region that
 // actually recognises the drag. In practice that is everything below the image.
+//
+// Two things about *how* that is wired, both of which it got wrong the first time and
+// both of which made the gesture simply not fire:
+//
+// - **The handle sits on a `NavigationLink`.** A link installs its own recogniser, and an
+//   inner gesture beats an outer one by default — so a plain `.gesture()` wrapped around
+//   the link lost every drag to the link's press handling. It has to be
+//   `.highPriorityGesture`. Taps still reach the link, because the drag needs 18pt of
+//   movement before it claims anything.
+// - **A gesture cannot travel through the environment.** It used to be shipped down as an
+//   `AnyGesture`, rebuilt on every `body` evaluation — which is every frame of a drag, so
+//   each frame replaced the recogniser that was mid-drag with a fresh one. What travels
+//   now is a coordinator with a *stable identity*; the handle owns the real gesture and
+//   reports to it.
 
 import SwiftData
 import SwiftUI
 
-struct QuickSaveModifier: ViewModifier {
-    @Environment(\.modelContext) private var context
-
-    let update: BrandUpdate
-
-    @State private var offset: CGFloat = 0
-    @State private var isChoosingBoard = false
-    @State private var didMarkRead = false
-
+/// The shared drag state between the card and whichever part of it is draggable.
+///
+/// A reference type on purpose. The environment value must be stable across renders or
+/// the subtree reading it is invalidated on every frame of the drag, which is exactly
+/// what killed the gesture before.
+@MainActor
+@Observable
+final class QuickSaveCoordinator {
     /// Far enough that a scroll can't trigger it, close enough for one thumb.
-    private static let threshold: CGFloat = 78
+    static let threshold: CGFloat = 78
 
-    private enum Intent {
+    enum Intent {
         case markRead
         case file
 
@@ -45,18 +58,53 @@ struct QuickSaveModifier: ViewModifier {
         }
     }
 
-    private var pending: Intent? {
+    private(set) var offset: CGFloat = 0
+
+    var pending: Intent? {
         if offset > 24 { return .markRead }
         if offset < -24 { return .file }
         return nil
     }
 
+    var isPastThreshold: Bool { abs(offset) >= Self.threshold }
+
+    func dragged(_ translation: CGSize) {
+        print("QS-DRAG \(translation)")
+        // Horizontal intent only. Without this the vertical scroll and the card fight
+        // each other and neither feels right.
+        guard abs(translation.width) > abs(translation.height) else { return }
+        // Resists past the threshold rather than following the finger forever, so the
+        // commit point is felt instead of guessed.
+        let raw = translation.width
+        offset = abs(raw) <= Self.threshold
+            ? raw
+            : raw / abs(raw) * (Self.threshold + (abs(raw) - Self.threshold) / 4)
+    }
+
+    /// Returns what should happen, and resets. Nil when the drag didn't go far enough.
+    func ended() -> Intent? {
+        let committed = isPastThreshold ? pending : nil
+        offset = 0
+        return committed
+    }
+}
+
+struct QuickSaveModifier: ViewModifier {
+    @Environment(\.modelContext) private var context
+
+    let update: BrandUpdate
+
+    @State private var coordinator = QuickSaveCoordinator()
+    @State private var isChoosingBoard = false
+    @State private var didMarkRead = false
+
     func body(content: Content) -> some View {
         content
-            .environment(\.quickSaveDrag, drag)
-            .offset(x: offset)
-            .background(alignment: offset > 0 ? .leading : .trailing) { hint }
-            .animation(.interactiveSpring(duration: 0.25), value: offset)
+            .environment(\.quickSaveCoordinator, coordinator)
+            .environment(\.quickSaveCommit, commit)
+            .offset(x: coordinator.offset)
+            .background(alignment: coordinator.offset > 0 ? .leading : .trailing) { hint }
+            .animation(.interactiveSpring(duration: 0.25), value: coordinator.offset)
             .sensoryFeedback(.success, trigger: didMarkRead)
             .sheet(isPresented: $isChoosingBoard) {
                 BoardPicker(update: update)
@@ -64,51 +112,20 @@ struct QuickSaveModifier: ViewModifier {
             }
     }
 
-    /// Handed down the view tree rather than attached here, so the caller decides which
-    /// part of the card is draggable. Attaching it at this level would swallow the
-    /// photograph's paging gesture.
-    ///
-    /// Type-erased to `AnyGesture<Void>` because it travels through the environment,
-    /// which needs a concrete type; the value it produces is never read.
-    private var drag: AnyGesture<Void> {
-        AnyGesture(rawDrag.map { _ in () })
-    }
-
-    private var rawDrag: some Gesture {
-        DragGesture(minimumDistance: 18)
-            .onChanged { value in
-                // Horizontal intent only. Without this the vertical scroll and
-                // the card fight each other and neither feels right.
-                guard abs(value.translation.width) > abs(value.translation.height) else { return }
-                // Resists past the threshold rather than following the finger
-                // forever, so the commit point is felt instead of guessed.
-                let raw = value.translation.width
-                offset = abs(raw) <= Self.threshold
-                    ? raw
-                    : raw / abs(raw) * (Self.threshold + (abs(raw) - Self.threshold) / 4)
-            }
-            .onEnded { _ in
-                if abs(offset) >= Self.threshold, let pending {
-                    commit(pending)
-                }
-                offset = 0
-            }
-    }
-
     /// What the gesture will do, printed in the gap the card leaves behind.
     @ViewBuilder
     private var hint: some View {
-        if let pending {
+        if let pending = coordinator.pending {
             DataLabel(
                 text: pending.label,
                 size: 11,
-                color: abs(offset) >= Self.threshold ? .signal : .muted
+                color: coordinator.isPastThreshold ? .signal : .muted
             )
             .padding(.horizontal, 22)
         }
     }
 
-    private func commit(_ intent: Intent) {
+    private func commit(_ intent: QuickSaveCoordinator.Intent) {
         switch intent {
         case .markRead:
             update.isSeen = true
@@ -244,28 +261,53 @@ struct BoardPicker: View {
     }
 }
 
-/// Carries the card's drag gesture down to whichever subview should recognise it.
+/// Carries the card's drag state down to whichever subview should recognise it.
 ///
 /// An environment value rather than a parameter because the handle is usually several
-/// layers below the modifier — inside a caption stack, inside a card — and threading a
-/// gesture through every intermediate view's signature would be worse than this.
-private struct QuickSaveDragKey: EnvironmentKey {
-    static let defaultValue: AnyGesture<Void>? = nil
+/// layers below the modifier — inside a caption stack, inside a card — and threading it
+/// through every intermediate view's signature would be worse than this. What travels is
+/// the coordinator and a commit callback, never a gesture: a gesture value rebuilt on
+/// each render replaces the recogniser mid-drag, which is why this used to do nothing.
+private struct QuickSaveCoordinatorKey: EnvironmentKey {
+    static let defaultValue: QuickSaveCoordinator? = nil
+}
+
+private struct QuickSaveCommitKey: EnvironmentKey {
+    static let defaultValue: ((QuickSaveCoordinator.Intent) -> Void)? = nil
 }
 
 extension EnvironmentValues {
-    var quickSaveDrag: AnyGesture<Void>? {
-        get { self[QuickSaveDragKey.self] }
-        set { self[QuickSaveDragKey.self] = newValue }
+    var quickSaveCoordinator: QuickSaveCoordinator? {
+        get { self[QuickSaveCoordinatorKey.self] }
+        set { self[QuickSaveCoordinatorKey.self] = newValue }
+    }
+
+    var quickSaveCommit: ((QuickSaveCoordinator.Intent) -> Void)? {
+        get { self[QuickSaveCommitKey.self] }
+        set { self[QuickSaveCommitKey.self] = newValue }
     }
 }
 
 private struct QuickSaveHandle: ViewModifier {
-    @Environment(\.quickSaveDrag) private var drag
+    @Environment(\.quickSaveCoordinator) private var coordinator
+    @Environment(\.quickSaveCommit) private var commit
 
     func body(content: Content) -> some View {
-        if let drag {
-            content.gesture(drag)
+        if let coordinator, let commit {
+            content
+                // **High priority, not `.gesture`.** This is nearly always attached to a
+                // `NavigationLink`, and a link's own recogniser is *inside* this view —
+                // where inner beats outer by default, so a plain `.gesture` lost every
+                // drag to the link's press handling and the swipe appeared dead. The link
+                // still receives taps: 18pt of movement is required before this claims
+                // anything, and a tap never travels that far.
+                .highPriorityGesture(
+                    DragGesture(minimumDistance: 18)
+                        .onChanged { coordinator.dragged($0.translation) }
+                        .onEnded { _ in
+                            if let intent = coordinator.ended() { commit(intent) }
+                        }
+                )
         } else {
             // No enclosing `quickSave` — the brand page's gallery cards before they were
             // given one, and previews. The view is simply undraggable rather than broken.

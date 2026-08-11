@@ -8,6 +8,13 @@
 //
 // Reachable by tapping a card in the collection. The feed still opens the storefront on
 // tap, because there the question is "can I buy this"; here it is "what did I think".
+//
+// That framing was taken too literally. The page dropped the size run, the colourways and
+// the watch — everything the *product* is — and kept only the two annotations, which left
+// a saved thing looking like a bookmark with a note attached. But the single most common
+// reason to keep something you cannot have is that it was sold out, and "tell me when it's
+// back" is the one thing this app can do that a screenshot cannot. So the facts come back,
+// and the watch sits above the notes rather than below them.
 
 import StreetwCore
 import SwiftData
@@ -17,6 +24,7 @@ struct SaveDetailView: View {
     @Environment(\.modelContext) private var context
     @Environment(\.dismiss) private var dismiss
     @Environment(\.openURL) private var openURL
+    @Environment(SizeProfileStore.self) private var sizes: SizeProfileStore
     @Query(sort: [SortDescriptor(\Board.sortIndex), SortDescriptor(\Board.createdAt)])
     private var boards: [Board]
 
@@ -24,19 +32,55 @@ struct SaveDetailView: View {
 
     @State private var note: String = ""
     @State private var sizeNote: String = ""
+    @State private var selectedColorway: String?
 
     private var update: BrandUpdate? { save.update }
+
+    private var colorways: [Colorway] { update?.colorways ?? [] }
+
+    /// Variants in the chosen colourway, or all of them when none is chosen.
+    private var visibleVariants: [VariantInfo] {
+        let all = update?.variants ?? []
+        guard let selectedColorway else { return all }
+        return all.filter { $0.color?.caseInsensitiveCompare(selectedColorway) == .orderedSame }
+    }
+
+    private var runEntries: [SizeRun.Entry] {
+        SizeRun.entries(for: visibleVariants, profile: sizes.profile)
+    }
+
+    /// Sold out in everything currently shown — the state the watcher exists for.
+    private var isSoldOut: Bool {
+        guard !visibleVariants.isEmpty else { return update?.isAvailable == false }
+        return !visibleVariants.contains { $0.available }
+    }
 
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
-                    if let update, update.primaryImageURL != nil {
-                        UpdateImage(url: update.primaryImageURL, kind: update.kind, aspect: 1, contentMode: .fit)
+                    if let update, !update.imageURLs.isEmpty {
+                        // The whole set, paged, not just the first frame. You kept this
+                        // particular thing; the other seven photographs of it are already
+                        // on the phone.
+                        ImageGallery(urls: update.imageURLs, kind: update.kind, isZoomable: true)
                     }
 
                     VStack(alignment: .leading, spacing: 22) {
                         heading
+                        if !runEntries.isEmpty { sizeSection }
+                        if !colorways.isEmpty {
+                            ColorwaySection(colorways: colorways, selected: $selectedColorway)
+                        }
+                        if let update {
+                            WatchSection(
+                                update: update,
+                                colorway: selectedColorway,
+                                isSoldOut: isSoldOut
+                            )
+                        }
+
+                        DataLabel(text: "YOUR NOTES")
                         field(
                             title: "Size",
                             prompt: "The one you own, or the one you're waiting for",
@@ -90,12 +134,42 @@ struct SaveDetailView: View {
             Text(update?.title ?? "Saved item")
                 .font(.editorial(22))
                 .foregroundStyle(Color.ink)
-            HStack(spacing: 10) {
+                .fixedSize(horizontal: false, vertical: true)
+
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
                 if let price = update?.priceText {
-                    DataLabel(text: price, size: 11, color: .ink)
+                    Text(price)
+                        .font(.data(15, .medium))
+                        .foregroundStyle(Color.ink)
                 }
+                // A markdown since you kept it is worth knowing on this page more than on
+                // any other — it is the answer to "should I finally buy this".
+                if let was = update?.previousPriceText, update?.kind == .priceDrop {
+                    Text(was)
+                        .font(.data(12))
+                        .foregroundStyle(Color.muted)
+                        .strikethrough(color: .muted)
+                }
+                Spacer(minLength: 0)
                 DataLabel(text: "KEPT \(Stamp.short(save.savedAt).uppercased())")
             }
+
+            if isSoldOut, update?.variants.isEmpty == false {
+                DataLabel(text: "SOLD OUT", size: 11, color: .signal)
+            }
+        }
+    }
+
+    private var sizeSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                DataLabel(text: "SIZES")
+                Spacer()
+                if !sizes.profile.isEmpty {
+                    DataLabel(text: "YOURS: \(sizes.profile.summary.uppercased())", size: 9)
+                }
+            }
+            SizeRun(entries: runEntries, size: 14, limit: .max)
         }
     }
 

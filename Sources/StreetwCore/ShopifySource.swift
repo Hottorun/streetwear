@@ -33,7 +33,7 @@ public struct ShopifySource: SourceAdapter {
         if first.notModified {
             return FetchResult(etag: source.etag, notModified: true)
         }
-        guard first.status == 200 else { throw SourceError.badResponse(first.status) }
+        try first.requireOK()
 
         guard let firstPage = try? JSONDecoder().decode(Catalog.self, from: first.data) else {
             // Not a Shopify store (HTML error page, or a different platform).
@@ -80,11 +80,50 @@ public struct ShopifySource: SourceAdapter {
 
     /// Probe used when adding a brand: does this domain serve a Shopify catalog?
     public static func detect(at base: URL, http: any HTTPFetching = Net.live) async -> Bool {
-        guard let response = try? await http.get(catalogURL(for: base, page: 1)), response.status == 200 else {
-            return false
+        await resolve(at: base, http: http) != nil
+    }
+
+    /// Which host actually serves the catalog — the one asked about, or its `www.`
+    /// sibling — or nil when neither does.
+    ///
+    /// The apex and the `www.` host are not interchangeable on a store that has moved its
+    /// storefront to Hydrogen: the new front end answers on the apex and knows nothing
+    /// about `/products.json`, while the classic Shopify origin still serves the full
+    /// catalog on `www.`. Palace does exactly this, and probing only the apex demoted a
+    /// storefront with titles, prices, images and stock all the way down to a sitemap —
+    /// which is how a feed ended up full of randomised handles over empty tiles.
+    public static func resolve(at base: URL, http: any HTTPFetching = Net.live) async -> URL? {
+        for candidate in [base, wwwVariant(of: base)].compactMap({ $0 }) {
+            guard let response = try? await http.get(catalogURL(for: candidate, page: 1)),
+                  response.status == 200,
+                  let catalog = try? JSONDecoder().decode(Catalog.self, from: response.data),
+                  !catalog.products.isEmpty
+            else { continue }
+            return candidate
         }
-        guard let catalog = try? JSONDecoder().decode(Catalog.self, from: response.data) else { return false }
-        return !catalog.products.isEmpty
+        return nil
+    }
+
+    /// The `www.` sibling of an apex host, or the apex of a `www.` host. Nil for anything
+    /// else.
+    ///
+    /// Deliberately narrow. Any other subdomain a brand runs — `usa.`, `eu.`, `shop.` —
+    /// is a *choice*, usually a region with its own currency and its own catalogue, and
+    /// quietly swapping someone onto a different one would change every price in their
+    /// feed. `www.` is the one prefix that is conventionally the same store. This also
+    /// avoids needing a public-suffix list, which guessing the registrable domain of
+    /// "brand.co.uk" would otherwise require.
+    static func wwwVariant(of base: URL) -> URL? {
+        guard let host = base.host() else { return nil }
+        var components = URLComponents(url: base, resolvingAgainstBaseURL: false)
+        if host.hasPrefix("www.") {
+            components?.host = String(host.dropFirst(4))
+        } else if host.split(separator: ".").count == 2 {
+            components?.host = "www." + host
+        } else {
+            return nil
+        }
+        return components?.url
     }
 
     public static func catalogURL(for base: URL, page: Int) -> URL {
@@ -116,6 +155,61 @@ public struct ShopifySource: SourceAdapter {
               let meta = try? JSONDecoder().decode(Meta.self, from: response.data)
         else { return nil }
         return ShopInfo(name: meta.name, currency: meta.currency)
+    }
+
+    // MARK: - One product, by its page
+
+    /// Everything a storefront knows about a single product, from its own page URL.
+    ///
+    /// This is what turns a shared link into something the app can act on. Open Graph —
+    /// all `SharedSaveImporter` had — gives a title, a photograph and a price, and that is
+    /// a bookmark. It cannot say what sizes exist, which of them are gone, or what
+    /// colourways there are, so "tell me when it's back in a medium" was unanswerable for
+    /// anything shared in from outside.
+    ///
+    /// Uses `/products/<handle>.js` rather than the `.json` beside it, and the difference
+    /// is the entire point: **`.json` omits `available`**. It is otherwise the nicer
+    /// payload — identical in shape to `products.json`, so it would need no new decoding —
+    /// but a variant list with no stock in it answers none of the questions being asked
+    /// here. The cost is that `.js` quotes prices in minor units, which is why they are
+    /// divided rather than parsed.
+    ///
+    /// Returns nil for anything that isn't a Shopify product page, which the caller treats
+    /// as "fall back to Open Graph" rather than as a failure.
+    public static func product(
+        at page: URL,
+        currency: String? = nil,
+        http: any HTTPFetching = Net.live
+    ) async -> FetchedItem? {
+        guard let handle = productHandle(in: page),
+              var components = URLComponents(url: page, resolvingAgainstBaseURL: false)
+        else { return nil }
+        components.path = "/products/\(handle).js"
+        components.query = nil
+        components.fragment = nil
+
+        guard let url = components.url,
+              let response = try? await http.get(url), response.status == 200,
+              let product = try? JSONDecoder().decode(LiveProduct.self, from: response.data)
+        else { return nil }
+
+        // Only asked for when we don't already know it, and only after the product itself
+        // has confirmed this is a Shopify store — so a shared link to anything else costs
+        // exactly one request.
+        var code = currency
+        if code == nil { code = await shopInfo(for: page, http: http)?.currency }
+        return product.asItem(storeURL: page, currency: code ?? "USD")
+    }
+
+    /// The handle out of `https://kith.com/products/foo?variant=1` — nil when the path
+    /// isn't a product page at all.
+    static func productHandle(in url: URL) -> String? {
+        let parts = url.pathComponents.filter { $0 != "/" }
+        guard let index = parts.firstIndex(where: { $0.lowercased() == "products" }),
+              parts.count > index + 1
+        else { return nil }
+        let handle = parts[index + 1]
+        return handle.isEmpty ? nil : handle
     }
 
     private static func item(from product: Product, storeURL: URL, currency: String) -> FetchedItem {
@@ -181,6 +275,94 @@ private extension ShopifySource {
     struct Meta: Decodable {
         var name: String?
         var currency: String?
+    }
+
+    /// `/products/<handle>.js`. A different payload from `products.json` and given its own
+    /// type rather than bent into `Product`: prices are integers in minor units, images
+    /// are bare strings, and `available` exists — three incompatibilities that a shared
+    /// decoder would have to paper over with optionals on both sides.
+    struct LiveProduct: Decodable {
+        var id: Int
+        var title: String
+        var handle: String
+        var description: String?
+        var published_at: Date?
+        var type: String?
+        var tags: [String]?
+        var images: [String]?
+        var options: [Option]?
+        var variants: [LiveVariant]?
+
+        struct Option: Decodable {
+            var name: String
+            var position: Int
+        }
+
+        struct LiveVariant: Decodable {
+            var id: Int
+            var title: String?
+            var available: Bool?
+            /// Minor units — 5500 is 55.00.
+            var price: Int?
+            var option1: String?
+            var option2: String?
+            var option3: String?
+
+            func option(at position: Int) -> String? {
+                switch position {
+                case 1: option1
+                case 2: option2
+                case 3: option3
+                default: nil
+                }
+            }
+        }
+
+        func axis(named candidates: [String]) -> Int? {
+            options?.first { candidates.contains($0.name.lowercased()) }?.position
+        }
+
+        func asItem(storeURL: URL, currency: String) -> FetchedItem {
+            let sizeAxis = axis(named: ["size", "shoe size", "sizes"])
+            let colorAxis = axis(named: ["color", "colour", "colorway"])
+
+            let mapped = (variants ?? []).map { variant in
+                VariantInfo(
+                    id: String(variant.id),
+                    title: variant.title ?? "",
+                    available: variant.available ?? false,
+                    price: variant.price.map { formatPrice(String(Double($0) / 100), currency: currency) },
+                    size: sizeAxis.flatMap(variant.option(at:)),
+                    color: colorAxis.flatMap(variant.option(at:))
+                )
+            }
+
+            var link = URLComponents(url: storeURL, resolvingAgainstBaseURL: false)
+            link?.path = "/products/\(handle)"
+            link?.query = nil
+            link?.fragment = nil
+
+            return FetchedItem(
+                // Keyed the same way the poller keys it, so a link shared for a brand the
+                // app already follows lands on the row that already exists instead of
+                // becoming a second card for the same product.
+                externalID: "shopify:\(id)",
+                title: title,
+                summary: description.map(ShopifySource.plainText(from:)),
+                linkURL: link?.url,
+                // Protocol-relative — "//cdn.shopify.com/…" — is what this endpoint
+                // returns, and it is not a URL an image loader can open.
+                imageURLStrings: (images ?? []).map { $0.hasPrefix("//") ? "https:\($0)" : $0 },
+                publishedAt: published_at ?? Date(),
+                kind: .product,
+                priceText: mapped.compactMap(\.price).first,
+                priceAmount: (variants ?? []).compactMap(\.price).min().map { Double($0) / 100 },
+                isAvailable: mapped.contains { $0.available },
+                tags: tags ?? [],
+                productType: type,
+                variants: mapped
+            )
+        }
     }
 
     struct Catalog: Decodable {

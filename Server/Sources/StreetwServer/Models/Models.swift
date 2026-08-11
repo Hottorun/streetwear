@@ -60,6 +60,11 @@ final class SourceModel: Model, @unchecked Sendable {
     /// failure — using that to decide "is this the baseline" spends the baseline on a
     /// poll that stored nothing, and the real first batch then goes out as news.
     @OptionalField(key: "baselined_at") var baselinedAt: Date?
+    /// When this source last observed a lock, or nil when it is seeing the storefront
+    /// normally. On the source rather than the brand because sources poll independently:
+    /// a brand-level flag written from inside one source's poll is overwritten by the
+    /// next source to run, and never cleared at all if the locking source starts failing.
+    @OptionalField(key: "locked_at") var lockedAt: Date?
     /// The poll queue is `ORDER BY next_check_at`, so cadence lives in the row rather
     /// than in a scheduler that would have to be rebuilt on restart.
     @Field(key: "next_check_at") var nextCheckAt: Date

@@ -19,19 +19,27 @@ public struct PageMetadata: Sendable, Hashable {
     public var siteName: String?
     public var price: String?
     public var canonicalURL: URL?
+    /// What the page says about stock, when it says anything.
+    ///
+    /// Nil means the page never declared it, which is genuinely different from "in stock"
+    /// — a shared link with no availability must not be presented as buyable, and must not
+    /// be presented as sold out either. Only an explicit declaration is acted on.
+    public var isAvailable: Bool?
 
     public init(
         title: String? = nil,
         imageURL: URL? = nil,
         siteName: String? = nil,
         price: String? = nil,
-        canonicalURL: URL? = nil
+        canonicalURL: URL? = nil,
+        isAvailable: Bool? = nil
     ) {
         self.title = title
         self.imageURL = imageURL
         self.siteName = siteName
         self.price = price
         self.canonicalURL = canonicalURL
+        self.isAvailable = isAvailable
     }
 
     public var isEmpty: Bool {
@@ -81,7 +89,31 @@ public enum PageMetadataParser {
            let url = URL(string: canonical, relativeTo: base)?.absoluteURL {
             metadata.canonicalURL = url
         }
+        // schema.org's vocabulary, which is what both Open Graph product tags and JSON-LD
+        // use: "InStock", "OutOfStock", "https://schema.org/InStock", "oos", "instock".
+        // Only an explicit statement counts — an absent tag stays nil rather than being
+        // read as available, because presenting a sold-out thing as buyable is the more
+        // annoying half of getting this wrong.
+        if let raw = value(["product:availability", "og:availability", "availability"]) {
+            metadata.isAvailable = Self.availability(from: raw)
+        }
         return metadata
+    }
+
+    static func availability(from raw: String) -> Bool? {
+        let lowered = raw.lowercased()
+        if lowered.contains("outofstock") || lowered.contains("out_of_stock")
+            || lowered.contains("out of stock") || lowered.contains("soldout")
+            || lowered.contains("sold_out") || lowered.contains("sold out")
+            || lowered.contains("discontinued") {
+            return false
+        }
+        if lowered.contains("instock") || lowered.contains("in_stock")
+            || lowered.contains("in stock") || lowered.contains("limitedavailability")
+            || lowered.contains("preorder") || lowered.contains("backorder") {
+            return true
+        }
+        return nil
     }
 
     // MARK: - Scraping the head

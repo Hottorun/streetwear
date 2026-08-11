@@ -9,18 +9,29 @@ import StreetwCore
 import Vapor
 import VaporAPNS
 
-/// Custom payload carried alongside the alert. The app uses it to jump straight to the
-/// brand and to pull the feed without waiting for the user to open a tab.
+/// Custom payload carried alongside the alert. The app uses it to open the thing the
+/// notification was about, and to pull the feed without waiting for the user to find a tab.
 struct PushPayload: Codable, Sendable {
     var brandID: String
+    /// The event this alert is about, when it is about exactly one — a restock, a single
+    /// new drop, a fired watch. Nil for a counted summary ("3 restocks"), where there is
+    /// no single product to open and the brand is the honest destination.
+    ///
+    /// The client keys its rows `event:<uuid>`, so this is enough to find the item it
+    /// just pulled and go straight to its page.
+    var eventID: String?
     /// Bumped so a client can tell a streetw push apart from anything added later.
-    var version = 1
+    var version = 2
 }
 
 struct APNSPushSender: PushSending {
     let app: Application
     /// The app's bundle ID. Wrong topic is a hard APNs rejection, not a silent drop.
     let topic: String
+
+    /// Every streetw alert shares one notification thread, so the system stacks them
+    /// under the app rather than splitting them per brand.
+    static let threadID = "streetw"
 
     func send(_ message: PushMessage) async throws {
         var notification = APNSAlertNotification(
@@ -34,9 +45,20 @@ struct APNSPushSender: PushSending {
             expiration: .timeIntervalSince1970InSeconds(Int(Date().timeIntervalSince1970) + 3600),
             priority: .immediately,
             topic: topic,
-            payload: PushPayload(brandID: message.brandID.uuidString),
+            payload: PushPayload(
+                brandID: message.brandID.uuidString,
+                eventID: message.eventID?.uuidString
+            ),
             sound: .default,
-            threadID: message.brandID.uuidString
+            // One thread for the whole app, not one per brand.
+            //
+            // iOS groups by thread id *within* an app, so a per-brand id is what split
+            // streetw's notifications into a separate stack for every storefront — five
+            // brands meant five piles on the lock screen instead of one that says
+            // "streetw · 5 notifications". Collapsing is still per brand, which is the
+            // knob that actually stops one brand shouting; grouping is about how the
+            // stack reads.
+            threadID: Self.threadID
         )
         notification.collapseID = message.collapseID
 

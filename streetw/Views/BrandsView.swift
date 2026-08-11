@@ -116,6 +116,9 @@ struct BrandRow: View {
 struct BrandMonogram: View {
     let name: String
     var logoURL: URL?
+    /// 44 in a list row; larger on a page that is about this one brand, where its own
+    /// mark is the most useful thing on screen.
+    var size: CGFloat = 44
 
     private var initials: String {
         let words = name.split(separator: " ").prefix(2)
@@ -125,14 +128,14 @@ struct BrandMonogram: View {
     var body: some View {
         Rectangle()
             .fill(Color.wash)
-            .frame(width: 44, height: 44)
+            .frame(width: size, height: size)
             .overlay {
                 if let logoURL {
                     // `BrandMark` has already asked the CDN for 180px, so this must not
-                    // re-request a width and undo that — hence the explicit size rather
-                    // than the 44pt this is drawn at.
-                    CachedImage(url: logoURL, width: 60) { image in
-                        image.resizable().scaledToFit().padding(5)
+                    // re-request a smaller width and undo that — hence a fixed request
+                    // size rather than the points this happens to be drawn at.
+                    CachedImage(url: logoURL, width: 180) { image in
+                        image.resizable().scaledToFit().padding(size * 0.12)
                     } placeholder: {
                         Color.clear
                     } failure: {
@@ -147,7 +150,7 @@ struct BrandMonogram: View {
 
     private var monogram: some View {
         Text(initials)
-            .font(.wordmark(12, .medium))
+            .font(.wordmark(size * 0.27, .medium))
             .tracking(0.8)
             .foregroundStyle(Color.muted)
     }

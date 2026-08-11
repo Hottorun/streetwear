@@ -130,10 +130,44 @@ struct ImageGallery: View {
     /// one piece regardless.
     var isPagingEnabled: Bool = true
     var drawnWidth: Int = 400
+    /// Whether tapping opens the full-screen viewer. Off in the feed, where a tap on the
+    /// card belongs to the product page — going full-screen from a scrolling feed would
+    /// hijack the commonest tap in the app.
+    var isZoomable: Bool = false
 
     @State private var index = 0
+    @State private var isZoomed = false
+
+    /// What to warm, in the order it is most likely to be wanted: forwards first, because
+    /// that is how a gallery is read, and one back so returning is instant too.
+    private var neighbours: [URL] {
+        [index + 1, index + 2, index - 1]
+            .filter { urls.indices.contains($0) }
+            .map { urls[$0] }
+    }
 
     var body: some View {
+        gallery
+            .fullScreenCover(isPresented: $isZoomed) {
+                ImageViewer(urls: urls, initialIndex: index)
+            }
+    }
+
+    /// A tap opens the viewer, and only where the caller asked for it. Attached with
+    /// `contentShape` so the transparent letterboxing around a `.fit` photograph is part
+    /// of the target — otherwise tapping the white margin of a product shot does nothing,
+    /// which reads as the gesture being unreliable rather than as a miss.
+    @ViewBuilder
+    private var zoomTap: some View {
+        if isZoomable {
+            Color.clear
+                .contentShape(.rect)
+                .onTapGesture { isZoomed = true }
+        }
+    }
+
+    @ViewBuilder
+    private var gallery: some View {
         if urls.count <= 1 || !isPagingEnabled {
             UpdateImage(
                 url: urls.first,
@@ -142,6 +176,7 @@ struct ImageGallery: View {
                 contentMode: .fit,
                 drawnWidth: drawnWidth
             )
+            .overlay { zoomTap }
         } else {
             TabView(selection: $index) {
                 ForEach(Array(urls.enumerated()), id: \.offset) { position, url in
@@ -152,11 +187,21 @@ struct ImageGallery: View {
                         contentMode: .fit,
                         drawnWidth: drawnWidth
                     )
+                    .overlay { zoomTap }
                     .tag(position)
                 }
             }
             .tabViewStyle(.page(indexDisplayMode: .never))
             .aspectRatio(1, contentMode: .fit)
+            // A `TabView` builds each page as it is reached, so the load for the next
+            // photograph began at the moment you landed on it — every swipe arrived on an
+            // empty frame and then filled in. Warming the neighbours instead means the
+            // page is already drawn by the time it is on screen.
+            //
+            // Keyed on `index` rather than run once: a gallery can be eight photographs,
+            // and fetching all of them the instant a card scrolls past is a lot of
+            // bandwidth spent on pictures nobody asked to see.
+            .task(id: index) { ImageLoader.shared.prefetch(neighbours, width: drawnWidth) }
             .overlay(alignment: .bottomTrailing) {
                 // A printed count rather than dots: it says how many there are, which
                 // dots only imply, and it matches the mono metadata everywhere else.

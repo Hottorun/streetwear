@@ -295,6 +295,27 @@ public struct FeedItem: Codable, Sendable, Hashable, Identifiable {
     /// Who the garment is cut for, decided server-side so both platforms agree.
     /// Optional for the same back-compatibility reason.
     public var gender: String?
+    /// The storefront's own classification of the product, and its merchandising tags.
+    ///
+    /// Sent because the client does not only *display* these — it classifies on them.
+    /// Gender, garment slot and the style profile all read `productType` and `tags`, and
+    /// with neither on the wire every server-backed item arrived as a bare title, so a
+    /// local re-classification could only ever answer "unknown". That is not academic:
+    /// YoungLA files its womenswear as `product_type: "For Her"` and nothing else — the
+    /// style number `W2156` is the only other tell and it is not a word — so the moment a
+    /// row needed re-deriving, every women's product reappeared in a menswear feed.
+    ///
+    /// Optional so a response from a server that predates them still decodes.
+    public var productType: String?
+    public var tags: [String]?
+    /// Which revision of `GenderClassifier` produced `gender`.
+    ///
+    /// The two ends compile the same classifier but deploy on different schedules, so
+    /// "the server decides" is only true until one of them moves. Sending the revision
+    /// lets a client that is *ahead* notice the verdict is stale and re-derive it from
+    /// `productType` and `tags` — the same staleness rule it already applies to its own
+    /// stored rows. Absent, or behind, means take the server's word for it.
+    public var genderVersion: Int?
 
     public var id: UUID { eventID }
 
@@ -321,7 +342,10 @@ public struct FeedItem: Codable, Sendable, Hashable, Identifiable {
         restockedSizes: [String] = [],
         availableInMySize: Bool = false,
         variants: [VariantInfo]? = nil,
-        gender: String? = nil
+        gender: String? = nil,
+        productType: String? = nil,
+        tags: [String]? = nil,
+        genderVersion: Int? = nil
     ) {
         self.eventID = eventID
         self.kind = kind
@@ -338,6 +362,9 @@ public struct FeedItem: Codable, Sendable, Hashable, Identifiable {
         self.availableInMySize = availableInMySize
         self.variants = variants
         self.gender = gender
+        self.productType = productType
+        self.tags = tags
+        self.genderVersion = genderVersion
     }
 }
 

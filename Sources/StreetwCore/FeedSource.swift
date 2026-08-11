@@ -24,7 +24,7 @@ public struct FeedSource: SourceAdapter {
         if response.notModified {
             return FetchResult(etag: source.etag, notModified: true)
         }
-        guard response.status == 200 else { throw SourceError.badResponse(response.status) }
+        try response.requireOK()
 
         let parser = FeedParser()
         guard let entries = parser.parse(response.data), !entries.isEmpty else {

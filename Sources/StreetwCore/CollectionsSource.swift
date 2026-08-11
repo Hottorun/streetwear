@@ -33,9 +33,7 @@ public struct CollectionsSource: SourceAdapter {
         if response.isLocked {
             return FetchResult(items: [], isLocked: true, etag: source.etag)
         }
-        guard response.status == 200 else {
-            throw SourceError.badResponse(response.status)
-        }
+        try response.requireOK()
         guard let payload = try? JSONDecoder().decode(Payload.self, from: response.data) else {
             throw SourceError.emptyPayload
         }

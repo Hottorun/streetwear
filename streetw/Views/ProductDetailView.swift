@@ -27,7 +27,6 @@ struct ProductDetailView: View {
     /// Narrows the size run and the watch button. Nil means "all colours", which is also
     /// the only option for a product without a colour axis.
     @State private var selectedColorway: String?
-    @State private var isWatchSheetPresented = false
 
     private var colorways: [Colorway] { update.colorways }
 
@@ -57,7 +56,12 @@ struct ProductDetailView: View {
                     kind: update.kind,
                     // The detail page is the one place a horizontal swipe is unambiguous:
                     // nothing here files or dismisses, so paging owns the gesture outright.
-                    isPagingEnabled: true
+                    isPagingEnabled: true,
+                    // And the one place a tap has nothing better to do — the card's tap
+                    // already brought you here. Deciding whether a fabric is the right
+                    // one is most of what this page is for, and that needs the pixels the
+                    // storefront is already publishing.
+                    isZoomable: true
                 )
                 .overlay(alignment: .topTrailing) {
                     SaveAction(update: update).padding(12)
@@ -66,8 +70,10 @@ struct ProductDetailView: View {
                 VStack(alignment: .leading, spacing: 26) {
                     heading
                     if !runEntries.isEmpty { sizeSection }
-                    if !colorways.isEmpty { colorwaySection }
-                    watchSection
+                    if !colorways.isEmpty {
+                        ColorwaySection(colorways: colorways, selected: $selectedColorway)
+                    }
+                    WatchSection(update: update, colorway: selectedColorway, isSoldOut: isSoldOut)
                     if let summary = update.summary, !summary.isEmpty { description(summary) }
                     metadata
                 }
@@ -81,10 +87,6 @@ struct ProductDetailView: View {
         .navigationTitle(update.brand?.name ?? "")
         .toolbarTitleDisplayMode(.inline)
         .safeAreaInset(edge: .bottom) { buyBar }
-        .sheet(isPresented: $isWatchSheetPresented) {
-            WatchEditor(update: update, colorway: selectedColorway)
-                .presentationDetents([.medium, .large])
-        }
         .onAppear {
             // Opening the page is acknowledging the item, the same as tapping through to
             // the site used to be.
@@ -136,68 +138,6 @@ struct ProductDetailView: View {
             // sizes and gets truncated to an ellipsis in a card; on this page there is
             // room to print all of it, and printing all of it is the reason to be here.
             SizeRun(entries: runEntries, size: 14, limit: .max)
-        }
-    }
-
-    private var colorwaySection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                DataLabel(text: "COLOURWAYS")
-                Spacer()
-                if selectedColorway != nil {
-                    Button("Show all") { selectedColorway = nil }
-                        .font(.data(10, .medium))
-                        .foregroundStyle(Color.muted)
-                        .buttonStyle(.borderless)
-                }
-            }
-
-            FlowRow(spacing: 10) {
-                ForEach(colorways) { colorway in
-                    ColorwayChip(
-                        colorway: colorway,
-                        isSelected: selectedColorway?.caseInsensitiveCompare(colorway.name) == .orderedSame
-                    ) {
-                        selectedColorway = selectedColorway?.caseInsensitiveCompare(colorway.name) == .orderedSame
-                            ? nil
-                            : colorway.name
-                    }
-                }
-            }
-        }
-    }
-
-    @ViewBuilder
-    private var watchSection: some View {
-        let active = update.activeWatches
-        let fired = update.watches.filter { !$0.isActive }
-
-        VStack(alignment: .leading, spacing: 12) {
-            if !active.isEmpty || !fired.isEmpty {
-                DataLabel(text: "WATCHING")
-                ForEach(active + fired) { watch in
-                    WatchRow(watch: watch) { context.delete(watch); try? context.save() }
-                }
-            }
-
-            Button {
-                isWatchSheetPresented = true
-            } label: {
-                Label(
-                    active.isEmpty ? "Notify me when it's back" : "Watch another size",
-                    systemImage: "bell"
-                )
-                .font(.data(12, .medium))
-                // The accent, spent here on purpose: on a sold-out product this is the
-                // only action available and the whole reason the app exists.
-                .foregroundStyle(isSoldOut && active.isEmpty ? Color.signal : Color.ink)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.vertical, 14)
-                .contentShape(.rect)
-            }
-            .buttonStyle(.borderless)
-            .overlay(alignment: .top) { Rule() }
-            .overlay(alignment: .bottom) { Rule() }
         }
     }
 
@@ -265,6 +205,101 @@ struct ProductDetailView: View {
     /// "KITH.COM" — naming the destination, so the button says where it goes.
     private func hostName(_ url: URL) -> String {
         (url.host() ?? "site").replacingOccurrences(of: "www.", with: "").uppercased()
+    }
+}
+
+// MARK: - Shared product blocks
+
+/// The colourways a product comes in, selectable to narrow the size run and any watch
+/// started from the same screen.
+///
+/// Pulled out of `ProductDetailView` because the archive needs it too. A saved thing is
+/// still a product — it has a price, a size run and colourways — and the page that dropped
+/// all of that turned "the item I kept" into a title and a photograph, which is exactly
+/// the information a bookmark already gives you.
+struct ColorwaySection: View {
+    let colorways: [Colorway]
+    @Binding var selected: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                DataLabel(text: "COLOURWAYS")
+                Spacer()
+                if selected != nil {
+                    Button("Show all") { selected = nil }
+                        .font(.data(10, .medium))
+                        .foregroundStyle(Color.muted)
+                        .buttonStyle(.borderless)
+                }
+            }
+
+            FlowRow(spacing: 10) {
+                ForEach(colorways) { colorway in
+                    ColorwayChip(
+                        colorway: colorway,
+                        isSelected: selected?.caseInsensitiveCompare(colorway.name) == .orderedSame
+                    ) {
+                        selected = selected?.caseInsensitiveCompare(colorway.name) == .orderedSame
+                            ? nil
+                            : colorway.name
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Standing watches on a product, and the way to start another.
+///
+/// On the archive this is the point of the page rather than a footnote: the most common
+/// reason to keep something you can't have is that it was sold out, and the app's whole
+/// justification is being able to say when it comes back.
+struct WatchSection: View {
+    @Environment(\.modelContext) private var context
+
+    let update: BrandUpdate
+    /// Pre-selects the colourway the surrounding page is showing.
+    var colorway: String?
+    var isSoldOut: Bool
+
+    @State private var isEditorPresented = false
+
+    var body: some View {
+        let active = update.activeWatches
+        let fired = update.watches.filter { !$0.isActive }
+
+        VStack(alignment: .leading, spacing: 12) {
+            if !active.isEmpty || !fired.isEmpty {
+                DataLabel(text: "WATCHING")
+                ForEach(active + fired) { watch in
+                    WatchRow(watch: watch) { context.delete(watch); try? context.save() }
+                }
+            }
+
+            Button {
+                isEditorPresented = true
+            } label: {
+                Label(
+                    active.isEmpty ? "Notify me when it's back" : "Watch another size",
+                    systemImage: "bell"
+                )
+                .font(.data(12, .medium))
+                // The accent, spent here on purpose: on a sold-out product this is the
+                // only action available and the whole reason the app exists.
+                .foregroundStyle(isSoldOut && active.isEmpty ? Color.signal : Color.ink)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.vertical, 14)
+                .contentShape(.rect)
+            }
+            .buttonStyle(.borderless)
+            .overlay(alignment: .top) { Rule() }
+            .overlay(alignment: .bottom) { Rule() }
+        }
+        .sheet(isPresented: $isEditorPresented) {
+            WatchEditor(update: update, colorway: colorway)
+                .presentationDetents([.medium, .large])
+        }
     }
 }
 
@@ -364,6 +399,9 @@ struct WatchEditor: View {
     let update: BrandUpdate
     /// Pre-selected from whatever colourway the page was showing.
     var colorway: String?
+    /// Set when the sheet appears unasked-for — after sharing in something sold out —
+    /// where it has to say why it is here before it asks anything.
+    var headline: String?
 
     @State private var size: String?
     @State private var color: String?
@@ -386,10 +424,18 @@ struct WatchEditor: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 26) {
-                    Text(update.title)
-                        .font(.editorial(18))
-                        .foregroundStyle(Color.ink)
-                        .fixedSize(horizontal: false, vertical: true)
+                    VStack(alignment: .leading, spacing: 8) {
+                        if let headline {
+                            Text(headline)
+                                .font(.editorial(20))
+                                .foregroundStyle(Color.ink)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        Text(update.title)
+                            .font(.editorial(headline == nil ? 18 : 14))
+                            .foregroundStyle(headline == nil ? Color.ink : Color.muted)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
 
                     if !allSizes.isEmpty {
                         picker(title: "SIZE", options: allSizes, selection: $size, anyLabel: "ANY SIZE")

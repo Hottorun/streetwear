@@ -35,15 +35,30 @@ enum ImageTagger {
     /// weight. The garment is what we want, not a perfect average.
     private static let sampleSize = 48
 
-    /// Analyses saved items that haven't been looked at yet. Bounded per pass so opening
-    /// the collection never stalls behind a backlog.
+    /// Analyses saved items that haven't been looked at yet.
+    ///
+    /// Drains the backlog in batches rather than stopping after one. The batch is what
+    /// keeps the collection responsive — results are written and drawn after each — but
+    /// stopping there left everything past the first dozen unanalysed until the person
+    /// happened to save something else, because the view only re-runs this when the count
+    /// changes. That is now visible rather than academic: the wall sizes each tile from
+    /// the measured aspect, so an unmeasured item is drawn to a guess.
     static func analyzePending(in context: ModelContext, limit: Int = 12) async {
+        while !Task.isCancelled {
+            let analyzed = await analyzeBatch(in: context, limit: limit)
+            if analyzed < limit { return }
+        }
+    }
+
+    /// One batch. Returns how many were looked at, so the caller knows whether the
+    /// backlog is drained.
+    private static func analyzeBatch(in context: ModelContext, limit: Int) async -> Int {
         let saves = (try? context.fetch(FetchDescriptor<SavedItem>())) ?? []
         let pending = saves
             .compactMap(\.update)
             .filter { $0.analyzedAt == nil && $0.primaryImageURL != nil }
             .prefix(limit)
-        guard !pending.isEmpty else { return }
+        guard !pending.isEmpty else { return 0 }
 
         for update in pending {
             guard let url = update.primaryImageURL else { continue }
@@ -62,10 +77,15 @@ enum ImageTagger {
                 update.visionColor = color.name
             }
             update.visionCategories = await categories(in: image)
+            // Also free, in the sense that matters: the photograph is already decoded and
+            // this pass is already running. Cutting on demand instead would mean the fit
+            // canvas stalls the first time each garment is dragged onto it.
+            update.cutoutFile = await Cutout.make(from: image, named: Cutout.name(for: update.id))
             update.analyzedAt = Date()
         }
         try? context.save()
         log.info("tagged \(pending.count) saved items")
+        return pending.count
     }
 
     // MARK: - Colour

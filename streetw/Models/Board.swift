@@ -30,6 +30,12 @@ final class Board {
     @Relationship(deleteRule: .nullify, inverse: \SavedItem.board)
     var items: [SavedItem] = []
 
+    /// Fits file onto a board exactly as items do, and for the same reason: a board is a
+    /// grouping, and "the outfits I wore in Tokyo" is a grouping. Nullify, again — deleting
+    /// a board must not delete an outfit any more than it deletes a jacket.
+    @Relationship(deleteRule: .nullify, inverse: \Fit.board)
+    var fits: [Fit] = []
+
     init(name: String, sortIndex: Int = 0, isPrivate: Bool = true) {
         self.id = UUID()
         self.name = name

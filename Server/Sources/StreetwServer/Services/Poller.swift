@@ -170,10 +170,7 @@ actor Poller {
             if let etag = result.etag { source.etag = etag }
             if let fingerprint = result.fingerprint { source.fingerprint = fingerprint }
 
-            if brand.lockedForDrop != result.isLocked {
-                brand.lockedForDrop = result.isLocked
-                try await brand.save(on: db)
-            }
+            source.lockedAt = result.isLocked ? (source.lockedAt ?? Date()) : nil
             if let currency = result.shopCurrency, brand.currency != currency {
                 brand.currency = currency
                 try await brand.save(on: db)
@@ -201,6 +198,11 @@ actor Poller {
         } catch {
             source.failureCount += 1
             source.lastError = String(describing: error)
+            // A source we can't reach is not a source that is locked. Leaving the lock
+            // standing is how a brand behind a bot wall stayed "drop imminent" forever —
+            // and, because the locked cadence is 60 seconds, kept being retried a minute
+            // at a time against a site that was already refusing us.
+            source.lockedAt = nil
         }
 
         let quiet = try await EventModel.query(on: db)
@@ -210,13 +212,33 @@ actor Poller {
 
         source.nextCheckAt = Date().addingTimeInterval(
             Cadence.next(
-                locked: brand.lockedForDrop,
+                locked: source.lockedAt != nil,
                 hadRecentEvent: hadEvent,
                 quietForAWeek: quiet,
                 failures: source.failureCount
             )
         )
         try await source.save(on: db)
+
+        try await reconcileLock(brandID: brandID, brand: brand)
+    }
+
+    /// The brand is locked when *any* of its sources currently is.
+    ///
+    /// Derived after the source has been written rather than assigned during the poll,
+    /// because a brand has several sources on independent schedules and each one only
+    /// knows its own answer. Assigning from inside the poll meant the last source to run
+    /// won, so a real lock seen by the catalog was erased minutes later by the collections
+    /// endpoint answering normally.
+    private func reconcileLock(brandID: UUID, brand: BrandModel) async throws {
+        let locked = try await SourceModel.query(on: app.db)
+            .filter(\.$brand.$id == brandID)
+            .filter(\.$lockedAt != nil)
+            .count() > 0
+
+        guard brand.lockedForDrop != locked else { return }
+        brand.lockedForDrop = locked
+        try await brand.save(on: app.db)
     }
 
     /// Returns whether anything user-visible happened.
@@ -312,6 +334,15 @@ actor Poller {
         product.priceAmount = item.priceAmount
         product.lastSeenAt = Date()
         if product.imageURLs.isEmpty { product.imageURLs = item.imageURLStrings }
+        // A name can arrive late. Rows stored before the sitemap adapter learned to read
+        // the image extension hold a randomised handle where the product name should be,
+        // and nothing else would ever revisit them — the merge above only touches a row
+        // it already has, and dedupe is on `externalID`, so the feed would keep saying
+        // "E7Anvz3I1Psy" for as long as that product exists. Only ever an upgrade: a real
+        // title is never replaced, least of all by a hash.
+        if SitemapSource.isProvisional(product.title), !SitemapSource.isProvisional(item.title) {
+            product.title = item.title
+        }
         try await product.save(on: db)
 
         guard !isBaseline else { return false }

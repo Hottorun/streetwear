@@ -107,6 +107,26 @@ struct GenderClassifierTests {
         #expect(GenderClassifier.classify(handle: "toddler-hoodie") == .kids)
     }
 
+    /// A baby tee is a women's cut. Reading it as childrenswear filed it on the kids'
+    /// rail, which both a menswear *and* a womenswear feed hide — so YoungLA's baby tees
+    /// vanished from every filtered feed there is.
+    @Test("A cut named after an age is not an age")
+    func cutNamesAreNotAges() {
+        #expect(GenderClassifier.classify(title: "W405 Tom & Jerry Baby Tee", productType: "For Her") == .womens)
+        #expect(GenderClassifier.classify(title: "Ribbed Baby Tee") == .unknown)
+        // The word still means what it means when it isn't naming a cut.
+        #expect(GenderClassifier.classify(title: "Baby Fleece Set") == .kids)
+    }
+
+    /// The only thing YoungLA says about gender. The style number carries a `W`, but a
+    /// bare letter is not evidence — the department is, and it is the reason the filed
+    /// tier exists at all.
+    @Test("A department is enough when the name says nothing")
+    func departmentDecides() {
+        #expect(GenderClassifier.classify(title: "W2156 - Pulse Seamless Legging", productType: "For Her") == .womens)
+        #expect(GenderClassifier.classify(title: "2109 - Naruto Cloud Sweats", productType: "For Him") == .mens)
+    }
+
     @Test("Every field is read, not just tags")
     func readsEveryField() {
         #expect(GenderClassifier.classify(productType: "Women's Tops") == .womens)

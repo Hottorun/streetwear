@@ -26,6 +26,24 @@ final class Fit {
     @Relationship(inverse: \SavedItem.fits)
     var items: [SavedItem] = []
 
+    /// Where each piece sits on the canvas. Parallel to `items` by id rather than by
+    /// index — the relationship's order is not guaranteed and an item can be removed from
+    /// a fit, which would silently shift every placement after it.
+    ///
+    /// Stored as structure, not only as the flattened picture, and that is the point:
+    /// a fit stays editable, stays a list of things you own, and stays machine-readable —
+    /// which is what lets a restock in one of its pieces be worth telling you about.
+    var placements: [FitPlacement] = []
+
+    /// Filename of the flattened render, in `FitRender.directory`. Nil until the canvas
+    /// has been saved once, and regenerated on every save.
+    var renderFile: String?
+
+    /// Boards are filters, and a fit is as fileable as anything else in the collection.
+    /// Nullifies on delete for the same reason `SavedItem.board` does — removing a board
+    /// must never take the things filed under it.
+    var board: Board?
+
     init(name: String = "", items: [SavedItem] = []) {
         self.id = UUID()
         self.name = name
@@ -39,8 +57,18 @@ final class Fit {
         items.sorted { $0.slot.stackOrder < $1.slot.stackOrder }
     }
 
-    var imageURLs: [URL] {
-        ordered.compactMap { $0.update?.primaryImageURL }
+    var renderURL: URL? {
+        renderFile.map { FitRender.url(for: $0) }
+    }
+
+    /// The canvas, in draw order. Anything placed but no longer in `items` is dropped —
+    /// un-saving something leaves the fits it was in rather than rewriting them, so a
+    /// stale placement is expected rather than a bug.
+    var placed: [(item: SavedItem, placement: FitPlacement)] {
+        let byID = Dictionary(items.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        return placements
+            .compactMap { placement in byID[placement.itemID].map { (item: $0, placement: placement) } }
+            .sorted { $0.placement.z < $1.placement.z }
     }
 
     /// "Jacket · Tee · Cargo Pant" — what it is, when it has no name yet.
@@ -52,6 +80,60 @@ final class Fit {
 
     var displayName: String {
         name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? derivedName : name
+    }
+}
+
+/// One garment's position on a fit's canvas.
+///
+/// Normalised, not in points: the canvas is drawn at whatever width the device gives it,
+/// and storing pixel coordinates would scrunch every fit made on a Pro Max when opened on
+/// a mini. `x`/`y` are the centre of the piece as a fraction of the canvas, and `scale` is
+/// relative to a nominal tile — so a fit is resolution-independent and renders identically
+/// at thumbnail size.
+struct FitPlacement: Codable, Hashable, Sendable, Identifiable {
+    var itemID: UUID
+    var x: Double
+    var y: Double
+    var scale: Double
+    /// Radians. Free rotation, because snapping is what makes a collage feel like a form.
+    var rotation: Double
+    /// Draw order. Sparse and ever-increasing rather than a compacted 0..<n, so bringing
+    /// one piece to the front is a single write instead of renumbering the whole canvas.
+    var z: Int
+
+    var id: UUID { itemID }
+
+    init(
+        itemID: UUID,
+        x: Double = 0.5,
+        y: Double = 0.5,
+        scale: Double = 1,
+        rotation: Double = 0,
+        z: Int = 0
+    ) {
+        self.itemID = itemID
+        self.x = x
+        self.y = y
+        self.scale = scale
+        self.rotation = rotation
+        self.z = z
+    }
+
+    /// Lenient by hand, and it has to be.
+    ///
+    /// SwiftData decodes a Codable stored in a `@Model` with an internal `try!`, so a
+    /// field added here after a store was written is not a migration problem — it is a
+    /// crash on launch for anyone holding the older data. Only `itemID` is required;
+    /// everything else falls back to the middle of the canvas at natural size, which is
+    /// exactly where a freshly dropped piece would land anyway.
+    init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        itemID = try container.decode(UUID.self, forKey: .itemID)
+        x = try container.decodeIfPresent(Double.self, forKey: .x) ?? 0.5
+        y = try container.decodeIfPresent(Double.self, forKey: .y) ?? 0.5
+        scale = try container.decodeIfPresent(Double.self, forKey: .scale) ?? 1
+        rotation = try container.decodeIfPresent(Double.self, forKey: .rotation) ?? 0
+        z = try container.decodeIfPresent(Int.self, forKey: .z) ?? 0
     }
 }
 

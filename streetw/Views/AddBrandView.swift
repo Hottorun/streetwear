@@ -49,10 +49,19 @@ struct AddBrandView: View {
             .background(Color.paper)
             .navigationTitle("Add a brand")
             .toolbarTitleDisplayMode(.inlineLarge)
+            // An icon in the trailing slot, not a titled `.cancellationAction`.
+            //
+            // With a search field in the bar, iOS has nowhere to put a leading text button
+            // and folds it into an overflow menu — so the screen shipped with a "···" whose
+            // entire contents was one item called Cancel. A menu wrapping a single action
+            // is worse than the action, and this is a sheet: the gesture to leave is a
+            // swipe, and the control is a close button.
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button(newBrand == nil ? "Cancel" : "Back") {
-                        if newBrand == nil { dismiss() } else { newBrand = nil }
+                ToolbarItem(placement: .topBarTrailing) {
+                    if newBrand == nil {
+                        Button("Close", systemImage: "xmark") { dismiss() }
+                    } else {
+                        Button("Back", systemImage: "chevron.left") { newBrand = nil }
                     }
                 }
             }

@@ -23,7 +23,14 @@ public struct PageWatchSource: SourceAdapter {
             return FetchResult(fingerprint: source.fingerprint, etag: source.etag, notModified: true)
         }
 
-        if response.isLocked {
+        // A lock the status code can see, or one the page admits to in its own markup.
+        // The second kind is how a storefront usually gates a drop — the shop stays up and
+        // answers 200 while Locksmith turns you away from the thing you came for — and
+        // reading only the status left those looking wide open.
+        let body = String(data: response.data, encoding: .utf8)
+        let declaresLock = body.map(StorefrontLock.isLocked(html:)) ?? false
+
+        if response.isLocked || declaresLock {
             // The fingerprint doubles as the lock flag, so a lock is reported on the
             // unlocked -> locked *transition* only. Polling every minute through a drop
             // must not append a row each time; but a later drop, after the store has
@@ -35,8 +42,7 @@ public struct PageWatchSource: SourceAdapter {
             // A locked page sometimes still says *when*. Most don't — the countdown is
             // usually JavaScript — but when the markup labels a start time explicitly,
             // that turns "a drop is close" into an actual entry in the calendar.
-            let announced = String(data: response.data, encoding: .utf8)
-                .flatMap { DropDateParser.find(in: $0) }
+            let announced = body.flatMap { DropDateParser.find(in: $0) }
 
             let item = FetchedItem(
                 externalID: "lock:\(source.id.uuidString):\(Int(Date().timeIntervalSince1970))",
@@ -52,7 +58,7 @@ public struct PageWatchSource: SourceAdapter {
             return FetchResult(items: [item], fingerprint: Self.lockedFingerprint, isLocked: true)
         }
 
-        guard response.status == 200 else { throw SourceError.badResponse(response.status) }
+        try response.requireOK()
         guard let html = String(data: response.data, encoding: .utf8)
                 ?? String(data: response.data, encoding: .isoLatin1) else {
             throw SourceError.emptyPayload
