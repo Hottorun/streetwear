@@ -374,6 +374,20 @@ public struct FeedItem: Codable, Sendable, Hashable, Identifiable {
     /// `productType` and `tags` — the same staleness rule it already applies to its own
     /// stored rows. Absent, or behind, means take the server's word for it.
     public var genderVersion: Int?
+    /// What the *product* is, as opposed to what this event is.
+    ///
+    /// A feed row is keyed by its event — `event:<uuid>` — because one product produces
+    /// several over its life: a drop, a markdown, a restock. That is right for the feed and
+    /// wrong for everything that wants to know whether two things are the same garment.
+    ///
+    /// Sharing a link is the case that broke. `SharedSaveImporter` keys a catalogue hit
+    /// `shopify:<id>`, the way the local poller keys it, and looked for an existing row
+    /// under that key — which a server-backed feed row never has. So sharing something the
+    /// app was already showing you minted a second card for it. The dedupe only ever worked
+    /// standalone, which is the one mode the app doesn't ship in.
+    ///
+    /// Nil for an event with no product behind it: a page change, a storefront locking.
+    public var productExternalID: String?
 
     public var id: UUID { eventID }
 
@@ -403,7 +417,8 @@ public struct FeedItem: Codable, Sendable, Hashable, Identifiable {
         gender: String? = nil,
         productType: String? = nil,
         tags: [String]? = nil,
-        genderVersion: Int? = nil
+        genderVersion: Int? = nil,
+        productExternalID: String? = nil
     ) {
         self.eventID = eventID
         self.kind = kind
@@ -423,6 +438,7 @@ public struct FeedItem: Codable, Sendable, Hashable, Identifiable {
         self.productType = productType
         self.tags = tags
         self.genderVersion = genderVersion
+        self.productExternalID = productExternalID
     }
 }
 

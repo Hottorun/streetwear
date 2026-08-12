@@ -163,6 +163,14 @@ extension SavedItem {
 struct SuggestedFit: Identifiable, Hashable {
     var items: [SavedItem]
 
+    /// Why this pairing, in the four words that fit under a card.
+    ///
+    /// Not decoration. A suggestion nobody can account for is indistinguishable from a
+    /// random pair, which is exactly what the row felt like when it was proposing on slot
+    /// and date alone — so the thing that scores a fit also has to say what it saw. Nil
+    /// when the wardrobe has not been analysed yet and there is genuinely nothing to say.
+    var reason: String?
+
     /// Stable across recomputation so SwiftUI doesn't animate a reshuffle on every render.
     var id: String { items.map(\.id.uuidString).sorted().joined() }
 
@@ -186,6 +194,12 @@ enum FitSuggestions {
     ///   suggestion.
     /// - **Deterministic.** Seeded by nothing but the wardrobe itself, so the same saves
     ///   produce the same fits and the section doesn't reshuffle every time it is drawn.
+    /// - **It looks at the clothes.** Every rule above is structural — one top, one
+    ///   bottom, both things you kept — and a pair can satisfy all of them and still be
+    ///   obviously wrong to anyone with eyes. `ColorHarmony` reads the dominant colour
+    ///   `ImageTagger` already stored, ranks the pairings, drops outright clashes, and
+    ///   hands back the line that says why. Where nothing has been analysed yet it scores
+    ///   everything the same and the order falls back to what it always was.
     static func build(from saves: [SavedItem], limit: Int = 6) -> [SuggestedFit] {
         var bySlot: [GarmentSlot: [SavedItem]] = [:]
         for save in saves where save.update != nil {
@@ -207,25 +221,40 @@ enum FitSuggestions {
         let outerwear = bySlot[.outerwear] ?? []
         let footwear = bySlot[.footwear] ?? []
 
-        var fits: [SuggestedFit] = []
+        var candidates: [(fit: SuggestedFit, score: Double)] = []
         var seen: Set<String> = []
 
         // Walk the cross product diagonally rather than nesting loops, so the suggestions
-        // vary in *both* axes early instead of pairing one top with every bottom.
+        // vary in *both* axes early instead of pairing one top with every bottom. Widened
+        // past `limit` because the colour pass now ranks what comes out — proposing the
+        // first six structurally valid pairs and then sorting them is not ranking, it is
+        // sorting an arbitrary six.
         let pairs = max(tops.count, bottoms.count)
-        for index in 0..<pairs where fits.count < limit {
+        for index in 0..<(pairs * 2) {
             let top = tops[index % tops.count]
             let bottom = bottoms[index % bottoms.count]
+
+            let harmony = ColorHarmony.score(top.update?.visionColor, bottom.update?.visionColor)
+            // The one pairing that reads as a bug rather than a suggestion.
+            guard !ColorHarmony.isClash(top.update?.visionColor, bottom.update?.visionColor) else {
+                continue
+            }
 
             var items = [top, bottom]
             if !footwear.isEmpty { items.append(footwear[index % footwear.count]) }
             if !outerwear.isEmpty { items.append(outerwear[index % outerwear.count]) }
 
-            let fit = SuggestedFit(items: items)
+            let fit = SuggestedFit(items: items, reason: harmony.reason)
             guard seen.insert(fit.id).inserted else { continue }
-            fits.append(fit)
+            candidates.append((fit, harmony.score))
         }
 
-        return fits
+        // Sorted on the colour reading, tie-broken on the id — so an unanalysed wardrobe,
+        // where every score is identical, keeps a stable order rather than reshuffling on
+        // each render, which is the property the whole function was built around.
+        return candidates
+            .sorted { $0.score == $1.score ? $0.fit.id < $1.fit.id : $0.score > $1.score }
+            .prefix(limit)
+            .map(\.fit)
     }
 }

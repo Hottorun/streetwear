@@ -31,6 +31,8 @@ struct streetwApp: App {
     /// `LazyVStack` and is routinely recycled or scrolled off before the confirmation has
     /// been acted on.
     @State private var confirmation: SaveConfirmation
+    /// How the Style tab asks the collection to open at a facet.
+    @State private var collection: CollectionRoute
 
     init() {
         Net.configureSharedCache()
@@ -74,6 +76,7 @@ struct streetwApp: App {
         _suggestions = State(initialValue: BrandSuggestions(remote: remote, settings: settings))
         _route = State(initialValue: route)
         _confirmation = State(initialValue: MainActor.assumeIsolated { SaveConfirmation() })
+        _collection = State(initialValue: MainActor.assumeIsolated { CollectionRoute() })
 
         // The app delegate is built by UIKit and can't be handed these, so they are
         // published here — the same moment they become valid.
@@ -92,6 +95,7 @@ struct streetwApp: App {
                 .environment(suggestions)
                 .environment(route)
                 .environment(confirmation)
+                .environment(collection)
                 .task { await DevSeed.runIfRequested(in: sharedModelContainer.mainContext) }
         }
         .modelContainer(sharedModelContainer)

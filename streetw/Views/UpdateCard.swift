@@ -163,6 +163,13 @@ struct CollectionTile: View {
     /// Tapping opens the item's own page, not the storefront. In the feed the question
     /// is "can I buy this"; here it is "what did I think", and the note lives there.
     var onOpen: () -> Void = {}
+    /// Whether the wall this tile is on is showing more than one label.
+    ///
+    /// A brand name earns its place by marking a *change* of brand. On a view that is
+    /// entirely one label — a board, a collection early on — it repeats the same words
+    /// down every tile, which makes the most-repeated element the one saying the least.
+    /// Silent there instead.
+    var showsBrand: Bool = true
 
     private var update: BrandUpdate? { save.update }
 
@@ -179,18 +186,29 @@ struct CollectionTile: View {
                 kind: update?.kind ?? .product,
                 aspect: aspect,
                 contentMode: .fit,
-                drawnWidth: 200
+                drawnWidth: 200,
+                // Fixed, so the wall reads as photographs on paper in either appearance.
+                // A brand that ships transparent PNGs was otherwise drawing a black
+                // garment onto near-black at night — a caption with nothing above it —
+                // while the brand next to it, shipping JPEGs on a white sweep, showed as a
+                // lightbox in a dark tile. Neither was a fault in the photograph.
+                backdrop: .sweep
             )
 
             VStack(alignment: .leading, spacing: 3) {
-                if let brand = update?.brand {
-                    Wordmark(name: brand.name, size: 9, color: .muted)
-                }
+                // The garment first. The wordmark used to sit above the title in tracked
+                // caps, which gave the most repeated line on the wall the most visual
+                // weight — on a collection that is mostly one label, six tiles shouting
+                // the same name over six different products. What you kept is the title;
+                // who made it is the caption.
                 Text(update?.title ?? "Saved item")
                     .font(.editorial(12))
                     .foregroundStyle(Color.ink)
                     .lineLimit(2)
                     .fixedSize(horizontal: false, vertical: true)
+                if showsBrand, let brand = update?.brand {
+                    Wordmark(name: brand.name, size: 9, color: .muted)
+                }
                 // The one annotation worth showing on the wall: which size this is to
                 // you. A note stays private to the item's own page — the collection is
                 // meant to be looked at, not read.

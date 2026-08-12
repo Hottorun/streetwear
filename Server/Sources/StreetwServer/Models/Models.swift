@@ -156,6 +156,10 @@ final class VariantModel: Model, @unchecked Sendable {
     @Field(key: "available") var available: Bool
     @OptionalField(key: "price") var price: String?
     @OptionalField(key: "available_changed_at") var availableChangedAt: Date?
+    /// Which of the product's photographs shows this variant. Stored rather than derived
+    /// because the association lives in the catalogue payload the poller decodes and
+    /// nowhere else — by the time the feed is assembled, the images are a bare array.
+    @OptionalField(key: "image_index") var imageIndex: Int?
 
     init() {}
 
@@ -167,10 +171,19 @@ final class VariantModel: Model, @unchecked Sendable {
         self.color = info.color
         self.available = info.available
         self.price = info.price
+        self.imageIndex = info.imageIndex
     }
 
     var asVariantInfo: VariantInfo {
-        VariantInfo(id: externalID, title: title, available: available, price: price, size: size, color: color)
+        VariantInfo(
+            id: externalID,
+            title: title,
+            available: available,
+            price: price,
+            size: size,
+            color: color,
+            imageIndex: imageIndex
+        )
     }
 }
 

@@ -38,6 +38,14 @@ struct UpdateImage: View {
     /// requested; the ladder in `ImageRendition` snaps nearby values together so a grid
     /// tile and a slightly different grid tile still share one cache entry.
     var drawnWidth: Int = 400
+    /// What sits behind the photograph — which for a `.fit` image is the letterboxing
+    /// around it, and for a transparent PNG is everything the garment isn't.
+    ///
+    /// `wash` by default, which is adaptive and correct for the feed: a card there is a
+    /// notice, and it should belong to whatever appearance the phone is in. The collection
+    /// is the other case — a wall of photographs, which do not invert — and passes
+    /// `sweep`. See `Color.sweep` for why that one is fixed.
+    var backdrop: Color = .wash
 
     var body: some View {
         Color.clear
@@ -51,7 +59,7 @@ struct UpdateImage: View {
                     symbol
                 }
             }
-            .background(Color.wash)
+            .background(backdrop)
             .clipped()
     }
 

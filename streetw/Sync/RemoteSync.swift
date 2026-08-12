@@ -350,6 +350,9 @@ final class RemoteSync {
                 productType: item.productType
             )
             update.restockedSizes = item.restockedSizes
+            // What the garment is, beside what happened to it — so a link shared from
+            // Safari can find the card the feed already drew for the same product.
+            update.productExternalID = item.productExternalID
             // The server already matched against this device's profile. Kept as a
             // fallback for items that genuinely have no variants — a collection
             // announcement, a page change — where the local check can't answer.
@@ -413,6 +416,12 @@ final class RemoteSync {
         // stock in it is what was true when it fired.
         if update.variants.isEmpty, let variants = item.variants, !variants.isEmpty {
             update.variants = variants
+            changed = true
+        }
+        // Without this the dedupe only ever works for rows written after the field
+        // shipped, and everything already in the feed stays un-matchable by a share.
+        if update.productExternalID == nil, let productID = item.productExternalID {
+            update.productExternalID = productID
             changed = true
         }
         guard changed else { return }

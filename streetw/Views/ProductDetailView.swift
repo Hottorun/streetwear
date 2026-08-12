@@ -28,6 +28,9 @@ struct ProductDetailView: View {
     /// Narrows the size run and the watch button. Nil means "all colours", which is also
     /// the only option for a product without a colour axis.
     @State private var selectedColorway: String?
+    /// Which photograph the gallery is showing, held here rather than inside it because
+    /// choosing a colourway is a statement about which photograph you want.
+    @State private var imageIndex = 0
 
     private var colorways: [Colorway] { update.colorways }
 
@@ -62,7 +65,8 @@ struct ProductDetailView: View {
                     // already brought you here. Deciding whether a fabric is the right
                     // one is most of what this page is for, and that needs the pixels the
                     // storefront is already publishing.
-                    isZoomable: true
+                    isZoomable: true,
+                    selection: $imageIndex
                 )
                 .overlay(alignment: .topTrailing) {
                     SaveAction(update: update).padding(12)
@@ -73,6 +77,9 @@ struct ProductDetailView: View {
                     if !runEntries.isEmpty { sizeSection }
                     if !colorways.isEmpty {
                         ColorwaySection(colorways: colorways, selected: $selectedColorway)
+                            .onChange(of: selectedColorway) { _, colour in
+                                showPhotograph(of: colour)
+                            }
                     }
                     WatchSection(update: update, colorway: selectedColorway, isSoldOut: isSoldOut)
                     if let summary = update.summary, !summary.isEmpty { description(summary) }
@@ -184,6 +191,30 @@ struct ProductDetailView: View {
         if let link = update.linkURL {
             StorefrontBar(url: link, isSoldOut: isSoldOut)
         }
+    }
+
+    private func showPhotograph(of colour: String?) {
+        guard let index = update.imageIndex(forColorway: colour) else { return }
+        withAnimation(.easeInOut(duration: 0.25)) { imageIndex = index }
+    }
+}
+
+extension BrandUpdate {
+    /// Which photograph shows a colourway, if the catalogue said.
+    ///
+    /// Nil is a real and common answer, and callers must treat it as "leave the gallery
+    /// alone" rather than as an error. Plenty of storefronts publish no association at
+    /// all; plenty more — Palace and BBC among them — put each colourway on its own
+    /// product handle, so the colour axis has exactly one value and there is nothing to
+    /// move to. Deselecting also lands here, deliberately: "Show all" is not a request to
+    /// yank the gallery back to the first frame.
+    func imageIndex(forColorway colour: String?) -> Int? {
+        guard let colour else { return nil }
+        let match = variants.first {
+            $0.color?.caseInsensitiveCompare(colour) == .orderedSame && $0.imageIndex != nil
+        }
+        guard let index = match?.imageIndex, imageURLs.indices.contains(index) else { return nil }
+        return index
     }
 }
 

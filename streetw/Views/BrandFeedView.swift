@@ -134,14 +134,28 @@ struct ImageGallery: View {
     /// card belongs to the product page — going full-screen from a scrolling feed would
     /// hijack the commonest tap in the app.
     var isZoomable: Bool = false
+    /// What sits behind each photograph. The collection passes `sweep`, which is fixed, so
+    /// a saved item looks the same opened as it does on the wall — see `Color.sweep`.
+    var backdrop: Color = .wash
+    /// Driven from outside when something else on the page decides which photograph is
+    /// being talked about — selecting a colourway, above all. Nil keeps the gallery's own
+    /// state, which is what every caller that only pages by hand wants.
+    var selection: Binding<Int>?
 
-    @State private var index = 0
+    @State private var localIndex = 0
     @State private var isZoomed = false
+
+    /// One index, owned in one of two places. Written as a computed binding rather than by
+    /// syncing two properties: the gallery and the colourway row would otherwise each
+    /// write the other's copy, and a swipe would fight the selection that caused it.
+    private var index: Binding<Int> {
+        selection ?? $localIndex
+    }
 
     /// What to warm, in the order it is most likely to be wanted: forwards first, because
     /// that is how a gallery is read, and one back so returning is instant too.
     private var neighbours: [URL] {
-        [index + 1, index + 2, index - 1]
+        [index.wrappedValue + 1, index.wrappedValue + 2, index.wrappedValue - 1]
             .filter { urls.indices.contains($0) }
             .map { urls[$0] }
     }
@@ -149,7 +163,7 @@ struct ImageGallery: View {
     var body: some View {
         gallery
             .fullScreenCover(isPresented: $isZoomed) {
-                ImageViewer(urls: urls, initialIndex: index)
+                ImageViewer(urls: urls, initialIndex: index.wrappedValue)
             }
     }
 
@@ -174,18 +188,20 @@ struct ImageGallery: View {
                 kind: kind,
                 aspect: 1,
                 contentMode: .fit,
-                drawnWidth: drawnWidth
+                drawnWidth: drawnWidth,
+                backdrop: backdrop
             )
             .overlay { zoomTap }
         } else {
-            TabView(selection: $index) {
+            TabView(selection: index) {
                 ForEach(Array(urls.enumerated()), id: \.offset) { position, url in
                     UpdateImage(
                         url: url,
                         kind: kind,
                         aspect: 1,
                         contentMode: .fit,
-                        drawnWidth: drawnWidth
+                        drawnWidth: drawnWidth,
+                        backdrop: backdrop
                     )
                     .overlay { zoomTap }
                     .tag(position)
@@ -201,13 +217,13 @@ struct ImageGallery: View {
             // Keyed on `index` rather than run once: a gallery can be eight photographs,
             // and fetching all of them the instant a card scrolls past is a lot of
             // bandwidth spent on pictures nobody asked to see.
-            .task(id: index) { ImageLoader.shared.prefetch(neighbours, width: drawnWidth) }
+            .task(id: index.wrappedValue) { ImageLoader.shared.prefetch(neighbours, width: drawnWidth) }
             .overlay(alignment: .bottomTrailing) {
                 // A printed count rather than dots: it says how many there are, which
                 // dots only imply, and it matches the mono metadata everywhere else.
                 // Laid over the photograph rather than under it so the caption block
                 // below stays a clean drag target for quick-save.
-                DataLabel(text: "\(index + 1)/\(urls.count)", size: 10, color: .ink)
+                DataLabel(text: "\(index.wrappedValue + 1)/\(urls.count)", size: 10, color: .ink)
                     .padding(.horizontal, 7)
                     .padding(.vertical, 4)
                     .background(Color.paper.opacity(0.92), in: Capsule())

@@ -37,6 +37,26 @@ extension Color {
     static let signal = adaptive(light: 0xD93A1E, dark: 0xFF5436)
     static let hairline = adaptive(light: 0xE2E1DB, dark: 0x262622)
 
+    /// The studio sweep a garment is photographed on. **Fixed, never adaptive** — the one
+    /// colour in the app that does not answer to dark mode.
+    ///
+    /// It has to be, because the photographs on it don't invert either. A product shot is
+    /// a garment on white; every other backdrop in the app can flip to near-black at
+    /// midnight and look right, and this one cannot:
+    ///
+    /// - A brand shipping **transparent PNGs** — Palace does — has the backdrop showing
+    ///   *through* the garment's own silhouette. In dark mode a black jacket was being
+    ///   drawn on near-black, so the item on the collection wall was a caption with
+    ///   nothing above it.
+    /// - A brand shipping **JPEGs on a white sweep** — Kith does — carries its own
+    ///   backdrop in the pixels. Letterboxing that with near-black put a bright white
+    ///   rectangle inside a dark tile, which is the harshest edge in the app.
+    ///
+    /// So the same wall showed one brand as invisible and the next as a lightbox, and
+    /// neither was a fault in the photograph. A fixed sweep makes the two agree, which is
+    /// the same fact the fit canvas already depends on and for the same reason.
+    static let sweep = Color(uiColor: UIColor(hex: 0xF4F3EE))
+
     private static func adaptive(light: Int, dark: Int) -> Color {
         Color(uiColor: UIColor { $0.userInterfaceStyle == .dark ? UIColor(hex: dark) : UIColor(hex: light) })
     }

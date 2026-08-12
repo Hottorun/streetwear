@@ -79,6 +79,15 @@ final class BrandUpdate {
     /// True when this photograph has never been offered to the current lift.
     var needsCutout: Bool { cutoutVersion != Cutout.version }
 
+    /// The product this row is about, as the catalogue keys it — `shopify:<id>`.
+    ///
+    /// Distinct from `externalID`, which identifies the *event*. In server mode a feed row
+    /// is `event:<uuid>` and one garment produces several over its life, so nothing could
+    /// tell that a link shared from Safari and a card already in the feed were the same
+    /// thing. Nil for an event with no product behind it, and for rows written before this
+    /// existed — `RemoteSync.backfill` fills those in.
+    var productExternalID: String?
+
     /// Which revision of the share importer last tried to find this in a catalogue.
     ///
     /// A link shared from Safari is enriched once, on the next foreground, and if that

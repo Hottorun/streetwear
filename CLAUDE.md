@@ -400,6 +400,19 @@ never been asked, and the copy claimed the former.
   snaps to a **ladder** of widths so a 118pt tile and a 121pt tile share one cache entry instead of
   minting two URLs for the same photograph. An unrecognised host is left completely alone — a
   resize parameter a CDN doesn't understand is at best ignored and at worst a 404.
+- **A colourway selects a photograph, and the catalogue always said which.** Selecting "Aqua"
+  filtered the size run while the gallery went on showing the black one, which reads as the control
+  being broken rather than as a missing feature. Shopify publishes the association twice, in two
+  encodings — `variant_ids` on each image in the list endpoint, `featured_image.position` on each
+  variant in `/products/<handle>.js` — and the adapter decoded neither, so the two paths need
+  different arithmetic (one is zero-based, the other is not) to produce one answer. `VariantInfo`
+  carries an **index**, not a URL: the URL is already in the images array and sending it per variant
+  would put a second copy of every photograph on the wire. Nil is normal and common — plenty of
+  storefronts publish nothing, and Palace and BBC put each colourway on its own product handle — so
+  a nil must leave the gallery alone rather than jump it to the first frame, which would look
+  deliberate and be wrong. `ImageGallery.selection` is an optional binding for the same reason:
+  callers that only page by hand keep the gallery's own state, and the two are never synced as
+  separate properties or a swipe would fight the selection that caused it.
 - **A paged gallery must warm its neighbours.** `TabView` builds a page only when it is reached, so
   the load for photo *n* started the moment you landed on it and every swipe arrived on an empty
   frame. `ImageGallery` calls `ImageLoader.prefetch` for ±2 on each index change. The prefetch is
@@ -482,6 +495,17 @@ swallows the photograph's paging; attaching it nowhere loses the actions.
   It also swaps to `www.` to find the catalogue, and **the currency then comes from the host that
   answered, not the host that was shared**: Palace's apex is USD and its `www.` is GBP, so reading
   one and pricing against the other prints a British price with a dollar sign on it.
+- **An event id is not a product id, and the share importer needs the second one.** A feed row is
+  keyed `event:<uuid>` because one garment produces several events over its life — a drop, a
+  markdown, a restock — and that is right for a feed and useless for asking "are these the same
+  thing". `SharedSaveImporter` keys a catalogue hit `shopify:<id>`, the way the *local* poller
+  keys it, and looked for an existing row under that key alone: which a server-backed row never
+  has. So sharing something the app was already showing you minted a second card for it, in the
+  only mode the app ships in — the dedupe worked standalone and nowhere else. `FeedItem` and
+  `BrandUpdate` now carry `productExternalID` beside the event key, `backfill` fills it on rows
+  written before it existed, and `existingRow` matches on either. A product match can be ambiguous
+  (several events, one garment): a row that is already **saved** wins, since that is the one
+  carrying somebody's note and board; otherwise the most recent.
 - **A share that landed badly must get another chance.** Enrichment runs once, at import, and the
   inbox file is deleted immediately after — so a link that found no catalogue record kept a title
   and one Open Graph photograph *permanently*: no price, no size run, no colourways, no stock and
@@ -757,6 +781,25 @@ builds the executable. Omitting them yields a confusing "overlapping sources" er
   The clamp in `SavedView.aspect` is therefore a clamp on the *photo*, not on the layout:
   the old 0.66–1.5 window squared off every lookbook shot, and what is left only stops a
   panorama blowing one column out.
+- **The collection wall does not invert, because photographs don't.** `Color.sweep` is the one
+  colour in the app that is fixed rather than adaptive, and `UpdateImage`/`ImageGallery` take a
+  `backdrop` so only the archive uses it — the feed keeps the adaptive `wash`, because a card there
+  is a notice and should belong to whatever appearance the phone is in. Both halves of the problem
+  are real and they pull the same way: a brand shipping **transparent PNGs** (Palace) has the
+  backdrop showing through the garment's own silhouette, so at night a black jacket was drawn on
+  near-black and the tile was a caption with nothing above it; a brand shipping **JPEGs on a white
+  sweep** (Kith) carries its backdrop in the pixels, so letterboxing it with near-black put a
+  lightbox inside a dark tile. Same wall, one brand invisible and the next one glaring, neither a
+  fault in the photograph. `SaveDetailView` passes `sweep` too — opening a tile must not change what
+  the garment is standing on. The fit canvas is the remaining surface with this property and still
+  uses adaptive `Color.paper`.
+- **The garment first; the brand is the caption.** The wordmark used to sit *above* the title in
+  tracked caps, so the most repeated line on the wall carried the most visual weight — six tiles
+  shouting PALACE SKATEBOARDS over six different products. A brand name earns its place by marking a
+  *change* of brand, so `CollectionTile` also goes silent when the visible wall is one label
+  (`SavedView.isMixedBrand`, computed over what is showing rather than over the whole collection, so
+  a single-brand board quiets it and going back to Inspiration brings it back). Removing the name
+  outright was the other option and is worse: browsing by label is a real thing to do in an archive.
 - **Only saved items get image analysis.** `ImageTagger` runs from the Saved tab, batched
   so results appear as they land, and stamps `analyzedAt` even on failure so a dead image
   URL isn't retried forever. Running it over a catalogue sweep would analyse 250 items
@@ -820,6 +863,20 @@ snapping**, because a grid turns a collage back into a form.
   "there is nothing here", not "nobody asked". Bump the version whenever the lift changes.
   `StyleView` runs the pass as well as `SavedView` — a fit is composed from the Style tab, and
   requiring a visit to Saved first denied stickers to exactly the person about to need them.
+- **A suggestion looks at the clothes, not only at the schema.** Every rule in `FitSuggestions` was
+  structural — one top, one bottom, both things you kept — so a pair could satisfy all of them and
+  be obviously wrong to anyone with eyes. `ColorHarmony` reads the dominant colour `ImageTagger`
+  already stored, ranks the pairings and drops outright clashes. Deliberately **not** a model: there
+  is nothing to train on, and the same rule that governs the brand recommender applies here — a
+  recommender that is clever and wrong is worse than one that is obvious and right. Three things it
+  must keep doing: a neutral goes with anything (most streetwear is black, grey, cream or denim, so
+  that is the common case and not the escape hatch); navy and brown count as neutrals, because they
+  are chromatic to a colour picker and neutral to a wardrobe; and an **unknown or missing** colour
+  scores neutral rather than badly — nothing has been analysed yet is not the same as having looked
+  and disapproved, and Vision does not run in the Simulator at all. The candidate pool is widened
+  past `limit` before ranking, or the sort is just sorting an arbitrary six. It also returns the
+  line saying why, which is what the card prints: a suggestion nobody can account for is
+  indistinguishable from a shuffle, which is what the row felt like.
 - **Placements are normalised, never points.** `FitPlacement` stores centre as a fraction of the
   canvas, so one description of a fit lays out identically at 900px for a render and at 168pt for a
   card — and a fit made on a Pro Max doesn't scrunch on a mini. It decodes leniently by hand for the
@@ -864,6 +921,27 @@ snapping**, because a grid turns a collage back into a form.
 - **The Style tab is not a settings screen.** Sizes and the gender filter moved to Settings; what
   is left is a reading of your taste and things to do with it. `StyleView` is also the only place
   besides the feed that shows recommendations, and it shares the block rather than restyling it.
+  - **A facet is a query, not a statistic.** The taste block printed four comma-joined lines of
+    nouns and ended there — the app's own reading of what you like, with nothing to do about it, on
+    the page whose whole subject is you. Each word is now its own control and opens the collection
+    narrowed to it, via `CollectionRoute` (the `PushRoute` shape, built in `streetwApp.init` for the
+    same reason: a view that reads it appears before anything could have set it). Two details are
+    load-bearing. `CollectionFacet.matches` **mirrors how `StyleProfile.build` counted**, including
+    the photograph-then-text order — if they drift, a facet reading "Black · 12" opens onto nine
+    items and the count looks broken. And the route carries a request *counter* as well as the
+    facet, because asking for the facet you are already looking at is a legitimate way back to the
+    Saved tab, and an unchanged value publishes nothing. The chip in `SavedView` is always visible
+    while it applies and always removable: a filter set from another tab that you cannot see is
+    indistinguishable from a collection that has lost things.
+  - **"What's missing" is the one thing this tab can say that no other screen can.** The feed knows
+    what is new and the collection knows what you kept; neither can tell you that you have six tops
+    and nothing to put with them — which is also the reason the suggestion row is sometimes empty
+    for no visible reason. Counted over `SaveType.wardrobe` when there is one, since the question is
+    about what you own, falling back to everything saved because most people never split the two.
+    Only over `GarmentSlot.essential`: saying somebody is short of headwear is a fashion opinion,
+    and this is meant to be an observation.
+  - **Discover sits below the reading of your own wardrobe.** It used to sit above it, which made
+    the tab about you open as a shop.
 
 - **A saved thing is still a product.** `SaveDetailView` shows the size run, the colourways and a
   watch, not just a note field. The page had been read too literally as "what did I think" and
@@ -942,11 +1020,6 @@ See `ROADMAP.md` for the planned work and what's explicitly out of scope. The ne
   works from a standing start; co-follow ("people who follow Kith also follow ALD") would be
   better and is meaningless at the current user count. It goes in behind a minimum-co-occurrence
   threshold, blended rather than replacing.
-- **A shared product does not dedupe against a server-backed feed row.** `SharedSaveImporter` keys
-  a catalogue hit `shopify:<id>`, the way the *local* poller keys it — but in server mode the feed
-  writes `event:<uuid>`, so sharing something the app already holds mints a second card. It only
-  ever worked standalone. The fix is a `productExternalID` on `FeedItem` (the server already sends
-  one on `WatchDTO`), stored on `BrandUpdate` and matched on by the importer.
 - Fits are composed by hand or proposed from the wardrobe; nothing reads the *photographs* when
   proposing one, so a suggestion can pair two things that clash.
 

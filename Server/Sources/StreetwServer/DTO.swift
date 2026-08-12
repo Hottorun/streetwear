@@ -98,7 +98,11 @@ extension FeedItem {
             // given the text the answer was read from.
             productType: product?.productType,
             tags: product?.tags,
-            genderVersion: product == nil ? nil : GenderClassifier.version
+            genderVersion: product == nil ? nil : GenderClassifier.version,
+            // What the garment is, not what happened to it. A feed row is keyed by its
+            // event, and one product produces several — so nothing downstream could tell
+            // that a shared link and a feed card were the same thing.
+            productExternalID: product?.externalID
         )
     }
 }

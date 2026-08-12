@@ -48,6 +48,9 @@ struct SaveDetailView: View {
     @State private var note: String = ""
     @State private var sizeNote: String = ""
     @State private var selectedColorway: String?
+    /// Held here rather than inside the gallery: choosing a colourway is a statement about
+    /// which photograph you want to be looking at.
+    @State private var imageIndex = 0
     @State private var openedFit: Fit?
     @State private var isConfirmingRemoval = false
     @State private var isRemoved = false
@@ -83,7 +86,15 @@ struct SaveDetailView: View {
                         // The whole set, paged, not just the first frame. You kept this
                         // particular thing; the other seven photographs of it are already
                         // on the phone.
-                        ImageGallery(urls: update.imageURLs, kind: update.kind, isZoomable: true)
+                        ImageGallery(
+                            urls: update.imageURLs,
+                            kind: update.kind,
+                            isZoomable: true,
+                            // The same fixed sweep the wall uses. Opening a tile must not
+                            // change what the garment is standing on.
+                            backdrop: .sweep,
+                            selection: $imageIndex
+                        )
                     }
 
                     VStack(alignment: .leading, spacing: 26) {
@@ -91,6 +102,10 @@ struct SaveDetailView: View {
                         if !runEntries.isEmpty { sizeSection }
                         if !colorways.isEmpty {
                             ColorwaySection(colorways: colorways, selected: $selectedColorway)
+                                .onChange(of: selectedColorway) { _, colour in
+                                    guard let index = update?.imageIndex(forColorway: colour) else { return }
+                                    withAnimation(.easeInOut(duration: 0.25)) { imageIndex = index }
+                                }
                         }
                         if let update {
                             WatchSection(

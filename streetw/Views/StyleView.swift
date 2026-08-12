@@ -47,14 +47,17 @@ struct StyleView: View {
                     } else {
                         if !fits.isEmpty { myFits }
                         if !suggested.isEmpty { suggestedFits }
+                        gaps
                     }
+
+                    // Below the reading of your own wardrobe, not above it. This is the
+                    // tab about you; a shop at the top of it made the page read as one.
+                    if !profile.isEmpty { taste }
 
                     BrandRecommendations(
                         title: "Discover",
                         blurb: "BRANDS OTHER PEOPLE ON STREETW FOLLOW"
                     )
-
-                    if !profile.isEmpty { taste }
                 }
                 .padding(.vertical, 10)
                 .padding(.bottom, 28)
@@ -147,7 +150,11 @@ struct StyleView: View {
                         } label: {
                             SuggestedFitCard(
                                 items: fit.ordered,
-                                title: fit.ordered.map(\.slot.label).joined(separator: " · ")
+                                // What the app saw, when it saw something. The slot list
+                                // ("Top · Bottom · Footwear") is a description of the
+                                // schema and says nothing a glance at the card doesn't.
+                                title: fit.reason
+                                    ?? fit.ordered.map(\.slot.label).joined(separator: " · ")
                             )
                         }
                         .buttonStyle(.plain)
@@ -159,15 +166,80 @@ struct StyleView: View {
         }
     }
 
+    /// What the wardrobe is short of.
+    ///
+    /// The one thing this tab can say that no other screen can. The feed knows what is
+    /// new, the collection knows what you kept, and neither can tell you that you have six
+    /// tops and nothing to put with them — which is both the most useful fact here and the
+    /// reason a suggestion row is sometimes empty for no visible reason.
+    ///
+    /// Counted over `SaveType.wardrobe` when there is one, because "what am I missing" is
+    /// a question about what you own rather than about what you have admired. It falls
+    /// back to everything saved, since most people never split the two and an empty
+    /// section would just look broken.
+    @ViewBuilder
+    private var gaps: some View {
+        let missing = missingSlots
+        if !missing.isEmpty {
+            VStack(alignment: .leading, spacing: 14) {
+                sectionHeader(
+                    "What's missing",
+                    owned.isEmpty ? "FROM YOUR SAVES" : "FROM YOUR WARDROBE"
+                )
+
+                VStack(alignment: .leading, spacing: 12) {
+                    ForEach(missing, id: \.slot) { entry in
+                        HStack(alignment: .firstTextBaseline, spacing: 12) {
+                            Text(entry.slot.label)
+                                .font(.editorial(15))
+                                .foregroundStyle(Color.ink)
+                            Spacer(minLength: 8)
+                            DataLabel(text: entry.note.uppercased(), size: 9)
+                        }
+                        .overlay(alignment: .bottom) { Rule().offset(y: 8) }
+                    }
+                }
+                .padding(.horizontal, 20)
+            }
+        }
+    }
+
+    /// The wardrobe, or everything if nothing has been filed as owned.
+    private var owned: [SavedItem] {
+        saves.filter { $0.type == .wardrobe && $0.update != nil }
+    }
+
+    /// Slots a fit needs and this wardrobe cannot fill, plus the ones it is thin on.
+    ///
+    /// Only the slots a fit is actually built from — proposing that somebody is short of
+    /// headwear is a fashion opinion, and this is meant to be an observation.
+    private var missingSlots: [(slot: GarmentSlot, note: String)] {
+        let pool = owned.isEmpty ? saves.filter { $0.update != nil } : owned
+        guard pool.count >= 3 else { return [] }
+
+        var counts: [GarmentSlot: Int] = [:]
+        for save in pool { counts[save.slot, default: 0] += 1 }
+
+        return GarmentSlot.essential
+            .sorted { $0.stackOrder < $1.stackOrder }
+            .compactMap { slot in
+                switch counts[slot] ?? 0 {
+                case 0: return (slot, "nothing yet")
+                case 1: return (slot, "only one")
+                default: return nil
+                }
+            }
+    }
+
     private var taste: some View {
         VStack(alignment: .leading, spacing: 14) {
             sectionHeader("Your taste", "FROM \(profile.totalSaves) SAVED \(profile.totalSaves == 1 ? "ITEM" : "ITEMS")")
 
             VStack(alignment: .leading, spacing: 16) {
-                FacetLine(title: "Colours", facets: profile.colors)
-                FacetLine(title: "Categories", facets: profile.categories)
-                FacetLine(title: "Silhouettes", facets: profile.silhouettes)
-                FacetLine(title: "Brands", facets: profile.brands)
+                FacetLine(title: "Colours", facets: profile.colors, axis: .colour)
+                FacetLine(title: "Categories", facets: profile.categories, axis: .category)
+                FacetLine(title: "Silhouettes", facets: profile.silhouettes, axis: .silhouette)
+                FacetLine(title: "Brands", facets: profile.brands, axis: .brand)
             }
             .padding(.horizontal, 20)
         }
@@ -295,17 +367,44 @@ struct SuggestedFitCard: View {
 /// accent — spending the colour that means "this is happening now" on a statistic about
 /// last month's saves.
 struct FacetLine: View {
+    @Environment(CollectionRoute.self) private var collection: CollectionRoute
+
     let title: String
     let facets: [StyleFacet]
+    /// Which axis these belong to, so a tap knows what question it is asking.
+    let axis: CollectionFacet.Axis
 
     var body: some View {
         if !facets.isEmpty {
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: 6) {
                 DataLabel(text: title.uppercased(), size: 9)
-                Text(facets.prefix(4).map(\.label).joined(separator: ", "))
-                    .font(.editorial(15))
-                    .foregroundStyle(Color.ink)
-                    .fixedSize(horizontal: false, vertical: true)
+                // Each word is its own control, because each is its own query. Printed as
+                // one comma-joined line the block was the app's reading of your taste with
+                // nothing to do about it — a statement, on the page whose whole subject is
+                // you. A facet is really a query over the collection, so tapping one runs
+                // it. `FlowRow` rather than a scroller: these are four short words and
+                // they should all be visible at once.
+                FlowRow(spacing: 8) {
+                    ForEach(facets.prefix(4)) { facet in
+                        Button {
+                            collection.open(CollectionFacet(axis: axis, value: facet.label))
+                        } label: {
+                            Text(facet.label)
+                                .font(.editorial(15))
+                                .foregroundStyle(Color.ink)
+                                // Underlined rather than boxed: the block is meant to read
+                                // as a sentence about you, and four rows of chips would
+                                // turn a reading into a control panel.
+                                .overlay(alignment: .bottom) {
+                                    Rectangle()
+                                        .fill(Color.hairline)
+                                        .frame(height: 1)
+                                        .offset(y: 3)
+                                }
+                        }
+                        .buttonStyle(.borderless)
+                    }
+                }
             }
         }
     }

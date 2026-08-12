@@ -60,13 +60,28 @@ public struct VariantInfo: Codable, Hashable, Sendable, Identifiable {
     public var size: String?
     public var color: String?
 
+    /// Which of the product's photographs shows this variant, as an index into
+    /// `imageURLStrings`.
+    ///
+    /// An index rather than a URL, deliberately. The URL is already in the images array —
+    /// sending it again would put a second copy of every photograph on the wire, once per
+    /// variant, for a product that runs six sizes in four colours. An index is four bytes
+    /// and is what a gallery needs anyway.
+    ///
+    /// Shopify has always published this and the adapter always discarded it, so selecting
+    /// a colourway filtered the size run while the photograph stayed on whatever colour was
+    /// first. You tapped Aqua and went on looking at the black one, which reads as the
+    /// control being broken rather than as a missing feature.
+    public var imageIndex: Int?
+
     public init(
         id: String,
         title: String,
         available: Bool,
         price: String? = nil,
         size: String? = nil,
-        color: String? = nil
+        color: String? = nil,
+        imageIndex: Int? = nil
     ) {
         self.id = id
         self.title = title
@@ -74,6 +89,7 @@ public struct VariantInfo: Codable, Hashable, Sendable, Identifiable {
         self.price = price
         self.size = size
         self.color = color
+        self.imageIndex = imageIndex
     }
 
     /// Shopify uses "Default Title" for products with no real options.

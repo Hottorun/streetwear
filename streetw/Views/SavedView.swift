@@ -21,6 +21,7 @@ enum CollectionFilter: Hashable {
 
 struct SavedView: View {
     @Environment(\.modelContext) private var context
+    @Environment(CollectionRoute.self) private var collection: CollectionRoute
     @Query(sort: \SavedItem.savedAt, order: .reverse) private var saves: [SavedItem]
     @Query(sort: [SortDescriptor(\Board.sortIndex), SortDescriptor(\Board.createdAt)])
     private var boards: [Board]
@@ -41,12 +42,46 @@ struct SavedView: View {
             case .board(let id): return save.board?.id == id
             }
         }
-        return inMode.filter { $0.matches(query) }
+        // The facet narrows whatever is already showing rather than replacing it, so
+        // arriving from the Style tab lands you inside the collection you know rather
+        // than in a mode you didn't choose. It is removable, and says so.
+        let narrowed = collection.facet.map { facet in
+            inMode.filter(facet.matches)
+        } ?? inMode
+        return narrowed.filter { $0.matches(query) }
+    }
+
+    /// Whether the wall currently shows more than one label.
+    ///
+    /// A brand name on a tile earns its place by marking a change of brand. On a view that
+    /// is entirely one label — a board, or a collection early on — it prints the same words
+    /// down every tile and becomes the most repeated thing on a page about the clothes.
+    /// Computed from what is *visible*, not from the whole collection, so filtering to a
+    /// single-brand board quiets it and going back to Inspiration brings it back.
+    private var isMixedBrand: Bool {
+        var seen: Set<UUID> = []
+        for save in visible {
+            guard let id = save.update?.brand?.id else { continue }
+            seen.insert(id)
+            if seen.count > 1 { return true }
+        }
+        return false
     }
 
     private var currentBoard: Board? {
         guard case .board(let id) = filter else { return nil }
         return boards.first { $0.id == id }
+    }
+
+    /// The fits filed onto the board being viewed, newest first.
+    ///
+    /// A fit is filed exactly as an item is, so a board can legitimately hold outfits and
+    /// no garments — "the fits I wore in Tokyo" is a board. It is therefore *not* empty,
+    /// and the page must not say it is. Hidden while searching, because the query matches
+    /// saved items and a row that ignores it reads as a search that failed to apply.
+    private var visibleFits: [Fit] {
+        guard query.isEmpty, let board = currentBoard else { return [] }
+        return board.fits.sorted { $0.createdAt > $1.createdAt }
     }
 
     private var filterLabel: String {
@@ -70,7 +105,7 @@ struct SavedView: View {
     var body: some View {
         NavigationStack {
             Group {
-                if visible.isEmpty {
+                if visible.isEmpty, visibleFits.isEmpty {
                     EditorialEmptyState(
                         title: emptyTitle,
                         action: emptyAction
@@ -85,7 +120,7 @@ struct SavedView: View {
             // Searching a collection is how it stays usable past a few hundred items —
             // and a saved archive is the one part of the app that only ever grows.
             .searchable(text: $query, prompt: "Search your collection")
-            .safeAreaInset(edge: .top) { modePicker }
+            .safeAreaInset(edge: .top) { header }
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Menu {
@@ -176,11 +211,21 @@ struct SavedView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
                 boardFits
-                HStack(alignment: .top, spacing: 14) {
-                    column(columns.0, offset: 0)
-                    column(columns.1, offset: 1)
+                if visible.isEmpty {
+                    // Fits and nothing else. The wall stays, so the line explains the
+                    // absence of tiles rather than the whole page claiming to be empty.
+                    Text(emptyAction)
+                        .font(.data(12))
+                        .tracking(0.4)
+                        .foregroundStyle(Color.muted)
+                        .padding(.horizontal, 20)
+                } else {
+                    HStack(alignment: .top, spacing: 14) {
+                        column(columns.0, offset: 0)
+                        column(columns.1, offset: 1)
+                    }
+                    .padding(.horizontal, 20)
                 }
-                .padding(.horizontal, 20)
             }
             .padding(.top, 8)
             .padding(.bottom, 32)
@@ -196,13 +241,13 @@ struct SavedView: View {
     /// pieces, and the Style tab is where outfits live.
     @ViewBuilder
     private var boardFits: some View {
-        if let board = currentBoard, !board.fits.isEmpty, query.isEmpty {
+        if !visibleFits.isEmpty {
             VStack(alignment: .leading, spacing: 10) {
-                DataLabel(text: "\(board.fits.count) \(board.fits.count == 1 ? "FIT" : "FITS")")
+                DataLabel(text: "\(visibleFits.count) \(visibleFits.count == 1 ? "FIT" : "FITS")")
                     .padding(.horizontal, 20)
                 ScrollView(.horizontal) {
                     LazyHStack(alignment: .top, spacing: 14) {
-                        ForEach(board.fits.sorted { $0.createdAt > $1.createdAt }) { fit in
+                        ForEach(visibleFits) { fit in
                             Button { openedFit = fit } label: { FitCard(fit: fit, width: 140) }
                                 .buttonStyle(.plain)
                         }
@@ -217,9 +262,12 @@ struct SavedView: View {
     private func column(_ items: [SavedItem], offset: Int) -> some View {
         LazyVStack(alignment: .leading, spacing: 22) {
             ForEach(items) { save in
-                CollectionTile(save: save, aspect: aspect(for: save, offset: offset)) {
-                    opened = save
-                }
+                CollectionTile(
+                    save: save,
+                    aspect: aspect(for: save, offset: offset),
+                    onOpen: { opened = save },
+                    showsBrand: isMixedBrand
+                )
             }
         }
         .frame(maxWidth: .infinity, alignment: .top)
@@ -244,6 +292,42 @@ struct SavedView: View {
         let ratios: [CGFloat] = [1, 0.8, 1, 0.75]
         let index = abs(save.id.hashValue &+ offset) % ratios.count
         return ratios[index]
+    }
+
+    /// The mode strip, plus the facet you arrived on if you arrived on one.
+    private var header: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            modePicker
+            if let facet = collection.facet { facetChip(facet) }
+        }
+    }
+
+    /// What the collection has been narrowed to, and the way out of it.
+    ///
+    /// Always removable, and always visible while it applies. A filter you cannot see is
+    /// indistinguishable from a collection that has lost things — and this one is set from
+    /// another tab entirely, so without the chip somebody could arrive here days later
+    /// wondering where half their saves went.
+    private func facetChip(_ facet: CollectionFacet) -> some View {
+        Button {
+            collection.clear()
+        } label: {
+            HStack(spacing: 7) {
+                Text(facet.value.uppercased())
+                    .font(.wordmark(10, .semibold))
+                    .tracking(1.1)
+                Image(systemName: "xmark")
+                    .font(.system(size: 8, weight: .semibold))
+            }
+            .foregroundStyle(Color.paper)
+            .padding(.horizontal, 11)
+            .padding(.vertical, 7)
+            .background(Color.ink, in: Capsule())
+        }
+        .buttonStyle(.borderless)
+        .padding(.horizontal, 20)
+        .padding(.bottom, 10)
+        .accessibilityLabel("Showing \(facet.value) only. Tap to show everything.")
     }
 
     /// A row of words, set as type. A segmented control here would be the loudest object

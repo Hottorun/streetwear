@@ -19,6 +19,60 @@ struct StyleFacet: Identifiable, Hashable {
     var share: Double
 }
 
+/// One facet of the taste summary, as something you can *open*.
+///
+/// The taste block used to be four lines of nouns and a dead end — the app's own reading
+/// of what you like, with nothing to do about it. A facet is really a query over the
+/// collection, so it should behave like one.
+///
+/// The matching here deliberately mirrors how `StyleProfile.build` counted, including the
+/// two-source order: what the photograph said, then the text vocabulary as the fallback.
+/// If the two ever drift, a facet reading "Black · 12" opens onto nine items, which reads
+/// as the count being wrong rather than as two different questions being asked.
+struct CollectionFacet: Hashable, Identifiable {
+    enum Axis: Hashable {
+        case colour, category, silhouette, brand
+    }
+
+    var axis: Axis
+    var value: String
+
+    var id: String { "\(axis)-\(value)" }
+
+    func matches(_ save: SavedItem) -> Bool {
+        guard let update = save.update else { return false }
+
+        switch axis {
+        case .brand:
+            return update.brand?.name.caseInsensitiveCompare(value) == .orderedSame
+
+        case .colour:
+            if let seen = update.visionColor {
+                return seen.caseInsensitiveCompare(value) == .orderedSame
+            }
+            return haystack(of: update).contains(value.lowercased())
+
+        case .category:
+            if !update.visionCategories.isEmpty {
+                return update.visionCategories.contains { $0.caseInsensitiveCompare(value) == .orderedSame }
+            }
+            let text = haystack(of: update)
+            return Vocabulary.categories.contains { term, label in
+                label.caseInsensitiveCompare(value) == .orderedSame && text.contains(term)
+            }
+
+        case .silhouette:
+            return haystack(of: update).contains(value.lowercased())
+        }
+    }
+
+    private func haystack(of update: BrandUpdate) -> String {
+        ([update.title, update.productType ?? ""] + update.tags)
+            .joined(separator: " ")
+            .lowercased()
+    }
+}
+
 struct StyleProfile {
     var colors: [StyleFacet] = []
     var categories: [StyleFacet] = []

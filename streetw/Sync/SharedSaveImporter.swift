@@ -270,8 +270,7 @@ enum SharedSaveImporter {
         // minting a second card for the same product.
         let externalID = product?.externalID ?? "shared:\(link.absoluteString)"
 
-        let existing = (try? context.fetch(FetchDescriptor<BrandUpdate>()))?
-            .first { $0.externalID == externalID }
+        let existing = existingRow(for: externalID, in: context)
 
         if let existing {
             // Already here. Re-sharing something is a request to keep it, not a
@@ -301,6 +300,7 @@ enum SharedSaveImporter {
             productType: product?.productType
         )
         update.variants = product?.variants ?? []
+        update.productExternalID = product?.externalID
         // Saved deliberately, so it is never "news" — it must not turn up in the feed
         // as an unread item the user has to dismiss.
         update.isSeen = true
@@ -311,11 +311,42 @@ enum SharedSaveImporter {
         return externalID
     }
 
+    /// The row this share is about, if the collection already holds one.
+    ///
+    /// Two keys, because there are two ways the same garment can already be here and only
+    /// one of them was ever checked:
+    ///
+    /// - `externalID`, which matches a row the *local* poller wrote (`shopify:<id>`) or an
+    ///   earlier share of the same link.
+    /// - `productExternalID`, which matches a row the **server** wrote. A feed row is keyed
+    ///   `event:<uuid>` and can never equal a catalogue key, so sharing something the app
+    ///   was already showing you minted a second card for it — in the only mode the app
+    ///   ships in.
+    ///
+    /// One product legitimately has several event rows — a drop, a markdown, a restock —
+    /// so a product match can be ambiguous. A row that is already saved wins, because that
+    /// is the one carrying somebody's note and board and the one they would expect to find
+    /// again; otherwise the most recent, which is what the feed is currently showing.
+    private static func existingRow(for externalID: String, in context: ModelContext) -> BrandUpdate? {
+        if let exact = row(for: externalID, in: context) { return exact }
+
+        let descriptor = FetchDescriptor<BrandUpdate>(
+            predicate: #Predicate { $0.productExternalID == externalID }
+        )
+        let candidates = (try? context.fetch(descriptor)) ?? []
+        return candidates.first { !$0.saves.isEmpty }
+            ?? candidates.max { $0.publishedAt < $1.publishedAt }
+    }
+
     /// Refreshes a row we already hold with what the storefront says now. Sizes sell out
     /// between one share and the next, and a stale variant list is what a watch would be
     /// evaluated against.
     private static func apply(_ product: FetchedItem, to update: BrandUpdate) {
         if !product.variants.isEmpty { update.variants = product.variants }
+        // A row that reached the catalogue now knows which garment it is, so the next
+        // share of it — or of the same product under a different link — finds it. This is
+        // also how a `shared:` row repaired long after the fact becomes matchable.
+        if update.productExternalID == nil { update.productExternalID = product.externalID }
         if update.imageURLStrings.isEmpty { update.imageURLStrings = product.imageURLStrings }
         update.isAvailable = product.isAvailable
         update.priceText = product.priceText ?? update.priceText

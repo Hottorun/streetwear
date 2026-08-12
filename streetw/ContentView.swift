@@ -15,6 +15,7 @@ struct ContentView: View {
     @Environment(SizeProfileStore.self) private var sizes: SizeProfileStore
     @Environment(PushRoute.self) private var route: PushRoute
     @Environment(SaveConfirmation.self) private var confirmation: SaveConfirmation
+    @Environment(CollectionRoute.self) private var collection: CollectionRoute
 
 
     /// Dev affordance, matching `-seedBrands` / `-seedSizes`: `-startTab style`
@@ -65,6 +66,13 @@ struct ContentView: View {
         // Ink, not the system blue: the accent is reserved for things that are happening
         // now, so it must never be spent on ordinary controls.
         .tint(.ink)
+        // Tapping a facet in the taste summary is a question about the collection, so it
+        // is answered in the collection. Keyed on the request count rather than on the
+        // facet: asking for the one you are already looking at is a legitimate way to get
+        // back to the Saved tab, and an unchanged value publishes nothing.
+        .onChange(of: collection.requests) { _, _ in
+            selection = "saved"
+        }
         // Above the tab bar rather than over the card that was saved. `quickSave` claims
         // the horizontal drag on the lower half of a feed card, so anything laid over that
         // region is competing with a gesture for the same pixels — and the card in

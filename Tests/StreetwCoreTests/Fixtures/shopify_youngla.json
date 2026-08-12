@@ -1,0 +1,361 @@
+{
+ "products": [
+  {
+   "id": 9139505692860,
+   "title": "W3147 - Pulse Seamless Racerback Crop Tank - August 20th",
+   "handle": "w3147",
+   "body_html": "<p dir=\"ltr\"><strong>MATERIAL: </strong>90% Nylon / 10% Spandex</p>\n<p dir=\"ltr\"><strong>FIT: </strong>Fitted</p>\n<p dir",
+   "published_at": "2026-08-07T16:42:24-07:00",
+   "created_at": "2026-01-19T17:07:22-08:00",
+   "vendor": "YoungLA",
+   "product_type": "For Her",
+   "tags": [
+    "@ CHA",
+    "@ LOU",
+    "Novia",
+    "OFG:CHA",
+    "OFG:LOU"
+   ],
+   "variants": [
+    {
+     "id": 45729487749308,
+     "title": "Aqua / XSmall",
+     "option1": "Aqua",
+     "option2": "XSmall",
+     "option3": null,
+     "available": true,
+     "price": "34.00"
+    },
+    {
+     "id": 45729487782076,
+     "title": "Aqua / Small",
+     "option1": "Aqua",
+     "option2": "Small",
+     "option3": null,
+     "available": true,
+     "price": "34.00"
+    },
+    {
+     "id": 45729487814844,
+     "title": "Aqua / Medium",
+     "option1": "Aqua",
+     "option2": "Medium",
+     "option3": null,
+     "available": true,
+     "price": "34.00"
+    },
+    {
+     "id": 45729487847612,
+     "title": "Aqua / Large",
+     "option1": "Aqua",
+     "option2": "Large",
+     "option3": null,
+     "available": true,
+     "price": "34.00"
+    },
+    {
+     "id": 45729487880380,
+     "title": "Aqua / XLarge",
+     "option1": "Aqua",
+     "option2": "XLarge",
+     "option3": null,
+     "available": true,
+     "price": "34.00"
+    },
+    {
+     "id": 45729487913148,
+     "title": "Black / XSmall",
+     "option1": "Black",
+     "option2": "XSmall",
+     "option3": null,
+     "available": true,
+     "price": "34.00"
+    },
+    {
+     "id": 45729487945916,
+     "title": "Black / Small",
+     "option1": "Black",
+     "option2": "Small",
+     "option3": null,
+     "available": true,
+     "price": "34.00"
+    },
+    {
+     "id": 45729487978684,
+     "title": "Black / Medium",
+     "option1": "Black",
+     "option2": "Medium",
+     "option3": null,
+     "available": true,
+     "price": "34.00"
+    }
+   ],
+   "images": [
+    {
+     "id": 51735421190332,
+     "src": "https://cdn.shopify.com/s/files/1/1775/6429/files/YoungLAJuly2400291.jpg?v=1786482455",
+     "variant_ids": []
+    },
+    {
+     "id": 51596074549436,
+     "src": "https://cdn.shopify.com/s/files/1/1775/6429/files/YoungLAJuly2400421.jpg?v=1785367526",
+     "variant_ids": []
+    },
+    {
+     "id": 51596074516668,
+     "src": "https://cdn.shopify.com/s/files/1/1775/6429/files/YoungLAJuly2400541.jpg?v=1786482501",
+     "variant_ids": []
+    },
+    {
+     "id": 51596074352828,
+     "src": "https://cdn.shopify.com/s/files/1/1775/6429/files/YoungLAJuly2406611.jpg?v=1786482535",
+     "variant_ids": [
+      45729487913148,
+      45729487945916,
+      45729487978684
+     ]
+    },
+    {
+     "id": 51596074385596,
+     "src": "https://cdn.shopify.com/s/files/1/1775/6429/files/YoungLAJuly2406821.jpg?v=1786482559",
+     "variant_ids": []
+    },
+    {
+     "id": 51596074418364,
+     "src": "https://cdn.shopify.com/s/files/1/1775/6429/files/YoungLAJuly2403571.jpg?v=1786482578",
+     "variant_ids": []
+    },
+    {
+     "id": 51596074451132,
+     "src": "https://cdn.shopify.com/s/files/1/1775/6429/files/YoungLAJuly2403121.jpg?v=1786482594",
+     "variant_ids": [
+      45729487749308,
+      45729487782076,
+      45729487814844,
+      45729487847612,
+      45729487880380
+     ]
+    },
+    {
+     "id": 51596074483900,
+     "src": "https://cdn.shopify.com/s/files/1/1775/6429/files/YoungLAJuly2403331.jpg?v=1786482620",
+     "variant_ids": []
+    },
+    {
+     "id": 51596094800060,
+     "src": "https://cdn.shopify.com/s/files/1/1775/6429/files/YoungLAJuly2406171.jpg?v=1786482643",
+     "variant_ids": []
+    },
+    {
+     "id": 51596074320060,
+     "src": "https://cdn.shopify.com/s/files/1/1775/6429/files/YoungLAJuly2406561.jpg?v=1785367420",
+     "variant_ids": []
+    }
+   ],
+   "options": [
+    {
+     "name": "Color",
+     "position": 1,
+     "values": [
+      "Aqua",
+      "Black",
+      "Blue",
+      "Pink"
+     ]
+    },
+    {
+     "name": "Size",
+     "position": 2,
+     "values": [
+      "XSmall",
+      "Small",
+      "Medium",
+      "Large",
+      "XLarge"
+     ]
+    }
+   ]
+  },
+  {
+   "id": 9139484688572,
+   "title": "W4342 - Pulse Seamless T Zip Tank - August 20th",
+   "handle": "w4342",
+   "body_html": "<p dir=\"ltr\"><strong>MATERIAL: </strong>56% Polyamide / 39% Polyester / 5% Elastane</p>\n<p dir=\"ltr\"><strong>FIT: </stro",
+   "published_at": "2026-08-07T16:42:24-07:00",
+   "created_at": "2026-01-19T16:48:30-08:00",
+   "vendor": "YoungLA",
+   "product_type": "For Her",
+   "tags": [
+    "@ CHA",
+    "@ LOU",
+    "Jardsen",
+    "OFG:CHA",
+    "OFG:LOU"
+   ],
+   "variants": [
+    {
+     "id": 45729415069884,
+     "title": "Aqua / XSmall",
+     "option1": "Aqua",
+     "option2": "XSmall",
+     "option3": null,
+     "available": true,
+     "price": "42.00"
+    },
+    {
+     "id": 45729415102652,
+     "title": "Aqua / Small",
+     "option1": "Aqua",
+     "option2": "Small",
+     "option3": null,
+     "available": true,
+     "price": "42.00"
+    },
+    {
+     "id": 45729415135420,
+     "title": "Aqua / Medium",
+     "option1": "Aqua",
+     "option2": "Medium",
+     "option3": null,
+     "available": true,
+     "price": "42.00"
+    },
+    {
+     "id": 45729415168188,
+     "title": "Aqua / Large",
+     "option1": "Aqua",
+     "option2": "Large",
+     "option3": null,
+     "available": true,
+     "price": "42.00"
+    },
+    {
+     "id": 45729415200956,
+     "title": "Aqua / XLarge",
+     "option1": "Aqua",
+     "option2": "XLarge",
+     "option3": null,
+     "available": true,
+     "price": "42.00"
+    },
+    {
+     "id": 45729415233724,
+     "title": "Black / XSmall",
+     "option1": "Black",
+     "option2": "XSmall",
+     "option3": null,
+     "available": false,
+     "price": "42.00"
+    },
+    {
+     "id": 45729415266492,
+     "title": "Black / Small",
+     "option1": "Black",
+     "option2": "Small",
+     "option3": null,
+     "available": false,
+     "price": "42.00"
+    },
+    {
+     "id": 45729415299260,
+     "title": "Black / Medium",
+     "option1": "Black",
+     "option2": "Medium",
+     "option3": null,
+     "available": false,
+     "price": "42.00"
+    }
+   ],
+   "images": [
+    {
+     "id": 51596561744060,
+     "src": "https://cdn.shopify.com/s/files/1/1775/6429/files/YoungLAJuly2409791.jpg?v=1786140927",
+     "variant_ids": []
+    },
+    {
+     "id": 51596564627644,
+     "src": "https://cdn.shopify.com/s/files/1/1775/6429/files/YoungLAJuly2409031.jpg?v=1786482684",
+     "variant_ids": []
+    },
+    {
+     "id": 51596562301116,
+     "src": "https://cdn.shopify.com/s/files/1/1775/6429/files/YoungLAJuly2409211.jpg?v=1786482704",
+     "variant_ids": []
+    },
+    {
+     "id": 51596474056892,
+     "src": "https://cdn.shopify.com/s/files/1/1775/6429/files/YoungLAJuly2401861.jpg?v=1785367693",
+     "variant_ids": []
+    },
+    {
+     "id": 51596474122428,
+     "src": "https://cdn.shopify.com/s/files/1/1775/6429/files/YoungLAJuly2402371.jpg?v=1785367711",
+     "variant_ids": []
+    },
+    {
+     "id": 51596474155196,
+     "src": "https://cdn.shopify.com/s/files/1/1775/6429/files/YoungLAJuly2402051.jpg?v=1785367722",
+     "variant_ids": []
+    },
+    {
+     "id": 51727058960572,
+     "src": "https://cdn.shopify.com/s/files/1/1775/6429/files/08_11_26_Yami___Naelli0616.jpg?v=1786280356",
+     "variant_ids": [
+      45729415233724,
+      45729415266492,
+      45729415299260
+     ]
+    },
+    {
+     "id": 51727059026108,
+     "src": "https://cdn.shopify.com/s/files/1/1775/6429/files/08_11_26_Yami___Naelli0627.jpg?v=1786280338",
+     "variant_ids": []
+    },
+    {
+     "id": 51735131488444,
+     "src": "https://cdn.shopify.com/s/files/1/1775/6429/files/08_11_26_Yami___Naelli0639_0fcd6f05-9464-49e4-940e-d6b8487df866.jpg?v=1786482746",
+     "variant_ids": []
+    },
+    {
+     "id": 51735390847164,
+     "src": "https://cdn.shopify.com/s/files/1/1775/6429/files/YoungLAJuly240463_1.jpg?v=1786482775",
+     "variant_ids": [
+      45729415069884,
+      45729415102652,
+      45729415135420,
+      45729415168188,
+      45729415200956
+     ]
+    },
+    {
+     "id": 51735390781628,
+     "src": "https://cdn.shopify.com/s/files/1/1775/6429/files/YoungLAJuly240473_1.jpg?v=1786482799",
+     "variant_ids": []
+    }
+   ],
+   "options": [
+    {
+     "name": "Color",
+     "position": 1,
+     "values": [
+      "Aqua",
+      "Black",
+      "Pink",
+      "White"
+     ]
+    },
+    {
+     "name": "Size",
+     "position": 2,
+     "values": [
+      "XSmall",
+      "Small",
+      "Medium",
+      "Large",
+      "XLarge"
+     ]
+    }
+   ]
+  }
+ ]
+}

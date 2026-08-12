@@ -291,6 +291,7 @@ public struct ShopifySource: SourceAdapter {
     private static func item(from product: Product, storeURL: URL, currency: String) -> FetchedItem {
         let sizeAxis = product.axis(named: ["size", "shoe size", "sizes"])
         let colorAxis = product.axis(named: ["color", "colour", "colorway"])
+        let imageForVariant = imageIndices(in: product.images ?? [])
 
         let variants = (product.variants ?? []).map { variant in
             VariantInfo(
@@ -299,7 +300,8 @@ public struct ShopifySource: SourceAdapter {
                 available: variant.available ?? false,
                 price: variant.price.map { formatPrice($0, currency: currency) },
                 size: sizeAxis.flatMap(variant.option(at:)),
-                color: colorAxis.flatMap(variant.option(at:))
+                color: colorAxis.flatMap(variant.option(at:)),
+                imageIndex: variant.id.flatMap { imageForVariant[$0] }
             )
         }
 
@@ -325,6 +327,23 @@ public struct ShopifySource: SourceAdapter {
             productType: product.productType,
             variants: variants
         )
+    }
+
+    /// Variant id → the position of the photograph that shows it.
+    ///
+    /// Built from the images array rather than from each variant's `featured_image`,
+    /// because the index has to be a position in *the array the app will draw* — a
+    /// featured image carries its own id and position and there is no guarantee the two
+    /// agree once anything is filtered. First photograph wins where several list the same
+    /// variant: that is the one the storefront leads with.
+    private static func imageIndices(in images: [ProductImage]) -> [Int: Int] {
+        var indices: [Int: Int] = [:]
+        for (position, image) in images.enumerated() {
+            for variantID in image.variantIDs ?? [] where indices[variantID] == nil {
+                indices[variantID] = position
+            }
+        }
+        return indices
     }
 
     public nonisolated static func formatPrice(_ raw: String, currency: String) -> String {
@@ -383,6 +402,21 @@ private extension ShopifySource {
             var option1: String?
             var option2: String?
             var option3: String?
+            /// `/products/<handle>.js` gives each variant its photograph inline, with a
+            /// 1-based `position` into the same `images` array this decodes. The list
+            /// endpoint expresses the identical fact the other way round — `variant_ids`
+            /// on each image — so the two paths need different arithmetic for one answer.
+            var featured_image: FeaturedImage?
+
+            struct FeaturedImage: Decodable {
+                var position: Int?
+            }
+
+            /// Zero-based, because `images` is an array and `position` is not.
+            var imageIndex: Int? {
+                guard let position = featured_image?.position, position > 0 else { return nil }
+                return position - 1
+            }
 
             func option(at position: Int) -> String? {
                 switch position {
@@ -409,7 +443,8 @@ private extension ShopifySource {
                     available: variant.available ?? false,
                     price: variant.price.map { formatPrice(String(Double($0) / 100), currency: currency) },
                     size: sizeAxis.flatMap(variant.option(at:)),
-                    color: colorAxis.flatMap(variant.option(at:))
+                    color: colorAxis.flatMap(variant.option(at:)),
+                    imageIndex: variant.imageIndex
                 )
             }
 
@@ -520,6 +555,14 @@ private extension ShopifySource {
 
     struct ProductImage: Decodable {
         var src: String?
+        /// Which variants this photograph is *of*. Shopify has always published it; the
+        /// adapter used to decode only `src` and throw the association away.
+        var variantIDs: [Int]?
+
+        enum CodingKeys: String, CodingKey {
+            case src
+            case variantIDs = "variant_ids"
+        }
     }
 }
 

@@ -223,6 +223,12 @@ struct RouteTests {
                 #expect(variants.count == 3)
                 #expect(variants.filter(\.available).map(\.displaySize) == ["S", "L"])
                 #expect(item.itemGender == .mens)
+
+                // What the garment is, beside what happened to it. A feed row is keyed by
+                // its event and one product produces several, so without this a link
+                // shared from Safari could never be recognised as something the app was
+                // already showing — and minted a duplicate card every time.
+                #expect(item.productExternalID == product.externalID)
             }
         }
     }
