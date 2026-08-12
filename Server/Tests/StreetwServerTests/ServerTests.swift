@@ -1463,6 +1463,94 @@ struct DiscoveryTests {
             }
         }
     }
+
+    /// The client cannot work this out for itself.
+    ///
+    /// In server mode the phone never discovers anything and never polls, so the only way
+    /// it can know a brand is watched at all is if the follow list says so. It didn't:
+    /// `BrandDTO` carried no sources, `Brand.sources` stayed empty on every server-backed
+    /// row, and the app then told the truth about its own empty array — "NOT WATCHED" on
+    /// every brand in the list, "0 SOURCES" on every brand page, and an empty state
+    /// claiming the site could not be watched automatically. All three about brands the
+    /// poller was working through on schedule.
+    @Test("The follow list says how each brand is watched")
+    func followsCarrySources() async throws {
+        try await withServer { app in
+            let brandID = try await brand(app, name: "Kith", slug: "kith.com")
+            try await SourceModel(brandID: brandID, kind: .shopify, url: "https://kith.com/products.json")
+                .save(on: app.db)
+            try await SourceModel(brandID: brandID, kind: .collections, url: "https://kith.com/collections.json")
+                .save(on: app.db)
+
+            let auth = try await register(app)
+            let device = try #require(
+                try await DeviceModel.query(on: app.db).filter(\.$authToken == auth.token).first()
+            )
+            try await FollowModel(userID: device.$user.id, brandID: brandID).save(on: app.db)
+
+            try await app.testing().test(.GET, "v1/follows", headers: auth.headers) { res async throws in
+                let follows = try res.content.decode([BrandDTO].self)
+                let sources = try #require(follows.first).sources
+                #expect(sources.map(\.kind).sorted() == ["collections", "shopify"])
+                #expect(sources.allSatisfy { $0.isAutomatic })
+                #expect(sources.allSatisfy { $0.lastError == nil })
+            }
+        }
+    }
+
+    /// A failing source is the only thing the brand page's "How it's watched" section is
+    /// *for*, so the failure has to survive the wire — a source that reports healthy from
+    /// the server is worse than one that reports nothing.
+    @Test("A source's failure reaches the client")
+    func followsCarrySourceFailures() async throws {
+        try await withServer { app in
+            let brandID = try await brand(app, name: "Kith", slug: "kith.com")
+            let source = SourceModel(brandID: brandID, kind: .sitemap, url: "https://kith.com/sitemap.xml")
+            source.lastError = "The request timed out."
+            source.failureCount = 3
+            try await source.save(on: app.db)
+
+            let auth = try await register(app)
+            let device = try #require(
+                try await DeviceModel.query(on: app.db).filter(\.$authToken == auth.token).first()
+            )
+            try await FollowModel(userID: device.$user.id, brandID: brandID).save(on: app.db)
+
+            try await app.testing().test(.GET, "v1/follows", headers: auth.headers) { res async throws in
+                let brands = try res.content.decode([BrandDTO].self)
+                let reported = try #require(brands.first?.sources.first)
+                #expect(reported.lastError == "The request timed out.")
+                #expect(reported.failureCount == 3)
+            }
+        }
+    }
+
+    /// Every route that hands over a brand hands over its sources, because the client
+    /// stores one `Brand` row whichever of them it arrived on — a search result that is
+    /// then followed must not overwrite a populated list with an empty one.
+    @Test("Search and discovery carry sources too")
+    func searchAndDiscoveryCarrySources() async throws {
+        try await withServer { app in
+            let brandID = try await brand(app, name: "Kith", slug: "kith.com")
+            try await SourceModel(brandID: brandID, kind: .shopify, url: "https://kith.com/products.json")
+                .save(on: app.db)
+
+            try await app.testing().test(.GET, "v1/brands?q=kith") { res async throws in
+                let brands = try res.content.decode([BrandDTO].self)
+                let found = try #require(brands.first)
+                #expect(found.sources.map(\.kind) == ["shopify"])
+            }
+
+            // Discovery of a brand already in the catalog returns the existing row, and it
+            // is the same row with the same sources.
+            try await app.testing().test(.POST, "v1/brands/discover", beforeRequest: { req in
+                try req.content.encode(DiscoverBrand(url: "https://kith.com"))
+            }, afterResponse: { res async throws in
+                let found = try res.content.decode(BrandDTO.self)
+                #expect(found.sources.map(\.kind) == ["shopify"])
+            })
+        }
+    }
 }
 
 @Suite("Stock watches")

@@ -122,7 +122,12 @@ func routes(_ app: Application) throws {
                 builder = builder.filter(\.$name, insensitive, "%\(raw)%")
             }
         }
-        return try await builder.sort(\.$name).limit(25).all().map(BrandDTO.init)
+        return try await builder
+            .sort(\.$name)
+            .limit(25)
+            .with(\.$sources)
+            .all()
+            .map { BrandDTO($0, sources: $0.sources) }
     }
 
     /// What other people are watching, most-followed first.
@@ -179,6 +184,7 @@ func routes(_ app: Application) throws {
 
         let brands = try await BrandModel.query(on: req.db)
             .filter(\.$id ~~ ranked.map(\.key))
+            .with(\.$sources)
             .all()
         let byID = Dictionary(brands.compactMap { b in b.id.map { ($0, b) } }, uniquingKeysWith: { a, _ in a })
 
@@ -202,7 +208,7 @@ func routes(_ app: Application) throws {
         return ranked.compactMap { entry in
             guard let brand = byID[entry.key] else { return nil }
             return PopularBrand(
-                brand: BrandDTO(brand),
+                brand: BrandDTO(brand, sources: brand.sources),
                 followers: entry.value,
                 previewImageURLs: previews[entry.key] ?? [],
                 // Sent so the client can re-rank against a taste profile built from its
@@ -243,8 +249,11 @@ func routes(_ app: Application) throws {
         }
         let slug = base.host() ?? body.url
 
-        if let existing = try await BrandModel.query(on: req.db).filter(\.$slug == slug).first() {
-            return BrandDTO(existing)
+        if let existing = try await BrandModel.query(on: req.db)
+            .filter(\.$slug == slug)
+            .with(\.$sources)
+            .first() {
+            return BrandDTO(existing, sources: existing.sources)
         }
 
         let found = await BrandDiscovery.discover(website: body.url, instagramHandle: body.instagram)
@@ -259,11 +268,15 @@ func routes(_ app: Application) throws {
         try await brand.save(on: req.db)
 
         let brandID = try brand.requireID()
+        // Collected as they are written rather than re-queried: these are the rows this
+        // request just created, and the response is about to name them.
+        var created: [SourceModel] = []
         for source in found.sources where source.kind.isAutomatic {
-            try await SourceModel(brandID: brandID, kind: source.kind, url: source.url.absoluteString)
-                .save(on: req.db)
+            let model = SourceModel(brandID: brandID, kind: source.kind, url: source.url.absoluteString)
+            try await model.save(on: req.db)
+            created.append(model)
         }
-        return BrandDTO(brand)
+        return BrandDTO(brand, sources: created)
     }
 
     // MARK: Follows
@@ -300,9 +313,12 @@ func routes(_ app: Application) throws {
         let device = try await req.authenticatedDevice()
         let follows = try await FollowModel.query(on: req.db)
             .filter(\.$user.$id == device.$user.id)
-            .with(\.$brand)
+            // Nested, because the brand's sources are what tell the phone how each brand
+            // is being watched — the client cannot know that on its own in server mode,
+            // since it does no polling and never discovered these itself.
+            .with(\.$brand) { $0.with(\.$sources) }
             .all()
-        return follows.map { BrandDTO($0.brand) }
+        return follows.map { BrandDTO($0.brand, sources: $0.brand.sources) }
     }
 
     // MARK: Feed

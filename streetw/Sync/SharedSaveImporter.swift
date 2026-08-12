@@ -30,18 +30,36 @@ enum SharedSaveImporter {
 
     /// Files everything waiting in the inbox into the store. Returns how many landed.
     ///
-    /// `route` is how a sold-out share becomes an offer to watch it. The extension cannot
-    /// make that offer itself — it does no networking, so at share time nobody knows
-    /// whether the thing is in stock — and by the time we do know, the share sheet is long
-    /// gone. So the question is asked here, on the next foreground, which is within
-    /// seconds of the share in the usual "share from Safari, switch back" flow.
+    /// Everything the extension could not ask is asked here, because here is the first
+    /// moment anyone knows the answer.
+    ///
+    /// The extension does no networking, so at share time nobody knows what the thing is
+    /// called, what sizes it comes in or whether any of them are left — and by the time we
+    /// do, the share sheet is long gone. So a share lands silently and the questions are
+    /// put on the next foreground, which in the usual share-from-Safari-and-switch-back
+    /// flow is seconds later.
+    ///
+    /// Two questions, and which one is asked depends on the answer to the third:
+    ///
+    /// - **Sold out** → `route`, which raises a sheet. Deliberately the heavier control:
+    ///   this is the one case where the offer is genuinely urgent and where you may not be
+    ///   looking at the screen when it arrives.
+    /// - **Anything else** → `confirm`, the same amendable confirmation an in-app save
+    ///   gets, so a shared link can be filed on a board or watched without hunting for the
+    ///   item afterwards. Until this, a share simply appeared in the collection with no
+    ///   acknowledgement at all and no way to act on it in the moment.
     @discardableResult
-    static func drain(into context: ModelContext, route: PushRoute? = nil) async -> Int {
+    static func drain(
+        into context: ModelContext,
+        route: PushRoute? = nil,
+        confirm: SaveConfirmation? = nil
+    ) async -> Int {
         let pending = SharedInbox.pending()
         log.info("inbox: container \(SharedInbox.isAvailable ? "ok" : "MISSING"), \(pending.count) pending")
         guard !pending.isEmpty else { return 0 }
 
         var imported = 0
+        var landedUpdates: [BrandUpdate] = []
         for item in pending {
             // One at a time on purpose: sharing happens a link at a time, and a burst of
             // parallel requests to one storefront is exactly what `PoliteFetcher`
@@ -57,29 +75,147 @@ enum SharedSaveImporter {
                 try context.save()
                 SharedInbox.remove(item.id)
                 log.info("imported \(item.save.url.absoluteString, privacy: .public) (new: \(landed != nil))")
-                if let landed { offerWatch(for: landed, in: context, route: route) }
+                if let landed, let update = row(for: landed, in: context) {
+                    landedUpdates.append(update)
+                }
             } catch {
                 log.error("could not store \(item.save.url.absoluteString, privacy: .public): \(error)")
             }
         }
+
+        announce(landedUpdates, route: route, confirm: confirm)
         return imported
     }
 
-    /// Asks about a watch when — and only when — the storefront actually said the thing is
-    /// gone. Saving something that is in stock needs no question, and a page that declared
-    /// nothing about stock must not be guessed at: a prompt about a jacket you could have
-    /// bought is the kind of interruption that gets an app's notifications turned off.
-    private static func offerWatch(for externalID: String, in context: ModelContext, route: PushRoute?) {
-        guard let route else { return }
+    /// The revision of enrichment that `repair` stamps. Bump it when this file learns to
+    /// find something it previously couldn't, and every thin save gets one more look.
+    static let enrichmentVersion = 1
+
+    /// How many thin saves to re-fetch per pass.
+    ///
+    /// Small on purpose. This runs on a foreground with nobody asking for it, against
+    /// storefronts that owe us nothing, and there is no hurry: a save that has been a bare
+    /// bookmark for a month can be a bare bookmark for another minute. Several passes
+    /// drain a backlog.
+    private static let repairBatch = 4
+
+    /// Files saved items under a brand they were never attributed to.
+    ///
+    /// Costs no network and is idempotent, so it needs no version stamp: it looks only at
+    /// rows that have no brand at all, and the answer either exists in the store now or it
+    /// doesn't. Rows land brandless for two reasons and both heal here — the host match
+    /// used to be exact, so anything from a brand's other storefronts missed; and a link
+    /// can simply be shared before its brand is followed, which is the ordinary way round
+    /// for somebody who finds a label and then decides to watch it.
+    @discardableResult
+    static func attachBrands(in context: ModelContext) -> Int {
+        var descriptor = FetchDescriptor<BrandUpdate>(
+            predicate: #Predicate { $0.brand == nil && !$0.saves.isEmpty }
+        )
+        descriptor.fetchLimit = 200
+
+        let orphans = (try? context.fetch(descriptor)) ?? []
+        guard !orphans.isEmpty else { return 0 }
+
+        let brands = (try? context.fetch(FetchDescriptor<Brand>())) ?? []
+        guard !brands.isEmpty else { return 0 }
+
+        var attached = 0
+        for update in orphans {
+            guard let link = update.linkURL,
+                  let brand = brands.first(where: { BrandDiscovery.isSameBrandHost(link, $0.websiteURL) })
+            else { continue }
+            update.brand = brand
+            attached += 1
+        }
+        if attached > 0 {
+            try? context.save()
+            log.info("attached \(attached) saved items to a brand")
+        }
+        return attached
+    }
+
+    /// Gives shares that landed as bare bookmarks another chance at the catalogue.
+    ///
+    /// This is the repair path the importer never had. A share is enriched exactly once,
+    /// at import, and the inbox file is deleted immediately afterwards — so a link that
+    /// failed to match a catalogue record kept a title and a single Open Graph photograph
+    /// permanently, with no size run, no colourways, no stock and therefore no way to
+    /// watch it. Which is most of what a saved product page is *for*.
+    ///
+    /// Only `shared:` rows with no variants are candidates: a `shopify:` key means the
+    /// catalogue already answered, and a row with variants has everything this could add.
+    @discardableResult
+    static func repair(in context: ModelContext) async -> Int {
+        let version = enrichmentVersion
+        var descriptor = FetchDescriptor<BrandUpdate>(
+            predicate: #Predicate { $0.enrichmentVersion != version && !$0.saves.isEmpty }
+        )
+        descriptor.fetchLimit = repairBatch * 4
+
+        let thin = ((try? context.fetch(descriptor)) ?? [])
+            .filter { $0.externalID.hasPrefix("shared:") && $0.variants.isEmpty }
+            .prefix(repairBatch)
+        guard !thin.isEmpty else { return 0 }
+
+        var upgraded = 0
+        for update in thin {
+            // Stamped whatever happens. A link whose storefront publishes no catalogue —
+            // a regional subdomain, a blog, a resale listing — must not be re-fetched on
+            // every foreground for the rest of its life.
+            update.enrichmentVersion = version
+
+            guard let link = update.linkURL,
+                  let product = await catalogProduct(for: link)
+            else { continue }
+
+            apply(product, to: update)
+            // The rest of what a catalogue record knows and Open Graph doesn't. Only ever
+            // filling gaps: a title someone has been looking at for a month should not
+            // change under them, but an empty summary or a missing product type is
+            // strictly better filled in.
+            if update.summary == nil { update.summary = product.summary }
+            if update.productType == nil { update.productType = product.productType }
+            if update.tags.isEmpty { update.tags = product.tags }
+            update.refreshGender()
+            upgraded += 1
+
+            log.info("repaired \(link.absoluteString, privacy: .public) with \(product.variants.count) variants")
+        }
+
+        try? context.save()
+        return upgraded
+    }
+
+    /// Says what happened, once for the whole drain.
+    ///
+    /// Deliberately not once per item. Sharing five things should not stack five sheets or
+    /// flash five confirmations that each replace the last unread — and a confirmation
+    /// whose buttons act on *one* product has no honest subject when several arrived, which
+    /// is the same reason a counted push carries no `eventID`. So a batch is left to speak
+    /// for itself in the collection, and only a lone share is offered anything.
+    private static func announce(
+        _ updates: [BrandUpdate],
+        route: PushRoute?,
+        confirm: SaveConfirmation?
+    ) {
+        let soldOut = updates.filter { $0.isAvailable == false && $0.activeWatches.isEmpty }
+        // The urgent case first, and it wins outright: something gone is worth a sheet, and
+        // raising a toast underneath it as well would be two answers to one share.
+        if let first = soldOut.first, let route {
+            route.offerWatch(first)
+            return
+        }
+        guard updates.count == 1, let only = updates.first else { return }
+        confirm?.confirm(only, destination: only.save?.board?.name ?? only.save?.type.label ?? "Inspiration")
+    }
+
+    private static func row(for externalID: String, in context: ModelContext) -> BrandUpdate? {
         var descriptor = FetchDescriptor<BrandUpdate>(
             predicate: #Predicate { $0.externalID == externalID }
         )
         descriptor.fetchLimit = 1
-        guard let update = try? context.fetch(descriptor).first,
-              update.isAvailable == false,
-              update.activeWatches.isEmpty
-        else { return }
-        route.offerWatch(update)
+        return try? context.fetch(descriptor).first
     }
 
 
@@ -186,20 +322,24 @@ enum SharedSaveImporter {
         update.priceAmount = product.priceAmount ?? update.priceAmount
     }
 
-    /// Attaches the save to a brand already being watched, when the host matches.
+    /// Attaches the save to a brand already being watched, when it is the same brand.
+    ///
+    /// Matched on the *registrable domain*, not the hostname. Stripping `www.` and
+    /// comparing what is left only works when the brand happens to be stored under the
+    /// same host the link came from — and a brand is not one host. Palace answers on the
+    /// apex, `www.`, `usa.` and `eu.`; the row holds whichever one it was added with, so
+    /// a link from any of the other three matched nothing and the save arrived with no
+    /// brand on it. On screen that is a card in the collection with no wordmark over it,
+    /// a detail page with no brand in the title, and an item that contributes nothing to
+    /// the brand facet of the style profile. Five of eleven saves in the test store were
+    /// in exactly this state, all of them Palace.
     ///
     /// Deliberately does *not* create a brand for an unknown host: adding a link from
     /// some blog should not start watching that blog, and it would quietly fill the
     /// Brands tab with things the user never chose to follow.
     private static func matchingBrand(for link: URL, in context: ModelContext) -> Brand? {
-        guard let host = link.host()?.replacingOccurrences(of: "www.", with: "") else { return nil }
         let brands = (try? context.fetch(FetchDescriptor<Brand>())) ?? []
-        return brands.first { brand in
-            guard let brandHost = brand.websiteURL?.host()?.replacingOccurrences(of: "www.", with: "") else {
-                return false
-            }
-            return host == brandHost || host.hasSuffix(".\(brandHost)")
-        }
+        return brands.first { BrandDiscovery.isSameBrandHost(link, $0.websiteURL) }
     }
 
     /// Best available name, in descending order of how much it was written *for* this

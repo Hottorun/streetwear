@@ -15,6 +15,22 @@
 // reason to keep something you cannot have is that it was sold out, and "tell me when it's
 // back" is the one thing this app can do that a screenshot cannot. So the facts come back,
 // and the watch sits above the notes rather than below them.
+//
+// Having won both halves back, the page then printed them as one undifferentiated column:
+// the size run, the colourways, the watch, a floating "YOUR NOTES", two fields and two
+// rows of chips, all at the same rhythm and all the same weight. Two things fix that and
+// they are the whole of this layout:
+//
+// - **The page is in two parts and now says so.** Above the rule is the garment, and it is
+//   the same garment anybody else would see. Below it is only yours — what you wrote, where
+//   you filed it, why you kept it. A ruled masthead between them costs one line and is the
+//   difference between a form and a page.
+// - **The way out is pinned, not buried.** "Open on site" was a small text link *below* two
+//   rows of chips, so the most consequential thing on the page sat at the bottom of a
+//   scroll. It is `StorefrontBar` now, the same one the product page uses.
+//
+// And one thing the archive can say that no catalogue can: what you have worn this with.
+// `SavedItem.fits` is already there and was going unread.
 
 import StreetwCore
 import SwiftData
@@ -23,7 +39,6 @@ import SwiftUI
 struct SaveDetailView: View {
     @Environment(\.modelContext) private var context
     @Environment(\.dismiss) private var dismiss
-    @Environment(\.openURL) private var openURL
     @Environment(SizeProfileStore.self) private var sizes: SizeProfileStore
     @Query(sort: [SortDescriptor(\Board.sortIndex), SortDescriptor(\Board.createdAt)])
     private var boards: [Board]
@@ -33,6 +48,11 @@ struct SaveDetailView: View {
     @State private var note: String = ""
     @State private var sizeNote: String = ""
     @State private var selectedColorway: String?
+    @State private var openedFit: Fit?
+    @State private var isConfirmingRemoval = false
+    @State private var isRemoved = false
+    @State private var isNamingBoard = false
+    @State private var newBoardName = ""
 
     private var update: BrandUpdate? { save.update }
 
@@ -66,7 +86,7 @@ struct SaveDetailView: View {
                         ImageGallery(urls: update.imageURLs, kind: update.kind, isZoomable: true)
                     }
 
-                    VStack(alignment: .leading, spacing: 22) {
+                    VStack(alignment: .leading, spacing: 26) {
                         heading
                         if !runEntries.isEmpty { sizeSection }
                         if !colorways.isEmpty {
@@ -79,8 +99,22 @@ struct SaveDetailView: View {
                                 isSoldOut: isSoldOut
                             )
                         }
+                        wornIn
+                    }
+                    .padding(.horizontal, 20)
+                    .padding(.top, 22)
 
-                        DataLabel(text: "YOUR NOTES")
+                    // Everything past here is yours and nobody else's, and the page is
+                    // divided rather than merely continued.
+                    // Generous, because the section above it ends in a rule of its own
+                    // (the watch) as often as not, and two hairlines a few points apart
+                    // read as a printing error rather than as a division.
+                    masthead
+                        .padding(.horizontal, 20)
+                        .padding(.top, 44)
+                        .padding(.bottom, 20)
+
+                    VStack(alignment: .leading, spacing: 26) {
                         field(
                             title: "Size",
                             prompt: "The one you own, or the one you're waiting for",
@@ -95,28 +129,60 @@ struct SaveDetailView: View {
                         )
                         boardPicker
                         typePicker
-                        if let link = update?.linkURL {
-                            Button("Open on site") { openURL(link) }
-                                .font(.data(12, .medium))
-                                .foregroundStyle(Color.ink)
-                                .buttonStyle(.borderless)
-                        }
                     }
                     .padding(.horizontal, 20)
-                    .padding(.top, 22)
                 }
-                .padding(.bottom, 40)
+                .padding(.bottom, 32)
             }
             .scrollIndicators(.hidden)
             .background(Color.paper)
-            .navigationTitle("")
+            .navigationTitle(update?.brand?.name ?? "Saved")
+            .toolbarTitleDisplayMode(.inline)
+            // Pinned rather than left at the foot of the scroll. Everything below the rule
+            // is an annotation you can come back to; going to look at the thing is not.
+            .safeAreaInset(edge: .bottom) {
+                if let link = update?.linkURL {
+                    StorefrontBar(url: link, isSoldOut: isSoldOut)
+                }
+            }
             .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Menu("More", systemImage: "ellipsis") {
+                        Button("Remove from collection", systemImage: "trash", role: .destructive) {
+                            isConfirmingRemoval = true
+                        }
+                    }
+                }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Done") { commit(); dismiss() }
+                        .font(.data(13, .semibold))
                 }
+            }
+            .alert("New board", isPresented: $isNamingBoard) {
+                TextField("Name", text: $newBoardName)
+                Button("Cancel", role: .cancel) {}
+                Button("Create") { createBoard() }
+            } message: {
+                Text("Boards are private. Nothing is shared anywhere.")
+            }
+            .confirmationDialog(
+                "Remove this from your collection?",
+                isPresented: $isConfirmingRemoval,
+                titleVisibility: .visible
+            ) {
+                Button("Remove", role: .destructive) { remove() }
+            } message: {
+                // Said plainly, because it is the one surprising consequence: a fit is a
+                // list of things you own, and un-saving does not rewrite the fits it was in.
+                Text(
+                    save.fits.isEmpty
+                        ? "Your note and where you filed it go too."
+                        : "Your note and where you filed it go too. Fits it appears in are left alone."
+                )
             }
         }
         .tint(.ink)
+        .sheet(item: $openedFit) { FitCanvas(fit: $0) }
         .onAppear {
             note = save.note ?? ""
             sizeNote = save.sizeNote ?? ""
@@ -127,12 +193,17 @@ struct SaveDetailView: View {
     }
 
     private var heading: some View {
-        VStack(alignment: .leading, spacing: 7) {
-            if let brand = update?.brand {
-                Wordmark(name: brand.name, size: 11, color: .muted)
+        VStack(alignment: .leading, spacing: 9) {
+            HStack(spacing: 8) {
+                DataLabel(text: "KEPT \(Stamp.short(save.savedAt).uppercased())")
+                if isSoldOut, update?.variants.isEmpty == false {
+                    DataLabel(text: "· SOLD OUT", size: 11, color: .signal)
+                }
+                Spacer(minLength: 0)
             }
+
             Text(update?.title ?? "Saved item")
-                .font(.editorial(22))
+                .font(.editorial(25))
                 .foregroundStyle(Color.ink)
                 .fixedSize(horizontal: false, vertical: true)
 
@@ -151,11 +222,48 @@ struct SaveDetailView: View {
                         .strikethrough(color: .muted)
                 }
                 Spacer(minLength: 0)
-                DataLabel(text: "KEPT \(Stamp.short(save.savedAt).uppercased())")
             }
+        }
+    }
 
-            if isSoldOut, update?.variants.isEmpty == false {
-                DataLabel(text: "SOLD OUT", size: 11, color: .signal)
+    /// The outfits this piece is in.
+    ///
+    /// The one statement an archive can make that a storefront cannot: not what the thing
+    /// is, but what you have worn it with. `SavedItem.fits` was already carrying this and
+    /// nothing read it — so a fit could be built out of an item and the item's own page
+    /// would never mention it.
+    @ViewBuilder
+    private var wornIn: some View {
+        if !save.fits.isEmpty {
+            VStack(alignment: .leading, spacing: 12) {
+                DataLabel(text: save.fits.count == 1 ? "IN ONE FIT" : "IN \(save.fits.count) FITS")
+                ScrollView(.horizontal) {
+                    HStack(alignment: .top, spacing: 14) {
+                        ForEach(save.fits.sorted { $0.createdAt > $1.createdAt }) { fit in
+                            Button { openedFit = fit } label: { FitCard(fit: fit, width: 132) }
+                                .buttonStyle(.plain)
+                        }
+                    }
+                }
+                .scrollIndicators(.hidden)
+                // Bleeds to the page edge, like every other horizontal rail in the app,
+                // rather than stopping short inside the text column.
+                .padding(.horizontal, -20)
+                .contentMargins(.horizontal, 20, for: .scrollContent)
+            }
+        }
+    }
+
+    /// The line that divides the garment from your reading of it.
+    private var masthead: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Rule()
+            HStack(alignment: .firstTextBaseline) {
+                Text("Yours")
+                    .font(.editorial(19))
+                    .foregroundStyle(Color.ink)
+                Spacer(minLength: 8)
+                DataLabel(text: "PRIVATE", size: 9)
             }
         }
     }
@@ -186,23 +294,25 @@ struct SaveDetailView: View {
         }
     }
 
+    /// Where this is filed, and — the part that was missing — the way to make somewhere to
+    /// file it. The empty state used to read "No boards yet — make one in the collection",
+    /// which names a place rather than offering to do it, on the one screen where somebody
+    /// has just decided this thing belongs with something else.
     private var boardPicker: some View {
         VStack(alignment: .leading, spacing: 10) {
             DataLabel(text: "BOARD")
-            if boards.isEmpty {
-                Text("No boards yet — make one in the collection.")
-                    .font(.editorial(14))
-                    .foregroundStyle(Color.muted)
-            } else {
-                // Wraps rather than scrolls: on a detail page you want to see every
-                // board at once, not hunt along a strip.
-                FlowRow(spacing: 8) {
-                    ForEach(boards) { board in
-                        chip(label: board.name, isOn: save.board?.id == board.id) {
-                            save.board = save.board?.id == board.id ? nil : board
-                            try? context.save()
-                        }
+            // Wraps rather than scrolls: on a detail page you want to see every board at
+            // once, not hunt along a strip.
+            FlowRow(spacing: 8) {
+                ForEach(boards) { board in
+                    chip(label: board.name, isOn: save.board?.id == board.id) {
+                        save.board = save.board?.id == board.id ? nil : board
+                        try? context.save()
                     }
+                }
+                chip(label: boards.isEmpty ? "New board" : "+ New", isOn: false) {
+                    newBoardName = ""
+                    isNamingBoard = true
                 }
             }
         }
@@ -235,12 +345,39 @@ struct SaveDetailView: View {
         .buttonStyle(.borderless)
     }
 
+    /// Filing straight onto a board that did not exist a second ago, which is the usual
+    /// way a board gets made: you find the second thing that belongs with the first.
+    private func createBoard() {
+        let name = newBoardName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else { return }
+        let created = Board(name: name, sortIndex: (boards.map(\.sortIndex).max() ?? 0) + 1)
+        context.insert(created)
+        save.board = created
+        try? context.save()
+    }
+
     private func commit() {
+        guard !isRemoved else { return }
         let trimmedNote = note.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedSize = sizeNote.trimmingCharacters(in: .whitespacesAndNewlines)
         save.note = trimmedNote.isEmpty ? nil : trimmedNote
         save.sizeNote = trimmedSize.isEmpty ? nil : trimmedSize
         try? context.save()
+    }
+
+    /// Un-saving, from the page that is about the save. Deleting the `SavedItem` leaves the
+    /// `BrandUpdate` — the product is catalogue, not collection — and leaves the fits it
+    /// was in, which is `Fit.items` cascading in neither direction and is the whole reason
+    /// the dialog says so.
+    ///
+    /// `onDisappear` fires `commit` on the way out and would otherwise be writing a note
+    /// onto a model that no longer exists, so the delete is latched rather than trusted to
+    /// be a harmless no-op.
+    private func remove() {
+        isRemoved = true
+        context.delete(save)
+        try? context.save()
+        dismiss()
     }
 }
 

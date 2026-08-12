@@ -61,7 +61,9 @@ public enum SizeNormalizer {
         "xl": "XL", "extra large": "XL",
         "xxl": "XXL", "2xl": "XXL",
         "xxxl": "XXXL", "3xl": "XXXL",
-        "4xl": "4XL"
+        // `shortened` spells a digit multiplier out as that many X's, so the long form
+        // "4XLarge" arrives here as "xxxxl" rather than as "4xl".
+        "4xl": "4XL", "xxxxl": "4XL"
     ]
 
     private static let oneSizeWords: Set<String> = [
@@ -77,7 +79,7 @@ public enum SizeNormalizer {
         if oneSizeWords.contains(cleaned) {
             return NormalizedSize(kind: .oneSize, token: "OS")
         }
-        if let apparel = apparelWords[cleaned] {
+        if let apparel = apparelWords[cleaned] ?? apparelWords[shortened(cleaned)] {
             return NormalizedSize(kind: .apparel, token: apparel)
         }
 
@@ -116,6 +118,42 @@ public enum SizeNormalizer {
         }
 
         return NormalizedSize(kind: .other, token: cleaned.uppercased(), scale: scale)
+    }
+
+    /// "XXLarge" → "xxl", so the table above only has to know the short forms.
+    ///
+    /// Half a brand's run being readable is worse than none of it, because the failure is
+    /// invisible: YoungLA writes `XXSmall, XSmall, Small, Medium, Large, XLarge, XXLarge`,
+    /// and only the three bare words were in the table. Every extremity fell through to
+    /// `.other` — never hidden, per the rule, but never *matched* either, so someone whose
+    /// profile says XL saw a run in which their size was the one token not ruled in
+    /// vermilion, on every product the brand makes.
+    ///
+    /// Only an all-`x` prefix (or the `2x`/`3x` shorthand for one) is accepted. A prefix
+    /// this doesn't recognise — "petite small", "junior large" — falls through unchanged
+    /// and stays `.other`, which is the right answer: those are not the same garment as an
+    /// S, and quietly matching them to one would put the wrong size in somebody's feed.
+    private static func shortened(_ cleaned: String) -> String {
+        let compact = cleaned
+            .replacingOccurrences(of: " ", with: "")
+            .replacingOccurrences(of: "-", with: "")
+            // "extra large" and "xlarge" are the same garment spelled two ways, and both
+            // turn up in the same catalogue.
+            .replacingOccurrences(of: "extra", with: "x")
+
+        guard let base = ["small": "s", "medium": "m", "large": "l"]
+            .first(where: { compact.hasSuffix($0.key) })
+        else { return cleaned }
+
+        var prefix = String(compact.dropLast(base.key.count))
+
+        // "2xlarge" is two X's, "3xlarge" is three — the digit is a count, not a size.
+        if let first = prefix.first, let count = Int(String(first)), prefix.dropFirst() == "x" {
+            prefix = String(repeating: "x", count: count)
+        }
+
+        guard prefix.allSatisfy({ $0 == "x" }) else { return cleaned }
+        return prefix + base.value
     }
 
     /// The scale a raw size string names, if it names one at all.

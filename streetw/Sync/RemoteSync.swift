@@ -251,6 +251,7 @@ final class RemoteSync {
                 brand.currencyCode = dto.currency
                 brand.isLockedForDrop = dto.lockedForDrop
                 if let logo = dto.logoURL { brand.logoURLString = logo }
+                brand.sources = dto.sources.map(Self.source(from:))
             } else {
                 let brand = Brand(
                     name: dto.name,
@@ -261,10 +262,15 @@ final class RemoteSync {
                 brand.currencyCode = dto.currency
                 brand.isLockedForDrop = dto.lockedForDrop
                 brand.logoURLString = dto.logoURL
+                brand.sources = dto.sources.map(Self.source(from:))
                 context.insert(brand)
                 byRemoteID[id] = brand
             }
         }
+
+        // Whole-array assignment above, never a mutation of one element: `Brand.sources`
+        // is a Codable array on a `@Model`, so writing through to a member does not
+        // persist.
 
         // A brand unfollowed on another device should disappear here too. Local-only
         // brands (no remoteID) are left alone so standalone mode still works.
@@ -274,6 +280,27 @@ final class RemoteSync {
                 context.delete(brand)
             }
         }
+    }
+
+    /// The server's view of a source, in the shape the app already stores.
+    ///
+    /// `fingerprint` and `etag` stay nil and that is correct: they are the *poller's*
+    /// state, and in server mode the phone is not the poller. They fill themselves in if
+    /// this store is ever run under `-standalone YES`, where the first poll of each source
+    /// establishes them.
+    ///
+    /// An unrecognised `kind` becomes `.page` rather than being dropped, so a brand watched
+    /// by something this build has never heard of still reports that it is watched at all.
+    private static func source(from dto: BrandSourceDTO) -> BrandSource {
+        BrandSource(
+            id: dto.id,
+            kind: dto.sourceKind ?? .page,
+            url: URL(string: dto.url) ?? URL(string: "https://invalid.invalid")!,
+            enabled: dto.enabled,
+            lastCheckedAt: dto.lastCheckedAt,
+            lastError: dto.lastError,
+            failureCount: dto.failureCount
+        )
     }
 
     private func merge(_ items: [FeedItem]) {
@@ -375,6 +402,17 @@ final class RemoteSync {
         }
         if update.tags.isEmpty, let tags = item.tags, !tags.isEmpty {
             update.tags = tags
+            changed = true
+        }
+        // The same trap as `productType`, and a louder one. A row stored before the feed
+        // carried variants holds none, and the merge above skips ids it already has — so
+        // it keeps none for as long as it exists. With no variants there is no size run,
+        // no colourways and no watchable size: the two things a product page is *for* are
+        // simply absent, on exactly the brands somebody has followed longest. Filled only
+        // when empty, never overwritten: an event is a record of what happened, and the
+        // stock in it is what was true when it fired.
+        if update.variants.isEmpty, let variants = item.variants, !variants.isEmpty {
+            update.variants = variants
             changed = true
         }
         guard changed else { return }

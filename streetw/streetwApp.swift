@@ -27,6 +27,10 @@ struct streetwApp: App {
     @State private var engine: SyncEngine
     @State private var suggestions: BrandSuggestions
     @State private var route: PushRoute
+    /// Owned here rather than by a card: the card that triggered a save lives in a
+    /// `LazyVStack` and is routinely recycled or scrolled off before the confirmation has
+    /// been acted on.
+    @State private var confirmation: SaveConfirmation
 
     init() {
         Net.configureSharedCache()
@@ -69,6 +73,7 @@ struct streetwApp: App {
         _engine = State(initialValue: SyncEngine(context: container.mainContext))
         _suggestions = State(initialValue: BrandSuggestions(remote: remote, settings: settings))
         _route = State(initialValue: route)
+        _confirmation = State(initialValue: MainActor.assumeIsolated { SaveConfirmation() })
 
         // The app delegate is built by UIKit and can't be handed these, so they are
         // published here — the same moment they become valid.
@@ -86,6 +91,7 @@ struct streetwApp: App {
                 .environment(engine)
                 .environment(suggestions)
                 .environment(route)
+                .environment(confirmation)
                 .task { await DevSeed.runIfRequested(in: sharedModelContainer.mainContext) }
         }
         .modelContainer(sharedModelContainer)
@@ -97,9 +103,29 @@ struct streetwApp: App {
             // Anything shared while the app was closed is filed on the way back in.
             // On becoming active rather than on launch, because the usual path is
             // share-from-Safari and then switch straight to an app that never quit.
+            //
+            // **The route is not optional here.** This is the drain that actually runs in
+            // that usual path — `ContentView`'s `.task` fires once per appearance and so
+            // never sees a share that arrives while the app is already alive. Draining
+            // without a route imports the save and then removes it from the inbox, so the
+            // sold-out prompt had nothing left to be asked about: the offer to watch
+            // something you just shared was unreachable except on a cold launch, and even
+            // then only if that `.task` won the race against this.
             if phase == .active {
                 let context = sharedModelContainer.mainContext
-                Task { await SharedSaveImporter.drain(into: context) }
+                Task {
+                    await SharedSaveImporter.drain(
+                        into: context,
+                        route: route,
+                        confirm: confirmation
+                    )
+                    // After the inbox, never before it: a share that just arrived is what
+                    // somebody is waiting on, and the repair queue is a backlog nobody
+                    // asked about. Both announce nothing — a bookmark quietly becoming a
+                    // product page is not news.
+                    SharedSaveImporter.attachBrands(in: context)
+                    await SharedSaveImporter.repair(in: context)
+                }
             }
         }
     }

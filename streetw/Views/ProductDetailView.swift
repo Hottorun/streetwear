@@ -21,6 +21,7 @@ struct ProductDetailView: View {
     @Environment(\.openURL) private var openURL
     @Environment(\.dismiss) private var dismiss
     @Environment(SizeProfileStore.self) private var sizes: SizeProfileStore
+    @Environment(SaveConfirmation.self) private var confirmation: SaveConfirmation
 
     let update: BrandUpdate
 
@@ -92,7 +93,10 @@ struct ProductDetailView: View {
             // the site used to be.
             update.isSeen = true
             try? context.save()
+            // Lift the save confirmation clear of the buy bar while this page is up.
+            confirmation.bottomClearance = StorefrontBar.height
         }
+        .onDisappear { confirmation.bottomClearance = 0 }
     }
 
     // MARK: - Sections
@@ -178,39 +182,61 @@ struct ProductDetailView: View {
     @ViewBuilder
     private var buyBar: some View {
         if let link = update.linkURL {
-            VStack(spacing: 0) {
-                Rule()
-                Button {
-                    openURL(link)
-                } label: {
-                    HStack(spacing: 8) {
-                        Text(isSoldOut ? "VIEW ON SITE" : "OPEN ON \(hostName(link))")
-                            .font(.data(12, .semibold))
-                            .tracking(1.1)
-                        Image(systemName: "arrow.up.right")
-                            .font(.system(size: 10, weight: .semibold))
-                    }
-                    .foregroundStyle(Color.paper)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 17)
-                    .background(Color.ink)
-                }
-                .buttonStyle(.borderless)
-                .padding(.horizontal, 20)
-                .padding(.top, 12)
-                .padding(.bottom, 4)
-            }
-            .background(.bar)
+            StorefrontBar(url: link, isSoldOut: isSoldOut)
         }
-    }
-
-    /// "KITH.COM" — naming the destination, so the button says where it goes.
-    private func hostName(_ url: URL) -> String {
-        (url.host() ?? "site").replacingOccurrences(of: "www.", with: "").uppercased()
     }
 }
 
 // MARK: - Shared product blocks
+
+/// The way out to the storefront, pinned to the bottom of whichever page is showing.
+///
+/// Shared with the archive rather than restyled there, for the same reason
+/// `ColorwaySection` and `WatchSection` are: a saved thing is still a product, and going
+/// to look at it on the site is the same act whether you found it in the feed this morning
+/// or kept it a year ago. Naming the host — "OPEN ON KITH.COM" — is what makes it a
+/// destination rather than a generic link.
+struct StorefrontBar: View {
+    @Environment(\.openURL) private var openURL
+
+    let url: URL
+    var isSoldOut: Bool
+
+    /// What the bar overlaps and therefore has to be lifted clear of, in points. The save
+    /// confirmation reads this so it never covers the one control the page is for.
+    static let height: CGFloat = 64
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Rule()
+            Button {
+                openURL(url)
+            } label: {
+                HStack(spacing: 8) {
+                    Text(isSoldOut ? "VIEW ON SITE" : "OPEN ON \(host)")
+                        .font(.data(12, .semibold))
+                        .tracking(1.1)
+                    Image(systemName: "arrow.up.right")
+                        .font(.system(size: 10, weight: .semibold))
+                }
+                .foregroundStyle(Color.paper)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 17)
+                .background(Color.ink)
+            }
+            .buttonStyle(.borderless)
+            .padding(.horizontal, 20)
+            .padding(.top, 12)
+            .padding(.bottom, 4)
+        }
+        .background(.bar)
+    }
+
+    /// "KITH.COM" — naming the destination, so the button says where it goes.
+    private var host: String {
+        (url.host() ?? "site").replacingOccurrences(of: "www.", with: "").uppercased()
+    }
+}
 
 /// The colourways a product comes in, selectable to narrow the size run and any watch
 /// started from the same screen.

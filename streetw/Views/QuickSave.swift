@@ -69,7 +69,6 @@ final class QuickSaveCoordinator {
     var isPastThreshold: Bool { abs(offset) >= Self.threshold }
 
     func dragged(_ translation: CGSize) {
-        print("QS-DRAG \(translation)")
         // Horizontal intent only. Without this the vertical scroll and the card fight
         // each other and neither feels right.
         guard abs(translation.width) > abs(translation.height) else { return }

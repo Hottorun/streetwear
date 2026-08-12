@@ -23,8 +23,28 @@ extension BrandProbe: @retroactive Content {}
 extension FeedResponse: @retroactive Content {}
 extension StatusResponse: @retroactive Content {}
 
+extension BrandSourceDTO {
+    init(_ source: SourceModel) {
+        self.init(
+            id: source.id ?? UUID(),
+            kind: source.kind,
+            url: source.url,
+            enabled: source.enabled,
+            lastCheckedAt: source.lastCheckedAt,
+            lastError: source.lastError,
+            failureCount: source.failureCount
+        )
+    }
+}
+
 extension BrandDTO {
-    init(_ brand: BrandModel) {
+    /// Sources are passed in rather than read off `brand.$sources`.
+    ///
+    /// Fluent's `@Children` accessor traps at runtime when the relation was not eager
+    /// loaded, and the callers here are four routes with four different query shapes. An
+    /// explicit parameter turns "somebody forgot a `.with`" from a crash on a production
+    /// route into a compile error at the call site.
+    init(_ brand: BrandModel, sources: [SourceModel]) {
         self.init(
             id: brand.id,
             name: brand.name,
@@ -33,7 +53,8 @@ extension BrandDTO {
             instagramHandle: brand.instagramHandle,
             currency: brand.currency,
             lockedForDrop: brand.lockedForDrop,
-            logoURL: brand.logoURL
+            logoURL: brand.logoURL,
+            sources: sources.map(BrandSourceDTO.init)
         )
     }
 }

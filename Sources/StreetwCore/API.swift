@@ -163,6 +163,53 @@ public struct DeviceResponse: Codable, Sendable {
     }
 }
 
+/// How one place a brand is watched is doing, as far as a client needs to know.
+///
+/// Deliberately *not* `BrandSource`, even though the server holds one of those per row and
+/// the client stores an array of them. `fingerprint` and `etag` are the poller's working
+/// state — a content hash and a cache validator — and they are meaningless to anybody who
+/// is not the thing doing the polling. Sending them would put two fields on the wire that
+/// a future client could only misuse.
+///
+/// What is here is what the two screens that show this actually print: which mechanism,
+/// where it points, and whether it is failing.
+public struct BrandSourceDTO: Codable, Sendable, Hashable, Identifiable {
+    public var id: UUID
+    /// `BrandSource.Kind` raw value. Kept as a string so a server that learns a new source
+    /// kind doesn't fail to decode on an older client — it renders as its raw name and is
+    /// treated as manual, rather than taking the whole brand list down with it.
+    public var kind: String
+    public var url: String
+    public var enabled: Bool
+    public var lastCheckedAt: Date?
+    public var lastError: String?
+    public var failureCount: Int
+
+    public init(
+        id: UUID,
+        kind: String,
+        url: String,
+        enabled: Bool = true,
+        lastCheckedAt: Date? = nil,
+        lastError: String? = nil,
+        failureCount: Int = 0
+    ) {
+        self.id = id
+        self.kind = kind
+        self.url = url
+        self.enabled = enabled
+        self.lastCheckedAt = lastCheckedAt
+        self.lastError = lastError
+        self.failureCount = failureCount
+    }
+
+    public var sourceKind: BrandSource.Kind? { BrandSource.Kind(rawValue: kind) }
+
+    public var label: String { sourceKind?.label ?? kind }
+
+    public var isAutomatic: Bool { sourceKind?.isAutomatic ?? false }
+}
+
 public struct BrandDTO: Codable, Sendable, Hashable, Identifiable {
     public var id: UUID?
     public var name: String
@@ -174,6 +221,15 @@ public struct BrandDTO: Codable, Sendable, Hashable, Identifiable {
     /// The brand's own mark, from the icon its site publishes. Optional so a client can
     /// still decode a response from a server that predates it.
     public var logoURL: String?
+    /// Where this brand is watched, and how those are doing.
+    ///
+    /// Required, not optional. Without it every server-backed brand arrived with an empty
+    /// `Brand.sources`, so the brands list printed "NOT WATCHED" against every row the
+    /// server was polling perfectly well, the brand page offered "0 SOURCES", and the
+    /// empty state claimed the site could not be watched automatically. Three false
+    /// statements, and the one place a failing source is visible was blank in the mode the
+    /// app actually ships in.
+    public var sources: [BrandSourceDTO]
 
     public init(
         id: UUID?,
@@ -183,7 +239,8 @@ public struct BrandDTO: Codable, Sendable, Hashable, Identifiable {
         instagramHandle: String? = nil,
         currency: String? = nil,
         lockedForDrop: Bool = false,
-        logoURL: String? = nil
+        logoURL: String? = nil,
+        sources: [BrandSourceDTO] = []
     ) {
         self.id = id
         self.name = name
@@ -193,6 +250,7 @@ public struct BrandDTO: Codable, Sendable, Hashable, Identifiable {
         self.currency = currency
         self.lockedForDrop = lockedForDrop
         self.logoURL = logoURL
+        self.sources = sources
     }
 }
 

@@ -199,6 +199,32 @@ struct BrandDiscoveryTests {
         #expect(BrandDiscovery.normalizedURL("   ") == nil)
     }
 
+    /// A brand is not one hostname. Palace answers on four, the Brands tab holds one, and
+    /// an exact-host check attributed everything shared from the other three to nobody —
+    /// a saved card with no wordmark on it.
+    @Test("A brand's storefronts are recognised as one brand", arguments: [
+        ("https://usa.palaceskateboards.com/products/x", "https://palaceskateboards.com"),
+        ("https://eu.palaceskateboards.com/products/x", "https://usa.palaceskateboards.com"),
+        ("https://palaceskateboards.com/products/x", "https://www.palaceskateboards.com"),
+        ("https://www.bbcicecream.com/products/x", "https://bbcicecream.com"),
+        ("https://shop.example.co.uk/products/x", "https://www.example.co.uk")
+    ])
+    func sameBrandAcrossStorefronts(link: String, brand: String) {
+        #expect(BrandDiscovery.isSameBrandHost(URL(string: link), URL(string: brand)))
+    }
+
+    /// And two brands are still two brands. A suffix match that reached across
+    /// registrable domains would file somebody's save under the wrong label, which is
+    /// worse than leaving it unfiled.
+    @Test("Different brands are not folded together", arguments: [
+        ("https://kith.com/products/x", "https://palaceskateboards.com"),
+        ("https://notkith.com/products/x", "https://kith.com"),
+        ("https://example.co.uk/products/x", "https://other.co.uk")
+    ])
+    func differentBrandsStayApart(link: String, brand: String) {
+        #expect(!BrandDiscovery.isSameBrandHost(URL(string: link), URL(string: brand)))
+    }
+
     @Test("Accepts a handle, a @handle or a profile URL", arguments: [
         "kith", "@kith", "https://instagram.com/kith", "  kith  "
     ])
@@ -463,6 +489,67 @@ struct SingleProductTests {
             http: http
         )
         #expect(item == nil)
+    }
+
+    /// Palace does exactly this on all three of its hosts: `.js` is 404, the catalogue is
+    /// fine. Falling through to Open Graph lost the size run and — the part that matters —
+    /// the stock, so a sold-out share was never offered a watch.
+    @Test("A storefront that doesn't serve .js is read out of the catalogue instead")
+    func fallsBackToTheCatalogue() async {
+        let http = MockHTTPClient()
+        http.stub("/products/hairy-beanie.js", .init(status: 404))
+        http.stub("/products.json?limit=250&page=1", .init(body: Data("""
+        {"products": [
+          {"id": 91, "title": "Too Hairy Beanie", "handle": "hairy-beanie",
+           "product_type": "Headwear", "tags": ["accessories"],
+           "images": [{"src": "https://cdn.shopify.com/beanie.jpg"}],
+           "options": [{"name": "Size", "position": 1}],
+           "variants": [{"id": 5, "title": "OS", "available": false, "price": "48.00", "option1": "OS"}]}
+        ]}
+        """.utf8)))
+        http.stub("/meta.json", .init(body: Data(#"{"name": "Palace", "currency": "GBP"}"#.utf8)))
+
+        let item = await ShopifySource.product(
+            at: URL(string: "https://palaceskateboards.com/products/hairy-beanie")!,
+            http: http
+        )
+        let found = try? #require(item)
+
+        #expect(found?.title == "Too Hairy Beanie")
+        // The whole point: stock survives the fallback, so the watch can be offered.
+        #expect(found?.isAvailable == false)
+        #expect(found?.variants.first?.available == false)
+        #expect(found?.variants.first?.size == "OS")
+        // Still keyed like the poller's, so a re-share lands on the existing row.
+        #expect(found?.externalID == "shopify:91")
+    }
+
+    /// The listing is newest first and this runs while somebody waits for their share to
+    /// land, so it must not walk an entire catalogue looking for a handle that isn't there.
+    @Test("The catalogue search is bounded rather than paging a whole store")
+    func stopsPagingTheCatalogue() async {
+        let http = MockHTTPClient()
+        // A full page every time, never containing the handle — the worst case.
+        let page = Data("""
+        {"products": [
+          {"id": 1, "title": "Something Else", "handle": "something-else",
+           "variants": [{"id": 1, "title": "OS", "available": true, "price": "10.00"}]}
+        ]}
+        """.utf8)
+        for index in 1...(ShopifySource.maxListedPages + 3) {
+            http.stub("/products.json?limit=250&page=\(index)", .init(body: page))
+        }
+
+        let item = await ShopifySource.product(
+            at: URL(string: "https://palaceskateboards.com/products/never-listed")!,
+            http: http
+        )
+        #expect(item == nil)
+
+        // A short page ends the walk immediately, so only the first is ever fetched here.
+        let pages = http.requestedKeys.filter { $0.hasPrefix("/products.json") }
+        #expect(pages.count <= ShopifySource.maxListedPages * 2)
+        #expect(!http.requestedKeys.contains("/products.json?limit=250&page=\(ShopifySource.maxListedPages + 1)"))
     }
 }
 

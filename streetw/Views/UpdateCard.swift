@@ -271,13 +271,18 @@ struct FeedState {
 /// Save toggle. Deliberately unlabelled and quiet — it sits on a photograph.
 struct SaveAction: View {
     @Environment(\.modelContext) private var context
+    @Environment(SaveConfirmation.self) private var confirmation: SaveConfirmation
     let update: BrandUpdate
 
     private var isSaved: Bool { update.save != nil }
 
     var body: some View {
         Button {
-            if isSaved { removeSave(update, in: context) } else { setSave(update, .inspiration, in: context) }
+            if isSaved {
+                removeSave(update, in: context)
+            } else {
+                setSave(update, .inspiration, in: context, confirm: confirmation)
+            }
         } label: {
             Image(systemName: isSaved ? "bookmark.fill" : "bookmark")
                 .font(.system(size: 12, weight: .medium))
@@ -294,14 +299,19 @@ struct SaveAction: View {
 /// One menu for all three cards, so the actions never drift apart.
 struct UpdateMenu: View {
     @Environment(\.modelContext) private var context
+    @Environment(SaveConfirmation.self) private var confirmation: SaveConfirmation
     @Query(sort: [SortDescriptor(\Board.sortIndex), SortDescriptor(\Board.createdAt)])
     private var boards: [Board]
 
     let update: BrandUpdate
 
     var body: some View {
-        Button("Save to Inspiration", systemImage: "bookmark") { setSave(update, .inspiration, in: context) }
-        Button("Add to Wardrobe", systemImage: "tshirt") { setSave(update, .wardrobe, in: context) }
+        Button("Save to Inspiration", systemImage: "bookmark") {
+            setSave(update, .inspiration, in: context, confirm: confirmation)
+        }
+        Button("Add to Wardrobe", systemImage: "tshirt") {
+            setSave(update, .wardrobe, in: context, confirm: confirmation)
+        }
 
         if !boards.isEmpty {
             Menu("Add to board", systemImage: "square.grid.2x2") {
@@ -337,8 +347,19 @@ struct UpdateMenu: View {
     }
 }
 
+/// Keeps something, and — when a confirmation is passed — offers the two things you might
+/// have meant instead.
+///
+/// The save is unconditional and complete before the confirmation is raised. Nothing here
+/// waits on the toast, and dismissing it changes nothing: it amends an outcome rather than
+/// standing between you and one.
 @MainActor
-private func setSave(_ update: BrandUpdate, _ type: SavedItem.SaveType, in context: ModelContext) {
+private func setSave(
+    _ update: BrandUpdate,
+    _ type: SavedItem.SaveType,
+    in context: ModelContext,
+    confirm: SaveConfirmation? = nil
+) {
     if let save = update.save {
         save.type = type
     } else {
@@ -346,6 +367,7 @@ private func setSave(_ update: BrandUpdate, _ type: SavedItem.SaveType, in conte
     }
     update.isSeen = true
     try? context.save()
+    confirm?.confirm(update, destination: update.save?.board?.name ?? type.label)
 }
 
 @MainActor

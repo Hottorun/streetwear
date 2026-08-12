@@ -79,6 +79,24 @@ final class BrandUpdate {
     /// True when this photograph has never been offered to the current lift.
     var needsCutout: Bool { cutoutVersion != Cutout.version }
 
+    /// Which revision of the share importer last tried to find this in a catalogue.
+    ///
+    /// A link shared from Safari is enriched once, on the next foreground, and if that
+    /// fails the row keeps whatever Open Graph gave it — a title, one photograph, no
+    /// price history, no size run, no stock, and therefore no watch. Forever: the inbox
+    /// file is deleted on import and nothing ever looks at that row again. Every reason a
+    /// first attempt fails is temporary or fixable — a regional subdomain that serves no
+    /// catalogue, a storefront that was slow that minute, a product further back in the
+    /// listing than the importer pages while somebody waits, or simply an older build of
+    /// this app.
+    ///
+    /// So it is the `cutoutVersion` pattern again, for the same reason and with the same
+    /// discipline: a row written by an older build decodes 0 and gets one more look;
+    /// stamping happens even when the attempt found nothing, so a genuinely un-catalogued
+    /// link is not re-fetched on every launch for the rest of its life. Bump the version
+    /// whenever enrichment learns something new.
+    var enrichmentVersion: Int = 0
+
     /// The sticker, when there is one. Read as a file each time rather than cached here:
     /// `UIImage(contentsOfFile:)` is lazily decoded and the canvas draws at most a dozen.
     var cutoutURL: URL? {

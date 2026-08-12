@@ -97,6 +97,40 @@ public enum BrandDiscovery {
         return components.url
     }
 
+    /// The part of a host that identifies the *brand* rather than the storefront.
+    ///
+    /// A brand is not one hostname. Palace alone answers on `palaceskateboards.com`,
+    /// `www.`, `usa.` and `eu.` — four hosts, one label, one row in the Brands tab — and
+    /// whichever of them the brand was added with is the only one an exact-match check
+    /// recognises. Everything shared or discovered from the others is attributed to
+    /// nobody, which on screen means a saved item with no brand name over it.
+    ///
+    /// Two labels, or three when the second-to-last is a public suffix that everybody
+    /// registers underneath ("co.uk", "com.au"). Deliberately a heuristic and not the
+    /// Public Suffix List: that is a megabyte of data that needs updating, to answer a
+    /// question whose worst outcome is a saved link not being filed under a brand — which
+    /// is exactly where it already is.
+    public static func registrableDomain(of host: String) -> String {
+        let labels = host.lowercased().split(separator: ".").map(String.init)
+        guard labels.count > 2 else { return labels.joined(separator: ".") }
+
+        let secondToLast = labels[labels.count - 2]
+        let take = Self.secondLevelSuffixes.contains(secondToLast) ? 3 : 2
+        return labels.suffix(take).joined(separator: ".")
+    }
+
+    /// Second-level suffixes common enough to matter for storefronts. Not exhaustive and
+    /// not meant to be — an unlisted one costs an unattributed save, not a wrong one.
+    private static let secondLevelSuffixes: Set<String> = [
+        "co", "com", "net", "org", "gov", "ac", "edu"
+    ]
+
+    /// Whether two URLs belong to the same brand's storefront estate.
+    public static func isSameBrandHost(_ a: URL?, _ b: URL?) -> Bool {
+        guard let first = a?.host(), let second = b?.host() else { return false }
+        return registrableDomain(of: first) == registrableDomain(of: second)
+    }
+
     public static func normalizedHandle(_ raw: String?) -> String? {
         guard var handle = raw?.trimmingCharacters(in: .whitespacesAndNewlines), !handle.isEmpty else { return nil }
         if let url = URL(string: handle), url.host?.contains("instagram.com") == true {

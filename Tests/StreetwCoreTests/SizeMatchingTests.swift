@@ -20,6 +20,38 @@ struct SizeNormalizerTests {
         #expect(size?.token == token)
     }
 
+    /// Half a brand's run being readable is worse than none of it, because nothing
+    /// announces the failure. YoungLA writes its whole catalogue this way and only the
+    /// three bare words were understood — so on every product they make, the extremities
+    /// were the tokens that could never be ruled in as somebody's size.
+    @Test(
+        "A size spelled out in full is the same size",
+        arguments: [
+            ("XSmall", "XS"), ("xsmall", "XS"), ("X Small", "XS"), ("x-small", "XS"),
+            ("XXSmall", "XXS"),
+            ("XLarge", "XL"), ("X Large", "XL"), ("extra large", "XL"),
+            ("XXLarge", "XXL"), ("2XLarge", "XXL"), ("2X Large", "XXL"),
+            ("XXXLarge", "XXXL"), ("3XLarge", "XXXL"),
+            ("4XLarge", "4XL")
+        ]
+    )
+    func spelledOutApparel(raw: String, token: String) {
+        let size = SizeNormalizer.normalize(raw)
+        #expect(size?.kind == .apparel, "\(raw) should read as apparel")
+        #expect(size?.token == token)
+    }
+
+    /// The prefix has to be X's and nothing else. A "petite small" is not an S, and
+    /// matching it to one would put the wrong garment in somebody's size-filtered feed —
+    /// which is the one failure this whole layer exists to avoid.
+    @Test(
+        "A qualifier that isn't a multiplier is not folded away",
+        arguments: ["petite small", "junior large", "tall medium", "kids small"]
+    )
+    func qualifiedSizesStayOther(raw: String) {
+        #expect(SizeNormalizer.normalize(raw)?.kind == .other)
+    }
+
     @Test(
         "US shoe sizes normalise regardless of prefix or trailing zero",
         arguments: [

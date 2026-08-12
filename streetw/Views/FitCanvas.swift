@@ -19,6 +19,15 @@
 // - **A tray from the wardrobe.** Every piece comes from something already saved, so a fit
 //   is automatically a list of item ids — which is what keeps it editable, and what makes
 //   "one of these came back in stock" a thing the app can say later.
+// - **A piece is placed where you put it.** Dragging out of the tray drops the garment
+//   under your finger; tapping still lands it on a sensible spot, because a tap has no
+//   destination to read. Dropping something already on the canvas moves it rather than
+//   minting a second copy of the same garment.
+// - **Handles, because a pinch is not always available.** Two fingers on a piece the size
+//   of a stamp is a gesture nobody can aim, and pinching the topmost of an overlapping
+//   stack is a coin toss. The selected piece therefore carries a corner handle that scales
+//   and turns with one finger, and a corner that takes it off the canvas. Pinch and twist
+//   still work and are still the fast path — the handles are the one that always works.
 //
 // Slots do not disappear; they just stop being the interface. `GarmentSlot` still filters
 // the tray and still drives `FitSuggestions`. Canvas for the person, slots for the machine.
@@ -45,6 +54,9 @@ struct FitCanvas: View {
     @State private var trayFilter: GarmentSlot?
     @State private var board: Board?
     @State private var isNaming = false
+    @State private var isDropTarget = false
+    @State private var isNamingBoard = false
+    @State private var newBoardName = ""
 
     /// Only ever grows. Sparse z values mean bringing something to the front is one write
     /// rather than renumbering everything behind it.
@@ -111,6 +123,13 @@ struct FitCanvas: View {
                 TextField("Sunday, layered, all black…", text: $name)
                 Button("Done") {}
             }
+            .alert("New board", isPresented: $isNamingBoard) {
+                TextField("Name", text: $newBoardName)
+                Button("Cancel", role: .cancel) {}
+                Button("Create") { createBoard() }
+            } message: {
+                Text("Boards are private. Nothing is shared anywhere.")
+            }
         }
         .tint(.ink)
         .onAppear(perform: load)
@@ -132,17 +151,35 @@ struct FitCanvas: View {
                         item: entry.item,
                         placement: binding(for: entry.placement.itemID),
                         canvas: geometry.size,
+                        space: Self.space,
                         isSelected: selected == entry.placement.itemID,
                         onSelect: { bringToFront(entry.placement.itemID) },
+                        onSendToBack: { sendToBack(entry.placement.itemID) },
                         onRemove: { remove(entry.placement.itemID) }
                     )
                 }
 
                 if placements.isEmpty { emptyCanvas }
             }
+            // Named rather than local: the resize handle rides inside the piece's rotated
+            // coordinate space, so the only frame its arithmetic can trust is the canvas.
+            .coordinateSpace(.named(Self.space))
+            .dropDestination(for: String.self) { payloads, location in
+                drop(payloads, at: location, in: geometry.size)
+            } isTargeted: {
+                isDropTarget = $0
+            }
+            .overlay {
+                if isDropTarget {
+                    Rectangle()
+                        .strokeBorder(Color.signal, lineWidth: 1)
+                        .allowsHitTesting(false)
+                }
+            }
         }
         .clipped()
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .sensoryFeedback(.impact(weight: .light), trigger: placements.count)
     }
 
     private var emptyCanvas: some View {
@@ -150,7 +187,7 @@ struct FitCanvas: View {
             Text("Build a fit")
                 .font(.editorial(22))
                 .foregroundStyle(Color.ink)
-            Text("Tap anything below to drop it in. Drag to move, pinch to size, twist to turn.")
+            Text("Drag anything below onto the canvas, or tap to drop it in. Move it with a finger, size it with the corner handle or a pinch.")
                 .font(.editorial(14))
                 .foregroundStyle(Color.muted)
                 .multilineTextAlignment(.center)
@@ -189,10 +226,18 @@ struct FitCanvas: View {
                 ScrollView(.horizontal) {
                     LazyHStack(spacing: 10) {
                         ForEach(trayItems) { item in
-                            Button { add(item) } label: {
+                            Button { toggle(item) } label: {
                                 TrayTile(item: item, isPlaced: chosen[item.id] != nil)
                             }
                             .buttonStyle(.plain)
+                            // Lift-and-drag rather than a raw `DragGesture`: the tray is a
+                            // horizontal scroller, and any gesture that begins on touch
+                            // fights the scroll for the same finger. `.draggable` waits for
+                            // the long press, so scrolling the tray still scrolls it.
+                            .draggable(Self.dragPayload(for: item)) {
+                                FitPieceImage(item: item)
+                                    .frame(width: 110, height: 110)
+                            }
                         }
                     }
                     .padding(.horizontal, 20)
@@ -222,11 +267,26 @@ struct FitCanvas: View {
         .buttonStyle(.borderless)
     }
 
-    @ViewBuilder
+    /// Filing a fit, which it has always been able to do — `Fit.board` nullifies exactly as
+    /// `SavedItem.board` does and `SavedView` draws a board's fits alongside its saves.
+    ///
+    /// It was only ever *reachable*, though, when a board already existed: the whole menu
+    /// was behind `if !boards.isEmpty`, so somebody who had never made one was shown no
+    /// way to file anything and no hint that filing was possible. A menu that hides the
+    /// thing you would use it for is worse than no menu.
     private var boardMenu: some View {
-        if !boards.isEmpty {
-            Menu("File on a board", systemImage: "square.grid.2x2") {
-                Button("None") { board = nil }
+        Menu("File on a board", systemImage: "square.grid.2x2") {
+            Button("New board…", systemImage: "plus") {
+                newBoardName = ""
+                isNamingBoard = true
+            }
+            if !boards.isEmpty {
+                Divider()
+                Button {
+                    board = nil
+                } label: {
+                    Label("None", systemImage: board == nil ? "checkmark" : "")
+                }
                 ForEach(boards) { candidate in
                     Button {
                         board = candidate
@@ -236,6 +296,15 @@ struct FitCanvas: View {
                 }
             }
         }
+    }
+
+    private func createBoard() {
+        let name = newBoardName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else { return }
+        let created = Board(name: name, sortIndex: (boards.map(\.sortIndex).max() ?? 0) + 1)
+        context.insert(created)
+        try? context.save()
+        board = created
     }
 
     // MARK: - Editing
@@ -254,25 +323,70 @@ struct FitCanvas: View {
 
     /// Tapping the tray drops a piece in; tapping it again takes it back out, so the tray
     /// doubles as the list of what is on the canvas.
-    private func add(_ item: SavedItem) {
+    private func toggle(_ item: SavedItem) {
         if chosen[item.id] != nil {
             remove(item.id)
             return
         }
+        let spot = Self.dropSpots[placements.count % Self.dropSpots.count]
+        place(item, x: spot.x, y: spot.y)
+    }
+
+    /// A garment dragged out of the tray and let go over the canvas.
+    ///
+    /// Dropping something that is already placed **moves** it instead of adding a second
+    /// copy: one saved thing is one garment, and two of the same jacket is not a fit — the
+    /// tray marks what is already down for exactly this reason.
+    private func drop(_ payloads: [String], at point: CGPoint, in size: CGSize) -> Bool {
+        guard size.width > 0, size.height > 0,
+              let id = payloads.compactMap(Self.itemID(fromPayload:)).first,
+              let item = wearable.first(where: { $0.id == id })
+        else { return false }
+
+        let x = min(max(point.x / size.width, 0), 1)
+        let y = min(max(point.y / size.height, 0), 1)
+
+        if let index = placements.firstIndex(where: { $0.itemID == id }) {
+            placements[index].x = x
+            placements[index].y = y
+            bringToFront(id)
+        } else {
+            place(item, x: x, y: y)
+        }
+        return true
+    }
+
+    private func place(_ item: SavedItem, x: Double, y: Double) {
         topZ += 1
         chosen[item.id] = item
-        let spot = Self.dropSpots[placements.count % Self.dropSpots.count]
         placements.append(
-            FitPlacement(
-                itemID: item.id,
-                x: spot.x,
-                y: spot.y,
-                scale: 0.8,
-                rotation: 0,
-                z: topZ
-            )
+            FitPlacement(itemID: item.id, x: x, y: y, scale: 0.8, rotation: 0, z: topZ)
         )
         selected = item.id
+    }
+
+    /// The canvas' own coordinate space, so a gesture inside a rotated, scaled piece can
+    /// still speak in the frame the placement is stored against.
+    private static let space = "fit-canvas"
+
+    /// What a tray tile carries while it is being dragged.
+    ///
+    /// A plain `String` rather than a custom `Transferable`: a bespoke UTI has to be
+    /// declared in the Info.plist to be legal, and this project has already been bitten by
+    /// keys Xcode silently drops. The prefix is what makes the payload unambiguous —
+    /// anything else dropped on the canvas, from this app or another, is refused rather
+    /// than parsed hopefully.
+    private nonisolated static let dragPrefix = "streetw:fit-piece:"
+
+    private static func dragPayload(for item: SavedItem) -> String {
+        dragPrefix + item.id.uuidString
+    }
+
+    /// `nonisolated` so it can be handed to `compactMap` as a function reference — a
+    /// String in, a UUID out, and nothing on the main actor in between.
+    private nonisolated static func itemID(fromPayload payload: String) -> UUID? {
+        guard payload.hasPrefix(dragPrefix) else { return nil }
+        return UUID(uuidString: String(payload.dropFirst(dragPrefix.count)))
     }
 
     /// Where each new piece lands, in order.
@@ -298,6 +412,14 @@ struct FitCanvas: View {
         guard let index = placements.firstIndex(where: { $0.itemID == id }) else { return }
         topZ += 1
         placements[index].z = topZ
+    }
+
+    /// The other half of layering, and the only way to reach a piece a big coat has buried.
+    /// `z` is sparse and unbounded in both directions, so this is one write too.
+    private func sendToBack(_ id: UUID) {
+        guard let index = placements.firstIndex(where: { $0.itemID == id }) else { return }
+        placements[index].z = (placements.map(\.z).min() ?? 0) - 1
+        selected = id
     }
 
     // MARK: - Persistence
@@ -382,75 +504,203 @@ struct FitCanvas: View {
 /// most frustrating thing a canvas can do. Each gesture keeps a live delta and commits it
 /// on end, so the stored placement is never mid-gesture — which matters because that
 /// placement is also what the render and the model read.
+///
+/// Size is carried by the **frame**, not by a `scaleEffect`. For a `scaledToFit` image the
+/// two draw the same pixels, but a scale effect multiplies everything laid over the piece
+/// with it — so the selection outline thickened, and the handles would have been thumbnails
+/// on a big jacket and specks on a small ring. Framing the piece at its drawn size leaves
+/// the chrome in screen units, where a touch target has to live.
 private struct PlacedPiece: View {
     let item: SavedItem
     @Binding var placement: FitPlacement
     let canvas: CGSize
+    let space: String
     let isSelected: Bool
     let onSelect: () -> Void
+    let onSendToBack: () -> Void
     let onRemove: () -> Void
 
     @State private var drag: CGSize = .zero
     @State private var pinch: CGFloat = 1
     @State private var twist: Angle = .zero
 
+    /// Live deltas for the corner handle, committed on end exactly as the pinch is.
+    @State private var handleScale: CGFloat = 1
+    @State private var handleTwist: Angle = .zero
+    /// The last angle the handle was seen at, so a turn past half a revolution keeps
+    /// counting instead of snapping back the other way when `atan2` wraps.
+    @State private var handleAngle: Double?
+
     /// The nominal size of a piece at scale 1 — a bit under half the canvas, so a first
     /// drop reads as one garment among several rather than as a full-bleed photograph.
     private var side: CGFloat { min(canvas.width, canvas.height) * 0.42 }
 
+    private var drawn: CGFloat { side * placement.scale * pinch * handleScale }
+
+    private var angle: Angle { .radians(placement.rotation) + twist + handleTwist }
+
+    /// Where the piece is anchored, ignoring an in-flight move.
+    private var centre: CGPoint {
+        CGPoint(x: placement.x * canvas.width, y: placement.y * canvas.height)
+    }
+
     private var position: CGPoint {
-        CGPoint(
-            x: placement.x * canvas.width + drag.width,
-            y: placement.y * canvas.height + drag.height
-        )
+        CGPoint(x: centre.x + drag.width, y: centre.y + drag.height)
     }
 
     var body: some View {
-        FitPieceImage(item: item)
-            .frame(width: side, height: side)
-            .scaleEffect(placement.scale * pinch)
-            .rotationEffect(.radians(placement.rotation) + twist)
-            .overlay {
-                if isSelected {
-                    Rectangle()
-                        .stroke(Color.signal, lineWidth: 1)
-                        .scaleEffect(placement.scale * pinch)
-                        .rotationEffect(.radians(placement.rotation) + twist)
+        ZStack {
+            FitPieceImage(item: item)
+                .frame(width: drawn, height: drawn)
+            if isSelected {
+                chrome.frame(width: drawn, height: drawn)
+            }
+        }
+        // Room for the handles to sit *on* the corners rather than beyond the bounds.
+        // A view drawn outside its parent is one clip away from being untappable, and the
+        // padding costs nothing: it is empty, so it draws nothing and catches no touch —
+        // which is what keeps the gap between two pieces from stealing a drag.
+        .padding(Handle.touch / 2)
+        .rotationEffect(angle)
+        .position(position)
+        .gesture(move)
+        .onTapGesture { onSelect() }
+        .contextMenu {
+            Button("Send to back", systemImage: "square.3.layers.3d.bottom.filled", action: onSendToBack)
+            Button("Reset size", systemImage: "arrow.counterclockwise") {
+                placement.scale = 0.8
+                placement.rotation = 0
+            }
+            Button("Take off the canvas", systemImage: "minus.circle", role: .destructive, action: onRemove)
+        }
+    }
+
+    // MARK: - Chrome
+
+    /// Drawn only while selected, and only ever two controls. A canvas covered in handles
+    /// is a form again.
+    private var chrome: some View {
+        Rectangle()
+            .stroke(Color.signal, lineWidth: 1)
+            .overlay(alignment: .topLeading) {
+                Handle(icon: "xmark")
+                    .offset(x: -Handle.touch / 2, y: -Handle.touch / 2)
+                    .onTapGesture(perform: onRemove)
+            }
+            .overlay(alignment: .bottomTrailing) {
+                Handle(icon: "arrow.up.left.and.arrow.down.right")
+                    .offset(x: Handle.touch / 2, y: Handle.touch / 2)
+                    .highPriorityGesture(resize)
+            }
+    }
+
+    // MARK: - Gestures
+
+    private var move: some Gesture {
+        DragGesture()
+            .onChanged { value in
+                if !isSelected { onSelect() }
+                drag = value.translation
+            }
+            .onEnded { value in
+                // Clamped to the canvas. The canvas clips, so an unclamped drag can post a
+                // garment off the edge into somewhere it can never be grabbed back from —
+                // the centre staying on means every piece is always reachable, while half
+                // of one can still bleed off the side, which is a real collage move.
+                placement.x = clamped(placement.x + value.translation.width / canvas.width, 0, 1)
+                placement.y = clamped(placement.y + value.translation.height / canvas.height, 0, 1)
+                drag = .zero
+            }
+            .simultaneously(with: MagnifyGesture()
+                .onChanged { pinch = $0.magnification }
+                .onEnded { value in
+                    // Clamped: a piece scaled to nothing can't be grabbed again,
+                    // and one scaled past the canvas hides everything under it.
+                    placement.scale = clamped(placement.scale * value.magnification, Self.minScale, Self.maxScale)
+                    pinch = 1
                 }
-            }
-            .position(position)
-            .gesture(
-                DragGesture()
-                    .onChanged { value in
-                        if !isSelected { onSelect() }
-                        drag = value.translation
-                    }
-                    .onEnded { value in
-                        placement.x += value.translation.width / canvas.width
-                        placement.y += value.translation.height / canvas.height
-                        drag = .zero
-                    }
-                    .simultaneously(with: MagnifyGesture()
-                        .onChanged { pinch = $0.magnification }
-                        .onEnded { value in
-                            // Clamped: a piece scaled to nothing can't be grabbed again,
-                            // and one scaled past the canvas hides everything under it.
-                            placement.scale = min(max(placement.scale * value.magnification, 0.2), 3)
-                            pinch = 1
-                        }
-                    )
-                    .simultaneously(with: RotateGesture()
-                        .onChanged { twist = $0.rotation }
-                        .onEnded { value in
-                            placement.rotation += value.rotation.radians
-                            twist = .zero
-                        }
-                    )
             )
-            .onTapGesture { onSelect() }
-            .contextMenu {
-                Button("Take off the canvas", systemImage: "minus.circle", role: .destructive, action: onRemove)
+            .simultaneously(with: RotateGesture()
+                .onChanged { twist = $0.rotation }
+                .onEnded { value in
+                    placement.rotation += value.rotation.radians
+                    twist = .zero
+                }
+            )
+    }
+
+    /// One finger on the corner: distance from the centre is the size, and the angle around
+    /// it is the turn.
+    ///
+    /// Both at once on purpose. The handle sits on a corner, and a corner has no meaning
+    /// other than "this point of the garment" — dragging it along an axis while the piece
+    /// stays upright is a rectangle's idea of resizing, not a sticker's. The gesture reads
+    /// in the **canvas** coordinate space because the handle it starts on is itself
+    /// rotating and scaling as the drag proceeds; measured locally it would be chasing its
+    /// own tail.
+    private var resize: some Gesture {
+        DragGesture(minimumDistance: 0, coordinateSpace: .named(space))
+            .onChanged { value in
+                if !isSelected { onSelect() }
+                let start = polar(of: value.startLocation)
+                let now = polar(of: value.location)
+
+                handleScale = now.radius / start.radius
+
+                var step = now.angle - (handleAngle ?? start.angle)
+                step = atan2(sin(step), cos(step))
+                handleTwist = handleTwist + .radians(step)
+                handleAngle = now.angle
             }
+            .onEnded { _ in
+                placement.scale = clamped(placement.scale * handleScale, Self.minScale, Self.maxScale)
+                placement.rotation += handleTwist.radians
+                handleScale = 1
+                handleTwist = .zero
+                handleAngle = nil
+            }
+    }
+
+    /// A point on the canvas, as distance and bearing from the piece's centre. The radius
+    /// has a floor because a drag that starts on the centre would otherwise divide by zero
+    /// and blow the piece up to the clamp in one frame.
+    private func polar(of point: CGPoint) -> (radius: CGFloat, angle: Double) {
+        let dx = point.x - centre.x
+        let dy = point.y - centre.y
+        return (max(hypot(dx, dy), 1), atan2(Double(dy), Double(dx)))
+    }
+
+    private func clamped(_ value: Double, _ low: Double, _ high: Double) -> Double {
+        min(max(value, low), high)
+    }
+
+    private static let minScale: Double = 0.2
+    private static let maxScale: Double = 3
+}
+
+/// A corner control on the selected piece.
+///
+/// Visibly small, because it sits over a photograph; touchable at 36pt, because a finger is
+/// not. The two sizes are separate for that reason and the offsets that place these on a
+/// corner are measured against the touch box, not the ink.
+private struct Handle: View {
+    let icon: String
+
+    static let ink: CGFloat = 26
+    static let touch: CGFloat = 36
+
+    var body: some View {
+        Color.clear
+            .frame(width: Self.touch, height: Self.touch)
+            .overlay {
+                Image(systemName: icon)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(Color.paper)
+                    .frame(width: Self.ink, height: Self.ink)
+                    .background(Circle().fill(Color.ink))
+                    .overlay(Circle().stroke(Color.paper, lineWidth: 1))
+            }
+            .contentShape(.circle)
     }
 }
 
@@ -543,10 +793,12 @@ struct FitCanvasSurface: View {
         GeometryReader { geometry in
             ZStack {
                 ForEach(fit.placed, id: \.placement.itemID) { entry in
-                    let side = min(geometry.size.width, geometry.size.height) * 0.42
+                    // Framed at the drawn size rather than scaled, matching the editor —
+                    // and a scale effect would enlarge the *rendered* tile, so a piece
+                    // blown up on a 900px render would come out of a 400pt drawing.
+                    let side = min(geometry.size.width, geometry.size.height) * 0.42 * entry.placement.scale
                     FitPieceImage(item: entry.item)
                         .frame(width: side, height: side)
-                        .scaleEffect(entry.placement.scale)
                         .rotationEffect(.radians(entry.placement.rotation))
                         .position(
                             x: entry.placement.x * geometry.size.width,

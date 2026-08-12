@@ -14,6 +14,7 @@ struct ContentView: View {
     @Environment(ServerSettings.self) private var settings: ServerSettings
     @Environment(SizeProfileStore.self) private var sizes: SizeProfileStore
     @Environment(PushRoute.self) private var route: PushRoute
+    @Environment(SaveConfirmation.self) private var confirmation: SaveConfirmation
 
 
     /// Dev affordance, matching `-seedBrands` / `-seedSizes`: `-startTab style`
@@ -64,6 +65,16 @@ struct ContentView: View {
         // Ink, not the system blue: the accent is reserved for things that are happening
         // now, so it must never be spent on ordinary controls.
         .tint(.ink)
+        // Above the tab bar rather than over the card that was saved. `quickSave` claims
+        // the horizontal drag on the lower half of a feed card, so anything laid over that
+        // region is competing with a gesture for the same pixels — and the card in
+        // question has usually been scrolled past by the time you decide to amend it
+        // anyway.
+        .overlay(alignment: .bottom) {
+            SaveToast()
+                .padding(.bottom, 92 + confirmation.bottomClearance)
+        }
+        .animation(.spring(duration: 0.32), value: confirmation.pending?.id)
         // Sync at the root, not in FeedView: a configured server should be live
         // whichever tab the app happens to open on.
         .task(id: settings.baseURLString) {
@@ -80,7 +91,7 @@ struct ContentView: View {
         // launch has no previous phase to change from — so anything shared while the app
         // was not running would sit in the inbox until the user backgrounded and
         // returned. Draining twice is harmless; the inbox empties itself.
-        .task { await SharedSaveImporter.drain(into: context, route: route) }
+        .task { await SharedSaveImporter.drain(into: context, route: route, confirm: confirmation) }
         // Only when there is genuinely nothing to show. A returning user who has removed
         // all their brands is a deliberate act, which is what `didOfferStarterPack`
         // remembers.
@@ -102,9 +113,23 @@ struct ContentView: View {
             NavigationStack { BrandDetailView(brand: brand) }
                 .tint(.ink)
         }
-        // The answer to sharing in something that's gone. The share extension can't ask —
-        // it does no networking, so at share time nobody knows the thing is sold out — and
-        // this is the first moment anyone does.
+        // Both driven from the confirmation rather than from the toast, which dismisses
+        // itself on the tap that opens them — a sheet owned by a view that is going away
+        // is a sheet that never appears.
+        .sheet(item: Bindable(confirmation).choosingBoard) { update in
+            BoardPicker(update: update)
+                .presentationDetents([.medium])
+        }
+        .sheet(item: Bindable(confirmation).settingWatch) { update in
+            WatchEditor(update: update)
+                .presentationDetents([.medium, .large])
+        }
+        // The answer to sharing in something that's gone. Kept as a sheet, and
+        // deliberately not folded into the toast: a share is acted on when the app comes
+        // back to the foreground, which can be long after the fact and while looking at
+        // something else entirely. A dismissible confirmation is right for a save you just
+        // made and watched happen; it is the wrong shape for an offer you might simply not
+        // be there for.
         .sheet(item: Bindable(route).watchOffer) { update in
             WatchEditor(
                 update: update,

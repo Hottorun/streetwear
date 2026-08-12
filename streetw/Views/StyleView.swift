@@ -28,6 +28,8 @@ struct StyleView: View {
 
     @Query(sort: \SavedItem.savedAt, order: .reverse) private var saves: [SavedItem]
     @Query(sort: \Fit.createdAt, order: .reverse) private var fits: [Fit]
+    @Query(sort: [SortDescriptor(\Board.sortIndex), SortDescriptor(\Board.createdAt)])
+    private var boards: [Board]
 
     @State private var isShowingSettings = false
     @State private var isComposing = false
@@ -114,6 +116,11 @@ struct StyleView: View {
                         }
                         .buttonStyle(.plain)
                         .contextMenu {
+                            // Filing without opening the editor. A fit is filed from the
+                            // canvas because that is where it is made, but it is *looked
+                            // at* here — and going into an editor to change which board
+                            // something is on is the long way round.
+                            if !boards.isEmpty { boardMenu(for: fit) }
                             Button("Delete fit", systemImage: "trash", role: .destructive) {
                                 if let render = fit.renderFile { FitRender.remove(render) }
                                 context.delete(fit)
@@ -163,6 +170,27 @@ struct StyleView: View {
                 FacetLine(title: "Brands", facets: profile.brands)
             }
             .padding(.horizontal, 20)
+        }
+    }
+
+    /// Only lists boards that exist; making one is the collection's job and the fit
+    /// editor's. This is the shortcut, not the place you set boards up.
+    private func boardMenu(for fit: Fit) -> some View {
+        Menu("File on a board", systemImage: "square.grid.2x2") {
+            Button {
+                fit.board = nil
+                try? context.save()
+            } label: {
+                Label("None", systemImage: fit.board == nil ? "checkmark" : "")
+            }
+            ForEach(boards) { board in
+                Button {
+                    fit.board = fit.board?.id == board.id ? nil : board
+                    try? context.save()
+                } label: {
+                    Label(board.name, systemImage: fit.board?.id == board.id ? "checkmark" : "")
+                }
+            }
         }
     }
 

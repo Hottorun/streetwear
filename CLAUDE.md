@@ -315,6 +315,11 @@ verdict*, because nothing would ever revisit it.
   `product_type: "For Her"`, and named `W2156`, which is not a word — reappeared in a
   menswear feed. `RemoteSync.backfill` fills these in on rows written before that, because
   the merge skips ids it already holds and they would otherwise never heal.
+  **It fills `variants` for the same reason, and that is the louder case.** A row stored before the
+  feed carried them holds none for as long as it exists, and with no variants there is no size run,
+  no colourways and nothing to watch — the two things a product page is *for*, absent on exactly
+  the brands somebody has followed longest. Filled only when empty, never overwritten: an event is
+  a record of what happened, and the stock in it is what was true when it fired.
 - **A cut named after an age is not an age.** A "baby tee" is a women's cut. Reading it as
   childrenswear put it on the kids' rail, which menswear *and* womenswear feeds both hide —
   so it vanished from every filtered feed there is. `cutPhrases` is for phrases only; a lone
@@ -339,6 +344,14 @@ verdict*, because nothing would ever revisit it.
   Both codes used to be stripped and the remainder read as US. Only a size that *names* its scale
   is converted; a bare "44" stays `.other` and is never hidden, because it is as likely a waist or
   an EU jacket.
+- **A size spelled out in full is the same size.** YoungLA writes its entire catalogue as
+  `XXSmall, XSmall, Small, Medium, Large, XLarge, XXLarge`, and the word table held only the three
+  bare words — so every extremity fell through to `.other`: never hidden, per the rule below, but
+  never *matched* either. On every product the brand makes, somebody's own size was the one token
+  not ruled in vermilion. `SizeNormalizer.shortened` folds an all-`X` prefix (or the `2X`/`3X`
+  shorthand for one) onto the short form before the lookup. The prefix must be X's and nothing
+  else: "petite small" is not an S, and folding it into one would put the wrong garment in a
+  size-filtered feed, which is the failure this whole layer exists to prevent.
 - **A converted size matches within half a size.** Brand tables genuinely disagree by that much, so
   demanding an exact hit after a conversion would hide real results. Native US sizes get no
   tolerance, or the profile silently widens by a size.
@@ -451,6 +464,44 @@ swallows the photograph's paging; attaching it nowhere loses the actions.
   omits `available`**, and stock is the whole question. The cost is prices in minor units. A
   catalogue hit is also keyed `shopify:<id>`, so sharing something from a followed brand lands on
   the row that already exists rather than minting a second card for it.
+- **The drain that matters is the one on `scenePhase == .active`, and it must carry the
+  `PushRoute`.** `ContentView`'s `.task` fires once per appearance, so it never sees a share that
+  arrives while the app is already alive — which is the whole "share from Safari, switch back"
+  flow. The scene-phase drain in `streetwApp` is what actually runs, and it was passing no route:
+  `offerWatch` returned at its first `guard`, the save was committed, the inbox file was removed,
+  and the sold-out prompt had nothing left to be asked about. It was reachable only on a cold
+  launch, and only if the `.task` won the race.
+- **Not every Shopify storefront serves `/products/<handle>.js`.** Palace 404s it on the apex,
+  `www.` and `usa.` alike, while answering `/products.json` fine — so `ShopifySource.product(at:)`
+  returned nil for every Palace share and the importer fell through to Open Graph: no size run, no
+  colourways, no stock, and therefore never an offer to watch a sold-out item. The page's own
+  markup is not a substitute; Palace advertises schema.org `inStock` on products whose every
+  variant reads `available: false`. The fallback searches the **catalogue listing** rather than
+  `/products/<handle>.json`, which is served where `.js` is not but omits `available` — the one
+  field the whole feature turns on. Bounded by `maxListedPages`, because somebody is waiting.
+  It also swaps to `www.` to find the catalogue, and **the currency then comes from the host that
+  answered, not the host that was shared**: Palace's apex is USD and its `www.` is GBP, so reading
+  one and pricing against the other prints a British price with a dollar sign on it.
+- **A share that landed badly must get another chance.** Enrichment runs once, at import, and the
+  inbox file is deleted immediately after — so a link that found no catalogue record kept a title
+  and one Open Graph photograph *permanently*: no price, no size run, no colourways, no stock and
+  therefore no watch. Every reason the first attempt fails is temporary or fixable — a regional
+  subdomain that publishes no catalogue at all (`eu.palaceskateboards.com` answers nothing),
+  a storefront that was slow that minute, a product further back than `maxListedPages` pages while
+  somebody waits, or an older build. `SharedSaveImporter.repair` is the `cutoutVersion` pattern
+  applied to that: `BrandUpdate.enrichmentVersion` decodes 0 on an older row and earns one more
+  look, and is stamped **even when the attempt found nothing**, so a genuinely un-catalogued link
+  is not re-fetched every launch forever. Bump the version when enrichment learns something.
+- **A brand is not one hostname.** Palace answers on the apex, `www.`, `usa.` and `eu.`; the Brands
+  tab holds whichever one it was added with. `matchingBrand` compared exact hosts with `www.`
+  stripped, so anything shared or discovered from the other three was attributed to nobody — which
+  on screen is a collection tile with no wordmark, a detail page titled "Saved", and an item
+  contributing nothing to the brand facet of the style profile. Five of eleven saves in the test
+  store were in that state, all Palace. `BrandDiscovery.registrableDomain` compares the last two
+  labels (three under a `co.uk`-shaped suffix); `attachBrands` heals rows that already landed, and
+  needs no version stamp because it costs no network and is idempotent. It is deliberately a
+  heuristic and not the Public Suffix List — the worst outcome of an unlisted suffix is a save that
+  stays unattributed, which is where it already was.
 - **The sold-out prompt is asked by the app, not the extension — because it cannot be asked
   earlier.** The extension does no networking, so at share time nobody knows whether the thing is
   in stock. `SharedSaveImporter` offers the watch on the next foreground, which in the usual
@@ -493,6 +544,32 @@ Shared objects (`ServerSettings`, `SizeProfileStore`, `RemoteSync`, `SyncEngine`
 built in `streetwApp.init`, **not** in a `.task`. Creating them asynchronously raced with
 child views' own `.task`s — `FeedView` could run first, see nil, and skip the sync, which
 looked exactly like a broken server.
+
+**A brand carries its sources on the wire, and the client cannot work them out.** In server
+mode the phone never discovers anything and never polls, so the *only* way it can know a
+brand is watched at all is if the follow list says so. It didn't: `BrandDTO` had no sources
+field, `RemoteSync` never wrote `Brand.sources`, and the app then faithfully reported its
+own empty array — "NOT WATCHED" on every row of the brands list, "0 SOURCES" on every brand
+page, and an empty state claiming the site could not be watched automatically. Three false
+statements about brands the poller was working through on schedule, and the one place a
+failing source is visible was blank in the mode the app ships in. Notes on the fix:
+
+- **`BrandSourceDTO` is not `BrandSource`.** `fingerprint` and `etag` are the poller's
+  working state — a content hash and a cache validator — and mean nothing to anybody who is
+  not doing the polling. Putting them on the wire would ship two fields a future client
+  could only misuse. `RemoteSync.source(from:)` leaves both nil, which is correct: under
+  `-standalone YES` the first poll of each source fills them in.
+- **`kind` crosses as a string.** A server that learns a new source kind must not fail to
+  decode on an older client and take the whole brand list down with it; an unknown kind
+  renders as its raw name and counts as manual.
+- **`BrandDTO.init` takes sources as a parameter rather than reading `brand.$sources`.**
+  Fluent's `@Children` accessor traps at runtime when the relation was not eager loaded,
+  and four routes hand over brands with four different query shapes. The parameter turns
+  "somebody forgot a `.with`" from a crash on a production route into a compile error.
+  `/v1/follows` needs the *nested* form: `.with(\.$brand) { $0.with(\.$sources) }`.
+- **Every route that hands over a brand hands over its sources**, because the client stores
+  one `Brand` row whichever route it arrived on — a search result that is then followed
+  must not overwrite a populated list with an empty one.
 
 ### Everything must go over the server when one is configured
 
@@ -631,6 +708,45 @@ builds the executable. Omitting them yields a confusing "overlapping sources" er
 
 ### The collection
 
+- **A save is confirmed, not interrogated.** Filing used to be reachable only through the
+  left-swipe board picker, and a watch only from a product page — so the app's best idea was
+  three taps from the moment you wanted it. The fix is *not* to ask "which board?" on every
+  save: most saves are reflexive, the honest answer is usually "I don't know yet", and taxing
+  the common case to serve the rare one turns one tap into a decision. `SaveConfirmation`
+  instead completes the save unconditionally and then offers to amend it — Board, and Notify —
+  for `dwell`. Nothing waits on it and dismissing it changes nothing.
+  - **A watch can now be set on something that is in stock.** That is the new capability, and
+    the reason this exists at all. Wanting to be told your size went and came back is not
+    conditional on it being gone right now, and until this the question could only be asked
+    about something already sold out.
+  - **No counting numerals.** A visible "3… 2… 1…" makes a quiet confirmation feel timed,
+    which is the opposite of the intent. The dwell is a hairline that drains.
+  - **It is owned by the app, not by the card.** The card that triggered it lives in a
+    `LazyVStack` and is routinely recycled or scrolled away before you act on the toast; so are
+    the two sheets, which are presented from `ContentView` because the toast dismisses itself
+    on the tap that opens them.
+  - **It clears the buy bar.** Anchored above the tab bar — `quickSave` owns the horizontal
+    drag on the lower half of a feed card, so anything laid over that region fights a gesture
+    for the same pixels — but a product page puts its buy button there, and covering it for
+    four seconds at the moment somebody decided they want the thing is the worst possible
+    place for a confirmation. `bottomClearance` lifts it while that page is up.
+  - **A share gets the same confirmation, and it is the main point of it.** The extension
+    cannot ask anything — it does no networking, so at share time nobody knows the title, the
+    sizes or the stock — so a link from Safari used to land silently and the only way to file it
+    or watch it was to go and find it again. `SharedSaveImporter.drain` now raises the
+    confirmation for a landed share, on the next foreground, which is the first moment any of
+    those answers exist.
+  - **`announce` speaks once per drain, not once per item.** Sharing five things must not stack
+    five sheets or flash five confirmations that each replace the last unread — and a
+    confirmation whose two buttons act on *one* product has no honest subject when several
+    arrived, the same reason a counted push carries no `eventID`. A batch is left to speak for
+    itself in the collection.
+  - **The sold-out share stays a sheet and wins outright over the toast.** It is deliberately
+    *not* folded into the confirmation. A share is acted on when the app next comes to the
+    foreground, which can be long after the fact and while looking at something else; a
+    dismissible toast is right for a save you just made and watched happen, and the wrong shape
+    for an offer you might not be there for. Raising both would be two answers to one share.
+
 - **Boards are filters, not folders.** `SavedItem.board` is optional and
   `Board.items` deletes with `.nullify` — removing a board must never take the saved
   things with it. `SaveType` (Inspiration/Wardrobe) is a separate axis and an item can be
@@ -708,8 +824,34 @@ snapping**, because a grid turns a collage back into a form.
   canvas, so one description of a fit lays out identically at 900px for a render and at 168pt for a
   card — and a fit made on a Pro Max doesn't scrunch on a mini. It decodes leniently by hand for the
   usual reason: SwiftData decodes a stored Codable with an internal `try!`.
-- **`z` is sparse and only ever grows.** Bringing a piece to the front is one write instead of
-  renumbering the canvas.
+- **`z` is sparse and unbounded in both directions.** Bringing a piece to the front is one write
+  instead of renumbering the canvas, and sending one to the back is `min - 1` — which is the only
+  way to reach something a big coat has buried.
+- **A piece's size is its frame, not a `scaleEffect`.** For a `scaledToFit` image the two draw the
+  same thing, but a scale effect multiplies everything laid *over* the piece with it: the selection
+  outline thickens and the handles come out as thumbnails on a jacket and specks on a ring. It
+  matters in `FitCanvasSurface` too — a render at 900px would otherwise be a 400pt drawing blown
+  up. Anything overlaid on a piece depends on this.
+- **The corner handle scales *and* turns, and it reads in the canvas' coordinate space.** A pinch is
+  the fast path, not the only one: two fingers on a piece the size of a stamp is a gesture nobody
+  can aim, and pinching the topmost of an overlapping stack is a coin toss. The handle it starts on
+  is itself rotating and scaling as the drag proceeds, so measuring locally would have it chasing
+  its own tail — hence `.coordinateSpace(.named(_:))` on the canvas. The turn accumulates from the
+  previous angle rather than from the start, or a rotation past half a revolution snaps back when
+  `atan2` wraps.
+- **The handles live inside the piece's bounds, bought with empty padding.** A view drawn outside
+  its parent is one clip away from being untappable. The padding is empty, so it draws nothing and
+  catches nothing — which is what stops the gap between two pieces stealing a drag.
+- **A drag out of the tray is `.draggable`, not a `DragGesture`.** The tray is a horizontal
+  scroller, and any gesture that begins on touch fights the scroll for the same finger; lift-on-long
+  -press does not. The payload is a prefixed `String` rather than a custom `Transferable`, because a
+  bespoke UTI has to be declared in the Info.plist and this project has already been bitten by keys
+  Xcode silently drops — the prefix is what makes anything else dropped on the canvas refused rather
+  than parsed hopefully. Dropping something already placed **moves** it: one saved thing is one
+  garment, and two of the same jacket is not a fit.
+- **A drag ends with the centre still on the canvas.** The canvas clips, so an unclamped drag posts
+  a garment somewhere it can never be grabbed back from. Clamping the centre rather than the whole
+  frame still lets half a piece bleed off the edge, which is a real collage move.
 - **Both the structure and the render are kept.** The structure is what keeps a fit editable, keeps
   it a list of things you own, and makes "one of these came back in stock" possible at all. The
   render is what a scrolling row draws without composing a canvas per card.
@@ -727,7 +869,27 @@ snapping**, because a grid turns a collage back into a form.
   watch, not just a note field. The page had been read too literally as "what did I think" and
   dropped everything the item *is* — but the commonest reason to keep something you can't have is
   that it was sold out, and "tell me when it's back" is the one thing here a screenshot can't do.
-  `ColorwaySection` and `WatchSection` are shared with `ProductDetailView` rather than restyled.
+  `ColorwaySection` and `WatchSection` are shared with `ProductDetailView` rather than restyled —
+  as is `StorefrontBar`, which is *pinned* on both. On the archive it had been a small text link
+  below two rows of chips, which put the page's most consequential control at the bottom of a
+  scroll. Anything laid over the bottom of either page must clear it: `StorefrontBar.height` is
+  what `SaveConfirmation.bottomClearance` is set to.
+- **That page is in two halves and says so.** Above the rule is the garment, and it is the same
+  garment anybody else would see; below it is only yours — the note, the size you own, the board,
+  why you kept it. Before the `Yours` masthead they were one undifferentiated column at one
+  rhythm, which is what made an archive page read as a form. The masthead carries a generous top
+  margin on purpose: the watch section ends in a rule of its own, and two hairlines a few points
+  apart read as a printing error rather than as a division.
+- **The archive says what a catalogue cannot: what you have worn it with.** `SavedItem.fits` was
+  already recorded and nothing read it, so a fit could be built out of an item and the item's own
+  page would never mention it.
+- **A board is made from wherever you needed one.** Both `SaveDetailView` and `FitCanvas` create
+  boards inline, because that is how a board actually comes about — you find the second thing that
+  belongs with the first. `FitCanvas`'s board menu in particular used to be behind
+  `if !boards.isEmpty`, so somebody who had never made a board was shown no way to file anything
+  and no hint that filing was possible; a menu that hides the thing you would open it for is worse
+  than no menu. Filing a fit is also on the `StyleView` card's context menu, since that is where
+  fits are looked at — the editor is where they are made.
 
 ### SwiftUI gotchas
 
@@ -780,6 +942,11 @@ See `ROADMAP.md` for the planned work and what's explicitly out of scope. The ne
   works from a standing start; co-follow ("people who follow Kith also follow ALD") would be
   better and is meaningless at the current user count. It goes in behind a minimum-co-occurrence
   threshold, blended rather than replacing.
+- **A shared product does not dedupe against a server-backed feed row.** `SharedSaveImporter` keys
+  a catalogue hit `shopify:<id>`, the way the *local* poller keys it — but in server mode the feed
+  writes `event:<uuid>`, so sharing something the app already holds mints a second card. It only
+  ever worked standalone. The fix is a `productExternalID` on `FeedItem` (the server already sends
+  one on `WatchDTO`), stored on `BrandUpdate` and matched on by the importer.
 - Fits are composed by hand or proposed from the wardrobe; nothing reads the *photographs* when
   proposing one, so a suggestion can pair two things that clash.
 

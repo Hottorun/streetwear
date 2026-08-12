@@ -176,30 +176,106 @@ public struct ShopifySource: SourceAdapter {
     ///
     /// Returns nil for anything that isn't a Shopify product page, which the caller treats
     /// as "fall back to Open Graph" rather than as a failure.
+    ///
+    /// Two routes to the same answer, because **not every Shopify storefront serves
+    /// `.js`**. Palace 404s it on all three of its hosts while answering `.json` and
+    /// `/products.json` perfectly well, so the single-product endpoint alone meant every
+    /// Palace share fell through to Open Graph — no size run, no colourways, and no stock,
+    /// which is why a sold-out Palace product never produced an offer to watch it. The
+    /// storefront's own page cannot stand in either: it advertises schema.org `inStock` for
+    /// products whose every variant reads `available: false`.
     public static func product(
         at page: URL,
         currency: String? = nil,
         http: any HTTPFetching = Net.live
     ) async -> FetchedItem? {
-        guard let handle = productHandle(in: page),
-              var components = URLComponents(url: page, resolvingAgainstBaseURL: false)
-        else { return nil }
-        components.path = "/products/\(handle).js"
-        components.query = nil
-        components.fragment = nil
+        guard let handle = productHandle(in: page) else { return nil }
 
-        guard let url = components.url,
-              let response = try? await http.get(url), response.status == 200,
-              let product = try? JSONDecoder().decode(LiveProduct.self, from: response.data)
-        else { return nil }
+        // Only asked for when we don't already know it, and only once the storefront has
+        // confirmed this is a Shopify store at all — so a shared link to anything else
+        // costs exactly one request.
+        //
+        // Asked of *the host that answered*, which is not always the host that was shared.
+        // Palace's apex and its `www.` are two regional stores — USD and GBP — so pricing
+        // a product read out of one against the currency of the other prints a British
+        // price with a dollar sign on it. The link stays the one that was shared, because
+        // that is the page the person was looking at.
+        func currencyCode(from origin: URL) async -> String {
+            if let currency { return currency }
+            return await shopInfo(for: origin, http: http)?.currency ?? "USD"
+        }
 
-        // Only asked for when we don't already know it, and only after the product itself
-        // has confirmed this is a Shopify store — so a shared link to anything else costs
-        // exactly one request.
-        var code = currency
-        if code == nil { code = await shopInfo(for: page, http: http)?.currency }
-        return product.asItem(storeURL: page, currency: code ?? "USD")
+        if let live = await liveProduct(handle: handle, at: page, http: http) {
+            return await live.asItem(storeURL: page, currency: currencyCode(from: page))
+        }
+        if let listed = await listedProduct(handle: handle, at: page, http: http) {
+            return await item(
+                from: listed.product,
+                storeURL: page,
+                currency: currencyCode(from: listed.origin)
+            )
+        }
+        return nil
     }
+
+    /// `/products/<handle>.js` — the good one, when the storefront serves it.
+    private static func liveProduct(
+        handle: String,
+        at page: URL,
+        http: any HTTPFetching
+    ) async -> LiveProduct? {
+        var components = URLComponents(url: page, resolvingAgainstBaseURL: false)
+        components?.path = "/products/\(handle).js"
+        components?.query = nil
+        components?.fragment = nil
+
+        guard let url = components?.url,
+              let response = try? await http.get(url), response.status == 200
+        else { return nil }
+        return try? JSONDecoder().decode(LiveProduct.self, from: response.data)
+    }
+
+    /// The same product found in the catalogue listing instead.
+    ///
+    /// Deliberately **not** `/products/<handle>.json`, which is the obvious sibling and is
+    /// served where `.js` is not — because it omits `available` exactly as the list
+    /// endpoint's absence of it is documented elsewhere, and stock is the entire question
+    /// being asked. `/products.json` carries `available` per variant and is the same
+    /// `Product` shape the poller already decodes, so the answer arrives complete.
+    ///
+    /// The cost is paging until the handle turns up. Bounded hard: the listing is newest
+    /// first and a shared link is overwhelmingly something current, so a few pages either
+    /// find it or it isn't worth more requests to a storefront on someone's behalf.
+    /// Returns the product and the host it was actually found on, because the two can
+    /// differ and the currency has to follow the second.
+    private static func listedProduct(
+        handle: String,
+        at page: URL,
+        http: any HTTPFetching
+    ) async -> (product: Product, origin: URL)? {
+        // The catalog may not answer on the host that was shared — Palace's apex 404s
+        // `/products.json` while `www.` serves it — and this is the same `www.`-only swap
+        // `resolve` makes, for the same reason.
+        for host in [page, wwwVariant(of: page)].compactMap({ $0 }) {
+            for index in 1...maxListedPages {
+                guard let response = try? await http.get(catalogURL(for: host, page: index)),
+                      response.status == 200,
+                      let catalog = try? JSONDecoder().decode(Catalog.self, from: response.data),
+                      !catalog.products.isEmpty
+                else { break }
+
+                if let match = catalog.products.first(where: { $0.handle == handle }) {
+                    return (match, host)
+                }
+                if catalog.products.count < pageSize { break }
+            }
+        }
+        return nil
+    }
+
+    /// Far short of `maxPages`: this runs while somebody waits for a share to land, and a
+    /// product old enough to be past a thousand listings is not what was just shared.
+    static let maxListedPages = 4
 
     /// The handle out of `https://kith.com/products/foo?variant=1` — nil when the path
     /// isn't a product page at all.
