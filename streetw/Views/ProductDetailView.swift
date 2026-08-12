@@ -136,8 +136,10 @@ struct ProductDetailView: View {
             }
             // No `limit` here, unlike the feed card. A sneaker's full run is 5–13 in half
             // sizes and gets truncated to an ellipsis in a card; on this page there is
-            // room to print all of it, and printing all of it is the reason to be here.
-            SizeRun(entries: runEntries, size: 14, limit: .max)
+            // room to print all of it, and printing all of it is the reason to be here —
+            // but only across several lines. Unwrapped, a run that long is wider than the
+            // phone and takes the whole page's width with it.
+            SizeRun(entries: runEntries, size: 14, limit: .max, wraps: true)
         }
     }
 

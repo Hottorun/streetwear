@@ -7,14 +7,19 @@
 // about an item shared in from a page with a two-word title. The photograph, meanwhile,
 // is unambiguous.
 //
-// Two things are extracted, and only two, because they are the two the profile actually
-// uses:
+// What is extracted:
 //
 // - **Dominant colour**, by downsampling to a thumbnail and voting — excluding the
 //   seamless white or black sweep every storefront shoots on, which would otherwise win
 //   every vote.
 // - **Categories**, from Vision's own on-device classifier. No model file, no download,
 //   and its taxonomy already contains the clothing terms we care about.
+// - **The cutout**, because the photograph is decoded here anyway and the fit canvas must
+//   not stall lifting a garment the first time it is dragged.
+//
+// Each has its own "is this due" test. They were added at different times and the store
+// outlives all of them, so a single `analyzedAt` cannot speak for a field that did not
+// exist when the row was stamped — see `Cutout.version`.
 //
 // Only saved items are analysed. Running this over a 250-item catalogue sweep would burn
 // battery to describe things nobody kept.
@@ -35,7 +40,8 @@ enum ImageTagger {
     /// weight. The garment is what we want, not a perfect average.
     private static let sampleSize = 48
 
-    /// Analyses saved items that haven't been looked at yet.
+    /// Analyses saved items with work outstanding — never analysed, or holding a cutout
+    /// from an older revision of the lift.
     ///
     /// Drains the backlog in batches rather than stopping after one. The batch is what
     /// keeps the collection responsive — results are written and drawn after each — but
@@ -54,37 +60,60 @@ enum ImageTagger {
     /// backlog is drained.
     private static func analyzeBatch(in context: ModelContext, limit: Int) async -> Int {
         let saves = (try? context.fetch(FetchDescriptor<SavedItem>())) ?? []
+        // Two independent reasons to look at a photograph, and they have to be tracked
+        // separately. `analyzedAt` is stamped once and forever; the cutout arrived later
+        // and carries its own version, so everything saved before it existed is still due
+        // even though it was analysed long ago. Filtering on `analyzedAt` alone is what
+        // left the canvas with no stickers at all on an established collection.
         let pending = saves
             .compactMap(\.update)
-            .filter { $0.analyzedAt == nil && $0.primaryImageURL != nil }
+            .filter { $0.primaryImageURL != nil && ($0.analyzedAt == nil || $0.needsCutout) }
             .prefix(limit)
         guard !pending.isEmpty else { return 0 }
 
+        var cut = 0
         for update in pending {
             guard let url = update.primaryImageURL else { continue }
+            let needsTags = update.analyzedAt == nil
+            let needsCutout = update.needsCutout
+
             guard let image = await load(url) else {
-                // Mark it anyway. A dead image URL will never resolve, and retrying it
-                // on every launch is a permanent background cost for nothing.
+                // Mark it anyway, on both counts. A dead image URL will never resolve, and
+                // retrying it on every launch is a permanent background cost for nothing.
                 update.analyzedAt = Date()
+                update.cutoutVersion = Cutout.version
                 continue
             }
-            // Free: the image is already decoded, and the wall would otherwise be
-            // guessing tile heights from a hash of the item id.
-            if image.size.height > 0 {
-                update.imageAspect = Double(image.size.width / image.size.height)
+
+            if needsTags {
+                // Free: the image is already decoded, and the wall would otherwise be
+                // guessing tile heights from a hash of the item id.
+                if image.size.height > 0 {
+                    update.imageAspect = Double(image.size.width / image.size.height)
+                }
+                if let color = dominantColor(in: image) {
+                    update.visionColor = color.name
+                }
+                update.visionCategories = await categories(in: image)
+                update.analyzedAt = Date()
             }
-            if let color = dominantColor(in: image) {
-                update.visionColor = color.name
+
+            if needsCutout {
+                // Also free, in the sense that matters: the photograph is already decoded
+                // and this pass is already running. Cutting on demand instead would mean
+                // the fit canvas stalls the first time each garment is dragged onto it.
+                //
+                // The old file goes first: the name is derived from the item id, so a lift
+                // that now finds nothing would otherwise leave last revision's sticker on
+                // disk with no row pointing at it.
+                if let stale = update.cutoutFile { Cutout.remove(stale) }
+                update.cutoutFile = await Cutout.make(from: image, named: Cutout.name(for: update.id))
+                update.cutoutVersion = Cutout.version
+                if update.cutoutFile != nil { cut += 1 }
             }
-            update.visionCategories = await categories(in: image)
-            // Also free, in the sense that matters: the photograph is already decoded and
-            // this pass is already running. Cutting on demand instead would mean the fit
-            // canvas stalls the first time each garment is dragged onto it.
-            update.cutoutFile = await Cutout.make(from: image, named: Cutout.name(for: update.id))
-            update.analyzedAt = Date()
         }
         try? context.save()
-        log.info("tagged \(pending.count) saved items")
+        log.info("looked at \(pending.count) saved items, lifted \(cut)")
         return pending.count
     }
 

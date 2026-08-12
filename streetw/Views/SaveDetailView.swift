@@ -169,7 +169,9 @@ struct SaveDetailView: View {
                     DataLabel(text: "YOURS: \(sizes.profile.summary.uppercased())", size: 9)
                 }
             }
-            SizeRun(entries: runEntries, size: 14, limit: .max)
+            // Wrapped, for the same reason as `ProductDetailView`: an unlimited run is
+            // `.fixedSize()` end to end and would otherwise set the width of the page.
+            SizeRun(entries: runEntries, size: 14, limit: .max, wraps: true)
         }
     }
 

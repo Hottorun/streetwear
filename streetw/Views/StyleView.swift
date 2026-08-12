@@ -74,6 +74,11 @@ struct StyleView: View {
             .sheet(isPresented: $isComposing) { FitCanvas(fit: nil) }
             .sheet(item: $editing) { FitCanvas(fit: $0) }
             .task(id: settings.token) { await suggestions.loadIfNeeded() }
+            // The other half of the pass that runs on the Saved tab. Cutouts are what the
+            // canvas is built out of, and a fit can be composed from here without that tab
+            // ever having been opened — which left the stickers un-lifted for exactly the
+            // person who was about to need them.
+            .task(id: saves.count) { await ImageTagger.analyzePending(in: context) }
         }
         // Ink, not the system blue. Every other tab does this; without it the controls on
         // this page are the only chroma in the app outside a photograph, which is exactly

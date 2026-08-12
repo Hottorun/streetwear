@@ -66,6 +66,19 @@ final class BrandUpdate {
     /// flat-lay, a lookbook shot, a size chart — and the canvas falls back to the original.
     var cutoutFile: String?
 
+    /// Which revision of `Cutout` last looked at this photograph.
+    ///
+    /// `analyzedAt` cannot answer for the cutout, because a row analysed before cutouts
+    /// existed is stamped and would never be revisited — so the whole collection stays
+    /// sticker-less and the canvas is a mood board forever. This is the `genderVersion`
+    /// pattern: a row written by an older build decodes as 0, is therefore stale, and gets
+    /// one more look. Stamped even when nothing was lifted, so an item with no single
+    /// subject isn't re-cut on every launch.
+    var cutoutVersion: Int = 0
+
+    /// True when this photograph has never been offered to the current lift.
+    var needsCutout: Bool { cutoutVersion != Cutout.version }
+
     /// The sticker, when there is one. Read as a file each time rather than cached here:
     /// `UIImage(contentsOfFile:)` is lazily decoded and the canvas draws at most a dozen.
     var cutoutURL: URL? {

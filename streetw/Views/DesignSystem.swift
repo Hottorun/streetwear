@@ -127,6 +127,27 @@ struct SizeRun: View {
     /// XS–XXL and fits; a sneaker runs 5 through 13 in half sizes and does not — and an
     /// overflowing run truncates every token to an ellipsis, which is worse than useless.
     var limit: Int = 8
+    /// Wrap onto more lines instead of running off the edge.
+    ///
+    /// **Required wherever `limit` is raised.** Every token is `.fixedSize()` — it has to
+    /// be, or the row renders as a line of ellipses — so a single-line `HStack` reports
+    /// whatever width its tokens add up to and *nothing clips that back*. A sneaker's full
+    /// run came to 892pt on a 402pt phone, and because a `VStack` is as wide as its widest
+    /// child, that measurement became the width of the entire product page: every flexible
+    /// sibling was then laid out at 892 too, so the photograph above rendered as a square
+    /// more than twice the width of the screen and the rest of the page fell off the
+    /// bottom. The run itself was never visible, which is why it looked like a fault in the
+    /// gallery. A card's row is safe unwrapped only because `limit` keeps it short.
+    var wraps: Bool = false
+
+    /// `FlowRow` answers with the width it was proposed, so a wrapped run can never be
+    /// wider than what it was offered — which is the property the page needs, not just
+    /// the extra lines.
+    private var layout: AnyLayout {
+        wraps
+            ? AnyLayout(FlowRow(spacing: size * 0.7))
+            : AnyLayout(HStackLayout(spacing: size * 0.7))
+    }
 
     /// Long runs are narrowed to what you can actually buy. The line therefore always
     /// means the same thing — "these sizes are available" — with the struck-through
@@ -139,7 +160,7 @@ struct SizeRun: View {
 
     var body: some View {
         if !shown.isEmpty {
-            HStack(spacing: size * 0.7) {
+            layout {
                 ForEach(shown, id: \.self) { entry in
                     Text(entry.token)
                         // Without this the stack compresses each token to "…" rather

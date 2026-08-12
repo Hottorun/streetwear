@@ -676,6 +676,34 @@ snapping**, because a grid turns a collage back into a form.
   classifier, **it does not work in the Simulator** ("Failed to create espresso context"), so the
   canvas there looks like a mood board and that is not a bug. `FitPieceImage` falls back to the
   original, which is also the permanent answer for anything with no single subject to lift.
+- **A brand that ships transparent PNGs has always looked like the cutout worked.** Palace publishes
+  3200² PNGs with an alpha channel; Kith publishes 2000² JPEGs on a flat `#EBEBEB` sweep. So a
+  Palace item lands on the canvas as a sticker with `Color.paper` showing through whether or not
+  anything was ever lifted, and a Kith item lands as a grey rectangle — which reads as "the cutout
+  works for one brand and not the other" when in fact it had never run for either. It is the same
+  fact behind the two backdrops in the feed and on the collection wall: `UpdateImage` draws
+  `Color.wash` behind a `.fit` photograph, so a transparent PNG shows the app's cream and a JPEG
+  shows the photographer's grey. Check the pixels before believing a brand-specific bug.
+- **`Seamless` is the fallback for when Vision won't, and it is all refusals.** Subject lifting
+  produces nothing in the Simulator, which makes the whole canvas un-buildable there, and it can
+  decline on device too. `Seamless` deletes a uniform studio backdrop instead — it knows nothing
+  about clothes and must never pretend to, so it only fires when the border is flat, light and
+  opaque, and it bails when the fill removed almost nothing or almost everything. Two details are
+  load-bearing: the fill is **flood-filled inward from the frame's edge**, never a global
+  colour match, because the white square of a graphic print and the gaps between a shoe's laces are
+  the same colour as the sweep and a global pass punches holes through the garment; and the rim is
+  **feathered** afterwards, because a hard threshold stops on the garment's anti-aliased edge and
+  leaves a pale halo of the sweep it was cut from.
+- **The cutout carries its own version, because `analyzedAt` cannot speak for it.**
+  `ImageTagger` used to select on `analyzedAt == nil` alone, so every item analysed before cutouts
+  existed was already stamped and never revisited — the whole established collection stayed
+  sticker-less and the canvas was a mood board *on device too*. `Cutout.version` beside
+  `BrandUpdate.cutoutVersion` is the `genderVersion` pattern: a row from an older build decodes 0,
+  is stale, and gets one more look. It is stamped even when nothing was lifted (a flat-lay has no
+  subject and must not be re-cut every launch), so a nil `cutoutFile` at the current version means
+  "there is nothing here", not "nobody asked". Bump the version whenever the lift changes.
+  `StyleView` runs the pass as well as `SavedView` — a fit is composed from the Style tab, and
+  requiring a visit to Saved first denied stickers to exactly the person about to need them.
 - **Placements are normalised, never points.** `FitPlacement` stores centre as a fraction of the
   canvas, so one description of a fit lays out identically at 900px for a render and at 168pt for a
   card — and a fit made on a Pro Max doesn't scrunch on a mini. It decodes leniently by hand for the
@@ -706,6 +734,18 @@ snapping**, because a grid turns a collage back into a form.
 Buttons inside a `List` row need `.buttonStyle(.borderless)`. With `.plain` the row takes the tap
 as a single target and the buttons never fire — this silently broke the size chips, and it looks
 identical in a screenshot, so it's only catchable by actually tapping.
+
+**One over-wide row sets the width of the whole page.** A `VStack` is as wide as its widest child,
+and in a `ScrollView` that width is then handed to every flexible sibling — so a single unwrappable
+row does not overflow on its own line, it re-lays out the entire screen. `SizeRun` prints every
+token `.fixedSize()` (it has to, or the row renders as a line of ellipses), and on the product page
+`limit: .max` let a sneaker's 3.5–16.5 run measure 892pt on a 402pt phone. The photograph above it
+was then drawn as an 892pt square: the detail page opened as one enormous crop with the title, the
+size run and the buy bar all pushed off the bottom, and it looked for all the world like a bug in
+`ImageGallery` — the run that caused it was never on screen. It also only showed on *some*
+products, which made it read as a fault in whichever card had been tapped. `SizeRun(wraps:)` uses
+`FlowRow`, which answers with the width it was **proposed** — that, not the extra lines, is the
+property that matters. Anything raising `limit` must set it.
 
 **A lone `.cancellationAction` beside a `.searchable` becomes a "···" menu.** With a search field
 in the bar, iOS 26 has nowhere to put a leading text button and folds it into an overflow menu — so
