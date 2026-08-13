@@ -24,6 +24,7 @@ struct FeedView: View {
 
     @State private var isShowingCalendar = false
     @State private var isShowingWatches = false
+    @State private var isShowingMarkdowns = false
 
     /// Only active watches count — a bell that stays filled forever after one has fired
     /// stops meaning anything.
@@ -31,6 +32,26 @@ struct FeedView: View {
     private var activeWatches: [StockWatch]
 
     private var watchCount: Int { activeWatches.count }
+
+    /// Whether the calendar has anything in it.
+    ///
+    /// The two sheet icons in this toolbar are, for most people most of the time, doors
+    /// onto empty rooms — and neither said so, so opening them was a coin toss. The bell
+    /// already filled when a watch existed; this is the same courtesy for the other one.
+    /// A brand locked for a drop is the strongest signal there is that something is about
+    /// to happen, so it earns the accent rather than a plain dot.
+    private var isLockedSomewhere: Bool { brands.contains { $0.isLockedForDrop } }
+
+    /// Markdowns still inside the window `MarkdownsView` shows.
+    private var markdownCount: Int {
+        let cutoff = Date().addingTimeInterval(-MarkdownsView.window)
+        let profile = sizes.profile
+        return brands.reduce(0) { total, brand in
+            total + brand.updates.count {
+                $0.kind == .priceDrop && $0.publishedAt >= cutoff && $0.passes(profile)
+            }
+        }
+    }
 
     /// How many briefs sit under a lead before the rest go behind "+N more".
     private static let briefLimit = 6
@@ -66,7 +87,10 @@ struct FeedView: View {
             .compactMap { brand -> BrandGroup? in
                 var unseen = brand.updates.filter { !$0.isSeen }
                 if filterGender {
-                    unseen = unseen.filter { profile.allows($0.gender) }
+                    // `passes`, not an inline `allows` — this screen and `BrandFeedView`
+                    // show the same items and drifted apart precisely because each had its
+                    // own copy of the rule.
+                    unseen = unseen.filter { $0.passes(profile) }
                 }
                 guard !unseen.isEmpty else { return nil }
                 return BrandGroup(
@@ -97,9 +121,29 @@ struct FeedView: View {
                     Button("Watching", systemImage: watchCount > 0 ? "bell.fill" : "bell") {
                         isShowingWatches = true
                     }
+                    // The count, not just a filled bell: "watching 4 things" and "watching
+                    // something" are different states and the icon could only say the
+                    // second. Capped, because a two-digit number on a toolbar glyph is
+                    // unreadable and the exact figure is one tap away.
+                    .badge(watchCount)
                 }
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button("Upcoming", systemImage: "calendar") { isShowingCalendar = true }
+                    Button("Upcoming", systemImage: isLockedSomewhere ? "calendar.badge.exclamationmark" : "calendar") {
+                        isShowingCalendar = true
+                    }
+                    .foregroundStyle(isLockedSomewhere ? Color.signal : Color.ink)
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    // Only once there is something to see. A markdown is the one event
+                    // whose worth doesn't decay with the feed's ordering, so it gets a
+                    // standing list — but an always-present icon onto an empty room is
+                    // exactly what the other two were criticised for.
+                    if markdownCount > 0 {
+                        Button("Marked down", systemImage: "arrow.down.right") {
+                            isShowingMarkdowns = true
+                        }
+                        .badge(markdownCount)
+                    }
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     if engine.isSyncing || remote.isSyncing {
@@ -115,6 +159,7 @@ struct FeedView: View {
             .overlay(alignment: .bottom) { syncStatus }
             .sheet(isPresented: $isShowingCalendar) { DropCalendarView() }
             .sheet(isPresented: $isShowingWatches) { WatchesView() }
+            .sheet(isPresented: $isShowingMarkdowns) { MarkdownsView() }
         }
         .tint(.ink)
     }
@@ -237,18 +282,35 @@ private struct BrandSpread: View {
     let briefLimit: Int
     let onDismiss: () -> Void
 
+    /// Releases this brand has just announced.
+    ///
+    /// Hoisted above the products rather than mixed in with them, because a collection is
+    /// *about* those products — it is the headline and they are the contents, and a season
+    /// announcement filed between two hoodies is the wrong way round. They also used to be
+    /// the emptiest cards in the feed: a collection page rarely publishes a photograph, so
+    /// it drew a grey square, a blank size run and no price.
+    private var releases: [BrandUpdate] {
+        group.updates.filter { $0.kind == .collection }
+    }
+
+    private var products: [BrandUpdate] {
+        group.updates.filter { $0.kind != .collection }
+    }
+
     /// The newest item *that has a photograph*. A lead is carried by its image, and the
-    /// newest thing a brand posts is often a collection announcement or a page change
-    /// with nothing to show — leading on that wastes the biggest slot on the page.
+    /// newest thing a brand posts is often a page change with nothing to show — leading on
+    /// that wastes the biggest slot on the page.
     private var lead: BrandUpdate? {
-        group.updates.first { $0.primaryImageURL != nil } ?? group.updates.first
+        products.first { $0.primaryImageURL != nil } ?? products.first
     }
 
     private var briefs: [BrandUpdate] {
-        Array(group.updates.filter { $0.id != lead?.id }.prefix(briefLimit))
+        Array(products.filter { $0.id != lead?.id }.prefix(briefLimit))
     }
 
-    private var overflow: Int { max(0, group.updates.count - 1 - briefLimit) }
+    private var overflow: Int {
+        max(0, products.count - (lead == nil ? 0 : 1) - briefs.count)
+    }
 
     private let columns = [GridItem(.flexible(), spacing: 14), GridItem(.flexible(), spacing: 14), GridItem(.flexible())]
 
@@ -259,6 +321,11 @@ private struct BrandSpread: View {
                 .padding(.bottom, 14)
 
             header
+
+            ForEach(releases) { release in
+                CollectionCard(update: release)
+                    .padding(.bottom, 22)
+            }
 
             if let lead {
                 FeedLead(update: lead)

@@ -5,6 +5,13 @@
 // section rather than being split between a sizes screen and a filters screen. They also
 // travel together: `SizePayload` carries both to the server, which needs them to decide
 // whether a drop is worth waking someone for.
+//
+// Set as type, not as a form. This was the last screen in the app built out of grouped
+// `List` sections, system chips and a `.segmented` picker — so the one place you go to
+// tell the app about yourself fell out of the app into Settings.app for a moment. It
+// composes `Color.paper`, `.editorial()`, `DataLabel` and `Rule()` like every other
+// screen now, and the chips are rectangles rather than capsules because nothing else here
+// is a capsule.
 
 import StreetwCore
 import SwiftUI
@@ -15,12 +22,41 @@ struct SizeProfileSection: View {
     @Environment(ServerSettings.self) private var settings: ServerSettings
 
     var body: some View {
-        Section {
+        VStack(alignment: .leading, spacing: 26) {
+            sizes
+            Rule()
+            gender
+        }
+        .onChange(of: store.profile) { _, profile in pushIfNeeded(profile) }
+    }
+
+    // MARK: - The three ladders
+
+    private var sizes: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            SettingsHeader(
+                title: "My sizes",
+                note: store.profile.isEmpty
+                    ? "Set these and streetw can tell you when something is back in a size you actually wear."
+                    : "Restocks in \(store.profile.summary) are ruled in vermilion in your feed."
+            )
+
             SizeChipRow(
                 title: "Clothing",
                 options: SizeProfile.apparelOptions.map { (display: $0, stored: $0) },
                 isSelected: { store.profile.apparel.contains($0) },
                 toggle: store.toggleApparel
+            )
+
+            // Bottoms are sized by the inch and this ladder did not exist, so every pair
+            // of trousers in the app normalised to "unrecognised" — never hidden, and
+            // never matched either. On denim and workwear, which is half of what these
+            // brands make, the whole size feature was switched off.
+            SizeChipRow(
+                title: "Waist",
+                options: SizeProfile.waistOptions.map { (display: $0, stored: $0) },
+                isSelected: { store.profile.waist.contains($0) },
+                toggle: store.toggleWaist
             )
 
             SizeChipRow(
@@ -33,52 +69,37 @@ struct SizeProfileSection: View {
                 // meaningless without knowing which you're reading.
                 accessory: {
                     AnyView(
-                        Picker("Scale", selection: Binding(
-                            get: { store.profile.shoeScale },
-                            set: { store.setShoeScale($0) }
-                        )) {
-                            ForEach(SizeScale.allCases) { scale in
-                                Text(scale.label).tag(scale)
-                            }
-                        }
-                        .pickerStyle(.segmented)
-                        .frame(width: 132)
+                        WordPicker(
+                            options: SizeScale.allCases.map { ($0.label, $0) },
+                            selection: store.profile.shoeScale,
+                            select: store.setShoeScale
+                        )
                     )
                 }
             )
-
-        } header: {
-            Text("My sizes")
-        } footer: {
-            Text(store.profile.isEmpty
-                 ? "Set your sizes and streetw can tell you when something is back in a size you actually wear."
-                 : "Restocks in \(store.profile.summary) are highlighted in your feed.")
         }
-        .onChange(of: store.profile) { _, profile in pushIfNeeded(profile) }
+    }
 
-        Section {
-            Picker("Show", selection: Binding(
-                get: { store.profile.gender },
-                set: { store.setGender($0) }
-            )) {
-                ForEach(GenderPreference.allCases) { preference in
-                    Text(preference.label).tag(preference)
-                }
-            }
-            .pickerStyle(.segmented)
-            .listRowInsets(EdgeInsets(top: 10, leading: 16, bottom: 10, trailing: 16))
-        } header: {
-            Text("What to show")
-        } footer: {
-            // Says exactly what it will and won't do. The honesty matters: plenty of
-            // brands tag nothing useful, and someone who picks "Menswear" and still sees
-            // the occasional women's piece should know that's the filter being careful
-            // rather than broken.
-            Text(store.profile.gender == .everything
-                 ? "Everything a brand posts, whoever it's cut for — including kids."
-                 : "Hides the opposite gender and kids. Unisex items and anything a brand doesn't label are always shown — a missed drop costs more than an extra one.")
+    // MARK: - Who the feed is cut for
+
+    private var gender: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            SettingsHeader(
+                title: "What to show",
+                // Says exactly what it will and won't do. The honesty matters: plenty of
+                // brands tag nothing useful, and someone who picks "Menswear" and still
+                // sees the occasional women's piece should know that's the filter being
+                // careful rather than broken.
+                note: store.profile.gender == .everything
+                    ? "Everything a brand posts, whoever it's cut for — including kids."
+                    : "Hides the opposite gender and kids. Unisex items, and anything a brand doesn't label, are always shown — a missed drop costs more than an extra one."
+            )
+            WordPicker(
+                options: GenderPreference.allCases.map { ($0.label, $0) },
+                selection: store.profile.gender,
+                select: store.setGender
+            )
         }
-        .onChange(of: store.profile.gender) { _, _ in pushIfNeeded(store.profile) }
     }
 
     /// The server targets alerts using this profile, so a change here is useless until
@@ -86,6 +107,64 @@ struct SizeProfileSection: View {
     private func pushIfNeeded(_ profile: SizeProfile) {
         guard settings.isConfigured else { return }
         Task { await remote.pushSizes(profile) }
+    }
+}
+
+// MARK: - Pieces
+
+/// A section title and the sentence under it, in the two faces this app uses for exactly
+/// that job everywhere else.
+struct SettingsHeader: View {
+    let title: String
+    var note: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title)
+                .font(.editorial(22))
+                .foregroundStyle(Color.ink)
+            if let note {
+                Text(note)
+                    .font(.data(11))
+                    .lineSpacing(2)
+                    .foregroundStyle(Color.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+}
+
+/// A row of words, one of them underlined — the app's segmented control.
+///
+/// The same object as `SavedView`'s mode strip, for the same reason: a system
+/// `.segmented` picker would be the loudest thing on the page, and the loudest thing on a
+/// settings page should be the settings.
+struct WordPicker<Value: Hashable>: View {
+    let options: [(label: String, value: Value)]
+    let selection: Value
+    let select: (Value) -> Void
+
+    var body: some View {
+        HStack(spacing: 18) {
+            ForEach(options, id: \.value) { option in
+                let isOn = option.value == selection
+                Button {
+                    withAnimation(.easeOut(duration: 0.15)) { select(option.value) }
+                } label: {
+                    VStack(spacing: 5) {
+                        Text(option.label.uppercased())
+                            .font(.wordmark(11, isOn ? .semibold : .regular))
+                            .tracking(1.4)
+                            .foregroundStyle(isOn ? Color.ink : Color.muted)
+                        Rectangle()
+                            .fill(isOn ? Color.ink : Color.clear)
+                            .frame(height: 1)
+                    }
+                    .fixedSize()
+                }
+                .buttonStyle(.borderless)
+            }
+        }
     }
 }
 
@@ -100,42 +179,39 @@ struct SizeChipRow: View {
     var accessory: (() -> AnyView)?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 9) {
             HStack {
-                Text(title)
-                    .font(.subheadline)
-                Spacer()
+                DataLabel(text: title.uppercased(), size: 10)
+                Spacer(minLength: 12)
                 if let accessory { accessory() }
             }
 
             ScrollView(.horizontal) {
-                HStack(spacing: 6) {
+                HStack(spacing: 7) {
                     ForEach(options, id: \.stored) { option in
                         let selected = isSelected(option.stored)
                         Button {
                             toggle(option.stored)
                         } label: {
                             Text(option.display)
-                                .font(.caption.weight(selected ? .semibold : .regular))
+                                .font(.data(13, selected ? .semibold : .regular))
                                 .monospacedDigit()
-                                .padding(.horizontal, 11)
-                                .padding(.vertical, 6)
-                                .background(
-                                    selected ? AnyShapeStyle(Color.ink) : AnyShapeStyle(.quaternary),
-                                    in: Capsule()
-                                )
-                                .foregroundStyle(selected ? Color.paper : Color.primary)
-                                .contentShape(.capsule)
+                                .foregroundStyle(selected ? Color.paper : Color.ink)
+                                .frame(minWidth: 34)
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 9)
+                                .background(selected ? Color.ink : Color.wash)
+                                .contentShape(.rect)
                         }
-                        // .borderless, not .plain: inside a List row, `.plain` lets the
-                        // row take the tap as a single target and the chips never fire.
+                        // .borderless, not .plain: inside a row that is itself tappable,
+                        // `.plain` lets the row take the tap as a single target and the
+                        // chips never fire.
                         .buttonStyle(.borderless)
                     }
                 }
-                .padding(.vertical, 2)
+                .padding(.vertical, 1)
             }
             .scrollIndicators(.hidden)
         }
-        .padding(.vertical, 2)
     }
 }

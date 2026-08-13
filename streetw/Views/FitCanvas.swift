@@ -62,7 +62,17 @@ struct FitCanvas: View {
     /// rather than renumbering everything behind it.
     @State private var topZ = 0
 
-    private var wearable: [SavedItem] { saves.filter { $0.update != nil } }
+    /// What can actually be put on a canvas.
+    ///
+    /// A photograph is not decoration here, it *is* the piece — there is nothing else to
+    /// lift a cutout from and nothing else to drag around. Some products genuinely have
+    /// none (Palace's sitemap publishes entries with no image), and those were arriving in
+    /// the tray as blank tiles that placed a blank rectangle you could move, scale and
+    /// rotate but never see. Kept out of the tray rather than drawn as a placeholder: a
+    /// collage is made of pictures, and offering one that isn't there is offering nothing.
+    private var wearable: [SavedItem] {
+        saves.filter { $0.update?.imageURLStrings.isEmpty == false }
+    }
 
     private var trayItems: [SavedItem] {
         guard let trayFilter else { return wearable }
@@ -100,6 +110,20 @@ struct FitCanvas: View {
                     Menu("More", systemImage: "ellipsis") {
                         Button("Name this fit", systemImage: "textformat") { isNaming = true }
                         boardMenu
+                        // Only for a fit that has been saved: sharing renders the stored
+                        // canvas, and a draft has none. Offering it on an unsaved fit would
+                        // either share the last version or share nothing.
+                        if let fit, fit.renderFile != nil, let image = fit.renderImage {
+                            ShareLink(
+                                item: Image(uiImage: image),
+                                preview: SharePreview(
+                                    fit.name.isEmpty ? "A fit" : fit.name,
+                                    image: Image(uiImage: image)
+                                )
+                            ) {
+                                Label("Share fit", systemImage: "square.and.arrow.up")
+                            }
+                        }
                         if !placements.isEmpty {
                             Button("Clear canvas", systemImage: "trash", role: .destructive) {
                                 placements = []
@@ -432,22 +456,21 @@ struct FitCanvas: View {
         board = fit.board
         topZ = placements.map(\.z).max() ?? 0
 
-        // A fit made before the canvas existed has items and no placements. Rather than
-        // opening empty — which would read as data loss — its pieces are laid out down the
-        // middle in the order a fit is read, which is what the old stacked card drew.
-        if placements.isEmpty, !fit.items.isEmpty {
-            for (index, item) in fit.ordered.enumerated() {
-                topZ += 1
-                placements.append(
-                    FitPlacement(
-                        itemID: item.id,
-                        x: 0.5,
-                        y: 0.2 + Double(index) * 0.22,
-                        scale: 0.9,
-                        z: topZ
-                    )
-                )
-            }
+        // The placements and the items are two lists describing the same outfit, and they
+        // can fall out of step: a fit made before the canvas existed has items and no
+        // placements at all, and a placement can outlive the item it names. Either way the
+        // canvas opens blank while the *card* still draws the stored render — so the fit
+        // looks intact everywhere except the one screen that can edit it, and Save then
+        // writes that emptiness back over it. Reconciled on the way in, in both directions.
+        placements.removeAll { chosen[$0.itemID] == nil }
+        var placed = Set(placements.map(\.itemID))
+        for item in fit.ordered where !placed.contains(item.id) {
+            let spot = Self.dropSpots[placed.count % Self.dropSpots.count]
+            topZ += 1
+            placements.append(
+                FitPlacement(itemID: item.id, x: spot.x, y: spot.y, scale: 0.85, z: topZ)
+            )
+            placed.insert(item.id)
         }
     }
 
@@ -469,7 +492,14 @@ struct FitCanvas: View {
         // needs is already decoded — it was just on screen — so the warm-up is normally
         // instant, and a fit that has to re-fetch a photograph must not hold the UI.
         Task {
-            await FitRender.warm(target)
+            // A render is only written when every piece actually decoded. `ImageRenderer`
+            // draws one frame synchronously, so a piece still loading comes out as an empty
+            // rectangle — and that gets written to disk and shown on the card *for as long
+            // as the fit exists*, since nothing recomputes a render that already succeeded.
+            // Saving a fit a second after opening it produced exactly that: a picture of
+            // two garments and two grey squares. Better to keep the previous render, or
+            // none at all and let the card draw the live surface, than to bake in a hole.
+            guard await FitRender.warm(target) else { return }
             target.renderFile = FitRender.write(target)
             try? context.save()
         }

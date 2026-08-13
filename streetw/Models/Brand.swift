@@ -16,6 +16,18 @@ final class Brand {
     var styleDescription: String?
     var myRating: Int?
     var followed: Bool = true
+    /// Still watched, still in the feed — just silent.
+    ///
+    /// A different knob from `followed`, and the app had only the second one. A brand that
+    /// posts forty times a week is not one you want to stop watching; it is one you want to
+    /// stop being woken by, and the only control offered was to remove it entirely. The
+    /// icon said as much: "Stop following" carried a `bell.slash`, which is what a mute
+    /// looks like everywhere else, so the row was already promising this.
+    ///
+    /// Local, and read at notification time. The server decides *who* to notify, so a
+    /// muted brand is filtered on arrival rather than at the source — a device-level
+    /// preference does not belong in a catalog the whole app shares.
+    var isMuted: Bool = false
     var addedAt: Date = Date()
 
     var sources: [BrandSource] = []
@@ -79,5 +91,36 @@ final class Brand {
     /// Newest updates first, capped — the feed never wants all 250 products.
     func recentUpdates(limit: Int = 12) -> [BrandUpdate] {
         updates.sorted { $0.publishedAt > $1.publishedAt }.prefix(limit).map { $0 }
+    }
+
+    /// The garments that landed with a collection announcement.
+    ///
+    /// A collection is the one kind of update that is *about* other updates. `/collections.json`
+    /// says a release exists and names it; it does not list what is in it, and the products
+    /// arrive separately down `/products.json`. So the membership is reconstructed here,
+    /// from two signals that agree in practice and cost no network:
+    ///
+    /// - **A distinctive word.** Brands tag and title their releases — "FW26", "Denim
+    ///   Tears x …" — so a product carrying a rare word from the collection's name is
+    ///   almost certainly in it. Common words are useless for this and are skipped, or
+    ///   "The Collection" would match the entire catalogue.
+    /// - **Landing at the same time.** Failing that, a release and its products publish
+    ///   together. The window is generous because storefronts stagger a drop across a day.
+    ///
+    /// Deliberately a heuristic. The alternative is fetching `/collections/<handle>/products.json`
+    /// per collection, which is a network call per card in a scrolling feed, and being
+    /// wrong here costs a page with a few extra garments on it — not a missed drop.
+    func members(of collection: BrandUpdate, window: TimeInterval = 48 * 3_600) -> [BrandUpdate] {
+        let words = BrandUpdate.distinctiveWords(in: collection.title)
+        let start = collection.publishedAt.addingTimeInterval(-window)
+        let end = collection.publishedAt.addingTimeInterval(window)
+
+        return updates
+            .filter { update in
+                guard update.kind != .collection, update.id != collection.id else { return false }
+                if !words.isEmpty, update.mentionsAny(of: words) { return true }
+                return (start...end).contains(update.publishedAt)
+            }
+            .sorted { $0.publishedAt > $1.publishedAt }
     }
 }

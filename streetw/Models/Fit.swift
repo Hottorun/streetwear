@@ -13,6 +13,7 @@
 import Foundation
 import StreetwCore
 import SwiftData
+import UIKit
 
 @Model
 final class Fit {
@@ -59,6 +60,16 @@ final class Fit {
 
     var renderURL: URL? {
         renderFile.map { FitRender.url(for: $0) }
+    }
+
+    /// The stored render, decoded — what a share sheet or a card actually hands over.
+    ///
+    /// An outfit is the most shareable thing in this app and the picture of it already
+    /// existed, written on every save and drawn by every card; nothing could get it out.
+    /// Reading the file rather than re-rendering keeps sharing free and guarantees what
+    /// leaves is exactly what the collection shows.
+    var renderImage: UIImage? {
+        renderURL.flatMap { UIImage(contentsOfFile: $0.path(percentEncoded: false)) }
     }
 
     /// The canvas, in draw order. Anything placed but no longer in `items` is dropped —
@@ -202,7 +213,11 @@ enum FitSuggestions {
     ///   everything the same and the order falls back to what it always was.
     static func build(from saves: [SavedItem], limit: Int = 6) -> [SuggestedFit] {
         var bySlot: [GarmentSlot: [SavedItem]] = [:]
-        for save in saves where save.update != nil {
+        // A suggestion is looked at before it is read, and a piece with no photograph
+        // renders as a blank rectangle — so a proposal containing one looks broken however
+        // good the pairing is. `ColorHarmony` can't speak for it either: the dominant
+        // colour comes from the photograph.
+        for save in saves where save.update?.imageURLStrings.isEmpty == false {
             let slot = save.slot
             guard slot != .unknown, GarmentSlot.essential.contains(slot) else { continue }
             bySlot[slot, default: []].append(save)

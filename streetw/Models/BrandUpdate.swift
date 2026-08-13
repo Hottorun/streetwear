@@ -34,6 +34,14 @@ final class BrandUpdate {
     var releaseDate: Date?
     /// What it cost before the most recent drop, so a card can say "was €180".
     var previousPriceText: String?
+    /// The old price as a number, so a cut can be *ranked* rather than only announced.
+    ///
+    /// The pair to `priceAmount`, and stored for exactly the reason that one is: two
+    /// formatted strings say nothing about how big the difference between them is, and a
+    /// list of markdowns is only worth having if the deepest one is at the top. Optional
+    /// because rows written before this existed have no numeric history, and inferring one
+    /// from a formatted string would mean parsing currency by hand.
+    var previousPriceAmount: Double?
     var isAvailable: Bool?
     var tags: [String] = []
     var productType: String?
@@ -237,11 +245,86 @@ final class BrandUpdate {
         return variants.contains { $0.available && profile.matches($0) }
     }
 
-    /// Everything the feed filter asks of one item: is it in a size I wear, and is it cut
-    /// for me. Kept together so the two halves can't drift apart between the feed, the
-    /// brand page and anywhere else that filters.
+    /// Whether this item belongs in a browsing view at all.
+    ///
+    /// **The one filter, called from every screen that shows a list of a brand's output.**
+    /// It had said so in this comment for a while and had no callers: the feed applied
+    /// `profile.allows(gender)` inline instead, and `BrandFeedView` — which is where
+    /// "+36 more from Kith" goes — applied nothing whatsoever. So somebody who had chosen
+    /// Menswear got it on the feed and lost it the moment they opened the rest of the same
+    /// drop, which reads as the setting not working rather than as one screen missing it.
+    ///
+    /// Gender hides; **size does not**. A size you don't wear is said in vermilion — or by
+    /// its absence from the run — not by removing the product, because a sold-out size
+    /// today is a restock tomorrow and that restock is the thing this app exists to catch.
+    /// `isAvailable(in:)` is still here for anywhere that genuinely wants the stricter
+    /// question.
     func passes(_ profile: SizeProfile) -> Bool {
-        profile.allows(gender) && isAvailable(in: profile)
+        profile.allows(gender)
+    }
+
+    /// How much was taken off, 0…1. Nil when there is nothing to compare against.
+    var discountShare: Double? {
+        guard let now = priceAmount, let was = previousPriceAmount, was > 0, now < was else {
+            return nil
+        }
+        return (was - now) / was
+    }
+
+    /// Which part of an outfit this is, read off the catalogue text.
+    ///
+    /// The same classification `SavedItem.slot` performs, on the product rather than on the
+    /// save — "more like this" has to answer for things nobody has kept.
+    var garmentSlot: GarmentSlot {
+        GarmentClassifier.classify(
+            title: title,
+            productType: productType,
+            tags: tags,
+            visionCategories: visionCategories
+        )
+    }
+
+    /// The words that decide whether two products are alternatives to each other.
+    ///
+    /// Tags and product type, not the title — the same choice `BrandVector` makes and for
+    /// the same reason: a product *name* ("Nocturne", "Wolfgang") is unique to one item, so
+    /// matching on it finds nothing, while the words a merchandiser files it under are
+    /// exactly the ones shared by the things it sits beside on the shelf.
+    var matchTerms: [String] {
+        let source = tags + [productType ?? ""]
+        return source
+            .flatMap { $0.lowercased().split { !$0.isLetter } }
+            .map(String.init)
+            .filter { $0.count > 2 }
+    }
+
+    /// Words from a collection's name worth searching a catalogue for.
+    ///
+    /// A season code ("FW26", "SS25") or a collaborator's name identifies a release; "the",
+    /// "collection" and "new" identify nothing, and matching on them would put the whole
+    /// catalogue inside every collection. Anything with a digit is kept whatever its
+    /// length, because that is exactly the shape a season code takes.
+    static func distinctiveWords(in title: String) -> [String] {
+        let stop: Set<String> = [
+            "the", "and", "new", "collection", "collections", "capsule", "drop", "release",
+            "collab", "collaboration", "part", "vol", "volume", "edition", "series", "all",
+            "shop", "our", "for", "with", "by", "of", "in", "a"
+        ]
+        return title
+            .lowercased()
+            .split(whereSeparator: { !$0.isLetter && !$0.isNumber })
+            .map(String.init)
+            .filter { word in
+                guard !stop.contains(word) else { return false }
+                return word.contains(where: \.isNumber) || word.count >= 4
+            }
+    }
+
+    /// Whether this product's own text carries one of those words.
+    func mentionsAny(of words: [String]) -> Bool {
+        guard !words.isEmpty else { return false }
+        let haystack = ([title, productType ?? ""] + tags).joined(separator: " ").lowercased()
+        return words.contains { haystack.contains($0) }
     }
 
     /// Sizes from this restock that the user actually wears.

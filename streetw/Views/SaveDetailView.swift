@@ -93,6 +93,7 @@ struct SaveDetailView: View {
                             // The same fixed sweep the wall uses. Opening a tile must not
                             // change what the garment is standing on.
                             backdrop: .sweep,
+                            mark: update.brand?.name,
                             selection: $imageIndex
                         )
                     }

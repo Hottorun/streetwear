@@ -169,13 +169,30 @@ struct SizeRun: View {
             : AnyLayout(HStackLayout(spacing: size * 0.7))
     }
 
-    /// Long runs are narrowed to what you can actually buy. The line therefore always
-    /// means the same thing — "these sizes are available" — with the struck-through
-    /// sold-out sizes as extra texture whenever there is room for them.
+    /// A run longer than this is regrouped when it wraps. Ten tokens is about a line and
+    /// a half on a phone — below it the ladder still reads as one object.
+    private static let regroupAbove = 10
+
+    /// Long runs lead with what you can actually buy. The line therefore always means the
+    /// same thing — "these sizes are available" — with the struck-through sold-out sizes
+    /// as extra texture whenever there is room for them.
+    ///
+    /// Two ways of getting there, because the two callers have different constraints. A
+    /// card's row cannot wrap, so it simply **drops** the sold-out sizes. A wrapped run
+    /// has room for all of them and drops nothing — but it **reorders**, because canonical
+    /// order alone put a sneaker's 3 through 9 (every one of them gone) on the first line
+    /// and the single pair left in your size on the second, under the fold. The page then
+    /// opened on a row of struck-through numbers, which reads as "sold out" for a product
+    /// that is not.
+    ///
+    /// Order inside each group is untouched, so each half is still a ladder.
     private var shown: [Entry] {
+        if wraps {
+            guard entries.count > Self.regroupAbove else { return entries }
+            return entries.filter(\.isAvailable) + entries.filter { !$0.isAvailable }
+        }
         guard entries.count > limit else { return entries }
-        let available = entries.filter(\.isAvailable)
-        return Array(available.prefix(limit))
+        return Array(entries.filter(\.isAvailable).prefix(limit))
     }
 
     var body: some View {

@@ -202,14 +202,29 @@ final class EventModel: Model, @unchecked Sendable {
     /// for the same reason as `next_check_at`: a restart must not re-notify, and a
     /// second instance can later claim rows without a shared cache.
     @OptionalField(key: "notified_at") var notifiedAt: Date?
+    /// What the product cost before this event, for a `.priceDrop`. On the event rather
+    /// than the product for the same reason `sizes` is: the product row holds what is
+    /// currently true and the next poll overwrites it, while an event has to keep what was
+    /// true when it fired.
+    @OptionalField(key: "previous_price_text") var previousPriceText: String?
+    @OptionalField(key: "previous_price_amount") var previousPriceAmount: Double?
 
     init() {}
 
-    init(brandID: UUID, productID: UUID?, kind: UpdateKind, sizes: [String] = []) {
+    init(
+        brandID: UUID,
+        productID: UUID?,
+        kind: UpdateKind,
+        sizes: [String] = [],
+        previousPriceText: String? = nil,
+        previousPriceAmount: Double? = nil
+    ) {
         self.$brand.id = brandID
         self.$product.id = productID
         self.kind = kind.rawValue
         self.sizes = sizes
+        self.previousPriceText = previousPriceText
+        self.previousPriceAmount = previousPriceAmount
     }
 }
 
@@ -227,6 +242,9 @@ final class UserModel: Model, @unchecked Sendable {
     // needs a column and a line in both halves of `sizeProfile`.
     @Field(key: "apparel_sizes") var apparelSizes: [String]
     @Field(key: "shoe_sizes") var shoeSizes: [String]
+    /// Waists in inches. Its own ladder, not a flavour of `apparel_sizes` — a 32 is not
+    /// an M and no table converts between them.
+    @Field(key: "waist_sizes") var waistSizes: [String]
     /// Vestigial. One-size items fit everyone, so the preference was removed and this is
     /// now always true — kept only because the column is `NOT NULL` in a schema that is
     /// already applied in production, and dropping it would be a migration bought for
@@ -239,6 +257,7 @@ final class UserModel: Model, @unchecked Sendable {
     init() {
         self.apparelSizes = []
         self.shoeSizes = []
+        self.waistSizes = []
         self.includeOneSize = true
     }
 
@@ -247,12 +266,14 @@ final class UserModel: Model, @unchecked Sendable {
             var profile = SizeProfile()
             profile.apparel = Set(apparelSizes)
             profile.shoe = Set(shoeSizes)
+            profile.waist = Set(waistSizes)
             profile.gender = gender.flatMap(GenderPreference.init(rawValue:)) ?? .everything
             return profile
         }
         set {
             apparelSizes = Array(newValue.apparel)
             shoeSizes = Array(newValue.shoe)
+            waistSizes = Array(newValue.waist)
             includeOneSize = true
             gender = newValue.gender.rawValue
         }

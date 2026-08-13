@@ -14,6 +14,7 @@
 
 import BackgroundTasks
 import StreetwCore
+import SwiftData
 import SwiftUI
 import UIKit
 import UserNotifications
@@ -30,17 +31,39 @@ enum BackgroundServices {
     private(set) static var sizes: SizeProfileStore?
     private(set) static var settings: ServerSettings?
     private(set) static var route: PushRoute?
+    /// Needed to answer one question at push time: is this brand muted. The delegate is
+    /// built by UIKit and has no environment, so the container is published here with
+    /// everything else.
+    private(set) static var container: ModelContainer?
 
     static func install(
         remote: RemoteSync,
         sizes: SizeProfileStore,
         settings: ServerSettings,
-        route: PushRoute
+        route: PushRoute,
+        container: ModelContainer
     ) {
         self.remote = remote
         self.sizes = sizes
         self.settings = settings
         self.route = route
+        self.container = container
+    }
+
+    /// Whether the user has silenced the brand a push is about.
+    ///
+    /// Answered on the device rather than at the source. The server decides *who* to
+    /// notify from the catalog, which is shared by everyone — a preference belonging to one
+    /// phone has no business in it. The cost is that a muted brand's push is delivered and
+    /// then dropped, which is invisible and is the right trade for keeping the catalog
+    /// impersonal.
+    static func isMuted(_ userInfo: [AnyHashable: Any]) -> Bool {
+        guard let remoteID = PushDestination.brandID(in: userInfo), let container else { return false }
+        let context = ModelContext(container)
+        let descriptor = FetchDescriptor<Brand>(
+            predicate: #Predicate { $0.remoteID == remoteID && $0.isMuted }
+        )
+        return ((try? context.fetchCount(descriptor)) ?? 0) > 0
     }
 
     /// One sync pass, safe to call from a background wake-up.
@@ -169,6 +192,10 @@ extension AppDelegate: UNUserNotificationCenterDelegate {
         willPresent notification: UNNotification
     ) async -> UNNotificationPresentationOptions {
         await BackgroundServices.syncNow()
+        // Still synced, still in the feed — just not announced. A muted brand is the one
+        // you want to keep watching and stop being woken by, and the only control the app
+        // used to offer for that was removing it altogether.
+        guard !BackgroundServices.isMuted(notification.request.content.userInfo) else { return [] }
         return [.banner, .sound, .list]
     }
 
@@ -217,6 +244,20 @@ enum PushDestination: Equatable {
     /// The server's sentinel for a test push. It refers to no real brand, so navigating to
     /// it would land on an empty page and read as a bug.
     static let probeBrandID = UUID(uuidString: "00000000-0000-0000-0000-000000000000")!
+
+    /// Which brand a push is about, whatever it is about *within* that brand.
+    ///
+    /// Read separately from the destination because the two questions differ: a restock
+    /// alert routes to one product but is still a message from a brand, and muting has to
+    /// silence it. `brandID` travels on every payload alongside `eventID` precisely so this
+    /// is answerable without a lookup.
+    static func brandID(in userInfo: [AnyHashable: Any]) -> UUID? {
+        guard let raw = userInfo["brandID"] as? String,
+              let id = UUID(uuidString: raw),
+              id != probeBrandID
+        else { return nil }
+        return id
+    }
 }
 
 /// The one place a tapped notification's destination is published.

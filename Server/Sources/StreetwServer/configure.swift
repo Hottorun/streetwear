@@ -70,6 +70,8 @@ func configure(_ app: Application) async throws {
     app.migrations.add(CreateWatches())
     app.migrations.add(AddSourceLock())
     app.migrations.add(AddVariantImageIndex())
+    app.migrations.add(AddUserWaistSizes())
+    app.migrations.add(AddEventPrice())
     if Environment.get("AUTO_MIGRATE") != "false" {
         try await app.autoMigrate()
     }

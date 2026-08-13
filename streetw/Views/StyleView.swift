@@ -124,6 +124,19 @@ struct StyleView: View {
                             // at* here — and going into an editor to change which board
                             // something is on is the long way round.
                             if !boards.isEmpty { boardMenu(for: fit) }
+                            // Sharing belongs here as much as in the editor: this is where
+                            // fits are looked at, and the editor is where they are made.
+                            if let image = fit.renderImage {
+                                ShareLink(
+                                    item: Image(uiImage: image),
+                                    preview: SharePreview(
+                                        fit.name.isEmpty ? "A fit" : fit.name,
+                                        image: Image(uiImage: image)
+                                    )
+                                ) {
+                                    Label("Share fit", systemImage: "square.and.arrow.up")
+                                }
+                            }
                             Button("Delete fit", systemImage: "trash", role: .destructive) {
                                 if let render = fit.renderFile { FitRender.remove(render) }
                                 context.delete(fit)
@@ -421,13 +434,20 @@ struct SettingsSheet: View {
 
     var body: some View {
         NavigationStack {
-            List {
-                SizeProfileSection()
-                NotificationsSection()
+            ScrollView {
+                VStack(alignment: .leading, spacing: 26) {
+                    SizeProfileSection()
+                    Rule()
+                    NotificationsSection()
+                }
+                .padding(.horizontal, 20)
+                .padding(.top, 4)
+                .padding(.bottom, 40)
             }
-            .scrollContentBackground(.hidden)
+            .scrollIndicators(.hidden)
             .background(Color.paper)
             .navigationTitle("Settings")
+            .toolbarTitleDisplayMode(.inlineLarge)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Done") { dismiss() }

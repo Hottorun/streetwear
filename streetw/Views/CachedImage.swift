@@ -46,6 +46,15 @@ struct UpdateImage: View {
     /// is the other case — a wall of photographs, which do not invert — and passes
     /// `sweep`. See `Color.sweep` for why that one is fixed.
     var backdrop: Color = .wash
+    /// What to set in place of a photograph that will never arrive.
+    ///
+    /// Some products genuinely have none: Palace's sitemap publishes entries with no
+    /// `<image:loc>`, so those rows hold an empty image array permanently. They were
+    /// drawing the loading-ish `kind` symbol — a small grey sparkle on a blank tile —
+    /// which is indistinguishable from an image that is still coming, so a brand page sat
+    /// there apparently loading forever. A wordmark is a statement instead of a wait: it
+    /// says *this is the thing, we just have no picture of it*.
+    var mark: String?
 
     var body: some View {
         Color.clear
@@ -56,17 +65,24 @@ struct UpdateImage: View {
                 } placeholder: {
                     Color.clear
                 } failure: {
-                    symbol
+                    fallback
                 }
             }
             .background(backdrop)
             .clipped()
     }
 
-    private var symbol: some View {
-        Image(systemName: kind.symbol)
-            .font(.system(size: 15, weight: .light))
-            .foregroundStyle(Color.muted)
+    @ViewBuilder
+    private var fallback: some View {
+        if let mark, !mark.isEmpty {
+            Wordmark(name: mark, size: 10, color: .muted)
+                .minimumScaleFactor(0.6)
+                .padding(.horizontal, 8)
+        } else {
+            Image(systemName: kind.symbol)
+                .font(.system(size: 15, weight: .light))
+                .foregroundStyle(Color.muted)
+        }
     }
 }
 

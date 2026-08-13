@@ -80,6 +80,8 @@ extension FeedItem {
             linkURL: product?.linkURL,
             imageURLs: product?.imageURLs ?? [],
             priceText: product?.priceText,
+            previousPriceText: event.previousPriceText,
+            previousPriceAmount: event.previousPriceAmount,
             isAvailable: product?.isAvailable,
             // Fall back to every returned size when no profile is set, so the card can
             // still say "Back in M, L".

@@ -33,7 +33,11 @@ struct WatchesView: View {
                 if watches.isEmpty {
                     EditorialEmptyState(
                         title: "Nothing on watch",
-                        action: "OPEN SOMETHING THAT'S SOLD OUT AND ASK TO BE TOLD WHEN IT'S BACK"
+                        // Not "open something sold out" any more: `SaveConfirmation`
+                        // made a watch settable on something in stock, which was the whole
+                        // point of it — wanting to know your size went and came back is not
+                        // conditional on it being gone right now.
+                        action: "OPEN ANYTHING AND ASK TO BE TOLD WHEN YOUR SIZE IS IN STOCK"
                     )
                 } else {
                     ScrollView {
@@ -106,7 +110,13 @@ struct WatchListRow: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 14) {
-            UpdateImage(url: update.primaryImageURL, kind: update.kind, aspect: 1, drawnWidth: 90)
+            UpdateImage(
+                url: update.primaryImageURL,
+                kind: update.kind,
+                aspect: 1,
+                drawnWidth: 90,
+                mark: update.brand?.name
+            )
                 .frame(width: 62)
 
             VStack(alignment: .leading, spacing: 5) {

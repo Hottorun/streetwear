@@ -352,15 +352,42 @@ public struct ShopifySource: SourceAdapter {
     }
 
     /// Shopify descriptions are HTML. Strip tags for a one-line summary.
+    ///
+    /// **A list item is not a sentence boundary — it is a stronger one.** Most storefronts
+    /// write their spec as `<ul><li>`, and deleting the tags without putting anything in
+    /// their place glues the whole thing into one 60-word sentence: "Ava Rover silhouette
+    /// Textile upper Padded collar Perforated toecap and tongue Reinforced eyelets…". That
+    /// is the largest block of text on the product page and it read as corrupt. `</li>`
+    /// becomes a middot, which is the same separator the rest of the app uses for a run of
+    /// short facts, and which survives being shown on one line.
+    ///
+    /// `<br>` and the block tags stay spaces: they are used inside prose as often as
+    /// between items, and a middot in the middle of a sentence is worse than a run-on.
+    ///
+    /// `&amp;` is decoded **last**, or `&amp;lt;` would arrive as `<` and a description
+    /// could inject markup into anything that later treats this as rich text.
     public nonisolated static func plainText(from html: String) -> String {
         html
-            .replacingOccurrences(of: "<br>", with: " ")
-            .replacingOccurrences(of: "</p>", with: " ")
+            .replacingOccurrences(of: "</li>", with: " · ", options: .caseInsensitive)
+            .replacingOccurrences(of: "<br\\s*/?>", with: " ", options: [.regularExpression, .caseInsensitive])
+            .replacingOccurrences(
+                of: "</(p|div|h[1-6]|tr|blockquote)>",
+                with: " ",
+                options: [.regularExpression, .caseInsensitive]
+            )
             .replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression)
-            .replacingOccurrences(of: "&amp;", with: "&")
             .replacingOccurrences(of: "&nbsp;", with: " ")
+            .replacingOccurrences(of: "&#39;", with: "'")
+            .replacingOccurrences(of: "&rsquo;", with: "’")
+            .replacingOccurrences(of: "&quot;", with: "\"")
+            .replacingOccurrences(of: "&lt;", with: "<")
+            .replacingOccurrences(of: "&gt;", with: ">")
+            .replacingOccurrences(of: "&amp;", with: "&")
             .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+            // An empty `<li>`, or the last one in the list, leaves a separator with
+            // nothing after it.
+            .replacingOccurrences(of: "(\\s*·\\s*)+", with: " · ", options: .regularExpression)
+            .trimmingCharacters(in: CharacterSet(charactersIn: " ·\n\t"))
     }
 }
 

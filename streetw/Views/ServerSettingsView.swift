@@ -37,27 +37,27 @@ struct NotificationsSection: View {
     }
 
     var body: some View {
-        Section {
+        VStack(alignment: .leading, spacing: 14) {
+            SettingsHeader(
+                title: "Alerts",
+                note: "Get told when a brand you follow drops, restocks in your size, or locks its storefront."
+            )
+
             switch status {
             case .authorized, .provisional, .ephemeral:
-                VStack(alignment: .leading, spacing: 4) {
-                    Label("Alerts on", systemImage: "bell.fill")
-                        .foregroundStyle(.green)
+                VStack(alignment: .leading, spacing: 7) {
+                    DataLabel(text: "ALERTS ON", size: 11, color: .ink)
                     // Permission granted is not the same as deliverable, and saying
                     // "Alerts on" while nothing can arrive is the lie worth avoiding.
+                    // Vermilion for the two states somebody can act on; muted for the one
+                    // that is only the network having a bad minute.
                     switch delivery {
                     case .noKey:
-                        Text("The server has no push key, so nothing is being sent.")
-                            .font(.caption)
-                            .foregroundStyle(.orange)
+                        DataLabel(text: "THE SERVER HAS NO PUSH KEY — NOTHING IS BEING SENT", size: 10, color: .signal)
                     case .noToken:
-                        Text("This device hasn't registered for push yet — reopen the app to retry.")
-                            .font(.caption)
-                            .foregroundStyle(.orange)
+                        DataLabel(text: "THIS DEVICE HASN'T REGISTERED YET — REOPEN THE APP TO RETRY", size: 10, color: .signal)
                     case .unreachable:
-                        Text("Can't reach the server right now.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+                        DataLabel(text: "CAN'T REACH THE SERVER RIGHT NOW", size: 10)
                     case .ok, .unknown:
                         EmptyView()
                     }
@@ -65,12 +65,12 @@ struct NotificationsSection: View {
             case .denied:
                 // Once denied, the prompt never comes back — only Settings can undo it,
                 // so offering the button again would be a dead end.
-                VStack(alignment: .leading, spacing: 4) {
-                    Label("Alerts off", systemImage: "bell.slash")
-                        .foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 9) {
+                    DataLabel(text: "ALERTS OFF", size: 11)
                     if let url = URL(string: UIApplication.openSettingsURLString) {
-                        Link("Turn on in Settings", destination: url)
-                            .font(.caption)
+                        Link(destination: url) {
+                            SettingsAction(title: "Turn on in Settings")
+                        }
                     }
                 }
             default:
@@ -82,19 +82,35 @@ struct NotificationsSection: View {
                         isRequesting = false
                     }
                 } label: {
-                    Label("Turn on drop alerts", systemImage: "bell.badge")
+                    SettingsAction(title: "Turn on drop alerts")
                 }
-                .buttonStyle(.borderless)
+                .buttonStyle(.plain)
                 .disabled(isRequesting || !settings.isConfigured)
             }
-        } header: {
-            Text("Alerts")
-        } footer: {
-            Text("Get told when a brand you follow drops, restocks in your size, or locks its storefront.")
         }
         .task {
             status = await PushAuthorization.current()
             delivery = await checkDelivery()
+        }
+    }
+
+    /// The one shape a settings screen uses for something you can press.
+    ///
+    /// A rule under a line of type rather than a filled `.bordered` button: the page is
+    /// paper, and a system button on it reads as a fragment of another app.
+    private struct SettingsAction: View {
+        let title: String
+
+        var body: some View {
+            VStack(alignment: .leading, spacing: 5) {
+                Text(title)
+                    .font(.editorial(17))
+                    .foregroundStyle(Color.ink)
+                Rectangle()
+                    .fill(Color.ink)
+                    .frame(height: 1)
+            }
+            .fixedSize()
         }
     }
 

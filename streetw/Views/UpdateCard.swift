@@ -17,6 +17,15 @@ import SwiftUI
 /// One brand's most recent item, printed large. The image is the argument; everything
 /// else is a caption under it.
 struct FeedLead: View {
+    /// Set by tapping the photograph, which pushes the same destination the caption does.
+    ///
+    /// A `NavigationLink` cannot simply be wrapped around the gallery: that would make the
+    /// whole photograph a button, and a button swallows the drag `TabView` needs to page.
+    /// So the tap is a gesture and the navigation is a hidden link driven by this flag —
+    /// paging keeps the drag, quick-save keeps the caption, and the biggest target on the
+    /// screen stops being inert.
+    @State private var isOpen = false
+
     @Environment(SizeProfileStore.self) private var sizes: SizeProfileStore
 
     let update: BrandUpdate
@@ -41,9 +50,22 @@ struct FeedLead: View {
                     // always fetched and stored, and the front of a garment is rarely the
                     // whole argument for it. Paging lives here and quick-save lives on
                     // the caption below, so the two never fight for the same swipe.
-                    ImageGallery(urls: update.imageURLs, kind: update.kind, drawnWidth: 400)
+                    ImageGallery(
+                        urls: update.imageURLs,
+                        kind: update.kind,
+                        drawnWidth: 400,
+                        mark: update.brand?.name
+                    )
                     SaveAction(update: update)
                         .padding(12)
+                }
+                // The photograph is the largest object on the screen and was the only one
+                // that did nothing. Paging is a *drag*, so a tap costs it nothing — the
+                // comment below is about the swipe, and a tap was simply never claimed.
+                .contentShape(.rect)
+                .onTapGesture { isOpen = true }
+                .navigationDestination(isPresented: $isOpen) {
+                    ProductDetailView(update: update)
                 }
             }
 
@@ -126,7 +148,13 @@ struct FeedTile: View {
                 // Three to a row: a third of the screen, so the smallest rendition.
                 // No gallery on a tile — at this size a second photograph is unreadable,
                 // and it would put a paging gesture inside a grid that scrolls.
-                UpdateImage(url: update.primaryImageURL, kind: update.kind, aspect: 1, drawnWidth: 130)
+                UpdateImage(
+                    url: update.primaryImageURL,
+                    kind: update.kind,
+                    aspect: 1,
+                    drawnWidth: 130,
+                    mark: update.brand?.name
+                )
                     .overlay(alignment: .bottomLeading) {
                         // The accent again, at the smallest possible dose: a rule along
                         // the bottom edge means "your size is in there".
@@ -192,7 +220,8 @@ struct CollectionTile: View {
                 // garment onto near-black at night — a caption with nothing above it —
                 // while the brand next to it, shipping JPEGs on a white sweep, showed as a
                 // lightbox in a dark tile. Neither was a fault in the photograph.
-                backdrop: .sweep
+                backdrop: .sweep,
+                mark: update?.brand?.name
             )
 
             VStack(alignment: .leading, spacing: 3) {

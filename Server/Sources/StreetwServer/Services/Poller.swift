@@ -326,8 +326,11 @@ actor Poller {
             && product.isAvailable == false
             && item.isAvailable == true
 
-        // Checked before the incoming price overwrites the stored one.
+        // Checked before the incoming price overwrites the stored one — and kept, because
+        // the event needs to say what it dropped *from* and by how much.
         let dropped = PriceChange.isDrop(from: product.priceAmount, to: item.priceAmount)
+        let wasText = product.priceText
+        let wasAmount = product.priceAmount
 
         product.isAvailable = item.isAvailable
         product.priceText = item.priceText
@@ -361,7 +364,13 @@ actor Poller {
         }
 
         if dropped {
-            try await EventModel(brandID: brandID, productID: productID, kind: .priceDrop).save(on: db)
+            try await EventModel(
+                brandID: brandID,
+                productID: productID,
+                kind: .priceDrop,
+                previousPriceText: wasText,
+                previousPriceAmount: wasAmount
+            ).save(on: db)
             return true
         }
         return false

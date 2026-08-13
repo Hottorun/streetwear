@@ -10,6 +10,14 @@ import Foundation
 public enum SizeKind: String, Codable, Sendable, CaseIterable {
     case apparel
     case shoe
+    /// Bottoms sized by the inch: "32", "W34", "32x30".
+    ///
+    /// Its own kind rather than a flavour of `apparel` because the ladders don't meet — a
+    /// 32 is not an M, no table converts between them, and a person wears one of each.
+    /// Without it, every pair of trousers in the app normalised to `.other`, which is
+    /// never hidden *and never matched*: on denim and workwear — half of what these
+    /// brands make — the size feature was simply switched off.
+    case waist
     case oneSize
     case other
 }
@@ -81,6 +89,11 @@ public enum SizeNormalizer {
         }
         if let apparel = apparelWords[cleaned] ?? apparelWords[shortened(cleaned)] {
             return NormalizedSize(kind: .apparel, token: apparel)
+        }
+        // Before the shoe path, which strips a leading "w" as the women's marker and would
+        // read "W32" as a US 32.
+        if let waist = waistToken(in: cleaned) {
+            return NormalizedSize(kind: .waist, token: waist)
         }
 
         // Which scale did the string announce? Read *before* stripping, because the
@@ -154,6 +167,59 @@ public enum SizeNormalizer {
 
         guard prefix.allSatisfy({ $0 == "x" }) else { return cleaned }
         return prefix + base.value
+    }
+
+    /// A waist measurement in inches, if the string is one.
+    ///
+    /// Two bands, and the difference between them is the whole care taken here. A string
+    /// that **names** itself a waist — "W34", "34W", "waist 34", "32x30" — is read across
+    /// the full human range. A **bare** number is only read as a waist up to 37, because
+    /// from 38 up it collides with the EU shoe ladder, and a bare "44" is as likely a
+    /// sneaker as a pair of trousers. Guessing wrong there would *hide* a product from
+    /// somebody's feed, which is the one outcome this whole layer exists to prevent — so
+    /// the ambiguous band stays `.other`, exactly where it already was.
+    ///
+    /// "32x30" is waist by inseam. The inseam is dropped rather than stored: nothing in
+    /// the app asks about leg length, and keeping it would mean a profile of "32" failed
+    /// to match a variant of "32x30" — the same trousers, spelled longer.
+    private static let waistRange = 20.0...60.0
+    private static let bareWaistRange = 20.0...37.0
+
+    private static func waistToken(in cleaned: String) -> String? {
+        var text = cleaned
+        var isDeclared = false
+
+        if text.contains("waist") {
+            isDeclared = true
+            text = text.replacingOccurrences(of: "waist", with: "")
+        }
+        // Drop the inseam half of "32x30", "32 x 30", "32/30".
+        text = text.replacingOccurrences(
+            of: #"\s*[x×/]\s*\d{2}(\.\d)?\s*$"#,
+            with: "",
+            options: .regularExpression
+        )
+        text = text.trimmingCharacters(in: .whitespaces)
+
+        // A "w" on either end. Note this is also the women's-shoe marker: "w 9" arrives
+        // here, is read as a declared 9, and is refused by the range — so it falls through
+        // to the shoe path with nothing lost.
+        if text.hasPrefix("w") {
+            isDeclared = true
+            text = String(text.dropFirst())
+        } else if text.hasSuffix("w") {
+            isDeclared = true
+            text = String(text.dropLast())
+        }
+
+        // Whole inches only. A "32.5" is not a waist anybody's trousers are cut to, and
+        // admitting halves here would start swallowing shoe sizes.
+        guard let value = Double(text.trimmingCharacters(in: .whitespaces)),
+              value == value.rounded(),
+              (isDeclared ? waistRange : bareWaistRange).contains(value)
+        else { return nil }
+
+        return String(Int(value))
     }
 
     /// The scale a raw size string names, if it names one at all.
@@ -238,6 +304,9 @@ public struct SizeProfile: Codable, Hashable, Sendable {
     /// One canonical form means `shoeScale` is a display preference that can be changed
     /// at any time without rewriting what is stored or re-sending anything to the server.
     public var shoe: Set<String> = []
+    /// Waists in inches, as bare numbers: "32", "34". Bottoms are the one garment these
+    /// brands size numerically, and until this existed they matched nothing at all.
+    public var waist: Set<String> = []
     /// The scale the user reads and picks shoe sizes in. Display only.
     public var shoeScale: SizeScale = .us
     /// Which genders belong in this person's feed. Lives here rather than in its own
@@ -255,6 +324,7 @@ public struct SizeProfile: Codable, Hashable, Sendable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         apparel = try container.decodeIfPresent(Set<String>.self, forKey: .apparel) ?? []
         shoe = try container.decodeIfPresent(Set<String>.self, forKey: .shoe) ?? []
+        waist = try container.decodeIfPresent(Set<String>.self, forKey: .waist) ?? []
         shoeScale = try container.decodeIfPresent(SizeScale.self, forKey: .shoeScale) ?? .us
         gender = try container.decodeIfPresent(GenderPreference.self, forKey: .gender) ?? .everything
     }
@@ -267,6 +337,10 @@ public struct SizeProfile: Codable, Hashable, Sendable {
     }
 
     public static let apparelOptions = ["XXS", "XS", "S", "M", "L", "XL", "XXL", "XXXL"]
+    /// Every inch from 26 to 44. Odd waists are rarer than even ones but real — Levi's
+    /// cuts them — and a ladder that skipped them would leave those people unable to say
+    /// what they wear at all.
+    public static let waistOptions: [String] = (26...44).map(String.init)
     /// The canonical US ladder. Everything stored in `shoe` is one of these.
     public static let shoeOptions: [String] = stride(from: 6.0, through: 14.0, by: 0.5)
         .map(ShoeSizes.token)
@@ -279,12 +353,17 @@ public struct SizeProfile: Codable, Hashable, Sendable {
         }
     }
 
-    public var isEmpty: Bool { apparel.isEmpty && shoe.isEmpty }
+    public var isEmpty: Bool { apparel.isEmpty && shoe.isEmpty && waist.isEmpty }
 
     public var summary: String {
         var parts: [String] = []
         if !apparel.isEmpty {
             parts.append(SizeProfile.apparelOptions.filter(apparel.contains).joined(separator: ", "))
+        }
+        if !waist.isEmpty {
+            // "W 32, 34" — the W marks the ladder, because a bare "32, 34" beside "M, L"
+            // reads as a continuation of the same run.
+            parts.append("W " + SizeProfile.waistOptions.filter(waist.contains).joined(separator: ", "))
         }
         if !shoe.isEmpty {
             // Printed in the user's own scale — "EU 43" reads as a size to someone who
@@ -297,13 +376,24 @@ public struct SizeProfile: Codable, Hashable, Sendable {
         return parts.isEmpty ? "Not set" : parts.joined(separator: " · ")
     }
 
+    /// Whether this is a size the user wears.
+    ///
+    /// **Each ladder filters only once it has been filled in.** They are separate
+    /// questions — knowing somebody's shoe size says nothing about their waist — and the
+    /// profile-wide `isEmpty` guard could not express that: it meant a person who had
+    /// entered shoe sizes and nothing else had *every garment in the app* hidden, because
+    /// an empty `apparel` set matched no letter. Adding a third ladder made that failure
+    /// three times as likely to be reached, and the first person to enter a waist would
+    /// have lost their whole feed to it.
     public func matches(_ raw: String) -> Bool {
         guard !isEmpty else { return true }
         guard let size = SizeNormalizer.normalize(raw) else { return true }
 
         switch size.kind {
-        case .apparel: return apparel.contains(size.token)
+        case .apparel: return apparel.isEmpty || apparel.contains(size.token)
+        case .waist: return waist.isEmpty || waist.contains(size.token)
         case .shoe:
+            guard !shoe.isEmpty else { return true }
             guard !size.isConverted else { return matchesConvertedShoe(size.token) }
             return shoe.contains(size.token)
         // A one-size item fits everyone by definition, so there was never a real reason to

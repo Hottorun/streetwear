@@ -216,6 +216,10 @@ final class SyncEngine {
         } else if dropped {
             update.kind = .priceDrop
             update.previousPriceText = update.priceText
+            // The number as well as the string. `previousPriceText` can say "was €180";
+            // only this can say which of two markdowns is the better one, which is what
+            // the markdowns list is ordered by.
+            update.previousPriceAmount = update.priceAmount
             update.publishedAt = Date()
             update.isSeen = false
             newItemCount += 1

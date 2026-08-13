@@ -38,6 +38,14 @@ final class SizeProfileStore {
         }
     }
 
+    func toggleWaist(_ size: String) {
+        if profile.waist.contains(size) {
+            profile.waist.remove(size)
+        } else {
+            profile.waist.insert(size)
+        }
+    }
+
     func toggleShoe(_ size: String) {
         if profile.shoe.contains(size) {
             profile.shoe.remove(size)

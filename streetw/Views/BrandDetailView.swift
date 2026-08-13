@@ -35,7 +35,13 @@ struct BrandDetailView: View {
 
     @Bindable var brand: Brand
 
-    private var recent: [BrandUpdate] { brand.recentUpdates(limit: 20) }
+    /// Filtered like every other browsing list. "Kept from here" below it deliberately is
+    /// not: those are things you chose, and hiding one because it doesn't match a setting
+    /// you changed afterwards would be the app editing your own collection.
+    private var recent: [BrandUpdate] {
+        let profile = sizes.profile
+        return brand.recentUpdates(limit: 60).filter { $0.passes(profile) }.prefix(20).map { $0 }
+    }
 
     private var savedFromBrand: [BrandUpdate] {
         brand.updates
@@ -257,30 +263,70 @@ struct BrandDetailView: View {
         }
     }
 
-    /// A word, not a switch. Unfollowing is rare, deliberate, and reversible — and a toggle
-    /// at the top of the page made it the most prominent control on a screen that is about
+    /// Words, not switches. These are rare, deliberate and reversible — and a toggle at the
+    /// top of the page made them the most prominent controls on a screen that is about
     /// looking at clothes.
+    ///
+    /// **Two rows, because they were one and it was the wrong one.** "Stop following"
+    /// carried a `bell.slash` — the universal mute icon — so the app was already offering
+    /// this and then doing something much more drastic. A brand that posts forty times a
+    /// week is not one you want to stop watching; it is one you want to stop being woken
+    /// by, and until now the only way to get quiet was to delete it from your feed.
     private var followingRow: some View {
-        Button {
-            brand.followed.toggle()
-            try? context.save()
-            syncFollowState()
-        } label: {
+        VStack(spacing: 0) {
+            if brand.followed {
+                actionRow(
+                    title: brand.isMuted ? "Unmute" : "Mute alerts",
+                    detail: brand.isMuted ? "SILENT · STILL IN YOUR FEED" : nil,
+                    symbol: brand.isMuted ? "bell" : "bell.slash",
+                    isEmphasised: brand.isMuted
+                ) {
+                    brand.isMuted.toggle()
+                    try? context.save()
+                }
+            }
+
+            actionRow(
+                title: brand.followed ? "Stop following" : "Follow again",
+                detail: nil,
+                // Not a bell. Unfollowing removes the brand from the feed entirely, and
+                // borrowing the mute icon for it is what made the two indistinguishable.
+                symbol: brand.followed ? "minus.circle" : "plus.circle",
+                isEmphasised: !brand.followed
+            ) {
+                brand.followed.toggle()
+                try? context.save()
+                syncFollowState()
+            }
+        }
+        .overlay(alignment: .top) { Rule().padding(.horizontal, 20) }
+    }
+
+    private func actionRow(
+        title: String,
+        detail: String?,
+        symbol: String,
+        isEmphasised: Bool,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
             HStack {
-                Text(brand.followed ? "Stop following" : "Follow again")
-                    .font(.data(12, .medium))
-                    .foregroundStyle(brand.followed ? Color.muted : Color.ink)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(title)
+                        .font(.data(12, .medium))
+                        .foregroundStyle(isEmphasised ? Color.ink : Color.muted)
+                    if let detail { DataLabel(text: detail, size: 9) }
+                }
                 Spacer()
-                Image(systemName: brand.followed ? "bell.slash" : "bell")
+                Image(systemName: symbol)
                     .font(.system(size: 11))
-                    .foregroundStyle(brand.followed ? Color.muted : Color.ink)
+                    .foregroundStyle(isEmphasised ? Color.ink : Color.muted)
             }
             .padding(.horizontal, 20)
             .padding(.vertical, 16)
             .contentShape(.rect)
         }
         .buttonStyle(.borderless)
-        .overlay(alignment: .top) { Rule().padding(.horizontal, 20) }
     }
 
     private func section(

@@ -350,6 +350,11 @@ final class RemoteSync {
                 productType: item.productType
             )
             update.restockedSizes = item.restockedSizes
+            // What it was marked down from. Without this a server-backed markdown could
+            // say "cheaper" and nothing else — no "was", and no way to rank one cut
+            // against another, which is the whole ordering of the markdowns list.
+            update.previousPriceText = item.previousPriceText
+            update.previousPriceAmount = item.previousPriceAmount
             // What the garment is, beside what happened to it — so a link shared from
             // Safari can find the card the feed already drew for the same product.
             update.productExternalID = item.productExternalID

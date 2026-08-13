@@ -22,6 +22,7 @@ struct AddBrandView: View {
     @Environment(RemoteSync.self) private var remote: RemoteSync
     @Environment(ServerSettings.self) private var settings: ServerSettings
     @Environment(SizeProfileStore.self) private var sizes: SizeProfileStore
+    @Environment(BrandSuggestions.self) private var suggestions: BrandSuggestions
 
     @Query private var followed: [Brand]
 
@@ -73,6 +74,10 @@ struct AddBrandView: View {
             .textInputAutocapitalization(.never)
             .autocorrectionDisabled()
             .onSubmit(of: .search) { Task { await search() } }
+            // Keyed on the token, not fired bare: `/v1/brands/popular` is authenticated,
+            // a `.task` runs once per appearance, and a 401 swallowed by `try?` would
+            // leave this screen looking exactly as empty as it did before.
+            .task(id: settings.token) { await suggestions.loadIfNeeded() }
             // Debounced rather than per-keystroke: this hits the network, and a search
             // that fires on every letter of "aimeleondore" is twelve requests for one
             // answer.
@@ -107,11 +112,15 @@ struct AddBrandView: View {
                 } else if results.isEmpty && !trimmed.isEmpty {
                     notFound
                 } else if results.isEmpty {
-                    EditorialEmptyState(
-                        title: "Search for a brand",
-                        action: "TYPE A NAME, OR PASTE A LINK TO ITS SITE"
-                    )
-                    .frame(minHeight: 260)
+                    // Not a blank page with a blank field on it.
+                    //
+                    // This screen opened onto an empty state and an empty search box, and
+                    // then waited — which asks somebody to already know the name of a brand
+                    // they have come here to find. The catalog is global and
+                    // `/v1/brands/popular` is already loaded elsewhere in the app, so the
+                    // obvious thing to put here is what other people watch. Typing replaces
+                    // it the moment there is anything to replace it with.
+                    startingPoints
                 } else {
                     ForEach(results) { dto in
                         resultRow(dto)
@@ -121,6 +130,39 @@ struct AddBrandView: View {
             .padding(.bottom, 24)
         }
         .scrollIndicators(.hidden)
+    }
+
+    /// What to show before anything has been typed.
+    @ViewBuilder
+    private var startingPoints: some View {
+        let unfollowed = suggestions.brands.filter { item in
+            guard let id = item.brand.id else { return false }
+            return !followed.contains { $0.remoteID == id }
+        }
+
+        if unfollowed.isEmpty {
+            EditorialEmptyState(
+                title: "Search for a brand",
+                action: "TYPE A NAME, OR PASTE A LINK TO ITS SITE"
+            )
+            .frame(minHeight: 260)
+        } else {
+            VStack(alignment: .leading, spacing: 0) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Or start here")
+                        .font(.editorial(19))
+                        .foregroundStyle(Color.ink)
+                    DataLabel(text: "ALREADY IN THE CATALOG · TYPE TO SEARCH IT ALL")
+                }
+                .padding(.horizontal, 20)
+                .padding(.top, 12)
+                .padding(.bottom, 16)
+
+                ForEach(unfollowed) { item in
+                    resultRow(item.brand)
+                }
+            }
+        }
     }
 
     private func resultRow(_ dto: BrandDTO) -> some View {

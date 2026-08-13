@@ -40,13 +40,25 @@ enum FitRender {
     /// is precisely what the first saved fit came out as. Items with a cutout need nothing
     /// (a local file decodes inline); the rest have to be in the decoded cache *before*
     /// the render, at the same width `FitPieceImage` will ask for.
-    static func warm(_ fit: Fit) async {
+    /// - Returns: whether every piece is now drawable. A `false` means the render would
+    ///   contain holes and should not be written — see `write`.
+    @discardableResult
+    static func warm(_ fit: Fit) async -> Bool {
+        var isComplete = true
         for entry in fit.placed where entry.item.update?.cutoutFile == nil {
-            guard let url = entry.item.update?.primaryImageURL else { continue }
-            _ = try? await ImageLoader.shared.load(
+            guard let url = entry.item.update?.primaryImageURL else {
+                // A product whose source published no photograph at all. Nothing will ever
+                // decode for it, so this is not a retryable failure — it is a fit with a
+                // permanent gap, and the live canvas is the honest way to show it.
+                isComplete = false
+                continue
+            }
+            let decoded = try? await ImageLoader.shared.load(
                 ImageRendition.sized(url, width: FitPieceImage.drawnWidth)
             )
+            if decoded == nil { isComplete = false }
         }
+        return isComplete
     }
 
     /// Draws the canvas off-screen and writes it out. Returns the filename, or nil if

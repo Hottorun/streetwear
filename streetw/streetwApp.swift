@@ -39,7 +39,8 @@ struct streetwApp: App {
         Appearance.configure()
 
         let schema = Schema([
-            Brand.self, BrandUpdate.self, SavedItem.self, Board.self, StockWatch.self, Fit.self
+            Brand.self, BrandUpdate.self, SavedItem.self, Board.self, StockWatch.self, Fit.self,
+            BrandDismissal.self
         ])
         let container: ModelContainer
         do {
@@ -81,7 +82,13 @@ struct streetwApp: App {
         // The app delegate is built by UIKit and can't be handed these, so they are
         // published here — the same moment they become valid.
         MainActor.assumeIsolated {
-            BackgroundServices.install(remote: remote, sizes: sizes, settings: settings, route: route)
+            BackgroundServices.install(
+                remote: remote,
+                sizes: sizes,
+                settings: settings,
+                route: route,
+                container: container
+            )
         }
     }
 

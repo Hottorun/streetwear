@@ -22,9 +22,15 @@ struct BrandFeedView: View {
     /// Show only what hasn't been seen, matching the feed the user arrived from.
     var unseenOnly: Bool = true
 
+    /// The same filter the feed applies, from the same place. Arriving here from
+    /// "+36 more" and being shown the womenswear a Menswear setting had just hidden reads
+    /// as the setting being broken — the page you came from and the page you land on have
+    /// to agree about what you asked for.
     private var updates: [BrandUpdate] {
-        brand.updates
+        let profile = sizes.profile
+        return brand.updates
             .filter { unseenOnly ? !$0.isSeen : true }
+            .filter { $0.passes(profile) }
             .sorted { $0.publishedAt > $1.publishedAt }
     }
 
@@ -32,7 +38,14 @@ struct BrandFeedView: View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 40) {
                 ForEach(updates) { update in
-                    GalleryCard(update: update)
+                    // A release is not a garment and must not be drawn as one here either
+                    // — this page is reached from "+36 more", so it holds exactly the same
+                    // mix the feed does.
+                    if update.kind == .collection {
+                        CollectionCard(update: update)
+                    } else {
+                        GalleryCard(update: update)
+                    }
                 }
             }
             .padding(.vertical, 20)
@@ -137,6 +150,10 @@ struct ImageGallery: View {
     /// What sits behind each photograph. The collection passes `sweep`, which is fixed, so
     /// a saved item looks the same opened as it does on the wall — see `Color.sweep`.
     var backdrop: Color = .wash
+    /// Set in place of a photograph that does not exist — see `UpdateImage.mark`. A
+    /// gallery with an empty `urls` still renders one frame, and on the products whose
+    /// source published no image at all that frame was the whole tile.
+    var mark: String?
     /// Driven from outside when something else on the page decides which photograph is
     /// being talked about — selecting a colourway, above all. Nil keeps the gallery's own
     /// state, which is what every caller that only pages by hand wants.
@@ -189,7 +206,8 @@ struct ImageGallery: View {
                 aspect: 1,
                 contentMode: .fit,
                 drawnWidth: drawnWidth,
-                backdrop: backdrop
+                backdrop: backdrop,
+                mark: mark
             )
             .overlay { zoomTap }
         } else {

@@ -31,6 +31,14 @@ struct SavedView: View {
     @State private var isNamingBoard = false
     @State private var newBoardName = ""
     @State private var renaming: Board?
+    /// The board a confirmation is currently being asked about.
+    ///
+    /// Delete sits directly under Rename in the same menu, at a spacing of about forty
+    /// points, and the two are one mis-tap apart. Nothing is *lost* when it fires — the
+    /// relationship nullifies, so the saves and fits survive — but the board itself, its
+    /// name and everything filed into it go with no undo, which is enough to be worth one
+    /// question.
+    @State private var deleting: Board?
     @State private var opened: SavedItem?
     @State private var openedFit: Fit?
 
@@ -135,7 +143,7 @@ struct SavedView: View {
                                 isNamingBoard = true
                             }
                             Button("Delete board", systemImage: "trash", role: .destructive) {
-                                delete(board)
+                                deleting = board
                             }
                         }
                     } label: {
@@ -155,6 +163,21 @@ struct SavedView: View {
                 Button("Save") { commitBoardName() }
             } message: {
                 Text("Boards are private. Nothing is shared anywhere.")
+            }
+            .confirmationDialog(
+                "Delete \(deleting?.name ?? "this board")?",
+                isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } }),
+                titleVisibility: .visible
+            ) {
+                Button("Delete board", role: .destructive) {
+                    if let board = deleting { delete(board) }
+                    deleting = nil
+                }
+                Button("Cancel", role: .cancel) { deleting = nil }
+            } message: {
+                // Says what survives, because that is the part somebody hesitating is
+                // actually worried about.
+                Text("The saves and fits filed here are kept — only the board goes.")
             }
         }
         .tint(.ink)

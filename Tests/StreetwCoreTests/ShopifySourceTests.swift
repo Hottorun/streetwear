@@ -153,6 +153,32 @@ struct ShopifyHelperTests {
         #expect(ShopifySource.plainText(from: html) == "Cotton jersey Made in Japan & dyed")
     }
 
+    /// The shape Kith and most storefronts actually publish. Without a separator for
+    /// `</li>` the whole spec arrives as one sentence, which is what the product page
+    /// was printing.
+    @Test("A bullet list keeps its boundaries")
+    func separatesListItems() {
+        let html = "<ul><li>Textile upper</li><li>Padded collar</li><li>Rubber outsole</li></ul>"
+        #expect(
+            ShopifySource.plainText(from: html)
+                == "Textile upper · Padded collar · Rubber outsole"
+        )
+    }
+
+    /// A trailing or empty item must not leave a separator pointing at nothing.
+    @Test("Empty list items leave no dangling separator")
+    func collapsesEmptyListItems() {
+        let html = "<ul><li>Cotton</li><li></li><li>Made in Japan</li></ul><br/>"
+        #expect(ShopifySource.plainText(from: html) == "Cotton · Made in Japan")
+    }
+
+    /// `&amp;` decodes last, or `&amp;lt;` would come out as a real tag delimiter.
+    @Test("Entities decode without re-introducing markup")
+    func decodesEntitiesSafely() {
+        #expect(ShopifySource.plainText(from: "A &amp;lt;b&amp;gt; tag") == "A &lt;b&gt; tag")
+        #expect(ShopifySource.plainText(from: "Don&#39;t &quot;quote&quot; me") == "Don't \"quote\" me")
+    }
+
     @Test("Shopify timestamps parse with and without fractional seconds")
     func parsesDates() {
         #expect(DateParsing.iso8601("2026-08-09T11:00:01-04:00") != nil)

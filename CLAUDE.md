@@ -230,6 +230,24 @@ Changing these silently will break intended behavior:
 - **Instagram is never scraped.** `BrandSource.Kind.instagram` has `isAutomatic == false` and
   `SourceAdapters.adapter(for:)` returns `nil` for it — it is a stored deep link only. Aggregating
   arbitrary public profiles isn't permitted and unofficial endpoints break constantly.
+- **`BrandUpdate.passes` is the one browsing filter, and every list calls it.** It said so in its own
+  doc comment for a long time and had *no callers*: the feed applied `profile.allows(gender)` inline
+  and `BrandFeedView` — which is where "+36 more from Kith" goes — applied nothing at all. So a
+  Menswear setting held on the feed and evaporated the moment you opened the rest of the same drop,
+  which reads as the setting being broken rather than as one screen missing it. Gender hides; **size
+  does not** — a size you don't wear is said in vermilion, not by removing the product, because a
+  sold-out size today is the restock this app exists to catch. A new screen that lists a brand's
+  output calls `passes`; it does not write its own copy of the rule.
+- **A collection is not a product** (`CollectionCard`, `CollectionReleaseView`). It is the one update
+  that is *about* other updates, and it was drawn as a garment: no photograph (a season page rarely
+  has one), an empty size run, no price, and a tap onto a product page with nothing on it — so
+  "DENIM TEARS FW26", the most interesting thing a brand posts all season, rendered as the emptiest
+  card in the feed. Releases are hoisted above the products in a brand's group, because they are the
+  headline and the garments are the contents. `Brand.members(of:)` reconstructs which garments
+  belong to one — `/collections.json` names a release and does not list it — from a distinctive word
+  in the title (brands tag their seasons) falling back to a publication window. Deliberately a
+  heuristic: the alternative is a network call per card in a scrolling feed, and being wrong costs a
+  page with a few extra garments rather than a missed drop.
 - **A brand's first sync is a baseline, not news.** `SyncEngine.merge` checks
   `brand.lastSyncedAt == nil` and inserts that batch pre-marked `isSeen`, so adding a brand doesn't
   dump 250 back-catalogue products into the feed.
@@ -344,6 +362,20 @@ verdict*, because nothing would ever revisit it.
   Both codes used to be stripped and the remainder read as US. Only a size that *names* its scale
   is converted; a bare "44" stays `.other` and is never hidden, because it is as likely a waist or
   an EU jacket.
+- **Bottoms have their own ladder, and it is not apparel.** A 32 is not an M, no table converts
+  between them, and a person wears one of each — so `SizeKind.waist` is its own case. Without it
+  every pair of trousers normalised to `.other`: never hidden, and never *matched* either, so on
+  denim and workwear — half of what these brands make — the size feature was simply switched off.
+  Two bands, and the difference is the whole care taken: a string that **names** itself a waist
+  ("W34", "34W", "waist 34", "32x30") is read across the full human range, while a **bare** number
+  is only a waist up to 37, because from 38 up it collides with the EU shoe ladder and guessing
+  would *hide* a product. Note `w` is also the women's-shoe marker: "W 9" falls out of the waist
+  reader by range and lands on the shoe ladder, and there is a test pinning that.
+- **Each ladder filters only once it has been filled in.** They are separate questions — a shoe size
+  says nothing about a waist — and the profile-wide `isEmpty` guard could not express it: somebody
+  who had entered shoe sizes and nothing else had *every garment in the app* hidden, because an
+  empty `apparel` set matched no letter. Adding a third ladder made that three times as likely to
+  be reached. Adding a fourth means adding the `isEmpty ||` to its case too.
 - **A size spelled out in full is the same size.** YoungLA writes its entire catalogue as
   `XXSmall, XSmall, Small, Medium, Large, XLarge, XXLarge`, and the word table held only the three
   bare words — so every extremity fell through to `.other`: never hidden, per the rule below, but
@@ -391,6 +423,20 @@ never been asked, and the copy claimed the former.
 
 ### Images
 
+- **Some products have no photograph, permanently, and that is different from loading.** Palace's
+  sitemap publishes entries with no `<image:loc>`, so those rows hold an empty image array for as
+  long as they exist. They were drawing the `kind` symbol — a small grey sparkle on a blank tile —
+  which is indistinguishable from an image still on its way, so a brand page sat there apparently
+  loading forever. `UpdateImage.mark` sets the brand's wordmark in its place: a statement rather
+  than a wait. Anywhere a photograph *is* the feature rather than decoration, such a product is
+  excluded outright instead — the fit tray and `FitSuggestions` both filter on a non-empty image
+  array, because a collage is made of pictures and offering one that isn't there is offering
+  nothing.
+- **A fit render is never written with a hole in it.** `ImageRenderer` draws one frame
+  synchronously, so a piece still loading comes out as an empty rectangle — and that is written to
+  disk and drawn on the card *for as long as the fit exists*, since nothing recomputes a render that
+  already succeeded. `FitRender.warm` now reports whether every piece decoded and `save()` skips the
+  write when it didn't; keeping the previous render, or none, beats baking in the gap.
 - **`CachedImage`, not `AsyncImage`.** `AsyncImage` treats *cancellation* as failure, so scrolling a
   `LazyVGrid` — which tears down off-screen rows and cancels their loads — latches a broken tile
   permanently, with no way to ask for a retry. `CachedImage` leaves a cancelled load in `.loading`,
@@ -448,6 +494,25 @@ swallows the photograph's paging; attaching it nowhere loses the actions.
 - **The taste vector is computed on the phone.** Saves are the sharpest signal and the most
   personal; the server ships candidates *with their vectors* and the comparison happens locally, so
   nothing about a save leaves the device. Don't "improve" this by uploading saves.
+- **A headcount has to earn its weight** (`Popularity.confidence`). Normalising by the maximum makes
+  a number between 0 and 1 at any scale, which quietly turned a *two-person* lead into a full unit
+  of evidence — a bigger gap than the entire spread of affinity, since every streetwear catalogue
+  resembles every other and similarities bunch in a narrow band. So the ranking was "whatever two
+  people follow" wearing the clothes of a taste engine. Damped smoothly rather than by a threshold,
+  or the list would reorder the day one person joined.
+- **A dismissal is the only negative signal, and it is not just a hide.** `BrandDismissal` stores the
+  refused brand's vector, and `Recommender.repulsion` demotes candidates that *resemble* it — one
+  tap on a technical-outdoor label should quiet the other four. Measured against the **nearest**
+  refusal, never the average: rejecting a loud graphic label says nothing about the quiet Japanese
+  one further down. Weighted below taste, because people reject things for reasons that have nothing
+  to do with the clothes. Local, like the taste vector, and for a stronger reason — what somebody
+  turned down is more revealing than what they followed.
+- **A card says why, and the reason is the one the ranking used.** `sharedTraits` reads the terms
+  contributing most to the dot product, so the line cannot drift from the score. It printed the
+  follower count instead, which at this scale read "1 PERSON WATCHING" on every row — an argument
+  *against* following, under every brand, on the block whose job is to make following attractive.
+  `GarmentSlot.unknown` is excluded: it is the classifier declining to answer and is a large share
+  of most catalogues, so it matches constantly and means nothing ("LIKE YOUR UNKNOWN").
 
 ### The share extension
 
@@ -714,6 +779,13 @@ builds the executable. Omitting them yields a confusing "overlapping sources" er
 - **Push delivery is behind `PushSending`.** `Notifier` never imports APNs, so the whole
   fan-out — follows, size targeting, batching, dead-token pruning — is tested with no
   certificate and no network. Only `APNSPushSender` talks to Apple.
+- **An event keeps what was true when it fired, including the price.** `events.previous_price_text`
+  / `previous_price_amount` are on the *event*, not the product, for the same reason `sizes` is:
+  the product row holds what is currently true and the next poll overwrites it. Without them a
+  markdown could say "this got cheaper" and not what it dropped from or by how much, so the
+  markdowns list had nothing to rank by. **One column per `update()`** in the migration — Fluent
+  renders several `.field`s as a single `ALTER TABLE … ADD COLUMN a, ADD COLUMN b`, which Postgres
+  accepts and SQLite rejects, so writing it the other way round passes everywhere except production.
 - **Retention prunes events before products, never the reverse.** `events.product_id` is
   `ON DELETE CASCADE`, so pruning a product takes feed history with it; and deleting a
   product the source still lists makes the next poll announce it as a new drop. Only

@@ -330,6 +330,12 @@ public struct FeedItem: Codable, Sendable, Hashable, Identifiable {
     public var linkURL: String?
     public var imageURLs: [String]
     public var priceText: String?
+    /// What it cost before, on a `.priceDrop`. Both forms, for the same reason the model
+    /// keeps both: the string is what a card prints, and only the number can say which of
+    /// two markdowns is the better one. Optional throughout — a client older than this
+    /// decodes without them, and a server older than this sends none.
+    public var previousPriceText: String?
+    public var previousPriceAmount: Double?
     public var isAvailable: Bool?
     /// Sizes that came back in a restock, already narrowed to ones the user wears.
     public var restockedSizes: [String]
@@ -410,6 +416,8 @@ public struct FeedItem: Codable, Sendable, Hashable, Identifiable {
         linkURL: String? = nil,
         imageURLs: [String] = [],
         priceText: String? = nil,
+        previousPriceText: String? = nil,
+        previousPriceAmount: Double? = nil,
         isAvailable: Bool? = nil,
         restockedSizes: [String] = [],
         availableInMySize: Bool = false,
@@ -430,6 +438,8 @@ public struct FeedItem: Codable, Sendable, Hashable, Identifiable {
         self.linkURL = linkURL
         self.imageURLs = imageURLs
         self.priceText = priceText
+        self.previousPriceText = previousPriceText
+        self.previousPriceAmount = previousPriceAmount
         self.isAvailable = isAvailable
         self.restockedSizes = restockedSizes
         self.availableInMySize = availableInMySize

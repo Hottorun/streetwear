@@ -53,6 +53,40 @@ struct SizeNormalizerTests {
     }
 
     @Test(
+        "Waists in inches read as waists",
+        arguments: [
+            ("32", "32"), ("W32", "32"), ("w 34", "34"), ("34W", "34"),
+            ("Waist 36", "36"), ("32x30", "32"), ("32 X 30", "32"), ("34/32", "34"),
+            ("W44", "44"), ("waist 46", "46")
+        ]
+    )
+    func waists(raw: String, token: String) {
+        let size = SizeNormalizer.normalize(raw)
+        #expect(size?.kind == .waist, "\(raw) should read as a waist")
+        #expect(size?.token == token)
+    }
+
+    /// A bare number from 38 up is as likely a European shoe as a pair of trousers, and
+    /// reading it wrong would hide a product. Only a string that names itself a waist is
+    /// trusted that far up; the rest stays exactly where it already was.
+    @Test(
+        "An ambiguous bare number is still nobody's size",
+        arguments: ["38", "40", "42", "44", "48"]
+    )
+    func ambiguousNumbersStayOther(raw: String) {
+        #expect(SizeNormalizer.normalize(raw)?.kind == .other)
+    }
+
+    /// The women's-shoe marker is the same letter as the waist marker. "W 9" has to come
+    /// out of the waist reader untouched and land on the shoe ladder.
+    @Test("A women's shoe marker is not a waist")
+    func womensMarkerIsNotAWaist() {
+        #expect(SizeNormalizer.normalize("W 9")?.kind == .shoe)
+        #expect(SizeNormalizer.normalize("women's 9")?.kind == .shoe)
+        #expect(SizeNormalizer.normalize("W 9")?.token == "9")
+    }
+
+    @Test(
         "US shoe sizes normalise regardless of prefix or trailing zero",
         arguments: [
             ("9", "9"), ("9.0", "9"), ("9.5", "9.5"),
@@ -74,13 +108,17 @@ struct SizeNormalizerTests {
 
     /// The important one. Classing an *unlabelled* number as a US shoe size would let a
     /// US-9 profile hide every EU-sized or waist-sized product — the one failure mode a
-    /// drop tracker must never have. A bare "44" is just as likely a waist, an EU jacket
-    /// or an EU shoe, so it stays permissive.
+    /// drop tracker must never have.
+    ///
+    /// A bare number in the waist band now reads as a waist rather than as nothing, but
+    /// the invariant asserted here is unchanged and is the one that matters: an unlabelled
+    /// number is **never** a shoe. Above the band it is still `.other`, because there it
+    /// is as likely an EU shoe as a pair of trousers.
     @Test("Unlabelled numeric sizing is not mistaken for a shoe size", arguments: [
         "44", "32", "28", "2", "50"
     ])
     func outOfRangeNumbersAreNotShoes(raw: String) {
-        #expect(SizeNormalizer.normalize(raw)?.kind == .other)
+        #expect(SizeNormalizer.normalize(raw)?.kind != .shoe)
     }
 
     /// A size that *names* its scale is a different matter: there is nothing to guess, so
@@ -164,6 +202,44 @@ struct SizeProfileTests {
         #expect(profile.matches("44"))
         #expect(profile.matches("Youth L"))
         #expect(profile.matches("32"))
+    }
+
+    /// Bottoms are sized by the inch and used to normalise to `.other` — never hidden,
+    /// never matched — so on denim and workwear the whole feature was inert.
+    @Test("Waists match once a waist is set")
+    func matchesWaist() {
+        var p = profile
+        p.waist = ["32", "34"]
+        #expect(p.matches("32"))
+        #expect(p.matches("W34"))
+        #expect(p.matches("32x30"))
+        #expect(!p.matches("36"))
+        #expect(!p.matches("W 28"))
+    }
+
+    /// The failure this would otherwise have introduced: somebody enters a waist, and
+    /// every shirt in the app disappears because they never filled in a letter.
+    @Test("A ladder that has not been filled in does not filter")
+    func laddersAreIndependent() {
+        var waistOnly = SizeProfile()
+        waistOnly.waist = ["32"]
+        #expect(!waistOnly.isEmpty)
+        #expect(waistOnly.matches("M"), "clothing must not vanish because only a waist was set")
+        #expect(waistOnly.matches("9.5"), "shoes must not vanish either")
+        #expect(!waistOnly.matches("36"))
+
+        var shoesOnly = SizeProfile()
+        shoesOnly.shoe = ["9"]
+        #expect(shoesOnly.matches("M"))
+        #expect(shoesOnly.matches("32"))
+        #expect(!shoesOnly.matches("11"))
+    }
+
+    @Test("The summary names the waist ladder")
+    func summaryIncludesWaist() {
+        var p = SizeProfile()
+        p.waist = ["32", "34"]
+        #expect(p.summary == "W 32, 34")
     }
 
     /// A converted size is a good estimate, not a fact — Nike and adidas disagree by half

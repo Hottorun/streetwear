@@ -66,6 +66,7 @@ struct ProductDetailView: View {
                     // one is most of what this page is for, and that needs the pixels the
                     // storefront is already publishing.
                     isZoomable: true,
+                    mark: update.brand?.name,
                     selection: $imageIndex
                 )
                 .overlay(alignment: .topTrailing) {
@@ -88,12 +89,29 @@ struct ProductDetailView: View {
                 .padding(.horizontal, 20)
                 .padding(.top, 22)
                 .padding(.bottom, 28)
+
+                SimilarItems(to: update)
             }
         }
         .scrollIndicators(.hidden)
         .background(Color.paper)
         .navigationTitle(update.brand?.name ?? "")
         .toolbarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                // Filing, from the page the thing is on.
+                //
+                // A save could only be put on a board from the confirmation toast — which
+                // dismisses itself after a few seconds — or by going to the Saved tab and
+                // finding it again. So the answer to "actually, this belongs with the
+                // others" was to leave the product and go looking for it.
+                Menu {
+                    UpdateMenu(update: update)
+                } label: {
+                    Label("More", systemImage: "ellipsis")
+                }
+            }
+        }
         .safeAreaInset(edge: .bottom) { buyBar }
         .onAppear {
             // Opening the page is acknowledging the item, the same as tapping through to

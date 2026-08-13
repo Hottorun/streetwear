@@ -162,15 +162,29 @@ func routes(_ app: Application) throws {
         // Popularity is normalised so the blend is between two 0…1 quantities rather than
         // between a similarity and a raw headcount, which would let one brand with forty
         // followers swamp the signal entirely.
-        let mostFollowed = Double(candidates.values.max() ?? 1)
+        //
+        // And it is *damped by how much headcount there is to normalise*. Dividing by the
+        // maximum makes a number between 0 and 1 whatever the scale, which quietly turns a
+        // two-person lead into a full unit of evidence — a bigger gap than the entire
+        // spread of affinity across candidates, since every streetwear catalogue resembles
+        // every other and similarities bunch. Early on, the list was therefore ordered by
+        // whichever brand two people happened to follow, while looking like taste. See
+        // `Popularity.confidence`.
+        let mostFollowed = candidates.values.max() ?? 0
+        let confidence = Popularity.confidence(mostFollowed: mostFollowed)
 
         func score(_ id: UUID, _ followers: Int) -> Double {
-            let popularity = Double(followers) / max(1, mostFollowed)
-            guard let affinity = affinities[id] else { return popularity }
+            let popularity = Popularity.normalised(followers: followers, mostFollowed: mostFollowed)
             // Taste leads, popularity floors it. Similarity here measures catalog
             // composition, which is a decent proxy for aesthetic and not the same thing —
-            // so a brand nobody follows never outranks a well-liked one on vibes alone.
-            return 0.65 * affinity + 0.35 * popularity
+            // so a brand nobody follows never outranks a well-liked one on vibes alone,
+            // once "well-liked" means anything at all.
+            return Recommender().score(
+                candidate: nil,
+                affinity: affinities[id],
+                popularity: popularity,
+                confidence: confidence
+            )
         }
 
         let ranked = candidates

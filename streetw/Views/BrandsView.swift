@@ -10,6 +10,7 @@ struct BrandsView: View {
     @Environment(SyncEngine.self) private var engine: SyncEngine
     @Environment(RemoteSync.self) private var remote: RemoteSync
     @Environment(ServerSettings.self) private var settings: ServerSettings
+    @Environment(BrandSuggestions.self) private var suggestions: BrandSuggestions
 
     @Query(sort: \Brand.name) private var brands: [Brand]
     @State private var isAdding = false
@@ -39,9 +40,24 @@ struct BrandsView: View {
                             .alignmentGuide(.listRowSeparatorLeading) { _ in 0 }
                         }
                         .onDelete(perform: delete)
+
+                        // The tab you open to manage brands was also the only one with no
+                        // way to find any: five rows and then a page of nothing, while the
+                        // recommendations sat on two other screens. Below the list rather
+                        // than above it — this page is your brands first.
+                        Section {
+                            BrandRecommendations(
+                                title: "More worth watching",
+                                blurb: "PICKED FROM WHAT YOU KEEP"
+                            )
+                            .listRowInsets(EdgeInsets())
+                            .listRowBackground(Color.paper)
+                            .listRowSeparator(.hidden)
+                        }
                     }
                     .listStyle(.plain)
                     .scrollContentBackground(.hidden)
+                    .task(id: settings.token) { await suggestions.loadIfNeeded() }
                 }
             }
             .background(Color.paper)
@@ -98,10 +114,16 @@ struct BrandRow: View {
 
             Spacer(minLength: 8)
 
+            // Labelled, because a bare "390" beside a wordmark says nothing about what
+            // is being counted — and the brand page one tap away calls the same figure
+            // UNREAD, so borrowing the word costs nothing and makes the two agree.
             if brand.unseenCount > 0 {
-                Text("\(brand.unseenCount)")
-                    .font(.data(12, .medium))
-                    .foregroundStyle(Color.ink)
+                HStack(spacing: 5) {
+                    Text("\(brand.unseenCount)")
+                        .font(.data(12, .medium))
+                        .foregroundStyle(Color.ink)
+                    DataLabel(text: "UNREAD", size: 9)
+                }
             }
         }
     }
@@ -112,7 +134,19 @@ struct BrandRow: View {
 ///
 /// Falls back to initials rather than to a broken-image box, because plenty of sites
 /// serve a generic platform favicon or nothing at all, and a wrong logo is worse than
-/// no logo. `.fit` with padding so a wide wordmark isn't cropped to its middle.
+/// no logo.
+///
+/// **One weight, whatever the site published.** A list of eight brands was showing three
+/// different kinds of mark: a square glyph (Palace's P, Supreme's box) filled its tile;
+/// a wide wordmark (KITH, `phase.`) fitted to *width* and floated as a thin strip in a
+/// mostly empty square; and a brand publishing nothing fell back to initials at 27% of the
+/// tile in `muted` grey, which beside a full-contrast logo reads as **disabled** — as
+/// though that row had failed to load. Two changes, and they are the whole of it:
+///
+/// - The fallback is set at ink weight and large enough to be a mark rather than a label.
+///   A brand with no icon should look typeset, not broken.
+/// - The padding is thin, so a wide wordmark uses the measure it needs instead of being
+///   inset to a third of the tile it was given.
 struct BrandMonogram: View {
     let name: String
     var logoURL: URL?
@@ -120,9 +154,13 @@ struct BrandMonogram: View {
     /// mark is the most useful thing on screen.
     var size: CGFloat = 44
 
+    /// Two letters where the name gives two words, one where it doesn't. Never three: at
+    /// this size a third letter is the difference between a mark and a word set too small
+    /// to read.
     private var initials: String {
         let words = name.split(separator: " ").prefix(2)
-        return words.compactMap { $0.first.map(String.init) }.joined().uppercased()
+        let letters = words.compactMap { $0.first.map(String.init) }.joined().uppercased()
+        return letters.isEmpty ? "·" : letters
     }
 
     var body: some View {
@@ -135,7 +173,7 @@ struct BrandMonogram: View {
                     // re-request a smaller width and undo that — hence a fixed request
                     // size rather than the points this happens to be drawn at.
                     CachedImage(url: logoURL, width: 180) { image in
-                        image.resizable().scaledToFit().padding(size * 0.12)
+                        image.resizable().scaledToFit().padding(size * 0.06)
                     } placeholder: {
                         Color.clear
                     } failure: {
@@ -150,9 +188,11 @@ struct BrandMonogram: View {
 
     private var monogram: some View {
         Text(initials)
-            .font(.wordmark(size * 0.27, .medium))
-            .tracking(0.8)
-            .foregroundStyle(Color.muted)
+            .font(.wordmark(size * 0.38, .semibold))
+            .tracking(size * 0.02)
+            .foregroundStyle(Color.ink)
+            .minimumScaleFactor(0.7)
+            .padding(.horizontal, size * 0.08)
     }
 }
 
