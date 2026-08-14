@@ -116,6 +116,9 @@ struct FeedView: View {
                 .background(Color.paper)
             .navigationTitle("Feed")
             .toolbarTitleDisplayMode(.inlineLarge)
+            // Registered once, here, for every card in this stack — including the ones on
+            // `BrandFeedView`, which is pushed onto it. See `productLink`.
+            .appDestinations()
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Watching", systemImage: watchCount > 0 ? "bell.fill" : "bell") {
@@ -342,9 +345,7 @@ private struct BrandSpread: View {
             }
 
             if overflow > 0 {
-                NavigationLink {
-                    BrandFeedView(brand: group.brand)
-                } label: {
+                NavigationLink(value: BrandFeedRoute(brand: group.brand)) {
                     // Underlined so it reads as the link it is; a bare mono line looked
                     // like another caption.
                     DataLabel(text: "+\(overflow) MORE FROM \(group.brand.name.uppercased())", color: .ink)
@@ -361,9 +362,7 @@ private struct BrandSpread: View {
 
     private var header: some View {
         HStack(alignment: .firstTextBaseline, spacing: 10) {
-            NavigationLink {
-                BrandDetailView(brand: group.brand)
-            } label: {
+            NavigationLink(value: BrandRoute(brand: group.brand)) {
                 VStack(alignment: .leading, spacing: 5) {
                     Wordmark(name: group.brand.name, size: 15)
                     DataLabel(

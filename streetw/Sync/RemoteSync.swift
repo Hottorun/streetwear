@@ -120,7 +120,7 @@ final class RemoteSync {
         try await ensureRegistered(sizes: sizes)
         guard let api, let id = dto.id else { throw APIError.notConfigured }
         try await api.follow(brandID: id)
-        mergeBrands([dto])
+        mergeBrands([dto], isCompleteList: false)
         try? context.save()
     }
 
@@ -212,7 +212,7 @@ final class RemoteSync {
             guard let api else { return }
 
             let brands = try await api.follows()
-            mergeBrands(brands)
+            mergeBrands(brands, isCompleteList: true)
 
             // First sync pulls a week; afterwards only what's new since the cursor.
             let response = try await api.feed(since: cursor)
@@ -237,15 +237,48 @@ final class RemoteSync {
 
     // MARK: - Merging
 
-    private func mergeBrands(_ remote: [BrandDTO]) {
+    /// Brings the local brand rows in line with the server's.
+    ///
+    /// - Parameter isCompleteList: whether `remote` is the **whole** follow list. Only
+    ///   then does an absent brand mean "unfollowed elsewhere" and get deleted.
+    ///
+    ///   This parameter is the whole point. The deletion pass below is correct for
+    ///   `GET /v1/follows` and catastrophic for anything else — and `followExisting` was
+    ///   calling this with a *single* brand, so following one thing from Discover made
+    ///   every other server-backed brand "absent" and deleted it. `Brand.updates` cascades,
+    ///   so the feed a view was drawing became invalidated models underneath it: the whole
+    ///   follow list gone, and a crash on the way out. There is no default; a caller has
+    ///   to say which kind of list it holds.
+    private func mergeBrands(_ remote: [BrandDTO], isCompleteList: Bool) {
         let existing = (try? context.fetch(FetchDescriptor<Brand>())) ?? []
         var byRemoteID = Dictionary(
             existing.compactMap { brand in brand.remoteID.map { ($0, brand) } },
             uniquingKeysWith: { first, _ in first }
         )
+        // A brand added before the server knew about it — in standalone mode, or from the
+        // starter pack — carries no `remoteID`, so matching on that alone never finds it
+        // and inserts a second row for the same shop. That is what put Kith in the
+        // recommendations *and* in the follow list at once, each with its own copy of the
+        // catalogue. Adopting the id here is also what makes it stop happening: the row
+        // heals on the first merge that mentions it.
+        var byDomain = Dictionary(
+            existing.compactMap { brand -> (String, Brand)? in
+                guard brand.remoteID == nil, let host = brand.websiteURL?.host() else { return nil }
+                return (BrandDiscovery.registrableDomain(of: host), brand)
+            },
+            uniquingKeysWith: { first, _ in first }
+        )
 
         for dto in remote {
             guard let id = dto.id else { continue }
+            // Adopt an unclaimed local row for the same shop before considering a new one.
+            if byRemoteID[id] == nil,
+               let host = dto.website.flatMap({ URL(string: $0)?.host() }),
+               let orphan = byDomain.removeValue(forKey: BrandDiscovery.registrableDomain(of: host)) {
+                orphan.remoteID = id
+                byRemoteID[id] = orphan
+            }
+
             if let brand = byRemoteID[id] {
                 brand.name = dto.name
                 brand.currencyCode = dto.currency
@@ -273,7 +306,10 @@ final class RemoteSync {
         // persist.
 
         // A brand unfollowed on another device should disappear here too. Local-only
-        // brands (no remoteID) are left alone so standalone mode still works.
+        // brands (no remoteID) are left alone so standalone mode still works — and this
+        // runs *only* for the complete follow list, or absence would mean nothing more
+        // than "wasn't in the batch I was handed".
+        guard isCompleteList else { return }
         let remoteIDs = Set(remote.compactMap(\.id))
         for brand in existing {
             if let id = brand.remoteID, !remoteIDs.contains(id) {

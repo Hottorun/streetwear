@@ -48,12 +48,8 @@ struct CollectionReleaseView: View {
                 } else {
                     LazyVGrid(columns: columns, alignment: .leading, spacing: 22) {
                         ForEach(members) { member in
-                            NavigationLink {
-                                ProductDetailView(update: member)
-                            } label: {
-                                MemberTile(update: member)
-                            }
-                            .buttonStyle(.plain)
+                            MemberTile(update: member)
+                                .productLink(member)
                         }
                     }
                     .padding(.horizontal, 20)
@@ -159,9 +155,7 @@ struct CollectionCard: View {
     }
 
     var body: some View {
-        NavigationLink {
-            CollectionReleaseView(update: update)
-        } label: {
+        NavigationLink(value: ReleaseRoute(update: update)) {
             VStack(alignment: .leading, spacing: 0) {
                 // The brand's own artwork when there is any — a lookbook cover is worth the
                 // whole width — and nothing at all when there isn't. A collection with no

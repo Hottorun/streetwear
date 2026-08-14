@@ -1345,18 +1345,24 @@ struct DiscoveryTests {
         }
     }
 
-    /// A recommendation without clothes in it asks someone to judge a wordmark.
-    @Test("A recommendation carries a few recent images")
+    /// A recommendation without clothes in it asks someone to judge a wordmark — and a
+    /// recommendation whose only photograph is a delivery banner is worse than that.
+    @Test("A recommendation carries recent images, and only of clothes")
     func popularCarriesPreviews() async throws {
         try await withServer { app in
             let brandID = try await brand(app, name: "Kith", slug: "kith.com")
-            for index in 0..<4 {
+
+            // A policy row among the garments, exactly as storefronts publish them: it has
+            // a title, a price and an image, and `/products.json` cannot tell it apart.
+            // This one led Represent's card in the real catalogue.
+            let titles = ["Worry-Free Purchase", "Gift Card"] + (0..<20).map { "Cargo Pant \($0)" }
+            for (index, title) in titles.enumerated() {
                 let product = ProductModel(
                     brandID: brandID,
                     sourceID: nil,
                     item: FetchedItem(
                         externalID: "shopify:\(index)",
-                        title: "Item \(index)",
+                        title: title,
                         imageURLStrings: ["https://cdn.shopify.com/\(index).jpg"],
                         publishedAt: Date(),
                         kind: .product
@@ -1372,7 +1378,14 @@ struct DiscoveryTests {
             let auth = try await register(app).headers
             try await app.testing().test(.GET, "v1/brands/popular", headers: auth) { res async throws in
                 let popular = try res.content.decode([PopularBrand].self)
-                #expect(popular.first?.previewImageURLs.count == 3, "capped at three")
+                let previews = try #require(popular.first?.previewImageURLs)
+
+                // Twelve, not three: the brand preview is a grid, and three tiles is not a
+                // look at a brand.
+                #expect(previews.count == 12)
+                // The first two rows are the policy ones. Neither may appear.
+                #expect(!previews.contains("https://cdn.shopify.com/0.jpg"), "a policy row is not a garment")
+                #expect(!previews.contains("https://cdn.shopify.com/1.jpg"), "a gift card is not a garment")
             }
         }
     }

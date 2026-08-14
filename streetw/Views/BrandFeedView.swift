@@ -81,14 +81,22 @@ struct GalleryCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             ZStack(alignment: .topTrailing) {
-                ImageGallery(urls: update.imageURLs, kind: update.kind, drawnWidth: 400)
+                ImageGallery(
+                    urls: update.imageURLs,
+                    kind: update.kind,
+                    drawnWidth: 400,
+                    mark: update.brand?.name
+                )
                 SaveAction(update: update)
                     .padding(12)
             }
+            // Same as the feed's lead: the photograph opens the product. This page is
+            // reached from "+36 more" and behaves like the feed in every other respect,
+            // so the biggest target on it being inert was doubly surprising here.
+            .contentShape(.rect)
+            .productLink(update)
 
-            NavigationLink {
-                ProductDetailView(update: update)
-            } label: {
+            Group {
                 VStack(alignment: .leading, spacing: 7) {
                     if let state = FeedState(update: update, profile: sizes.profile) {
                         DataLabel(text: state.text, size: 11, color: state.color)
@@ -117,7 +125,7 @@ struct GalleryCard: View {
                 .padding(.horizontal, 20)
                 .contentShape(.rect)
             }
-            .buttonStyle(.plain)
+            .productLink(update)
             .quickSaveHandle()
         }
         .contextMenu { UpdateMenu(update: update) }

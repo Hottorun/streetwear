@@ -86,12 +86,8 @@ struct SimilarItems: View {
                 ScrollView(.horizontal) {
                     LazyHStack(alignment: .top, spacing: 14) {
                         ForEach(found) { item in
-                            NavigationLink {
-                                ProductDetailView(update: item)
-                            } label: {
-                                SimilarTile(update: item)
-                            }
-                            .buttonStyle(.plain)
+                            SimilarTile(update: item)
+                                .productLink(item)
                         }
                     }
                     .padding(.horizontal, 20)

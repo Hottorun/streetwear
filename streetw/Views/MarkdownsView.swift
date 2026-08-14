@@ -64,12 +64,8 @@ struct MarkdownsView: View {
                     ScrollView {
                         LazyVGrid(columns: columns, alignment: .leading, spacing: 22) {
                             ForEach(ordered) { update in
-                                NavigationLink {
-                                    ProductDetailView(update: update)
-                                } label: {
-                                    MarkdownTile(update: update)
-                                }
-                                .buttonStyle(.plain)
+                                MarkdownTile(update: update)
+                                    .productLink(update)
                             }
                         }
                         .padding(.horizontal, 20)
@@ -81,6 +77,7 @@ struct MarkdownsView: View {
             .background(Color.paper)
             .navigationTitle("Marked down")
             .toolbarTitleDisplayMode(.inlineLarge)
+            .appDestinations()
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Done") { dismiss() }

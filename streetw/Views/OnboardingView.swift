@@ -70,9 +70,14 @@ struct OnboardingView: View {
         case howItWorks
         case alerts
 
-        /// Everything except the brand list is short enough to sit centred; the brand
-        /// list is a scroller.
-        var isList: Bool { self == .brands }
+        /// Whether the step is tall enough to need scrolling rather than sitting as one
+        /// block above centre.
+        ///
+        /// Sizes joined the brand list here when the waist ladder was added: three chip
+        /// rows and a header no longer clear the action bar on a small phone at large
+        /// type, and a step whose last row is clipped is one somebody cannot complete —
+        /// on the screen that decides whether the first sync is any use to them.
+        var scrolls: Bool { self == .brands || self == .sizes }
     }
 
     @State private var step: Step = .sizes
@@ -87,11 +92,11 @@ struct OnboardingView: View {
     var body: some View {
         NavigationStack {
             Group {
-                if step.isList {
+                if step.scrolls {
                     ScrollView {
                         VStack(alignment: .leading, spacing: 26) {
                             header
-                            brandStep
+                            currentStep
                         }
                         .padding(.top, 8)
                         .padding(.bottom, 32)
@@ -227,9 +232,15 @@ struct OnboardingView: View {
         .padding(.horizontal, 20)
     }
 
+    /// The three ladders, in the same order and the same shapes Settings uses.
+    ///
+    /// Waist is asked here rather than left to be discovered later, because this step
+    /// exists for one reason — the very first sync is what fills the feed, and a profile
+    /// set afterwards can't retroactively rule anything in it. Bottoms are a large share of
+    /// what these brands make, so a first run that only asks for a letter and a shoe size
+    /// leaves the feature switched off across all of it.
     private var sizeStep: some View {
-        @Bindable var store = sizes
-        return VStack(alignment: .leading, spacing: 22) {
+        VStack(alignment: .leading, spacing: 22) {
             SizeChipRow(
                 title: "Clothing",
                 options: SizeProfile.apparelOptions.map { (display: $0, stored: $0) },
@@ -237,23 +248,35 @@ struct OnboardingView: View {
                 toggle: sizes.toggleApparel
             )
             SizeChipRow(
+                title: "Waist",
+                options: SizeProfile.waistOptions.map { (display: $0, stored: $0) },
+                isSelected: { sizes.profile.waist.contains($0) },
+                toggle: sizes.toggleWaist
+            )
+            SizeChipRow(
                 title: "Shoes",
                 options: SizeProfile.shoeOptions(in: sizes.profile.shoeScale),
                 isSelected: { sizes.profile.shoe.contains($0) },
                 toggle: sizes.toggleShoe,
                 accessory: {
+                    // `WordPicker`, not a system `.segmented` — this was the last place in
+                    // the app still drawing one, and a stock control on the first screen a
+                    // person ever sees sets the wrong expectation for every screen after.
                     AnyView(
-                        Picker("Scale", selection: Binding(
-                            get: { sizes.profile.shoeScale },
-                            set: { sizes.setShoeScale($0) }
-                        )) {
-                            ForEach(SizeScale.allCases) { Text($0.label).tag($0) }
-                        }
-                        .pickerStyle(.segmented)
-                        .frame(width: 132)
+                        WordPicker(
+                            options: SizeScale.allCases.map { ($0.label, $0) },
+                            selection: sizes.profile.shoeScale,
+                            select: sizes.setShoeScale
+                        )
                     )
                 }
             )
+
+            // Nothing here is required, and the step is skippable — but somebody who fills
+            // in one ladder and not the others should know that the empty ones are not a
+            // filter they have accidentally left on.
+            DataLabel(text: "A LADDER YOU LEAVE EMPTY SIMPLY DOESN'T FILTER")
+                .padding(.top, 2)
         }
         .padding(.horizontal, 20)
     }

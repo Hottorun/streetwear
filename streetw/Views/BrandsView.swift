@@ -26,9 +26,7 @@ struct BrandsView: View {
                 } else {
                     List {
                         ForEach(brands) { brand in
-                            NavigationLink {
-                                BrandDetailView(brand: brand)
-                            } label: {
+                            NavigationLink(value: BrandRoute(brand: brand)) {
                                 BrandRow(brand: brand)
                             }
                             .listRowBackground(Color.paper)
@@ -63,6 +61,7 @@ struct BrandsView: View {
             .background(Color.paper)
             .navigationTitle("Brands")
             .toolbarTitleDisplayMode(.inlineLarge)
+            .appDestinations()
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Add brand", systemImage: "plus") { isAdding = true }

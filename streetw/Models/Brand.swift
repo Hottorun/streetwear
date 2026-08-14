@@ -110,17 +110,34 @@ final class Brand {
     /// Deliberately a heuristic. The alternative is fetching `/collections/<handle>/products.json`
     /// per collection, which is a network call per card in a scrolling feed, and being
     /// wrong here costs a page with a few extra garments on it — not a missed drop.
-    func members(of collection: BrandUpdate, window: TimeInterval = 48 * 3_600) -> [BrandUpdate] {
+    func members(
+        of collection: BrandUpdate,
+        window: TimeInterval = 36 * 3_600,
+        cap: Int = 60
+    ) -> [BrandUpdate] {
+        let candidates = updates.filter { $0.kind != .collection && $0.id != collection.id }
         let words = BrandUpdate.distinctiveWords(in: collection.title)
+
+        // A word match is evidence; a timestamp is only an absence of evidence to the
+        // contrary. So the two are tried in order rather than OR'd together — OR'ing them
+        // was wrong in the one case that matters most: on a brand's **first sync** the
+        // whole back catalogue is stored at once and shares a publication time, so a
+        // release announced in the same batch swallowed all of it and the page announced
+        // "292 PIECES IN THIS RELEASE".
+        if !words.isEmpty {
+            let named = candidates.filter { $0.mentionsAny(of: words) }
+            if !named.isEmpty { return named.sorted { $0.publishedAt > $1.publishedAt } }
+        }
+
+        // Nothing in the name to go on. Fall back to what landed alongside it, capped —
+        // a release is a release and not a catalogue, and a page of sixty is already
+        // generous enough to be wrong without being absurd.
         let start = collection.publishedAt.addingTimeInterval(-window)
         let end = collection.publishedAt.addingTimeInterval(window)
-
-        return updates
-            .filter { update in
-                guard update.kind != .collection, update.id != collection.id else { return false }
-                if !words.isEmpty, update.mentionsAny(of: words) { return true }
-                return (start...end).contains(update.publishedAt)
-            }
+        return candidates
+            .filter { (start...end).contains($0.publishedAt) }
             .sorted { $0.publishedAt > $1.publishedAt }
+            .prefix(cap)
+            .map { $0 }
     }
 }

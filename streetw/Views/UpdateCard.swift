@@ -12,20 +12,71 @@ import StreetwCore
 import SwiftData
 import SwiftUI
 
+// MARK: - Navigation
+
+// Every push in this app is **value-based**, and that is not a style preference.
+//
+// SwiftUI's two navigation models must not be mixed inside one stack. A destination
+// -carrying `NavigationLink { … }` pushes by itself; `navigationDestination(for:)` pushes
+// by appending to the stack's path. With both present the stack ends up tracking two
+// notions of "what is on top", and the symptom is exactly what it sounds like: tapping a
+// product on the "+36 more" page opened the product page *and pushed the +36 more page
+// again on top of it*, because the destination link that had put that page there was
+// re-activated by the value push.
+//
+// So: one route type per destination, registered once per stack via `appDestinations()`,
+// and no `NavigationLink { … }` anywhere in a stack that uses them. The other reason to
+// prefer values is that a destination link builds its destination eagerly for every row in
+// a lazy list — a feed of 400 cards was constructing 400 product pages to show none of
+// them.
+
+/// A product page.
+struct ProductRoute: Hashable {
+    let update: BrandUpdate
+}
+
+/// A brand's own page.
+struct BrandRoute: Hashable {
+    let brand: Brand
+}
+
+/// Everything one brand has posted — where "+36 more" goes.
+struct BrandFeedRoute: Hashable {
+    let brand: Brand
+    var unseenOnly: Bool = true
+}
+
+/// A collection announcement, and the garments that landed with it.
+struct ReleaseRoute: Hashable {
+    let update: BrandUpdate
+}
+
+extension View {
+    /// Registers every destination this app pushes. Call once on each `NavigationStack`
+    /// root — a route pushed onto a stack that hasn't registered it does nothing at all,
+    /// silently, which is the one failure mode of value-based navigation.
+    func appDestinations() -> some View {
+        navigationDestination(for: ProductRoute.self) { ProductDetailView(update: $0.update) }
+            .navigationDestination(for: BrandRoute.self) { BrandDetailView(brand: $0.brand) }
+            .navigationDestination(for: BrandFeedRoute.self) {
+                BrandFeedView(brand: $0.brand, unseenOnly: $0.unseenOnly)
+            }
+            .navigationDestination(for: ReleaseRoute.self) { CollectionReleaseView(update: $0.update) }
+    }
+
+    /// Makes this view push the product page, without taking the drag off it — the
+    /// photograph in a feed card still pages, because a tap is not a drag.
+    func productLink(_ update: BrandUpdate) -> some View {
+        NavigationLink(value: ProductRoute(update: update)) { self }
+            .buttonStyle(.plain)
+    }
+}
+
 // MARK: - Feed: the lead
 
 /// One brand's most recent item, printed large. The image is the argument; everything
 /// else is a caption under it.
 struct FeedLead: View {
-    /// Set by tapping the photograph, which pushes the same destination the caption does.
-    ///
-    /// A `NavigationLink` cannot simply be wrapped around the gallery: that would make the
-    /// whole photograph a button, and a button swallows the drag `TabView` needs to page.
-    /// So the tap is a gesture and the navigation is a hidden link driven by this flag —
-    /// paging keeps the drag, quick-save keeps the caption, and the biggest target on the
-    /// screen stops being inert.
-    @State private var isOpen = false
-
     @Environment(SizeProfileStore.self) private var sizes: SizeProfileStore
 
     let update: BrandUpdate
@@ -59,23 +110,25 @@ struct FeedLead: View {
                     SaveAction(update: update)
                         .padding(12)
                 }
-                // The photograph is the largest object on the screen and was the only one
-                // that did nothing. Paging is a *drag*, so a tap costs it nothing — the
-                // comment below is about the swipe, and a tap was simply never claimed.
+                // The photograph is the largest object on the screen and was the only
+                // one that did nothing. Paging is a *drag*, so a tap costs it nothing —
+                // the comment above is about the swipe, and a tap was never claimed.
+                //
+                // A **value** link, not `navigationDestination(isPresented:)`. That
+                // modifier may be declared only once per stack, and there is one card per
+                // brand in a `LazyVStack` — so every card registered its own and whichever
+                // registered last answered for all of them. Tapping the lead opened the
+                // card below it. The destination is registered once, on `FeedView`'s
+                // stack, and every card here just names a value.
                 .contentShape(.rect)
-                .onTapGesture { isOpen = true }
-                .navigationDestination(isPresented: $isOpen) {
-                    ProductDetailView(update: update)
-                }
+                .productLink(update)
             }
 
             // Tapping opens the app's own page rather than ejecting to Safari. The
             // caption is also where quick-save listens, so the two coexist: a tap opens,
             // a horizontal drag files or dismisses, and the photograph above keeps its
             // paging.
-            NavigationLink {
-                ProductDetailView(update: update)
-            } label: {
+            Group {
                 VStack(alignment: .leading, spacing: 7) {
                     if let state = FeedState(update: update, profile: sizes.profile) {
                         HStack(spacing: 6) {
@@ -120,7 +173,7 @@ struct FeedLead: View {
                 .padding(.horizontal, 20)
                 .contentShape(.rect)
             }
-            .buttonStyle(.plain)
+            .productLink(update)
             .quickSaveHandle()
         }
         .contentShape(.rect)
@@ -141,9 +194,7 @@ struct FeedTile: View {
     private var isMine: Bool { update.isInMySize(sizes.profile) }
 
     var body: some View {
-        NavigationLink {
-            ProductDetailView(update: update)
-        } label: {
+        Group {
             VStack(alignment: .leading, spacing: 6) {
                 // Three to a row: a third of the screen, so the smallest rendition.
                 // No gallery on a tile — at this size a second photograph is unreadable,
@@ -175,7 +226,7 @@ struct FeedTile: View {
             }
             .contentShape(.rect)
         }
-        .buttonStyle(.plain)
+        .productLink(update)
         .contextMenu { UpdateMenu(update: update) }
     }
 }

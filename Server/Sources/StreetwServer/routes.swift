@@ -136,6 +136,12 @@ func routes(_ app: Application) throws {
     /// no identities, no per-person lists. It exists so the feed is never a dead end:
     /// somebody caught up on their own brands should be shown what else is worth watching
     /// rather than an empty page.
+    /// How many photographs a recommendation carries, and how many candidate rows are
+    /// examined per brand to find them. The second is larger because promotional rows —
+    /// gift cards, size guides, delivery banners — are filtered out of it.
+    let previewLimit = 12
+    let previewFetchPerBrand = 30
+
     authed.get("brands", "popular") { req async throws -> [PopularBrand] in
         let device = try await req.authenticatedDevice()
         let limit = min((try? req.query.get(Int.self, at: "limit")) ?? 12, 40)
@@ -202,20 +208,29 @@ func routes(_ app: Application) throws {
             .all()
         let byID = Dictionary(brands.compactMap { b in b.id.map { ($0, b) } }, uniquingKeysWith: { a, _ in a })
 
-        // A few recent images per brand, so a recommendation shows the clothes rather
-        // than asking someone to take a wordmark on faith.
+        // Recent images per brand, so a recommendation shows the clothes rather than
+        // asking someone to take a wordmark on faith.
+        //
+        // Twelve, not three. Three was enough for the card's single row and left the brand
+        // preview — the screen whose entire job is *looking* at a brand before following
+        // it — with a three-tile grid for every shop in the catalogue. The fetch budget is
+        // per brand rather than a flat cap, or one prolific storefront takes the whole
+        // window and the brands under it get nothing.
         let products = try await ProductModel.query(on: req.db)
             .filter(\.$brand.$id ~~ ranked.map(\.key))
             .sort(\.$publishedAt, .descending)
-            .limit(ranked.count * 12)
+            .limit(ranked.count * previewFetchPerBrand)
             .all()
 
-        var previews: [UUID: [String]] = [:]
+        // Grouped first, then filtered per brand — `PreviewImages` needs to see a brand's
+        // whole candidate set to know whether refusing all of them would leave it blank.
+        var rows: [UUID: [(title: String, imageURL: String?)]] = [:]
         for product in products {
             let id = product.$brand.id
-            guard previews[id, default: []].count < 3, let image = product.imageURLs.first else { continue }
-            previews[id, default: []].append(image)
+            guard rows[id, default: []].count < previewFetchPerBrand else { continue }
+            rows[id, default: []].append((product.title, product.imageURLs.first))
         }
+        let previews = rows.mapValues { PreviewImages.pick(from: $0, limit: previewLimit) }
 
         let vectors = await req.application.similarity?.all() ?? [:]
 

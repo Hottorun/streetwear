@@ -92,6 +92,16 @@ struct BrandRecommendations: View {
 
     var title: String = "Also worth watching"
     var blurb: String = "PICKED FROM WHAT YOU KEEP"
+    /// How many cards this block prints before deferring to the full list.
+    ///
+    /// Three, not twelve. The block sits on the feed, the brands tab *and* the style tab,
+    /// so a wall of suggestions was being served three times over to somebody who had
+    /// followed one brand — the same twelve names each time, in the same order. Three
+    /// reads as a suggestion; twelve reads as a demand, and the third copy of it reads as
+    /// the app having nothing else to say. Everything beyond them is one tap away.
+    var limit: Int = 3
+
+    @State private var isShowingAll = false
 
     /// Below this many saves there isn't a taste to speak of, and re-ranking on three
     /// items would be confidently wrong rather than usefully personal.
@@ -100,12 +110,31 @@ struct BrandRecommendations: View {
     /// Anything already followed locally is filtered out here as well as server-side —
     /// the server's answer can be a few seconds stale, and recommending someone a brand
     /// they just added reads as broken.
+    /// Anything already followed locally is filtered out here as well as server-side —
+    /// the server's answer can be a few seconds stale, and recommending someone a brand
+    /// they just added reads as broken.
+    ///
+    /// Matched on **domain as well as remote id**. A brand added in standalone mode or
+    /// from the onboarding starter pack has no `remoteID` at all, so an id-only check sees
+    /// nothing and cheerfully suggests a shop already sitting at the top of the same
+    /// screen — which is exactly what Kith did, listed as followed and unfollowed at once.
+    /// `RemoteSync.mergeBrands` heals those rows by adopting the id, but only once a sync
+    /// has mentioned them, and this must be right before that happens.
     private var candidates: [PopularBrand] {
         let mine = Set(followed.compactMap(\.remoteID))
+        let myDomains = Set(followed.compactMap { brand -> String? in
+            brand.websiteURL?.host().map(BrandDiscovery.registrableDomain(of:))
+        })
         let refused = Set(dismissals.map(\.remoteID))
-        return suggestions.brands.filter { dto in
-            guard let id = dto.brand.id else { return false }
-            return !mine.contains(id) && !refused.contains(id)
+
+        return suggestions.brands.filter { item in
+            guard let id = item.brand.id, !mine.contains(id), !refused.contains(id) else {
+                return false
+            }
+            guard let host = item.brand.website.flatMap({ URL(string: $0)?.host() }) else {
+                return true
+            }
+            return !myDomains.contains(BrandDiscovery.registrableDomain(of: host))
         }
     }
 
@@ -157,6 +186,8 @@ struct BrandRecommendations: View {
             .map(\.0)
     }
 
+    private var shown: [PopularBrand] { Array(visible.prefix(limit)) }
+
     /// The words a candidate shares with this wardrobe — the line the card prints instead
     /// of a follower count.
     private func reason(for item: PopularBrand) -> [String] {
@@ -178,7 +209,7 @@ struct BrandRecommendations: View {
                 .padding(.horizontal, 20)
                 .padding(.bottom, 18)
 
-                ForEach(visible) { item in
+                ForEach(shown) { item in
                     SuggestedBrandCard(
                         item: item,
                         reason: reason(for: item),
@@ -187,8 +218,29 @@ struct BrandRecommendations: View {
                         onDismiss: { dismiss(item) }
                     )
                 }
+
+                if visible.count > shown.count {
+                    Button { isShowingAll = true } label: {
+                        DataLabel(text: "SEE ALL \(visible.count)", color: .ink)
+                            .overlay(alignment: .bottom) {
+                                Rectangle().fill(Color.ink).frame(height: 1).offset(y: 3)
+                            }
+                            .padding(.horizontal, 20)
+                            .padding(.top, 18)
+                            .contentShape(.rect)
+                    }
+                    .buttonStyle(.plain)
+                }
             }
             .padding(.top, 8)
+            .sheet(isPresented: $isShowingAll) {
+                DiscoverView(
+                    items: visible,
+                    reason: reason(for:),
+                    onFollow: { await follow($0) },
+                    onDismiss: { dismiss($0) }
+                )
+            }
             .sheet(item: $previewed) { item in
                 BrandPreviewSheet(
                     item: item,

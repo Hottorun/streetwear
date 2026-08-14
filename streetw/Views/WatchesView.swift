@@ -51,6 +51,7 @@ struct WatchesView: View {
                 }
             }
             .background(Color.paper)
+            .appDestinations()
             .navigationTitle("Watching")
             .toolbarTitleDisplayMode(.inlineLarge)
             .toolbar {
@@ -72,9 +73,7 @@ struct WatchesView: View {
 
             ForEach(watches) { watch in
                 if let update = watch.update {
-                    NavigationLink {
-                        ProductDetailView(update: update)
-                    } label: {
+                    NavigationLink(value: ProductRoute(update: update)) {
                         WatchListRow(watch: watch, update: update)
                     }
                     .buttonStyle(.plain)

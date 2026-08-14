@@ -15,31 +15,19 @@ import StreetwCore
 import SwiftUI
 
 /// Choosing which of a brand's photographs are worth showing.
+///
+/// The judgement itself lives in `PreviewImages`, in the shared core, because the server
+/// applies it when deciding what to put on the wire and this end applies it again over
+/// whatever a server too old to know about it sent. Two copies of the vocabulary would
+/// drift, and the symptom would be a delivery banner that one screen shows and another
+/// hides.
 enum BrandPreview {
-    /// Storefronts publish policy banners, size charts and delivery graphics in the same
-    /// image field as the clothes, and one of them led Represent's card: a truck icon
-    /// captioned "Worry-Free Purchase", as the first impression of a fashion brand.
-    ///
-    /// Filtered on the file name, which is where storefronts label these — the alternative
-    /// is decoding every candidate to look at it, for a row of thumbnails. A false
-    /// positive costs one photograph out of a dozen; a false negative is the truck.
-    private static let banned = [
-        "worry", "free-purchase", "shipping", "delivery", "returns", "size-chart",
-        "sizechart", "sizing", "guide", "banner", "promo", "gift-card", "giftcard",
-        "klarna", "afterpay", "payment", "policy", "newsletter", "placeholder", "coming-soon"
-    ]
-
-    static func isProduct(_ url: URL) -> Bool {
-        let name = url.lastPathComponent.lowercased()
-        return !banned.contains { name.contains($0) }
-    }
-
     static func images(from strings: [String], limit: Int) -> [URL] {
-        let all = strings.compactMap(URL.init(string:))
-        let clean = all.filter(isProduct)
-        // If filtering took everything, the brand's whole preview set is unusual rather
-        // than promotional — show it rather than an empty row.
-        return Array((clean.isEmpty ? all : clean).prefix(limit))
+        // No titles at this end — the wire carries images only — so this is the file-name
+        // pass alone. It catches what it can; the server's pass, which has the product
+        // names, is the one that does the real work.
+        let rows = strings.map { (title: "", imageURL: Optional($0)) }
+        return PreviewImages.pick(from: rows, limit: limit).compactMap(URL.init(string:))
     }
 }
 
