@@ -72,20 +72,40 @@ enum Cutout {
     /// declines, and `FitPieceImage` draws the original. Those items looked like the cutout
     /// was working long before any of this ran, which is exactly why brands that ship
     /// opaque JPEGs (Kith) read as broken by comparison.
-    static func make(from image: UIImage, named name: String) async -> String? {
+    /// What a lift produced: the file to draw, and the mask it was cut from.
+    ///
+    /// The mask is handed back rather than only written because it answers a second
+    /// question — `Silhouette` reads the garment's shape off exactly this outline, and
+    /// re-decoding the PNG from disk to ask would be a second decode of something already
+    /// in hand. Both halves are optional and independently so: a brand shipping transparent
+    /// PNGs needs no lift at all and still has a perfectly good outline to measure.
+    struct Lift {
+        var file: String?
+        var mask: CGImage?
+    }
+
+    static func make(from image: UIImage, named name: String) async -> Lift {
         guard let cgImage = image.cgImage else {
             log.info("no cgImage for \(name, privacy: .public)")
-            return nil
+            return Lift()
         }
 
         if let lifted = await subject(in: cgImage, named: name) {
-            return write(lifted, named: name)
+            return Lift(file: write(lifted, named: name), mask: render(lifted))
         }
         if let trimmed = Seamless.lift(cgImage) {
             log.info("backdrop removed for \(name, privacy: .public)")
-            return write(trimmed, named: name)
+            return Lift(file: write(trimmed, named: name), mask: render(trimmed))
         }
-        return nil
+        // Nothing to lift, which is ordinary — but the photograph may have arrived already
+        // cut out. Palace ships transparent PNGs, so those items have an outline worth
+        // measuring even though every lift path correctly declined to touch them.
+        return Lift(file: nil, mask: cgImage)
+    }
+
+    /// A `CIImage` has no pixels until something renders it, and `Silhouette` reads bytes.
+    private static func render(_ image: CIImage) -> CGImage? {
+        CIContext().createCGImage(image, from: image.extent)
     }
 
     /// Vision's answer, or nil for any reason at all — no subject, no hardware, no

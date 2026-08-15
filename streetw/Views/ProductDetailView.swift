@@ -90,6 +90,10 @@ struct ProductDetailView: View {
                 .padding(.top, 22)
                 .padding(.bottom, 28)
 
+                // Above "more like this", deliberately. What you already own that goes
+                // with this is a better answer than another version of it — and on
+                // something not yet kept it is the argument for keeping it.
+                GoesWith(subject: update)
                 SimilarItems(to: update)
             }
         }

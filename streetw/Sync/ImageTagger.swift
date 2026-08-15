@@ -7,19 +7,24 @@
 // about an item shared in from a page with a two-word title. The photograph, meanwhile,
 // is unambiguous.
 //
+// This file decides what is due, drains the backlog and writes the answers down. The
+// measuring itself lives next door — `Histogram` for anything read off the distribution of
+// pixels, `VisualReading` for the Vision requests, `Silhouette` for the outline, `Cutout`
+// for the sticker.
+//
 // What is extracted:
 //
-// - **Dominant colour**, by downsampling to a thumbnail and voting — excluding the
-//   seamless white or black sweep every storefront shoots on, which would otherwise win
-//   every vote.
 // - **Categories**, from Vision's own on-device classifier. No model file, no download,
 //   and its taxonomy already contains the clothing terms we care about.
 // - **The cutout**, because the photograph is decoded here anyway and the fit canvas must
 //   not stall lifting a garment the first time it is dragged.
+// - **The deeper read** — two colours, busyness, text coverage, tonal register, a
+//   perceptual fingerprint and the silhouette. See `VisualReading`.
 //
-// Each has its own "is this due" test. They were added at different times and the store
-// outlives all of them, so a single `analyzedAt` cannot speak for a field that did not
-// exist when the row was stamped — see `Cutout.version`.
+// Each has its own "is this due" test, and there are now three. They were added at
+// different times and the store outlives all of them, so a single `analyzedAt` cannot speak
+// for a field that did not exist when the row was stamped — see `Cutout.version` and
+// `VisualReading.version`.
 //
 // Only saved items are analysed. Running this over a 250-item catalogue sweep would burn
 // battery to describe things nobody kept.
@@ -36,12 +41,8 @@ import Vision
 enum ImageTagger {
     private static let log = Logger(subsystem: "com.kern.functional.streetw", category: "tagging")
 
-    /// Small enough that the vote is cheap, big enough that trim and panels still carry
-    /// weight. The garment is what we want, not a perfect average.
-    private static let sampleSize = 48
-
-    /// Analyses saved items with work outstanding — never analysed, or holding a cutout
-    /// from an older revision of the lift.
+    /// Analyses saved items with work outstanding — never analysed, or holding a cutout or
+    /// a reading from an older revision.
     ///
     /// Drains the backlog in batches rather than stopping after one. The batch is what
     /// keeps the collection responsive — results are written and drawn after each — but
@@ -67,7 +68,10 @@ enum ImageTagger {
         // left the canvas with no stickers at all on an established collection.
         let pending = saves
             .compactMap(\.update)
-            .filter { $0.primaryImageURL != nil && ($0.analyzedAt == nil || $0.needsCutout) }
+            .filter {
+                $0.primaryImageURL != nil
+                    && ($0.analyzedAt == nil || $0.needsCutout || $0.needsVisualReading)
+            }
             .prefix(limit)
         guard !pending.isEmpty else { return 0 }
 
@@ -76,12 +80,14 @@ enum ImageTagger {
             guard let url = update.primaryImageURL else { continue }
             let needsTags = update.analyzedAt == nil
             let needsCutout = update.needsCutout
+            let needsReading = update.needsVisualReading
 
             guard let image = await load(url) else {
-                // Mark it anyway, on both counts. A dead image URL will never resolve, and
+                // Mark it anyway, on every count. A dead image URL will never resolve, and
                 // retrying it on every launch is a permanent background cost for nothing.
                 update.analyzedAt = Date()
                 update.cutoutVersion = Cutout.version
+                update.visionVersion = VisualReading.version
                 continue
             }
 
@@ -91,123 +97,61 @@ enum ImageTagger {
                 if image.size.height > 0 {
                     update.imageAspect = Double(image.size.width / image.size.height)
                 }
-                if let color = dominantColor(in: image) {
-                    update.visionColor = color.name
-                }
                 update.visionCategories = await categories(in: image)
                 update.analyzedAt = Date()
             }
 
-            if needsCutout {
+            if needsReading {
+                // The deeper read: the second colour, how busy it is, how much text is on
+                // it, how dark and how colourful, and a perceptual fingerprint. All of it
+                // off pixels already in memory.
+                //
+                // `visionColor` is written from here too, and not under `needsTags`. The
+                // two used to be one step, but the histogram behind them is now shared —
+                // and a row analysed by an older build has a colour and needs everything
+                // else, so gating the colour on `analyzedAt` would re-measure the
+                // distribution and then throw the winner away.
+                let reading = await VisualReading.read(image)
+                update.visionColor = reading.color ?? update.visionColor
+                update.visionSecondaryColor = reading.secondaryColor
+                update.visionBusyness = reading.busyness
+                update.visionLightness = reading.lightness
+                update.visionSaturation = reading.saturation
+                update.visionTextCoverage = reading.textCoverage
+                update.visionFeaturePrint = reading.featurePrint ?? update.visionFeaturePrint
+            }
+
+            if needsCutout || needsReading {
                 // Also free, in the sense that matters: the photograph is already decoded
                 // and this pass is already running. Cutting on demand instead would mean
                 // the fit canvas stalls the first time each garment is dragged onto it.
                 //
+                // Run when *either* is due, because the lift and the silhouette read the
+                // same mask and neither is worth a second decode of the other's work.
+                //
                 // The old file goes first: the name is derived from the item id, so a lift
                 // that now finds nothing would otherwise leave last revision's sticker on
                 // disk with no row pointing at it.
-                if let stale = update.cutoutFile { Cutout.remove(stale) }
-                update.cutoutFile = await Cutout.make(from: image, named: Cutout.name(for: update.id))
-                update.cutoutVersion = Cutout.version
-                if update.cutoutFile != nil { cut += 1 }
+                if needsCutout, let stale = update.cutoutFile { Cutout.remove(stale) }
+                let lift = await Cutout.make(from: image, named: Cutout.name(for: update.id))
+                if needsCutout {
+                    update.cutoutFile = lift.file
+                    update.cutoutVersion = Cutout.version
+                    if lift.file != nil { cut += 1 }
+                }
+                if needsReading, let mask = lift.mask {
+                    update.visionSilhouette = Silhouette.measure(mask, slot: update.garmentSlot)
+                }
             }
+
+            // Last, and only once everything above has had its turn: a row stamped before
+            // its measurements are written would be skipped on the next pass holding none
+            // of them.
+            if needsReading { update.visionVersion = VisualReading.version }
         }
         try? context.save()
         log.info("looked at \(pending.count) saved items, lifted \(cut)")
         return pending.count
-    }
-
-    // MARK: - Colour
-
-    /// The most common non-backdrop colour, by quantised vote.
-    ///
-    /// A mean would produce mud: averaging a black jacket against a white sweep gives
-    /// grey, which is a colour neither present nor useful. Voting on coarse buckets
-    /// keeps the answer to something that is actually in the picture.
-    static func dominantColor(in image: UIImage) -> NamedColor? {
-        guard let pixels = downsample(image, to: sampleSize) else { return nil }
-
-        let garment = pixels.filter { !ColorNamer.isLikelyBackdrop(red: $0.r, green: $0.g, blue: $0.b) }
-
-        // A white shirt on a white sweep leaves almost nothing behind once the backdrop
-        // is removed, and what does survive is shadow and stitching — which would name
-        // the garment "Grey". Below a useful remainder, vote over everything instead and
-        // let it say "White", which is the true answer for exactly these items.
-        let voting = Double(garment.count) / Double(max(pixels.count, 1)) < 0.08 ? pixels : garment
-
-        var votes: [String: (count: Int, confidence: Double)] = [:]
-        for pixel in voting {
-            let named = ColorNamer.name(red: pixel.r, green: pixel.g, blue: pixel.b)
-            let existing = votes[named.name] ?? (0, 0)
-            votes[named.name] = (existing.count + 1, max(existing.confidence, named.confidence))
-        }
-
-        guard let winner = votes.max(by: { $0.value.count < $1.value.count }) else { return nil }
-        return NamedColor(name: winner.key, confidence: winner.value.confidence)
-    }
-
-    private struct Pixel {
-        var r: Double
-        var g: Double
-        var b: Double
-    }
-
-    /// How much of the frame to keep, measured from the centre.
-    ///
-    /// Excluding the backdrop by colour alone is not enough: a seamless sweep is 70–85%
-    /// of a product shot, and the near-white penumbra that survives a colour test still
-    /// outvotes the garment. Measured on real Kith and BBC shots, every item came back
-    /// "White" — including a black-and-grey Air Jordan. Product photography is reliably
-    /// centred, so cropping to the middle is what actually puts the garment in the
-    /// majority.
-    private static let centreCrop = 0.55
-
-    /// Redraws the image tiny and reads the raw bytes back. Cheaper and far more
-    /// predictable than sampling the full-size image.
-    private static func downsample(_ image: UIImage, to side: Int) -> [Pixel]? {
-        guard var cgImage = image.cgImage else { return nil }
-
-        let width = Double(cgImage.width)
-        let height = Double(cgImage.height)
-        let crop = CGRect(
-            x: width * (1 - centreCrop) / 2,
-            y: height * (1 - centreCrop) / 2,
-            width: width * centreCrop,
-            height: height * centreCrop
-        )
-        if let cropped = cgImage.cropping(to: crop) { cgImage = cropped }
-
-        let bytesPerPixel = 4
-        let bytesPerRow = side * bytesPerPixel
-        var buffer = [UInt8](repeating: 0, count: side * side * bytesPerPixel)
-
-        guard let context = CGContext(
-            data: &buffer,
-            width: side,
-            height: side,
-            bitsPerComponent: 8,
-            bytesPerRow: bytesPerRow,
-            space: CGColorSpaceCreateDeviceRGB(),
-            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
-        ) else { return nil }
-
-        context.interpolationQuality = .medium
-        context.draw(cgImage, in: CGRect(x: 0, y: 0, width: side, height: side))
-
-        var pixels: [Pixel] = []
-        pixels.reserveCapacity(side * side)
-        for index in stride(from: 0, to: buffer.count, by: bytesPerPixel) {
-            // Fully transparent pixels are padding, not colour.
-            guard buffer[index + 3] > 8 else { continue }
-            pixels.append(
-                Pixel(
-                    r: Double(buffer[index]) / 255,
-                    g: Double(buffer[index + 1]) / 255,
-                    b: Double(buffer[index + 2]) / 255
-                )
-            )
-        }
-        return pixels
     }
 
     // MARK: - Categories

@@ -79,15 +79,24 @@ public enum PreviewImages {
 
     /// The lead photographs to show for a brand, in catalogue order.
     ///
-    /// Falls back to the unfiltered set only when filtering removed *everything* — a brand
+    /// Falls back to the unfiltered set only when filtering left no *photograph* — a brand
     /// whose entire recent catalogue reads as promotional is more likely to be one this
     /// vocabulary has misjudged than one with nothing to show.
+    ///
+    /// The image is picked out **before** the fallback is decided, not after. Written the
+    /// other way round, a brand whose garments are all imageless — perfectly ordinary for a
+    /// sitemap-sourced storefront — counts as "filtering removed nothing", skips the
+    /// fallback, and then returns an empty list from rows that had pictures on them. The
+    /// question this is answering is which photographs to show, so a row with no photograph
+    /// cannot be evidence either way.
     public static func pick(
         from rows: [(title: String, imageURL: String?)],
         limit: Int
     ) -> [String] {
-        let usable = rows.filter { isGarment(title: $0.title, imageURL: $0.imageURL) }
-        let source = usable.isEmpty ? rows : usable
-        return source.compactMap(\.imageURL).prefix(limit).map { $0 }
+        let garments = rows
+            .filter { isGarment(title: $0.title, imageURL: $0.imageURL) }
+            .compactMap(\.imageURL)
+        let source = garments.isEmpty ? rows.compactMap(\.imageURL) : garments
+        return Array(source.prefix(limit))
     }
 }

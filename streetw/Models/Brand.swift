@@ -90,7 +90,7 @@ final class Brand {
 
     /// Newest updates first, capped — the feed never wants all 250 products.
     func recentUpdates(limit: Int = 12) -> [BrandUpdate] {
-        updates.sorted { $0.publishedAt > $1.publishedAt }.prefix(limit).map { $0 }
+        updates.sorted(by: BrandUpdate.newestFirst).prefix(limit).map { $0 }
     }
 
     /// The garments that landed with a collection announcement.
@@ -126,7 +126,7 @@ final class Brand {
         // "292 PIECES IN THIS RELEASE".
         if !words.isEmpty {
             let named = candidates.filter { $0.mentionsAny(of: words) }
-            if !named.isEmpty { return named.sorted { $0.publishedAt > $1.publishedAt } }
+            if !named.isEmpty { return named.sorted(by: BrandUpdate.newestFirst) }
         }
 
         // Nothing in the name to go on. Fall back to what landed alongside it, capped —
@@ -136,7 +136,7 @@ final class Brand {
         let end = collection.publishedAt.addingTimeInterval(window)
         return candidates
             .filter { (start...end).contains($0.publishedAt) }
-            .sorted { $0.publishedAt > $1.publishedAt }
+            .sorted(by: BrandUpdate.newestFirst)
             .prefix(cap)
             .map { $0 }
     }

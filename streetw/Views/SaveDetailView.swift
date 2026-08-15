@@ -149,11 +149,22 @@ struct SaveDetailView: View {
                     .padding(.horizontal, 20)
                 }
                 .padding(.bottom, 32)
+
+                // What else in the collection this goes with. It sits below the masthead
+                // and below the note, because on a page about something you already own it
+                // is the *next* thing to do rather than the subject — the reverse of where
+                // it sits on a product page, which is arguing for the save in the first
+                // place.
+                if let update { GoesWith(subject: update) }
             }
             .scrollIndicators(.hidden)
             .background(Color.paper)
             .navigationTitle(update?.brand?.name ?? "Saved")
             .toolbarTitleDisplayMode(.inline)
+            // This sheet has a stack of its own, so it needs its own destination table —
+            // a route pushed onto a stack that hasn't registered it does nothing at all,
+            // silently. Without this the pairing tiles would look tappable and be inert.
+            .appDestinations()
             // Pinned rather than left at the foot of the scroll. Everything below the rule
             // is an annotation you can come back to; going to look at the thing is not.
             .safeAreaInset(edge: .bottom) {

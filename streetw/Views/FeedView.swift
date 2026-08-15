@@ -95,7 +95,7 @@ struct FeedView: View {
                 guard !unseen.isEmpty else { return nil }
                 return BrandGroup(
                     brand: brand,
-                    updates: unseen.sorted { $0.publishedAt > $1.publishedAt }
+                    updates: unseen.sorted(by: BrandUpdate.newestFirst)
                 )
             }
             .sorted { ($0.latest ?? .distantPast) > ($1.latest ?? .distantPast) }
@@ -121,14 +121,25 @@ struct FeedView: View {
             .appDestinations()
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
+                    // A filled bell, and **no number on it**.
+                    //
+                    // The count was there because "watching 4 things" and "watching
+                    // something" are different states — true, and not worth what it cost.
+                    // A badge is the platform's unread mark: it says *something has
+                    // happened, deal with it*, and it clears when you do. This one says
+                    // neither. It is the number of watches you deliberately set, so it goes
+                    // up when you ask for more and comes down only when a restock lands or
+                    // you give up — which can be weeks. A permanent red 4 in the corner of
+                    // the feed is an alarm about your own settings, nagging hardest exactly
+                    // when the thing you are waiting for is slowest to come back.
+                    //
+                    // The bell fills, which is the honest amount to say: something is on
+                    // watch, and the list is one tap away. A watch that actually fires
+                    // arrives as a push and as a card in the feed — the two places news
+                    // belongs.
                     Button("Watching", systemImage: watchCount > 0 ? "bell.fill" : "bell") {
                         isShowingWatches = true
                     }
-                    // The count, not just a filled bell: "watching 4 things" and "watching
-                    // something" are different states and the icon could only say the
-                    // second. Capped, because a two-digit number on a toolbar glyph is
-                    // unreadable and the exact figure is one tap away.
-                    .badge(watchCount)
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Upcoming", systemImage: isLockedSomewhere ? "calendar.badge.exclamationmark" : "calendar") {

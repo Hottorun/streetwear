@@ -1,7 +1,7 @@
 // DiscoverView.swift
 // The whole list of brands worth following, on a screen you asked for.
 //
-// The inline block on the feed, the brands tab and the style tab prints three. This is
+// The inline block on the feed, the brands tab and the style tab prints a handful. This is
 // where the rest live. That split is the point: a suggestion offered in passing should be
 // small enough to ignore, and a person who actually wants to browse should get a page
 // rather than a longer interruption on the one they were already reading.

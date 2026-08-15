@@ -151,14 +151,19 @@ final class SyncEngine {
             if let match = existing[item.externalID] {
                 refresh(match, with: item)
             } else {
+                // What, if anything, a first sighting is worth saying. Nil is a product
+                // being put back on the shelf with nothing buyable in it — stored, so a
+                // watch can be set and a real restock still fires, but never announced.
+                // See `Reshelving`.
+                let news = Reshelving.firstSighting(of: item)
                 // A brand added today shouldn't dump its entire back catalogue into the
                 // feed as "new" — the first sync is a baseline.
-                insert(item, into: brand, markSeen: isFirstSync)
+                insert(item, into: brand, as: news, markSeen: isFirstSync || news == nil)
             }
         }
     }
 
-    private func insert(_ item: FetchedItem, into brand: Brand, markSeen: Bool) {
+    private func insert(_ item: FetchedItem, into brand: Brand, as kind: UpdateKind?, markSeen: Bool) {
         let update = BrandUpdate(
             externalID: item.externalID,
             brand: brand,
@@ -167,7 +172,7 @@ final class SyncEngine {
             linkURL: item.linkURL,
             imageURLStrings: item.imageURLStrings,
             publishedAt: item.publishedAt,
-            kind: item.kind,
+            kind: kind ?? item.kind,
             priceText: item.priceText,
             priceAmount: item.priceAmount,
             isAvailable: item.isAvailable,
@@ -253,7 +258,7 @@ final class SyncEngine {
         for brand in brands where brand.updates.count > Self.retentionPerBrand {
             let expendable = brand.updates
                 .filter { $0.saves.isEmpty && $0.isSeen }
-                .sorted { $0.publishedAt > $1.publishedAt }
+                .sorted(by: BrandUpdate.newestFirst)
                 .dropFirst(Self.retentionPerBrand)
 
             for update in expendable {

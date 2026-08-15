@@ -380,6 +380,83 @@ struct PollerTests {
         }
     }
 
+    /// Kith runs Shopify Flow automations that unpublish and republish stock in sweeps, and
+    /// each sweep restamps `published_at` to now. A fifth of its 250 newest products were
+    /// created more than three months before they were "published" — one Air Max 1 by
+    /// 1,015 days — and the sold-out ones landed as a page of new clothes you could not
+    /// buy. Nothing dropped, so nothing is said; the row is still stored, so a watch on it
+    /// still works and a real restock still fires.
+    @Test("Re-shelved sold-out stock is stored and not announced")
+    func reshelvedSoldOutStockIsSilent() async throws {
+        try await withServer { app in
+            let http = StubHTTP()
+            http.stub("/meta.json", body: #"{"name": "Example", "currency": "USD"}"#)
+            http.stub("/products.json?limit=250&page=1", body: catalog(available: true))
+            _ = try await seedBrand(app, http: http)
+
+            let poller = Poller(app: app, http: http)
+            await poller.tick()
+
+            let source = try #require(try await SourceModel.query(on: app.db).first())
+            source.nextCheckAt = Date().addingTimeInterval(-1)
+            try await source.save(on: app.db)
+            // Created in 2023, put back on the shelf today, every size gone.
+            http.stub("/products.json?limit=250&page=1", body: """
+                {"products": [{
+                  "id": 2, "title": "Nike Air Max 1", "handle": "nike-air-max-1",
+                  "published_at": "2026-08-11T15:41:05-04:00", "created_at": "2023-10-31T03:47:26-04:00",
+                  "tags": [], "product_type": "Low Top Sneakers",
+                  "options": [{"name": "Size", "position": 1}],
+                  "variants": [{"id": 21, "title": "9", "option1": "9", "available": false, "price": "140.00"}],
+                  "images": []
+                }]}
+                """)
+
+            await poller.tick()
+
+            #expect(try await EventModel.query(on: app.db).count() == 0, "a re-shelving is not a drop")
+            let stored = try await ProductModel.query(on: app.db)
+                .filter(\.$externalID == "shopify:2")
+                .first()
+            #expect(stored != nil, "it is still stored — a watch has to be able to reach it")
+        }
+    }
+
+    /// The same sweep, but the shelf has something on it. That is a restock and not a
+    /// discovery — and unlike the sold-out case there is something to act on.
+    @Test("Re-shelved stock you can buy is a restock")
+    func reshelvedAvailableStockIsARestock() async throws {
+        try await withServer { app in
+            let http = StubHTTP()
+            http.stub("/meta.json", body: #"{"name": "Example", "currency": "USD"}"#)
+            http.stub("/products.json?limit=250&page=1", body: catalog(available: true))
+            _ = try await seedBrand(app, http: http)
+
+            let poller = Poller(app: app, http: http)
+            await poller.tick()
+
+            let source = try #require(try await SourceModel.query(on: app.db).first())
+            source.nextCheckAt = Date().addingTimeInterval(-1)
+            try await source.save(on: app.db)
+            http.stub("/products.json?limit=250&page=1", body: """
+                {"products": [{
+                  "id": 3, "title": "Nike Cortez", "handle": "nike-cortez",
+                  "published_at": "2026-08-11T15:41:05-04:00", "created_at": "2023-02-13T03:47:26-04:00",
+                  "tags": [], "product_type": "Low Top Sneakers",
+                  "options": [{"name": "Size", "position": 1}],
+                  "variants": [{"id": 31, "title": "9", "option1": "9", "available": true, "price": "90.00"}],
+                  "images": []
+                }]}
+                """)
+
+            await poller.tick()
+
+            let events = try await EventModel.query(on: app.db).all()
+            #expect(events.count == 1)
+            #expect(events.first?.kind == UpdateKind.restock.rawValue, "back on the shelf, not new")
+        }
+    }
+
     /// Silent product edits are mostly noise, but a markdown on something you follow is
     /// the exception — and it is invisible in `published_at`, which does not change.
     @Test("A price cut produces one priceDrop event")
@@ -1386,6 +1463,92 @@ struct DiscoveryTests {
                 // The first two rows are the policy ones. Neither may appear.
                 #expect(!previews.contains("https://cdn.shopify.com/0.jpg"), "a policy row is not a garment")
                 #expect(!previews.contains("https://cdn.shopify.com/1.jpg"), "a gift card is not a garment")
+            }
+        }
+    }
+
+    /// A prolific storefront must not take the photographs off the brands under it.
+    ///
+    /// The preview fetch used to be one date-sorted query with a global `LIMIT`, and the
+    /// per-brand budget was applied afterwards while grouping the result — which is not a
+    /// per-brand budget at all, because the cut already happened in SQL. A brand that
+    /// publishes its whole catalogue in one sweep therefore owned the entire window and the
+    /// quieter brands came back blank. Against production this cost fourteen of thirty-five
+    /// recommendations every photograph they had, and left Represent showing a single
+    /// delivery graphic: its garments were all older than the global cut, so the
+    /// "everything here reads as promotional" fallback had nothing else left to choose.
+    ///
+    /// The tell was that a brand's picture count moved when `limit` moved, which a real
+    /// per-brand budget can never do — so this asserts on both.
+    @Test("A loud brand doesn't take the pictures off a quiet one")
+    func popularBudgetsPreviewsPerBrand() async throws {
+        try await withServer { app in
+            let loud = try await brand(app, name: "Kith", slug: "kith.com")
+            let quiet = try await brand(app, name: "Represent", slug: "representclo.com")
+
+            // The quiet brand's garments are the *oldest* rows in the catalogue, which is
+            // the whole point: under one global window they fall off the end.
+            for index in 0..<12 {
+                let product = ProductModel(
+                    brandID: quiet,
+                    sourceID: nil,
+                    item: FetchedItem(
+                        externalID: "shopify:quiet-\(index)",
+                        title: "Cargo Pant \(index)",
+                        imageURLStrings: ["https://cdn.shopify.com/quiet-\(index).jpg"],
+                        publishedAt: Date().addingTimeInterval(-86_400 * 30),
+                        kind: .product
+                    )
+                )
+                try await product.save(on: app.db)
+            }
+            // …and its one recent row is a delivery graphic, exactly as Represent's was.
+            let banner = ProductModel(
+                brandID: quiet,
+                sourceID: nil,
+                item: FetchedItem(
+                    externalID: "shopify:quiet-banner",
+                    title: "Worry-Free Purchase",
+                    imageURLStrings: ["https://cdn.shopify.com/quiet-banner.png"],
+                    publishedAt: Date(),
+                    kind: .product
+                )
+            )
+            try await banner.save(on: app.db)
+
+            for index in 0..<200 {
+                let product = ProductModel(
+                    brandID: loud,
+                    sourceID: nil,
+                    item: FetchedItem(
+                        externalID: "shopify:loud-\(index)",
+                        title: "Hoodie \(index)",
+                        imageURLStrings: ["https://cdn.shopify.com/loud-\(index).jpg"],
+                        publishedAt: Date(),
+                        kind: .product
+                    )
+                )
+                try await product.save(on: app.db)
+            }
+
+            let follower = UserModel()
+            try await follower.save(on: app.db)
+            try await FollowModel(userID: try follower.requireID(), brandID: loud).save(on: app.db)
+            try await FollowModel(userID: try follower.requireID(), brandID: quiet).save(on: app.db)
+
+            let auth = try await register(app).headers
+            for limit in [2, 40] {
+                try await app.testing().test(.GET, "v1/brands/popular?limit=\(limit)", headers: auth) { res async throws in
+                    let popular = try res.content.decode([PopularBrand].self)
+                    let previews = try #require(
+                        popular.first { $0.brand.name == "Represent" }?.previewImageURLs
+                    )
+                    #expect(previews.count == 12, "a quiet brand's own catalogue is its own budget")
+                    #expect(
+                        !previews.contains("https://cdn.shopify.com/quiet-banner.png"),
+                        "with garments in reach the promotional fallback must not fire"
+                    )
+                }
             }
         }
     }

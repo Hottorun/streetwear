@@ -270,9 +270,16 @@ actor Poller {
                 try await product.save(on: db)
                 if let productID = product.id {
                     try await insertVariants(item.variants, productID: productID)
-                    // The first poll of a brand must not fire 2,500 notifications.
-                    if !isBaseline {
-                        try await EventModel(brandID: brandID, productID: productID, kind: item.kind)
+                    // What this first sighting is worth saying, which is sometimes
+                    // *nothing*: a storefront re-publishing year-old sold-out stock has
+                    // announced no drop and left nothing to buy. The product row is saved
+                    // either way, so a watch can be set on it and a genuine restock later
+                    // fires normally — see `Reshelving`.
+                    //
+                    // The first poll of a brand must not fire 2,500 notifications, which is
+                    // the other reason there may be no event here.
+                    if !isBaseline, let kind = Reshelving.firstSighting(of: item) {
+                        try await EventModel(brandID: brandID, productID: productID, kind: kind)
                             .save(on: db)
                         producedEvent = true
                     }

@@ -78,4 +78,29 @@ struct PreviewImagesTests {
         ]
         #expect(PreviewImages.pick(from: rows, limit: 3) == ["a.png", "b.png"])
     }
+
+    /// The fallback is decided on what has a *photograph*, not on what survived the
+    /// vocabulary. Written the other way round, this brand counts as "filtering removed
+    /// nothing", skips the fallback, and returns an empty list while holding one — which is
+    /// ordinary for a sitemap-sourced storefront, where plenty of rows carry no image.
+    @Test("A garment with no photograph doesn't veto the fallback")
+    func imagelessGarmentsDoNotEmptyTheCard() {
+        let rows: [(title: String, imageURL: String?)] = [
+            ("Cargo Pant", nil),
+            ("Hoodie", nil),
+            ("Worry-Free Purchase", "a.png")
+        ]
+        #expect(PreviewImages.pick(from: rows, limit: 3) == ["a.png"])
+    }
+
+    /// …and a garment that *does* have one still outranks it.
+    @Test("A photographed garment beats a photographed banner")
+    func photographedGarmentWins() {
+        let rows: [(title: String, imageURL: String?)] = [
+            ("Worry-Free Purchase", "a.png"),
+            ("Cargo Pant", nil),
+            ("Hoodie", "b.png")
+        ]
+        #expect(PreviewImages.pick(from: rows, limit: 3) == ["b.png"])
+    }
 }

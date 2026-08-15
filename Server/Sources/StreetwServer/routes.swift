@@ -213,24 +213,31 @@ func routes(_ app: Application) throws {
         //
         // Twelve, not three. Three was enough for the card's single row and left the brand
         // preview — the screen whose entire job is *looking* at a brand before following
-        // it — with a three-tile grid for every shop in the catalogue. The fetch budget is
-        // per brand rather than a flat cap, or one prolific storefront takes the whole
-        // window and the brands under it get nothing.
-        let products = try await ProductModel.query(on: req.db)
-            .filter(\.$brand.$id ~~ ranked.map(\.key))
-            .sort(\.$publishedAt, .descending)
-            .limit(ranked.count * previewFetchPerBrand)
-            .all()
-
-        // Grouped first, then filtered per brand — `PreviewImages` needs to see a brand's
-        // whole candidate set to know whether refusing all of them would leave it blank.
-        var rows: [UUID: [(title: String, imageURL: String?)]] = [:]
-        for product in products {
-            let id = product.$brand.id
-            guard rows[id, default: []].count < previewFetchPerBrand else { continue }
-            rows[id, default: []].append((product.title, product.imageURLs.first))
+        // it — with a three-tile grid for every shop in the catalogue.
+        //
+        // **One query per brand, not one query with a cap applied afterwards.** This used
+        // to be a single `~~` over every candidate, sorted by date and cut at
+        // `ranked.count * previewFetchPerBrand`, with the per-brand budget enforced while
+        // grouping the result. That is not a per-brand budget at all: the cut happens in
+        // SQL, across all brands at once, so a storefront that publishes 250 items in one
+        // sweep takes the whole window and the quieter brands under it are simply not in
+        // the answer. Measured against production: at the limit the app actually asks for,
+        // fourteen of thirty-five recommendations came back with **no photographs**, and
+        // Represent came back with exactly one — a delivery graphic, because its garments
+        // were all older than the global cut and the "everything here is promotional"
+        // fallback then had nothing else to choose from. The tell was that a brand's
+        // picture count changed when the *limit* changed, which a genuine per-brand budget
+        // can never do.
+        var previews: [UUID: [String]] = [:]
+        for id in ranked.map(\.key) {
+            let rows = try await ProductModel.query(on: req.db)
+                .filter(\.$brand.$id == id)
+                .sort(\.$publishedAt, .descending)
+                .limit(previewFetchPerBrand)
+                .all()
+                .map { (title: $0.title, imageURL: $0.imageURLs.first) }
+            previews[id] = PreviewImages.pick(from: rows, limit: previewLimit)
         }
-        let previews = rows.mapValues { PreviewImages.pick(from: $0, limit: previewLimit) }
 
         let vectors = await req.application.similarity?.all() ?? [:]
 

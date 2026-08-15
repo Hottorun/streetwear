@@ -248,6 +248,24 @@ Changing these silently will break intended behavior:
   in the title (brands tag their seasons) falling back to a publication window. Deliberately a
   heuristic: the alternative is a network call per card in a scrolling feed, and being wrong costs a
   page with a few extra garments rather than a missed drop.
+- **`published_at` says when a product was last put on a shelf, not when it is new.**
+  Storefronts rewrite it on every re-merchandising sweep — Kith's own tags say so
+  (`081126NIKEremerch`, `shopifyflow:removedtag`) — so a fifth of its 250 newest products
+  were created more than three months before they were "published", one Air Max 1 by 1,015
+  days, and the sold-out ones landed as a page of new clothes nobody could buy. `Reshelving`
+  reads `created_at` beside it: a launch keeps its kind, a re-shelving you can buy is a
+  `.restock`, and a re-shelving with nothing buyable in it is **silent** — stored, so a watch
+  still reaches it and a real restock still fires, but never announced. Ninety days, chosen
+  to sit in the gap in the data rather than on a boundary; brands do build a product record
+  a season ahead, and suppressing a real drop is the one failure this cannot afford.
+- **`publishedAt` is not an ordering, and `BrandUpdate.newestFirst` is.** Storefronts stamp a
+  whole drop with one second — Represent's 250 newest products carry 154 distinct timestamps —
+  and a sitemap's `lastmod` is often date-only, so ties are the common case, not the edge.
+  `sorted(by:)` is not stable and `brand.updates` is a to-many relationship whose array order
+  is unspecified and free to differ between reads, so sorting on the date alone gave the tied
+  items **a fresh arbitrary order on every render**. On screen: marking a card read in
+  "+36 more" showed the wrong item next and then swapped back. Every list of a brand's output
+  sorts with this comparator, which breaks the tie on `externalID`.
 - **A brand's first sync is a baseline, not news.** `SyncEngine.merge` checks
   `brand.lastSyncedAt == nil` and inserts that batch pre-marked `isSeen`, so adding a brand doesn't
   dump 250 back-catalogue products into the feed.
@@ -507,6 +525,24 @@ swallows the photograph's paging; attaching it nowhere loses the actions.
   one further down. Weighted below taste, because people reject things for reasons that have nothing
   to do with the clothes. Local, like the taste vector, and for a stronger reason — what somebody
   turned down is more revealing than what they followed.
+- **A recommendation's photographs are budgeted per brand, in SQL.** `/v1/brands/popular`
+  fetched them with one date-sorted query and a global `LIMIT`, then enforced a per-brand cap
+  while grouping the rows — which enforces nothing, because the cut already happened. A brand
+  that publishes 250 items in one sweep owned the whole window: measured against production,
+  **fourteen of thirty-five recommendations came back with no photographs at all**, and
+  Represent came back with one delivery graphic, its garments all being older than the global
+  cut so the "everything here reads as promotional" fallback had nothing else to pick. The
+  tell is that a brand's picture count *changes when `limit` changes*, which a real per-brand
+  budget cannot do. It is now one small query per candidate, which is what
+  `AddProductBrandIndex` exists for — `products.brand_id` is a foreign key and Postgres does
+  not index the referencing side by itself.
+- **`PreviewImages.pick` decides the fallback on what has a photograph, not on what survived
+  the vocabulary.** A brand whose garments are all imageless — ordinary for a sitemap source
+  — otherwise counts as "filtering removed nothing", skips the fallback, and returns an empty
+  list built from rows that did have pictures.
+- **The block prints six and the list holds thirty.** Three cards is one screenful of a scroll
+  you were already doing, and two of them are usually brands you have an opinion about — too
+  small to be an offer. Thirty fetched, because "SEE ALL" led to a page of six otherwise.
 - **A card says why, and the reason is the one the ranking used.** `sharedTraits` reads the terms
   contributing most to the dot product, so the line cannot drift from the score. It printed the
   follower count instead, which at this scale read "1 PERSON WATCHING" on every row — an argument
@@ -872,6 +908,43 @@ builds the executable. Omitting them yields a confusing "overlapping sources" er
   (`SavedView.isMixedBrand`, computed over what is showing rather than over the whole collection, so
   a single-brand board quiets it and going back to Inspiration brings it back). Removing the name
   outright was the other option and is worse: browsing by label is a real thing to do in an archive.
+- **The photograph is asked six things, not two** (`VisualReading`, `Histogram`,
+  `Silhouette`). Dominant colour and Vision's category labels both answer questions a
+  product *title* could mostly have answered too. The picture knows more, and all of it was
+  going unasked while the bytes sat decoded: a **second colour**, **busyness** (colour
+  variety plus edge density — what makes two loud pieces argue, and no tag anywhere says
+  it), **text coverage** (the axis catalogue parsing can never reach, because no brand files
+  a hoodie under "logo-heavy"), **shape** off the cutout mask, **tonal register** (how dark,
+  how colourful — this is what separates a Palace wardrobe from a Kith one while both read
+  "mostly black"), and a **perceptual fingerprint**. All on device, all from requests that
+  ship with the OS, none of it leaving the phone. `VisualReading.version` is the
+  `cutoutVersion` pattern — bump it and every row gets one more look.
+- **`visionBusyness` is not a claim that there is a print.** A four-panel colourblock jacket
+  scores high with no print on it at all, and that is correct for the thing it feeds:
+  whether two pieces argue when worn together. Naming it after prints would invite the wrong
+  reading and then the wrong fix.
+- **Text outranks busyness when naming what a garment is doing.** A chest wordmark on an
+  otherwise plain hoodie is *Logo*, not *Graphic* — filing it with the all-over prints puts
+  it where it does not belong. One label per item, so nothing double-counts.
+- **The measured reading beats the word list wherever there is one** (`Garment.isStatement`).
+  The vocabulary was always a stand-in for looking: "camo" in a title is a guess that the
+  picture is busy. It stays, because `ImageTagger` only runs over saves, so a product on a
+  page nobody has kept has never been measured and words are all there is.
+- **A silhouette is refused far more often than it is given, and every guard was earned.**
+  Read on the widest row, a funnel-neck fleece and a Palace hoodie both came back "Cropped"
+  — because a top laid flat has its sleeves out, so the widest row is the *wingspan* and
+  says nothing about the cut. It reads the hem now. There is deliberately no "Cropped" at
+  all: cropped and boxy both widen the body against the length and these measurements cannot
+  separate them, so claiming to would be a guess dressed as a measurement. Three further
+  refusals, each added after the logs showed it was needed: the outline must be
+  substantially smaller than its bounding box, it must **vary across its middle** (a frame
+  with softened corners narrows only at the ends and is otherwise a rectangle), and the
+  answer must be a shape a garment can physically be — a real collection produced tops 1.29
+  times wider at the hem than they were long, which is a photograph being measured.
+  **`SilhouetteBands` lives in `StreetwCore` while the measuring stays in the app**: the
+  pixels need CoreGraphics and cannot go there, but the bands are the part with an opinion
+  in them and the only part testable without a photograph — which matters, because Vision
+  produces no mask in the Simulator and that path can never run in a test at all.
 - **Only saved items get image analysis.** `ImageTagger` runs from the Saved tab, batched
   so results appear as they land, and stamps `analyzedAt` even on failure so a dead image
   URL isn't retried forever. Running it over a catalogue sweep would analyse 250 items
@@ -993,7 +1066,13 @@ snapping**, because a grid turns a collage back into a form.
 - **The Style tab is not a settings screen.** Sizes and the gender filter moved to Settings; what
   is left is a reading of your taste and things to do with it. `StyleView` is also the only place
   besides the feed that shows recommendations, and it shares the block rather than restyling it.
-  - **A facet is a query, not a statistic.** The taste block printed four comma-joined lines of
+  - **`StyleReading` holds every threshold that turns a measurement into a word**, because two
+  copies would drift and the symptom is specific: a facet reading "Graphic · 12" that opens
+  onto nine items, which reads as the count being broken. `StyleProfile.build` counts with
+  it and `CollectionFacet.matches` filters with it.
+- **Register sits above categories in the taste block.** "Dark, muted, plain" is a sharper
+  reading of somebody than "hoodies and sneakers", which describes half of streetwear.
+- **A facet is a query, not a statistic.** The taste block printed four comma-joined lines of
     nouns and ended there — the app's own reading of what you like, with nothing to do about it, on
     the page whose whole subject is you. Each word is now its own control and opens the collection
     narrowed to it, via `CollectionRoute` (the `PushRoute` shape, built in `streetwApp.init` for the
@@ -1015,6 +1094,34 @@ snapping**, because a grid turns a collage back into a form.
   - **Discover sits below the reading of your own wardrobe.** It used to sit above it, which made
     the tab about you open as a shop.
 
+- **"Wear it with" is the one thing an archive can say that a catalogue cannot** (`GoesWith`,
+  `Pairing`). It reads both ways round: on something you haven't kept it is the argument for
+  keeping it, and on something you have it is the start of a fit. The judgement is in
+  `StreetwCore` beside `ColorHarmony` so this page and the fit row can't disagree about the
+  same two garments. Four rules — slots must complement (a gate, not a score), colour via
+  `ColorHarmony`, weight must agree, one statement piece — and the interesting one is
+  **absent**: no formality penalty. A blazer with track pants is the house style here, so
+  the first rule anyone reaches for would spend its time refusing the best answers the app
+  has. Note also that a *fabric* is not a season: `wool` and `linen` and `mesh` were in the
+  seasonal lists and the tests took them out, because a wrong refusal is invisible — the
+  suggestion never appears and nobody can tell it was suppressed.
+- **The classifier's vocabulary is read off real wardrobes, not guessed at.** Three of eleven
+  saves on the test device were `.unknown` — invisible to fits, pairings and the wardrobe's
+  own slot counts — and two were ordinary clothes: Palace names its hoodies "P3 HOOD", and
+  `fleece` was in no list at all. `blazer` was missing too, found by a pairing test that was
+  asserting about formality and failing on the slot gate instead. Compound names still
+  resolve correctly because the table is walked in slot order: "Fleece Jacket" is outerwear,
+  a bare "fleece" is a top.
+- **Emptying a brand's unread page leaves it** (`BrandFeedView`). That screen *is* the unread
+  queue for one brand, so clearing it with the checkmark left you looking at a page whose
+  entire content was the thing you just finished — which reads as the button breaking the
+  page rather than completing it. `onChange`, not a check in `body`, or the `unseenOnly:
+  false` route (a brand's whole history, allowed to be empty) would refuse to open.
+- **The watch bell fills; it does not carry a number.** A badge is the platform's unread
+  mark — something happened, deal with it, and it clears when you do. A watch count is none
+  of those: it is the number of watches you deliberately set, and it comes down only when a
+  restock lands, so it nags hardest exactly when the thing you are waiting for is slowest.
+  A watch that fires arrives as a push and as a card in the feed, which is where news goes.
 - **A saved thing is still a product.** `SaveDetailView` shows the size run, the colourways and a
   watch, not just a note field. The page had been read too literally as "what did I think" and
   dropped everything the item *is* — but the commonest reason to keep something you can't have is

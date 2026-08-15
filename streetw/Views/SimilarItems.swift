@@ -41,8 +41,40 @@ struct SimilarItems: View {
         // genuine variant of what you are looking at, but a page full of one brand is a
         // catalogue rather than a suggestion.
         if candidate.brand?.id == subject.brand?.id { score += 0.5 }
+        score += resemblance(to: candidate)
         return score
     }
+
+    /// How much the two actually *look* alike, worth up to two points.
+    ///
+    /// Everything else here matches vocabulary, which is blind in both directions: it
+    /// cannot see that two jackets resemble each other when their merchandisers filed them
+    /// under different words, and it happily proposes two unrelated products because both
+    /// are tagged "cotton". `VisualReading` stores a perceptual fingerprint per analysed
+    /// item and this is what it is for.
+    ///
+    /// **Added to the text score rather than replacing it**, and capped so it cannot carry
+    /// a match on its own. Only saved items are ever analysed — `ImageTagger` deliberately
+    /// does not walk the catalogue — so on most pairs one side has no fingerprint and this
+    /// contributes nothing. A term that only *sometimes* exists must not be able to
+    /// outrank the one that always does, or the ranking would reorder itself as the
+    /// analysis backlog drained.
+    private func resemblance(to candidate: BrandUpdate) -> Double {
+        guard let distance = VisualReading.distance(
+            subject.visionFeaturePrint,
+            candidate.visionFeaturePrint
+        ) else { return 0 }
+        // Vision's distance is unbounded and small numbers mean "alike". Anything past the
+        // horizon is simply a different garment and scores nothing, rather than scoring
+        // negatively — this is evidence for a match, never against one.
+        guard distance < Self.resemblanceHorizon else { return 0 }
+        return (1 - distance / Self.resemblanceHorizon) * 2
+    }
+
+    /// Past this, two photographs have nothing to say about each other. Chosen so the term
+    /// is a strong nudge among plausible candidates rather than a filter — it is added to
+    /// scores that start at 1.5 for a matching slot.
+    private static let resemblanceHorizon = 1.1
 
     private var matches: [BrandUpdate] {
         let profile = sizes.profile

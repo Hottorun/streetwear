@@ -72,6 +72,7 @@ func configure(_ app: Application) async throws {
     app.migrations.add(AddVariantImageIndex())
     app.migrations.add(AddUserWaistSizes())
     app.migrations.add(AddEventPrice())
+    app.migrations.add(AddProductBrandIndex())
     if Environment.get("AUTO_MIGRATE") != "false" {
         try await app.autoMigrate()
     }

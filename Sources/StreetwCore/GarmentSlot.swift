@@ -55,6 +55,93 @@ public enum GarmentSlot: String, Codable, Sendable, CaseIterable, Identifiable {
     public static let essential: [GarmentSlot] = [.outerwear, .top, .bottom, .footwear]
 }
 
+/// Turning two measurements of a garment's outline into a word.
+///
+/// The measuring is done on the device, off the cutout mask, and cannot live here —
+/// `StreetwCore` compiles on Linux and CoreGraphics does not. The *judgement* can, and
+/// should: which band a proportion falls into is the part with an opinion in it, the part
+/// most likely to be wrong, and the only part that can be tested without a photograph.
+///
+/// All three inputs are ratios within the outline, so they survive brands shooting at
+/// different distances:
+///
+/// - **breadth** — the widest row divided by the outline's height.
+/// - **taper** — the hem's width divided by the widest row.
+/// - **bodyBreadth** — the hem's width divided by the outline's height.
+///
+/// The third exists because of a wrong answer on a real wardrobe. A top laid flat has its
+/// sleeves out to the sides, so its *widest row* is the sleeve span — which says nothing
+/// whatever about the garment's cut. Read on `breadth`, a funnel-neck fleece and a hoodie
+/// both came back "Cropped", which is not a word either of them deserves. The hem is the
+/// body, and the body is what "boxy" and "longline" are about.
+public enum SilhouetteBands {
+    /// The word for this outline, or **nil**, which is the common answer.
+    ///
+    /// There is deliberately a gap between every band where nothing is reported. Most
+    /// garments are unremarkable in shape, and a profile that labels all of them "Regular"
+    /// has said nothing at length — the same reason `GenderClassifier` answers `.unknown`
+    /// rather than guessing. Only an outline clearly at one end earns a word.
+    ///
+    /// Slots other than tops, bottoms and outerwear return nil outright. A shoe has a
+    /// perfectly good outline and its shape is a fact about shoes rather than about the
+    /// person wearing them; "Wide" under every sneaker in a collection is a facet nobody
+    /// would open.
+    public static func label(
+        breadth: Double,
+        taper: Double,
+        bodyBreadth: Double,
+        slot: GarmentSlot
+    ) -> String? {
+        // Nothing wearable is this shape.
+        //
+        // The last line of defence, and it exists because the ones before it were not
+        // enough. Measured against a real collection, tops came back with a body 1.29 times
+        // their own height — a hoodie wider at the hem than it is long, which no garment is.
+        // Every guard before this one asks whether the *outline* looks like an outline;
+        // this one asks whether the answer is a garment, and refuses when it plainly is
+        // not. A refused reading costs a facet nobody sees. A reading like that one, kept,
+        // is a wrong word printed under somebody's own wardrobe.
+        guard bodyBreadth <= Self.impossible(for: slot) else { return nil }
+
+        switch slot {
+        case .bottom:
+            // A leg is read at the hem: that is the whole difference between a wide leg and
+            // a tapered one, and it is invisible in the overall proportions.
+            if taper >= 0.9 && breadth >= 0.42 { return "Wide" }
+            if taper <= 0.62 { return "Tapered" }
+            if breadth <= 0.3 { return "Slim" }
+            return nil
+
+        case .top, .outerwear:
+            // The body, not the wingspan. Note there is no "Cropped": a cropped top and a
+            // boxy one both widen the body relative to the length and these two numbers
+            // cannot tell them apart, so claiming to would be a guess dressed as a
+            // measurement. Two words that are true beat three where one is invented.
+            if bodyBreadth >= 0.86 { return "Boxy" }
+            if bodyBreadth <= 0.62 { return "Longline" }
+            return nil
+
+        default:
+            return nil
+        }
+    }
+
+    /// Whether an outline is worth measuring at all for this slot.
+    public static func speaks(for slot: GarmentSlot) -> Bool {
+        slot == .top || slot == .bottom || slot == .outerwear
+    }
+
+    /// The widest a garment's hem can plausibly be relative to its own length.
+    ///
+    /// Generous, because this is only meant to catch answers that are not about clothes at
+    /// all. A cropped tee is a real garment and comes close to square; a hoodie a third
+    /// wider than it is long is a photograph being measured instead of a garment. Trousers
+    /// get a tighter bound because they cannot approach square in any cut.
+    private static func impossible(for slot: GarmentSlot) -> Double {
+        slot == .bottom ? 0.85 : 1.05
+    }
+}
+
 public enum GarmentClassifier {
     /// Longest phrase first within each slot, and slots checked in a fixed order, because
     /// several words legitimately appear in more than one garment — "jacket" in "jacket"
@@ -70,7 +157,13 @@ public enum GarmentClassifier {
         ]),
         (.outerwear, [
             "jacket", "jackets", "coat", "coats", "parka", "parkas", "anorak", "windbreaker",
-            "outerwear", "puffer", "bomber", "trench", "raincoat", "overcoat", "gilet", "vest"
+            "outerwear", "puffer", "bomber", "trench", "raincoat", "overcoat", "gilet", "vest",
+            // Found by the pairing tests: a blazer resolved to `.unknown`, which meant it
+            // could never be put in a fit, never be suggested against anything, and never
+            // count towards the wardrobe's outerwear. `overshirt` and `shacket` are the
+            // same omission one layer down — both are outerwear whatever the name says, and
+            // "shirt jacket" was already handled as a phrase for exactly this reason.
+            "blazer", "blazers", "overshirt", "shacket", "varsity", "peacoat", "shearling"
         ]),
         (.bottom, [
             // "shorts" but never a bare "short" — "Short Sleeve Shirt" is a top, and the
@@ -82,12 +175,20 @@ public enum GarmentClassifier {
         (.top, [
             "tee", "tshirt", "shirt", "shirts", "hoodie", "hoodies", "hoody",
             "sweatshirt", "sweater", "sweaters", "crewneck", "knit", "knitwear", "jumper",
-            "polo", "longsleeve", "top", "tops", "tank", "jersey", "cardigan"
+            "polo", "longsleeve", "top", "tops", "tank", "jersey", "cardigan",
+            // Read off a real wardrobe rather than guessed at. Palace names its hoodies
+            // "P3 HOOD", and "fleece" — one of the most common things a streetwear brand
+            // sells — was in no list at all, so both resolved to `.unknown` and were
+            // invisible to fits, pairings and the wardrobe's own slot counts. A bare
+            // "fleece" lands here; "Fleece Jacket" still lands on outerwear, because the
+            // table is checked in slot order and outerwear comes first.
+            "fleece", "fleeces", "hood", "henley", "rugby", "turtleneck", "thermal"
         ]),
         (.accessory, [
             "bag", "bags", "tote", "backpack", "belt", "belts", "sock", "socks", "scarf",
             "glove", "gloves", "wallet", "keychain", "sunglasses", "jewelry", "jewellery",
-            "necklace", "ring", "bracelet", "accessory", "accessories"
+            "necklace", "ring", "bracelet", "accessory", "accessories",
+            "crossbody", "pouch", "duffel", "duffle", "holdall", "cardholder"
         ])
     ]
 

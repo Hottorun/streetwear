@@ -250,6 +250,12 @@ struct StyleView: View {
 
             VStack(alignment: .leading, spacing: 16) {
                 FacetLine(title: "Colours", facets: profile.colors, axis: .colour)
+                // Register above categories: "dark, muted, plain" is a sharper reading of
+                // somebody than "hoodies and sneakers", which describes half of streetwear.
+                // Both are read off the photograph rather than out of a product title —
+                // see `VisualReading`.
+                FacetLine(title: "Register", facets: profile.tones, axis: .tone)
+                FacetLine(title: "How loud", facets: profile.patterns, axis: .pattern)
                 FacetLine(title: "Categories", facets: profile.categories, axis: .category)
                 FacetLine(title: "Silhouettes", facets: profile.silhouettes, axis: .silhouette)
                 FacetLine(title: "Brands", facets: profile.brands, axis: .brand)

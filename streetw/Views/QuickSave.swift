@@ -127,8 +127,16 @@ struct QuickSaveModifier: ViewModifier {
     private func commit(_ intent: QuickSaveCoordinator.Intent) {
         switch intent {
         case .markRead:
-            update.isSeen = true
-            update.brand?.lastOpenedAt = Date()
+            // Animated, because every list this card sits in filters on `isSeen` and the
+            // card is therefore about to be *removed* — an unanimated removal is a hitch:
+            // the card is there, then the page has silently shifted up by its height and
+            // whatever was below is now under your thumb. It read as the app pausing to
+            // think. What is actually being animated is the gap closing, which is the one
+            // thing that makes the next item feel like it arrived rather than appeared.
+            withAnimation(.easeOut(duration: 0.22)) {
+                update.isSeen = true
+                update.brand?.lastOpenedAt = Date()
+            }
             try? context.save()
             didMarkRead.toggle()
         case .file:

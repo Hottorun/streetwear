@@ -16,6 +16,7 @@ import SwiftUI
 
 struct BrandFeedView: View {
     @Environment(\.modelContext) private var context
+    @Environment(\.dismiss) private var dismiss
     @Environment(SizeProfileStore.self) private var sizes: SizeProfileStore
 
     let brand: Brand
@@ -31,20 +32,43 @@ struct BrandFeedView: View {
         return brand.updates
             .filter { unseenOnly ? !$0.isSeen : true }
             .filter { $0.passes(profile) }
-            .sorted { $0.publishedAt > $1.publishedAt }
+            .sorted(by: BrandUpdate.newestFirst)
+    }
+
+    /// The lead photographs of the next couple of items, for the card at `position` to
+    /// warm while it is the one being read.
+    ///
+    /// A `LazyVStack` builds a card when it is nearly on screen, and this page's cards are
+    /// a full-width square each — so the load for the next garment began at the moment it
+    /// arrived, and marking one read (which removes it, pulling the next up under your
+    /// thumb) landed on an empty frame that then filled in. That gap is the "lag" before
+    /// the next item appears: nothing was slow, the picture simply had not been asked for
+    /// yet. Same argument as `ImageGallery`'s neighbour warm-up, one level up.
+    ///
+    /// Two, not the rest of the list: a brand page can be three hundred products and
+    /// fetching all of them because somebody opened the page would be a great deal of
+    /// bandwidth spent on photographs nobody has asked to see.
+    private static func leadImages(of updates: [BrandUpdate], after position: Int) -> [URL] {
+        updates
+            .dropFirst(position + 1)
+            .prefix(2)
+            .compactMap(\.primaryImageURL)
     }
 
     var body: some View {
         ScrollView {
+            // One evaluation, reused by the `ForEach` and by the warm-up below it.
+            let updates = self.updates
+
             LazyVStack(alignment: .leading, spacing: 40) {
-                ForEach(updates) { update in
+                ForEach(Array(updates.enumerated()), id: \.element.id) { position, update in
                     // A release is not a garment and must not be drawn as one here either
                     // — this page is reached from "+36 more", so it holds exactly the same
                     // mix the feed does.
                     if update.kind == .collection {
                         CollectionCard(update: update)
                     } else {
-                        GalleryCard(update: update)
+                        GalleryCard(update: update, warm: Self.leadImages(of: updates, after: position))
                     }
                 }
             }
@@ -54,11 +78,33 @@ struct BrandFeedView: View {
         .background(Color.paper)
         .navigationTitle(brand.name)
         .toolbarTitleDisplayMode(.inline)
+        // **Emptying this page leaves it, whichever way it was emptied.**
+        //
+        // This screen *is* the unread queue for one brand: everything on it is here because
+        // it hasn't been read, so reading the last of it leaves a page whose whole content
+        // was the thing you just finished. Pressing the checkmark cleared all of them at
+        // once and left you looking at nothing, with no statement that anything had
+        // happened and a back button as the only way on — which reads as the button having
+        // broken the page rather than completed it. Swiping the last card read gets there
+        // too, more slowly.
+        //
+        // `onChange`, not a check in `body`: an already-empty page must stay put, or the
+        // `unseenOnly: false` route — the brand's whole history, which is allowed to be
+        // empty — would refuse to open at all.
+        .onChange(of: updates.isEmpty) { _, isEmpty in
+            guard isEmpty, unseenOnly else { return }
+            dismiss()
+        }
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Button("Mark all seen", systemImage: "checkmark") {
-                    for update in updates { update.isSeen = true }
-                    brand.lastOpenedAt = Date()
+                    // Animated for the same reason the swipe is: the cards are being
+                    // removed, and the pop that follows reads as a consequence of that
+                    // rather than as the screen being yanked away.
+                    withAnimation(.easeOut(duration: 0.22)) {
+                        for update in updates { update.isSeen = true }
+                        brand.lastOpenedAt = Date()
+                    }
                     try? context.save()
                 }
                 .labelStyle(.iconOnly)
@@ -77,6 +123,12 @@ struct GalleryCard: View {
     @Environment(SizeProfileStore.self) private var sizes: SizeProfileStore
 
     let update: BrandUpdate
+    /// Photographs belonging to the cards *after* this one — see
+    /// `BrandFeedView.leadImages(of:after:)`. Empty anywhere the caller has no next card
+    /// to name, which is the correct behaviour rather than a missing feature.
+    var warm: [URL] = []
+
+    private static let drawnWidth = 400
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -84,7 +136,7 @@ struct GalleryCard: View {
                 ImageGallery(
                     urls: update.imageURLs,
                     kind: update.kind,
-                    drawnWidth: 400,
+                    drawnWidth: Self.drawnWidth,
                     mark: update.brand?.name
                 )
                 SaveAction(update: update)
@@ -130,6 +182,9 @@ struct GalleryCard: View {
         }
         .contextMenu { UpdateMenu(update: update) }
         .quickSave(update)
+        // At the same width the next card will draw at, or the ladder in `ImageRendition`
+        // mints a second URL for the same photograph and the warm-up warms nothing.
+        .task(id: warm) { ImageLoader.shared.prefetch(warm, width: Self.drawnWidth) }
     }
 }
 

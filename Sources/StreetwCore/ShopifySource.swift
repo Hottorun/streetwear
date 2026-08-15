@@ -316,6 +316,9 @@ public struct ShopifySource: SourceAdapter {
             linkURL: link?.url,
             imageURLStrings: product.images?.compactMap { $0.src } ?? [],
             publishedAt: product.publishedAt ?? product.createdAt ?? Date(),
+            // Carried so `Reshelving` can tell a launch from a re-merchandising sweep —
+            // this is the only source that publishes it, and the whole rule turns on it.
+            createdAt: product.createdAt,
             kind: .product,
             priceText: variants.compactMap(\.price).first,
             // The lowest variant price, not the first: a product whose S is on sale and

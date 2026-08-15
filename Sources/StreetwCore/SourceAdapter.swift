@@ -20,6 +20,13 @@ public struct FetchedItem: Sendable, Hashable {
     public var linkURL: URL?
     public var imageURLStrings: [String]
     public var publishedAt: Date
+    /// When the product came into existence, where the source says so.
+    ///
+    /// Not the same question as `publishedAt`, which is when it was last *put on the
+    /// shelf* — storefronts rewrite that on every re-merchandising sweep, so on its own it
+    /// reports three-year-old stock as today's newest drop. See `Reshelving`. Nil is normal
+    /// and common: only Shopify publishes a creation date.
+    public var createdAt: Date?
     public var kind: UpdateKind
     public var priceText: String?
     /// The same price as a number, in the shop's own currency.
@@ -44,6 +51,7 @@ public struct FetchedItem: Sendable, Hashable {
         linkURL: URL? = nil,
         imageURLStrings: [String] = [],
         publishedAt: Date,
+        createdAt: Date? = nil,
         kind: UpdateKind,
         priceText: String? = nil,
         priceAmount: Double? = nil,
@@ -59,6 +67,7 @@ public struct FetchedItem: Sendable, Hashable {
         self.linkURL = linkURL
         self.imageURLStrings = imageURLStrings
         self.publishedAt = publishedAt
+        self.createdAt = createdAt
         self.kind = kind
         self.priceText = priceText
         self.priceAmount = priceAmount

@@ -62,7 +62,12 @@ final class BrandSuggestions {
         isLoading = true
         defer { isLoading = false }
 
-        if let found = try? await remote.popularBrands(limit: 12) {
+        // Thirty, not twelve. The blocks print a handful and "SEE ALL" is meant to be a
+        // page worth opening — with twelve fetched and the first six on screen, the rest of
+        // the catalogue was six brands, so the link led somewhere emptier than the thing it
+        // was linked from. The rows are small (a DTO, a vector and a dozen image URLs) and
+        // this is fetched once per ten minutes for the whole app.
+        if let found = try? await remote.popularBrands(limit: 30) {
             brands = found
             lastLoadedAt = Date()
         }
@@ -94,12 +99,16 @@ struct BrandRecommendations: View {
     var blurb: String = "PICKED FROM WHAT YOU KEEP"
     /// How many cards this block prints before deferring to the full list.
     ///
-    /// Three, not twelve. The block sits on the feed, the brands tab *and* the style tab,
-    /// so a wall of suggestions was being served three times over to somebody who had
-    /// followed one brand — the same twelve names each time, in the same order. Three
-    /// reads as a suggestion; twelve reads as a demand, and the third copy of it reads as
-    /// the app having nothing else to say. Everything beyond them is one tap away.
-    var limit: Int = 3
+    /// Six, not the whole list. The block sits on the feed, the brands tab *and* the style
+    /// tab, so printing everything would serve the same wall three times over to somebody
+    /// who has followed one brand — the same names each time, in the same order.
+    ///
+    /// It was three, which is a suggestion in the sense that it is barely an offer: three
+    /// cards is one screenful of a scroll you were already doing, and two of them are
+    /// usually brands you have an opinion about already. Six is still small enough to
+    /// scroll past and large enough that the taste ranking has room to show. Everything
+    /// beyond them is one tap away on "SEE ALL".
+    var limit: Int = 6
 
     @State private var isShowingAll = false
 

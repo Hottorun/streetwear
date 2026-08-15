@@ -87,6 +87,75 @@ final class BrandUpdate {
     /// True when this photograph has never been offered to the current lift.
     var needsCutout: Bool { cutoutVersion != Cutout.version }
 
+    // MARK: - The deeper read of the photograph
+    //
+    // Everything below is measured by `VisualReading` in the same pass that already
+    // decodes the picture for the colour and the cutout. Stored flat rather than as one
+    // Codable struct **on purpose**: SwiftData decodes a stored `Codable` with an internal
+    // `try!`, so a field added later is a crash on launch for anybody holding older data —
+    // which is exactly what `BrandSource.failureCount` did on a real device. A new
+    // property with a default is a lightweight migration and cannot fail that way.
+
+    /// The second colour in the photograph, where there is a real one.
+    ///
+    /// Nil is the common and correct answer: most garments are one colour, and inventing
+    /// an accent for them would put "Black · Grey" on every row in the collection. Only a
+    /// runner-up holding a meaningful share of the garment's pixels earns this.
+    var visionSecondaryColor: String?
+
+    /// How much is going on in the picture, 0…1 — colour variety plus edge density inside
+    /// the garment. A plain black hoodie sits near 0; an all-over print sits near 1.
+    ///
+    /// Deliberately *not* called "has a print": a four-panel colourblock jacket scores high
+    /// and has no print on it at all. What this measures is visual noise, which is the
+    /// property that actually matters for whether two pieces argue.
+    var visionBusyness: Double = 0
+
+    /// How much of the garment is covered in legible text, 0…1.
+    ///
+    /// The one axis in streetwear that title-parsing can never reach. A brand does not tag
+    /// a product "logo-heavy" — but a chest wordmark is right there in the photograph, and
+    /// on-device text recognition reads it reliably. Logo-heavy versus blank is most of
+    /// what separates two wardrobes that a colour histogram would call identical.
+    var visionTextCoverage: Double = 0
+
+    /// The garment's shape, read off the cutout mask — "Boxy", "Slim", "Wide", "Long".
+    ///
+    /// Nil whenever there is no mask to measure, which is ordinary: Vision's subject lift
+    /// does not run in the Simulator, `Seamless` declines on anything but a flat sweep, and
+    /// a lookbook photograph has no single garment to outline. Never guessed from the
+    /// bounding box alone — see `Silhouette`.
+    var visionSilhouette: String?
+
+    /// Mean lightness and colourfulness of the garment's own pixels, 0…1.
+    ///
+    /// Two numbers that cost nothing — they fall out of the histogram the colour vote
+    /// already builds — and together they say the thing a list of colour names cannot:
+    /// whether somebody dresses dark and muted or bright and loud. That is the axis that
+    /// separates a Palace wardrobe from a Kith one while both read "mostly black".
+    var visionLightness: Double = 0
+    var visionSaturation: Double = 0
+
+    /// Vision's perceptual fingerprint of the photograph.
+    ///
+    /// About two kilobytes, computed on device, with a distance function built in — so two
+    /// garments can be compared on *how they look* rather than on which words they share.
+    /// `SimilarItems` has only ever matched vocabulary, which cannot see that two jackets
+    /// resemble each other and can be fooled by two unrelated things both tagged "cotton".
+    var visionFeaturePrint: Data?
+
+    /// Which revision of `VisualReading` produced the fields above.
+    ///
+    /// The `cutoutVersion` argument exactly: `analyzedAt` was stamped long before any of
+    /// these existed, so gating on it would leave every established collection with none of
+    /// them, forever. A row from an older build decodes 0, is stale, and gets one more look.
+    /// Stamped even when a measurement finds nothing, so a photograph with no text on it is
+    /// not re-read on every launch.
+    var visionVersion: Int = 0
+
+    /// True when this photograph has not been through the current deeper read.
+    var needsVisualReading: Bool { visionVersion != VisualReading.version }
+
     /// The product this row is about, as the catalogue keys it — `shopify:<id>`.
     ///
     /// Distinct from `externalID`, which identifies the *event*. In server mode a feed row
@@ -261,6 +330,31 @@ final class BrandUpdate {
     /// question.
     func passes(_ profile: SizeProfile) -> Bool {
         profile.allows(gender)
+    }
+
+    /// Newest first, and **totally ordered** — the comparator every list of a brand's
+    /// output sorts by.
+    ///
+    /// The date alone is not an ordering. A storefront publishes a drop in one write and
+    /// stamps the batch with the same second: Represent's 250 most recent products carry
+    /// only 154 distinct timestamps, so nearly half of them are tied with something else,
+    /// and a sitemap brand whose `lastmod` is date-only ties an entire day together.
+    /// `sorted(by:)` is not a stable sort, and `brand.updates` is a to-many relationship
+    /// whose array order is unspecified and free to differ between two reads — so sorting
+    /// on `publishedAt` alone gave the tied items a *fresh arbitrary order on every render*.
+    ///
+    /// On screen that is the bug where marking one card read in "+36 more" briefly shows
+    /// the wrong item next and then swaps back to the right one: the mutation re-renders
+    /// the list, the ties reshuffle, and a later pass reshuffles them again. Nothing was
+    /// wrong with the data and no amount of looking at the filter would have found it.
+    ///
+    /// `externalID` is the tiebreaker because it is the one field that is stable across
+    /// relaunches, identical on the phone and the server, and unique per row — the same
+    /// string dedupe already keys on.
+    static func newestFirst(_ a: BrandUpdate, _ b: BrandUpdate) -> Bool {
+        a.publishedAt == b.publishedAt
+            ? a.externalID > b.externalID
+            : a.publishedAt > b.publishedAt
     }
 
     /// How much was taken off, 0…1. Nil when there is nothing to compare against.
