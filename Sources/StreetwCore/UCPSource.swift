@@ -128,32 +128,28 @@ public struct UCPSource: SourceAdapter {
 
     struct Discovery: Sendable, Hashable {
         var endpoint: URL
-        /// Whether the profile *says* it can answer a catalogue search. A hint, not a
-        /// verdict — see `detect`.
-        var advertisesCatalog: Bool
     }
 
     /// Reads `/.well-known/ucp` and picks the MCP shopping endpoint.
     ///
-    /// **The capability list is a hint and the endpoint is the truth**, which was learned
-    /// the expensive way and inside a single afternoon. Supreme's profile advertised
-    /// `dev.ucp.shopping.catalog.search` when this adapter was written and verified against
-    /// it; three hours later the same URL listed `dev.shopify.catalog` and no standard
-    /// catalogue capability at all, while the endpoint went on answering `search_catalog`
-    /// exactly as before. A gate that trusted the list turned a working source into
-    /// "not a UCP storefront" on a document edit nobody made on our side.
+    /// **The capability list is not consulted at all, and that is a decision with evidence
+    /// behind it.** It was wrong in both directions within one afternoon of this being
+    /// written, on the same storefront:
     ///
-    /// So this returns an endpoint whenever one is published, and reports separately
-    /// whether the catalogue was advertised. `detect` uses that to decide whether to *ask*;
-    /// `fetch` ignores it entirely, because by then the source exists and the honest thing
-    /// is to try and report what came back.
+    /// - Supreme advertised `dev.ucp.shopping.catalog.search`, then three hours later listed
+    ///   only `dev.shopify.catalog` while the endpoint went on answering `search_catalog`
+    ///   exactly as before. A gate that trusted the list turned a working source into "not a
+    ///   UCP storefront" on a document edit nobody made here.
+    /// - Later the same day it still resolved a profile, and the endpoint replied
+    ///   `Tool not found: search_catalog` — advertised gone, tool gone with it.
+    ///
+    /// A list that can say yes when the answer is no, and no when the answer is yes, is not
+    /// evidence. So this returns an endpoint whenever one is published and lets `detect`
+    /// settle it by asking, which costs one request once per brand and cannot go stale.
     static func endpoint(inProfile data: Data) -> Discovery? {
         guard let root = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
               let ucp = root["ucp"] as? [String: Any]
         else { return nil }
-
-        let capabilities = ucp["capabilities"] as? [String: Any] ?? [:]
-        let advertised = catalogCapabilities.contains { capabilities[$0] != nil }
 
         let services = ucp["services"] as? [String: Any] ?? [:]
         guard let shopping = services["dev.ucp.shopping"] as? [[String: Any]] else { return nil }
@@ -164,17 +160,10 @@ public struct UCPSource: SourceAdapter {
                   let url = URL(string: raw),
                   url.scheme == "https"
             else { continue }
-            return Discovery(endpoint: url, advertisesCatalog: advertised)
+            return Discovery(endpoint: url)
         }
         return nil
     }
-
-    /// The standard capability, and Shopify's vendor-namespaced one — which is what its
-    /// storefronts list when they list anything at all.
-    static let catalogCapabilities = [
-        "dev.ucp.shopping.catalog.search",
-        "dev.shopify.catalog"
-    ]
 
     private func discover(at origin: URL) async throws -> Discovery? {
         guard var components = URLComponents(url: origin, resolvingAgainstBaseURL: false) else {
@@ -197,17 +186,18 @@ public struct UCPSource: SourceAdapter {
     /// Whether a storefront can be watched this way. Used by discovery, which needs the
     /// answer before a `BrandSource` exists to fetch with.
     ///
-    /// **Asks the endpoint when the profile doesn't say.** A storefront publishing an MCP
-    /// service but no catalogue capability might be checkout-only — in which case attaching
-    /// this would be exactly the failure the adapter exists to remove, a source that reports
-    /// healthy and never produces a drop — or it might be Supreme, whose endpoint answers
-    /// catalogue searches perfectly well while its profile has stopped mentioning them. The
-    /// list cannot tell those apart and one `search_catalog` call can, so it makes one.
+    /// **Always asks, never assumes.** Attaching a source that cannot answer is precisely
+    /// the failure this adapter exists to remove — a brand that reports "WATCHING" and never
+    /// produces a drop — and the profile's capability list has been wrong in both directions
+    /// on the same storefront in a single afternoon (see `endpoint(inProfile:)`). One
+    /// `search_catalog` call settles it and cannot go stale.
     ///
-    /// This costs a request, and it costs it **once, when a brand is added** — never on a
-    /// poll. That is the same bargain `SiteIdentityProbe` and `CollectionsSource.detect`
-    /// already make, and it buys a definite answer instead of a guess that goes stale when
-    /// somebody else edits a JSON file.
+    /// The cost is one request, **once, when a brand is added** — never on a poll. That is
+    /// the same bargain `SiteIdentityProbe` and `CollectionsSource.detect` already make.
+    ///
+    /// An empty catalogue still counts as an answer: that is what a storefront between drops
+    /// legitimately returns, and refusing it would drop exactly the brands whose next drop
+    /// is the reason somebody is adding them.
     public static func detect(at base: URL, http: any HTTPFetching = Net.live) async -> URL? {
         guard var components = URLComponents(url: base, resolvingAgainstBaseURL: false) else {
             return nil
@@ -217,16 +207,9 @@ public struct UCPSource: SourceAdapter {
         guard let url = components.url,
               let response = try? await http.get(url),
               response.status == 200,
-              let discovery = endpoint(inProfile: response.data)
+              let discovery = endpoint(inProfile: response.data),
+              (try? await UCPSource(http: http).search(endpoint: discovery.endpoint, cursor: nil)) != nil
         else { return nil }
-
-        if !discovery.advertisesCatalog {
-            // An error means it genuinely cannot answer; anything decodable — including an
-            // empty catalogue, which is what Supreme returns between drops — means it can.
-            guard let _ = try? await UCPSource(http: http)
-                .search(endpoint: discovery.endpoint, cursor: nil)
-            else { return nil }
-        }
 
         // The **storefront origin** is what gets stored, not the MCP endpoint: the endpoint
         // is discovered fresh each poll, and the origin is the thing a person recognises on
@@ -430,13 +413,43 @@ public struct UCPSource: SourceAdapter {
 /// things a product cannot be without.
 struct RPCEnvelope: Decodable {
     struct Failure: Decodable {
-        /// The part worth reading. `message` is the category ("UCP discovery failed");
-        /// `data.content` is the sentence that names the fix ("Unable to fetch agent
-        /// profile: Missing ucp version"). Reporting only the former is how a fault on our
-        /// side reads as a fault on theirs.
-        struct Detail: Decodable {
-            var code: String?
-            var content: String?
+        /// The part worth reading. `message` is the category ("Invalid params", "UCP
+        /// discovery failed"); the detail is the sentence that names what to do about it
+        /// ("Tool not found: search_catalog", "Unable to fetch agent profile: Missing ucp
+        /// version").
+        ///
+        /// **`data` is not one shape, and assuming it was cost us the message twice.** UCP's
+        /// own refusals send an object — `{"code": …, "content": …}` — while the transport's
+        /// send a bare string. Decoding it as an object made the *whole envelope*
+        /// undecodable when a string arrived, so `decode` fell through to `emptyPayload` and
+        /// a brand page said "Nothing returned" about a server that had answered 200 with a
+        /// precise explanation in the body. That is the same failure as reading the status
+        /// before the body, one level further down.
+        enum Detail: Decodable {
+            case text(String)
+            case structured(code: String?, content: String?)
+
+            private struct Object: Decodable {
+                var code: String?
+                var content: String?
+            }
+
+            init(from decoder: any Decoder) throws {
+                let container = try decoder.singleValueContainer()
+                if let text = try? container.decode(String.self) {
+                    self = .text(text)
+                } else {
+                    let object = try container.decode(Object.self)
+                    self = .structured(code: object.code, content: object.content)
+                }
+            }
+
+            var content: String? {
+                switch self {
+                case .text(let value): value.isEmpty ? nil : value
+                case .structured(_, let content): (content?.isEmpty ?? true) ? nil : content
+                }
+            }
         }
 
         var code: Int?
@@ -444,7 +457,7 @@ struct RPCEnvelope: Decodable {
         var data: Detail?
 
         var detail: String {
-            guard let content = data?.content, !content.isEmpty else { return message }
+            guard let content = data?.content else { return message }
             return "\(message) — \(content)"
         }
     }

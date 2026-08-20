@@ -321,10 +321,28 @@ func routes(_ app: Application) throws {
         }
         let slug = base.host() ?? body.url
 
-        if let existing = try await BrandModel.query(on: req.db)
-            .filter(\.$slug == slug)
-            .with(\.$sources)
-            .first() {
+        // **Matched on the registrable domain, not the exact host.**
+        //
+        // The slug is the hostname, and a brand is not one hostname — the rule the client
+        // already learned when saves from `usa.palaceskateboards.com` were attributed to
+        // nobody. Here the same fact makes *duplicate brands*: `stussy.com` and
+        // `www.stussy.com` are two slugs, so the catalogue ended up holding Stüssy twice,
+        // Palace twice (once as a sitemap and once as a Shopify catalog), Corteiz twice and
+        // Supreme twice. Both rows poll, both fill with products, and the person adding one
+        // has no way to tell which is the real one — they follow a brand and get half its
+        // drops.
+        //
+        // The catalogue is global, so this is the one place that can prevent it. Checked
+        // over loaded rows rather than in SQL because the comparison is
+        // `BrandDiscovery.registrableDomain`, which is Swift and shared with the client so
+        // the two cannot disagree about what counts as the same brand.
+        let domain = BrandDiscovery.registrableDomain(of: base.host() ?? slug)
+        let candidates = try await BrandModel.query(on: req.db).with(\.$sources).all()
+        if let existing = candidates.first(where: { brand in
+            guard let host = brand.website.flatMap({ URL(string: $0)?.host() }) ?? Optional(brand.slug)
+            else { return false }
+            return BrandDiscovery.registrableDomain(of: host) == domain
+        }) {
             return BrandDTO(existing, sources: existing.sources)
         }
 
@@ -646,26 +664,45 @@ func routes(_ app: Application) throws {
 
         // Counted in one grouped pass rather than a query per brand: this is 50+ brands and
         // growing, and a route that gets slower with the catalogue is a route nobody runs.
-        var counts: [UUID: Int] = [:]
-        if let sql = req.db as? any SQLDatabase {
-            struct Row: Decodable { var brand_id: UUID; var n: Int }
-            let rows = try await sql.raw("SELECT brand_id, COUNT(*)::int AS n FROM products GROUP BY brand_id")
+        struct Row: Decodable { var brand_id: UUID; var n: Int }
+        func tally(_ table: String) async throws -> [UUID: Int] {
+            guard let sql = req.db as? any SQLDatabase else { return [:] }
+            let rows = try await sql.raw("SELECT brand_id, COUNT(*)::int AS n FROM \(unsafeRaw: table) GROUP BY brand_id")
                 .all(decoding: Row.self)
-            for row in rows { counts[row.brand_id] = row.n }
+            return Dictionary(rows.map { ($0.brand_id, $0.n) }, uniquingKeysWith: { a, _ in a })
+        }
+        let counts = try await tally("products")
+        // Followers, because the other thing this list is read for is deciding which of two
+        // rows for the same brand can be removed — and a row somebody follows cannot.
+        let followers = try await tally("follows")
+
+        // A brand is not one hostname, so two rows can be the same shop under different
+        // hosts. Marked rather than merged: merging is destructive and this is a report.
+        var byDomain: [String: Int] = [:]
+        for brand in brands {
+            let host = brand.website.flatMap { URL(string: $0)?.host() } ?? brand.slug
+            byDomain[BrandDiscovery.registrableDomain(of: host), default: 0] += 1
         }
 
         let lines = brands.compactMap { brand -> (Int, String)? in
             guard let id = brand.id else { return nil }
             let products = counts[id] ?? 0
+            let host = brand.website.flatMap { URL(string: $0)?.host() } ?? brand.slug
             let kinds = brand.sources.map(\.kind).joined(separator: "+")
             let failing = brand.sources.compactMap(\.lastError).first
-            let note = failing.map { " ⚠ \($0.prefix(60))" } ?? ""
+            let note = failing.map { " ⚠ \($0.prefix(50))" } ?? ""
             let never = brand.sources.allSatisfy { $0.lastCheckedAt == nil } ? " (not checked yet)" : ""
-            return (products, "\(String(products).padding(toLength: 6, withPad: " ", startingAt: 0))"
-                + "\(brand.name.padding(toLength: 28, withPad: " ", startingAt: 0)) \(kinds)\(never)\(note)")
+            let dupe = (byDomain[BrandDiscovery.registrableDomain(of: host)] ?? 0) > 1 ? " ‼ DUPLICATE" : ""
+            let cells = [
+                String(products).padding(toLength: 7, withPad: " ", startingAt: 0),
+                String(followers[id] ?? 0).padding(toLength: 5, withPad: " ", startingAt: 0),
+                brand.name.padding(toLength: 26, withPad: " ", startingAt: 0),
+                host.padding(toLength: 30, withPad: " ", startingAt: 0)
+            ].joined()
+            return (products, cells + kinds + never + dupe + note)
         }
 
-        return ([ "products  brand                        sources" ]
+        return (["products followers brand                 host                          sources"]
             + lines.sorted { $0.0 < $1.0 }.map(\.1)).joined(separator: "\n")
     }
 

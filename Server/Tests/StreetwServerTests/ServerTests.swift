@@ -131,6 +131,30 @@ struct RouteTests {
         }
     }
 
+    /// A brand is not one hostname, and the catalogue is global — so this is the one place
+    /// that can stop the same shop being added twice. It could not: the slug is the host, so
+    /// `stussy.com` and `www.stussy.com` were two brands. Both polled, both filled with
+    /// products, and somebody following one got half the drops with no way to tell.
+    @Test("The same shop under a different host is not a second brand")
+    func discoverDeduplicatesAcrossHosts() async throws {
+        try await withServer { app in
+            let existing = BrandModel(
+                name: "Stüssy", slug: "stussy.com", website: "https://stussy.com",
+                instagramHandle: nil, usesGeneratedName: false
+            )
+            try await existing.save(on: app.db)
+
+            try await app.testing().test(.POST, "v1/brands/discover", beforeRequest: { req in
+                try req.content.encode(DiscoverBrand(url: "https://www.stussy.com"))
+            }, afterResponse: { res async throws in
+                #expect(res.status == .ok)
+                #expect(try res.content.decode(BrandDTO.self).id == existing.id)
+            })
+
+            #expect(try await BrandModel.query(on: app.db).count() == 1)
+        }
+    }
+
     @Test("The feed refuses anonymous callers")
     func feedRequiresAuth() async throws {
         try await withServer { app in

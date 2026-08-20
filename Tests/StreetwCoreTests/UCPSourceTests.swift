@@ -29,45 +29,26 @@ struct UCPSourceTests {
         #expect(discovery.endpoint.absoluteString == "https://eu-production.myshopify.com/api/ucp/mcp")
     }
 
-    /// Shopify's own storefronts list the vendor-namespaced capability, and some list it
-    /// *instead of* the standard one — Supreme's profile changed from one to the other
-    /// within hours of this adapter being written, while its endpoint went on answering.
-    @Test("Either catalogue capability counts as advertised")
-    func acceptsEitherCapabilityName() throws {
-        func profile(_ capability: String) -> Data {
-            Data("""
-            {"ucp":{"version":"2026-04-08",
-              "services":{"dev.ucp.shopping":[{"transport":"mcp","endpoint":"https://x.example/api"}]},
-              "capabilities":{"\(capability)":[{"version":"2026-04-08"}]}}}
-            """.utf8)
-        }
-        for name in UCPSource.catalogCapabilities {
-            let found = try #require(UCPSource.endpoint(inProfile: profile(name)))
-            #expect(found.advertisesCatalog, "\(name) should count")
-        }
-        #expect(UCPSource.endpoint(inProfile: profile("dev.ucp.shopping.checkout"))?.advertisesCatalog == false)
-    }
-
-    /// A profile that mentions no catalogue is ambiguous, not a refusal: it might be a
-    /// checkout-only store, or it might be a store that has simply stopped saying. Attaching
-    /// the first would be the failure this adapter exists to remove — a source that reports
-    /// healthy and never produces a drop — so `detect` asks rather than guesses.
-    @Test("An unadvertised catalogue is settled by asking the endpoint")
-    func probesWhenTheProfileIsSilent() async {
+    /// The capability list is never consulted — it was wrong in both directions on one
+    /// storefront in a single afternoon. A checkout-only profile is therefore not a refusal
+    /// on its own; what settles it is whether the endpoint answers.
+    @Test("Detection is settled by asking, not by the capability list")
+    func probesRatherThanTrustingTheProfile() async {
         let checkoutOnly = """
         {"ucp":{"version":"2026-04-08",
           "services":{"dev.ucp.shopping":[{"transport":"mcp","endpoint":"https://x.example/api"}]},
           "capabilities":{"dev.ucp.shopping.checkout":[{"version":"2026-04-08"}]}}}
         """
 
-        // It cannot answer: not a catalogue source.
+        // It cannot answer: not a catalogue source, whatever the list said.
         let mute = MockHTTPClient()
         mute.stub("/.well-known/ucp", MockHTTPClient.Stub(body: Data(checkoutOnly.utf8)))
         mute.stubPost(MockHTTPClient.Stub(status: 500))
         #expect(await UCPSource.detect(at: origin, http: mute) == nil)
 
         // It answers — and an *empty* catalogue still counts, because that is what a
-        // storefront between drops legitimately returns.
+        // storefront between drops legitimately returns, and refusing it would drop the
+        // brands whose next drop is the reason somebody is adding them.
         let answering = MockHTTPClient()
         answering.stub("/.well-known/ucp", MockHTTPClient.Stub(body: Data(checkoutOnly.utf8)))
         answering.stubPost(json: #"{"jsonrpc":"2.0","id":1,"result":{"structuredContent":{"products":[]}}}"#)
@@ -103,6 +84,7 @@ struct UCPSourceTests {
     @Test("Discovery attaches the storefront, not the endpoint")
     func detectStoresTheOrigin() async {
         let http = client()
+        http.stubPost(fixture: "ucp-search-page1.json")
         // The origin is what a person recognises on a brand page, and the endpoint is
         // re-read every poll so a merchant can move it without stranding the brand.
         #expect(await UCPSource.detect(at: origin, http: http) == origin)
@@ -228,6 +210,52 @@ struct UCPSourceTests {
         await #expect(throws: SourceError.ucp("UCP discovery failed")) {
             try await UCPSource(http: http).fetch(source(http), since: nil)
         }
+    }
+
+    /// `data` is not one shape and assuming it was cost the message twice. UCP's own
+    /// refusals send an object; the transport's send a bare string — and decoding it as an
+    /// object made the *whole envelope* undecodable, so a brand page reported "Nothing
+    /// returned" about a server that had answered 200 with a precise explanation.
+    ///
+    /// Both payloads below are verbatim from Supreme, hours apart: the first when its
+    /// endpoint could not resolve our profile, the second after it withdrew the catalogue
+    /// tools altogether.
+    @Test("The reason survives whichever shape `data` arrives in")
+    func readsBothErrorDetailShapes() async {
+        let structured = """
+        {"jsonrpc":"2.0","id":1,"error":{"code":-32001,"message":"UCP discovery failed",
+         "data":{"code":"version_unsupported","content":"Unable to fetch agent profile: Http error"}}}
+        """
+        let plain = """
+        {"jsonrpc":"2.0","id":1,"error":{"code":-32602,"message":"Invalid params",
+         "data":"Tool not found: search_catalog"}}
+        """
+
+        for (payload, expected) in [
+            (structured, "UCP discovery failed — Unable to fetch agent profile: Http error"),
+            (plain, "Invalid params — Tool not found: search_catalog")
+        ] {
+            let http = client()
+            http.stubPost(json: payload)
+            await #expect(throws: SourceError.ucp(expected)) {
+                try await UCPSource(http: http).fetch(source(http), since: nil)
+            }
+        }
+    }
+
+    /// A storefront that withdraws the catalogue tools is no longer watchable this way, and
+    /// discovery has to notice rather than attaching a source that errors on every poll.
+    /// Supreme did exactly this, the same afternoon it was added.
+    @Test("A store that has withdrawn the catalogue tools is not attached")
+    func refusesAStoreThatLostItsTools() async {
+        let http = client()
+        http.stubPost(json: """
+        {"jsonrpc":"2.0","id":1,"error":{"code":-32602,"message":"Invalid params",
+         "data":"Tool not found: search_catalog"}}
+        """)
+        // The fixture profile advertises a catalogue, so `detect` would normally trust it;
+        // this is the case where trusting it is wrong, and only the call can tell.
+        #expect(await UCPSource.detect(at: origin, http: http) == nil)
     }
 
     /// Supreme's catalogue is genuinely empty between seasons. Reading that as a failure
