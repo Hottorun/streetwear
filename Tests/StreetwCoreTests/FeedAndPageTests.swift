@@ -1185,6 +1185,57 @@ struct SitemapSourceTests {
         #expect(result.items.first?.title == "Skye Cap Cypress Wax 574")
     }
 
+    /// An index whose children are merely *numbered* still has products in it. Acne Studios
+    /// lists 78 files called `sitemap_1.xml`…, Palm Angels 138 named after locales — so the
+    /// "does the name say product" filter selected nothing and the adapter returned empty
+    /// from a perfectly good index, with no error to show for it.
+    @Test("A numbered sitemap index is still read")
+    func followsUnnamedChildSitemaps() async throws {
+        let index = """
+        <?xml version="1.0" encoding="UTF-8"?>
+        <sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+          <sitemap><loc>https://brand.com/sitemap_1.xml</loc><lastmod>2026-08-20</lastmod></sitemap>
+        </sitemapindex>
+        """
+        let child = """
+        <?xml version="1.0" encoding="UTF-8"?>
+        <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+          <url><loc>https://brand.com/products/chore-coat</loc><lastmod>2026-08-20</lastmod></url>
+        </urlset>
+        """
+        let http = MockHTTPClient()
+        http.stub("/sitemap.xml", .init(body: Data(index.utf8)))
+        http.stub("/sitemap_1.xml", .init(body: Data(child.utf8)))
+
+        let result = try await SitemapSource(http: http).fetch(source(), since: nil)
+        #expect(result.items.count == 1)
+    }
+
+    /// ...and a named child is still preferred, so the budget is not spent on the blog.
+    @Test("A named child sitemap wins over its siblings")
+    func prefersTheProductChild() async throws {
+        let index = """
+        <?xml version="1.0" encoding="UTF-8"?>
+        <sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+          <sitemap><loc>https://brand.com/blog/sitemap.xml</loc></sitemap>
+          <sitemap><loc>https://brand.com/product/sitemap.xml</loc></sitemap>
+        </sitemapindex>
+        """
+        let http = MockHTTPClient()
+        http.stub("/sitemap.xml", .init(body: Data(index.utf8)))
+        http.stub("/product/sitemap.xml", .init(body: Data("""
+        <?xml version="1.0" encoding="UTF-8"?>
+        <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+          <url><loc>https://brand.com/products/chore-coat</loc><lastmod>2026-08-20</lastmod></url>
+        </urlset>
+        """.utf8)))
+        http.stub("/blog/sitemap.xml", .init(status: 500))
+
+        let result = try await SitemapSource(http: http).fetch(source(), since: nil)
+        #expect(result.items.count == 1)
+        #expect(!http.requestedKeys.contains("/blog/sitemap.xml"), "the blog is not worth a request")
+    }
+
     @Test("Product URLs become items; pages and listings do not")
     func parsesProductURLs() async throws {
         let result = try await SitemapSource(http: client(urlset)).fetch(source(), since: nil)

@@ -74,7 +74,19 @@ public struct SitemapSource: SourceAdapter {
         // names suggest products; ignore the rest, which are blogs, pages and policies.
         if entries.allSatisfy(\.isIndex) {
             var collected: [Entry] = []
-            for child in entries.filter({ Self.looksLikeProducts($0.location) }).prefix(Self.maxChildSitemaps) {
+            // Named children first — "…/product/sitemap.xml" is a strong hint and following
+            // the blog instead would be a waste of the budget.
+            //
+            // **But an index whose children are merely numbered still has products in it.**
+            // Acne Studios lists 78 files called `sitemap_1.xml` … `sitemap_78.xml`, and
+            // Palm Angels 138 named after locales — nothing matches, so the filter selected
+            // nothing and the adapter returned empty from a perfectly good index. On screen
+            // that is a brand row saying "Sitemap" with no error and no products, which is
+            // the failure this whole file keeps producing in new ways. Reading the first few
+            // is strictly better than reading none, and it is bounded by exactly the same
+            // cap either way.
+            let named = entries.filter { Self.looksLikeProducts($0.location) }
+            for child in (named.isEmpty ? entries : named).prefix(Self.maxChildSitemaps) {
                 guard let url = URL(string: child.location),
                       let childResponse = try? await http.get(url, etag: nil),
                       childResponse.status == 200
@@ -122,9 +134,17 @@ public struct SitemapSource: SourceAdapter {
         return !markers.contains { lowered.hasSuffix($0) || lowered.hasSuffix(String($0.dropLast())) }
     }
 
+    /// Whether a child sitemap's *name* suggests it lists products.
+    ///
+    /// **Whole tokens, never substrings** — the rule this codebase already runs on for
+    /// gender, and it was being broken here in the funniest possible way: `"sitemap"`
+    /// contains `"item"`, so every child called anything-`sitemap.xml` matched and the
+    /// filter selected the entire index. It has therefore never once narrowed anything, and
+    /// the first three children got followed whatever they were — the blog as readily as the
+    /// catalogue.
     static func looksLikeProducts(_ location: String) -> Bool {
-        let lowered = location.lowercased()
-        return lowered.contains("product") || lowered.contains("shop") || lowered.contains("item")
+        let tokens = Set(location.lowercased().split { !$0.isLetter }.map(String.init))
+        return !tokens.isDisjoint(with: ["product", "products", "shop", "item", "items"])
     }
 
     /// The best name the entry can offer, in descending order of trust.
