@@ -624,6 +624,24 @@ private final class DateFormatters: @unchecked Sendable {
         return f
     }()
 
+    /// A bare calendar date, which is what a `<lastmod>` usually is.
+    ///
+    /// The sitemaps spec permits the date-only form of W3C Datetime and storefronts use it
+    /// constantly — Carhartt WIP writes `2026-08-20` for all 930 of its products. Nothing
+    /// here could read that, so every entry fell through the `guard let modified` in
+    /// `SitemapSource` and the adapter returned zero items from a perfectly good file. The
+    /// brand row said "Sitemap", the source recorded no error, and the catalogue stayed
+    /// empty: a source reporting healthy while delivering nothing, which is the failure this
+    /// codebase keeps having to hunt down. UTC, because a date with no zone in a sitemap is
+    /// not making a claim about a timezone and picking the server's would shift it.
+    private let dateOnly: DateFormatter = {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.timeZone = TimeZone(secondsFromGMT: 0)
+        f.dateFormat = "yyyy-MM-dd"
+        return f
+    }()
+
     func iso8601(_ raw: String) -> Date? {
         lock.lock()
         defer { lock.unlock() }
@@ -635,6 +653,12 @@ private final class DateFormatters: @unchecked Sendable {
         defer { lock.unlock() }
         return rfc822.date(from: raw)
     }
+
+    func dateOnly(_ raw: String) -> Date? {
+        lock.lock()
+        defer { lock.unlock() }
+        return dateOnly.date(from: raw)
+    }
 }
 
 public enum DateParsing {
@@ -644,8 +668,10 @@ public enum DateParsing {
         formatters.iso8601(raw)
     }
 
+    /// Every date shape a source in this package actually publishes. Ordered most specific
+    /// first, so a full timestamp is never truncated to midnight by the date-only reader.
     public static func any(_ raw: String) -> Date? {
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        return iso8601(trimmed) ?? formatters.rfc822(trimmed)
+        return iso8601(trimmed) ?? formatters.rfc822(trimmed) ?? formatters.dateOnly(trimmed)
     }
 }

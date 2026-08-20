@@ -1155,6 +1155,36 @@ struct SitemapSourceTests {
         return http
     }
 
+    /// **A date-only `lastmod` is the common shape, and nothing could read it.**
+    ///
+    /// The sitemaps spec permits the date-only form of W3C Datetime and storefronts use it
+    /// constantly — Carhartt WIP writes `2026-08-20` for all 930 of its products.
+    /// `DateParsing.any` handled ISO8601 and RFC822 and returned nil for this, so every
+    /// entry fell through `guard let modified` and the adapter returned **zero items from a
+    /// perfectly good file**. On screen: a brand row reading "Sitemap", a source recording
+    /// no error, and an empty catalogue — a source reporting healthy while delivering
+    /// nothing, which is the failure this codebase keeps having to hunt down.
+    @Test("A date-only lastmod is a date")
+    func readsDateOnlyLastmod() async throws {
+        #expect(DateParsing.any("2026-08-20") != nil)
+        // UTC, not the machine's zone: a date with no zone is not making a claim about one.
+        #expect(DateParsing.any("2026-08-20") == Date(timeIntervalSince1970: 1_787_184_000))
+        // ...and a full timestamp is still read as a timestamp, not truncated to midnight.
+        #expect(DateParsing.any("2026-08-09T10:00:00+00:00")
+            != DateParsing.any("2026-08-09"))
+
+        let dateOnly = """
+        <?xml version="1.0" encoding="UTF-8"?>
+        <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+          <url><loc>https://brand.com/en-gb/p/skye-cap-cypress-wax-574</loc>
+               <lastmod>2026-08-20</lastmod></url>
+        </urlset>
+        """
+        let result = try await SitemapSource(http: client(dateOnly)).fetch(source(), since: nil)
+        #expect(result.items.count == 1)
+        #expect(result.items.first?.title == "Skye Cap Cypress Wax 574")
+    }
+
     @Test("Product URLs become items; pages and listings do not")
     func parsesProductURLs() async throws {
         let result = try await SitemapSource(http: client(urlset)).fetch(source(), since: nil)
