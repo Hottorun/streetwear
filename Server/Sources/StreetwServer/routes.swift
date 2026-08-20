@@ -632,6 +632,43 @@ func routes(_ app: Application) throws {
         return lines.joined(separator: "\n")
     }
 
+    /// One line per brand: what it is watched with, how much it has, and what is failing.
+    ///
+    /// `/status` says the catalogue holds 22,000 products, which is true and answers nothing
+    /// useful — a brand that discovered a source and stores nothing from it looks exactly
+    /// like a brand that is working, and the totals hide it completely. That is the shape of
+    /// failure this project keeps rediscovering: a page watch on a client-rendered
+    /// storefront, a sitemap with no `lastmod`, a source erroring quietly behind a backoff.
+    ///
+    /// Sorted with the emptiest first, because the list is read to find what is broken.
+    app.get("admin", "catalog") { req async throws -> String in
+        let brands = try await BrandModel.query(on: req.db).with(\.$sources).sort(\.$name).all()
+
+        // Counted in one grouped pass rather than a query per brand: this is 50+ brands and
+        // growing, and a route that gets slower with the catalogue is a route nobody runs.
+        var counts: [UUID: Int] = [:]
+        if let sql = req.db as? any SQLDatabase {
+            struct Row: Decodable { var brand_id: UUID; var n: Int }
+            let rows = try await sql.raw("SELECT brand_id, COUNT(*)::int AS n FROM products GROUP BY brand_id")
+                .all(decoding: Row.self)
+            for row in rows { counts[row.brand_id] = row.n }
+        }
+
+        let lines = brands.compactMap { brand -> (Int, String)? in
+            guard let id = brand.id else { return nil }
+            let products = counts[id] ?? 0
+            let kinds = brand.sources.map(\.kind).joined(separator: "+")
+            let failing = brand.sources.compactMap(\.lastError).first
+            let note = failing.map { " ⚠ \($0.prefix(60))" } ?? ""
+            let never = brand.sources.allSatisfy { $0.lastCheckedAt == nil } ? " (not checked yet)" : ""
+            return (products, "\(String(products).padding(toLength: 6, withPad: " ", startingAt: 0))"
+                + "\(brand.name.padding(toLength: 28, withPad: " ", startingAt: 0)) \(kinds)\(never)\(note)")
+        }
+
+        return ([ "products  brand                        sources" ]
+            + lines.sorted { $0.0 < $1.0 }.map(\.1)).joined(separator: "\n")
+    }
+
     app.post("admin", "sweep") { req async throws -> String in
         guard let reaper = req.application.reaper else { throw Abort(.serviceUnavailable) }
         let result = await reaper.sweep()
