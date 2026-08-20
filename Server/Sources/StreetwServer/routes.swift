@@ -775,6 +775,48 @@ func routes(_ app: Application) throws {
             + "now watched by \(usable.map(\.kind.rawValue).joined(separator: "+"))"
     }
 
+    /// Point one of a brand's sources at a URL discovery could not have guessed.
+    ///
+    /// **Because some catalogues are real and simply not findable.** Carhartt WIP publishes
+    /// a sitemap index wrapped in a `<urlset>`, whose 38 entries are locale sitemaps, each
+    /// of which lists three more — the products are three hops down at
+    /// `/en-gb/product/sitemap.xml`, and there are 930 of them with `lastmod` and `/p/`
+    /// paths the adapter already reads perfectly. Teaching `SitemapSource` to walk that tree
+    /// generically would mean following 38 locales × 3 children on *every* poll of *every*
+    /// sitemap brand, to serve one shop. Naming the leaf costs one line and no requests.
+    ///
+    /// **Restricted to the brand's own domain**, which is what makes an unauthenticated
+    /// route that adds a *recurring* fetch safe: the poller can only ever be pointed at the
+    /// storefront it is already polling. Without that this would be a standing request to
+    /// fetch anything, every twenty minutes, on somebody else's say-so.
+    app.post("admin", "brands", ":brandID", "source") { req async throws -> String in
+        guard let brandID = req.parameters.get("brandID", as: UUID.self),
+              let brand = try await BrandModel.find(brandID, on: req.db),
+              let raw = try? req.query.get(String.self, at: "url"),
+              let url = URL(string: raw), url.scheme == "https",
+              let kindName = try? req.query.get(String.self, at: "kind"),
+              let kind = BrandSource.Kind(rawValue: kindName), kind.isAutomatic
+        else { throw Abort(.badRequest, reason: "pass ?kind=<sitemap|feed|shopify|collections|ucp>&url=https://…") }
+
+        let mine = BrandDiscovery.registrableDomain(of: brand.website.flatMap { URL(string: $0)?.host() } ?? brand.slug)
+        guard let host = url.host(), BrandDiscovery.registrableDomain(of: host) == mine else {
+            return "refused: \(url.host() ?? raw) is not \(brand.name)'s own domain (\(mine))"
+        }
+
+        // The replaced source's products go with it. They were keyed on the old source, so
+        // leaving them would put the same garment on screen twice once the new one fills.
+        let replaced = try await SourceModel.query(on: req.db)
+            .filter(\.$brand.$id == brandID).filter(\.$kind == kind.rawValue).all()
+        for old in replaced {
+            try await ProductModel.query(on: req.db).filter(\.$source.$id == old.id!).delete()
+            try await old.delete(on: req.db)
+        }
+        try await SourceModel(brandID: brandID, kind: kind, url: url.absoluteString).save(on: req.db)
+
+        return "\(brand.name): \(kind.rawValue) now \(url.absoluteString)"
+            + (replaced.isEmpty ? "" : " (replaced \(replaced.count))")
+    }
+
     app.post("admin", "sweep") { req async throws -> String in
         guard let reaper = req.application.reaper else { throw Abort(.serviceUnavailable) }
         let result = await reaper.sweep()

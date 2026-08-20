@@ -191,6 +191,37 @@ struct RouteTests {
         }
     }
 
+    /// The route adds a *recurring* fetch on an unauthenticated endpoint, so the domain
+    /// restriction is what keeps it from being a standing request to fetch anything every
+    /// twenty minutes on somebody else's say-so.
+    @Test("A source can only be pointed at the brand's own domain")
+    func sourceRouteStaysOnTheBrandsDomain() async throws {
+        try await withServer { app in
+            let brand = BrandModel(
+                name: "Carhartt WIP", slug: "carhartt-wip.com", website: "https://carhartt-wip.com",
+                instagramHandle: nil, usesGeneratedName: false
+            )
+            try await brand.save(on: app.db)
+            let id = try brand.requireID()
+
+            try await app.testing().test(
+                .POST, "admin/brands/\(id)/source?kind=sitemap&url=https://evil.example/x.xml"
+            ) { res async throws in
+                #expect(res.body.string.contains("refused"))
+            }
+            #expect(try await SourceModel.query(on: app.db).count() == 0)
+
+            // Its own site, including a subdomain, is allowed — that is the whole use.
+            try await app.testing().test(
+                .POST,
+                "admin/brands/\(id)/source?kind=sitemap&url=https://www.carhartt-wip.com/en-gb/product/sitemap.xml"
+            ) { res async throws in
+                #expect(res.status == .ok)
+            }
+            #expect(try await SourceModel.query(on: app.db).count() == 1)
+        }
+    }
+
     @Test("The feed refuses anonymous callers")
     func feedRequiresAuth() async throws {
         try await withServer { app in
