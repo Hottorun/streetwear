@@ -25,6 +25,9 @@ final class BrandModel: Model, @unchecked Sendable {
     /// True while `name` is still derived from the hostname, so the first successful
     /// poll may replace it with the storefront's real name.
     @Field(key: "uses_generated_name") var usesGeneratedName: Bool
+    /// When this brand last interrupted anybody. The rate limit that turns a drop from a
+    /// trickle of pushes into one alert and one follow-up — see `Notifier.cooldown`.
+    @OptionalField(key: "last_notified_at") var lastNotifiedAt: Date?
     @Timestamp(key: "created_at", on: .create) var createdAt: Date?
 
     @Children(for: \.$brand) var sources: [SourceModel]

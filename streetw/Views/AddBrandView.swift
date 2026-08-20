@@ -26,6 +26,11 @@ struct AddBrandView: View {
 
     @Query private var followed: [Brand]
 
+    /// What to put in the field when this is opened from somewhere that already knows what
+    /// is being looked for — a saved link whose brand nobody follows, above all. Arriving at
+    /// an empty search box having just tapped a name is being asked to type it out again.
+    var prefill: String = ""
+
     @State private var query = ""
     @State private var results: [BrandDTO] = []
     @State private var isSearching = false
@@ -74,6 +79,10 @@ struct AddBrandView: View {
             .textInputAutocapitalization(.never)
             .autocorrectionDisabled()
             .onSubmit(of: .search) { Task { await search() } }
+            // Seeded once, on appearance rather than in an initialiser, so `@State` still
+            // owns the field afterwards — clearing it must not have the prefill reappear.
+            // The debounced search below picks it up as though it had been typed.
+            .onAppear { if query.isEmpty { query = prefill } }
             // Keyed on the token, not fired bare: `/v1/brands/popular` is authenticated,
             // a `.task` runs once per appearance, and a 401 swallowed by `try?` would
             // leave this screen looking exactly as empty as it did before.

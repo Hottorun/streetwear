@@ -141,7 +141,16 @@ public enum Pairing {
     /// Below this, proposing the pair does more harm than saying nothing.
     static let bar = 0.4
 
-    public static func score(_ one: Garment, with other: Garment) -> Verdict {
+    /// - Parameter statement: what the wearer has said about their own style, where they
+    ///   have said anything. It can raise or lower a score and can rescue a pair the colour
+    ///   rules refused — a stated preference is *evidence*, and every other input here is an
+    ///   inference. It can never introduce a pair the slot gate rejected: two pairs of
+    ///   trousers do not become an outfit because somebody typed "trousers".
+    public static func score(
+        _ one: Garment,
+        with other: Garment,
+        statement: StyleStatement? = nil
+    ) -> Verdict {
         let mine = one.slot, theirs = other.slot
 
         // The gate. `.unknown` is the classifier declining to answer, and it is a large
@@ -156,8 +165,14 @@ public enum Pairing {
             return Verdict(score: 0, reason: nil, isRefused: true)
         }
 
+        // Asked before the colour veto, and allowed to overrule it. Somebody who has written
+        // that they wear a checkered shirt with black shorts has settled the question that
+        // the wheel is guessing at, and a suggestion refused on a rule while the person has
+        // said the opposite in words is the app arguing with its user.
+        let stated = statement.map { $0.statedPairing(between: one, and: other) } ?? false
+
         let colour = ColorHarmony.score(one.color, other.color)
-        if ColorHarmony.isClash(one.color, other.color) {
+        if !stated, ColorHarmony.isClash(one.color, other.color) {
             return Verdict(score: colour.score, reason: nil, isRefused: true)
         }
 
@@ -195,6 +210,20 @@ public enum Pairing {
             reason = reason ?? "Layers over it"
         }
 
+        // Last, and loudest. A statement is the only input here that was not inferred from
+        // something, so it moves the score further than any of the rules above and takes the
+        // line over from them — "you wear these together" is a better reason than "black
+        // with cream", and it is the one the ranking actually used.
+        if let statement {
+            if stated {
+                score += 0.35
+                reason = "You wear these together"
+            } else {
+                let affinity = statement.affinity(for: one) + statement.affinity(for: other)
+                score += 0.12 * affinity
+            }
+        }
+
         return Verdict(
             score: min(max(score, 0), 1),
             reason: reason,
@@ -210,11 +239,12 @@ public enum Pairing {
     public static func best(
         for garment: Garment,
         from wardrobe: [Garment],
-        limit: Int = 4
+        limit: Int = 4,
+        statement: StyleStatement? = nil
     ) -> [(garment: Garment, verdict: Verdict)] {
         var scored: [(garment: Garment, verdict: Verdict)] = []
         for candidate in wardrobe where candidate.id != garment.id {
-            let verdict = score(garment, with: candidate)
+            let verdict = score(garment, with: candidate, statement: statement)
             guard !verdict.isRefused else { continue }
             scored.append((garment: candidate, verdict: verdict))
         }

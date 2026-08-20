@@ -66,11 +66,14 @@ struct SavedView: View {
     /// down every tile and becomes the most repeated thing on a page about the clothes.
     /// Computed from what is *visible*, not from the whole collection, so filtering to a
     /// single-brand board quiets it and going back to Inspiration brings it back.
+    /// Counted on the label the tile would actually print, not on the brand row behind it —
+    /// a wall of shares from three shops nobody follows has three labels and no brands, and
+    /// silencing all of them would leave the same wordmark logic in the wrong state.
     private var isMixedBrand: Bool {
-        var seen: Set<UUID> = []
+        var seen: Set<String> = []
         for save in visible {
-            guard let id = save.update?.brand?.id else { continue }
-            seen.insert(id)
+            guard let label = save.update?.brandLabel else { continue }
+            seen.insert(label)
             if seen.count > 1 { return true }
         }
         return false
@@ -156,7 +159,12 @@ struct SavedView: View {
             // Analysing here rather than at save time: this is the one screen whose
             // whole content is saved items, so the work is done where its results are
             // about to be used, and never for the 250 catalogue items nobody kept.
-            .task(id: saves.count) { await ImageTagger.analyzePending(in: context) }
+            // Keyed on the backlog rather than the save count — see `ImageTagger.backlog`.
+            // A share whose photographs arrive on a later foreground has to be picked up
+            // without waiting for somebody to keep something else.
+            .task(id: ImageTagger.backlog(in: saves)) {
+                await ImageTagger.analyzePending(in: context)
+            }
             .alert(renaming == nil ? "New board" : "Rename board", isPresented: $isNamingBoard) {
                 TextField("Name", text: $newBoardName)
                 Button("Cancel", role: .cancel) { renaming = nil }

@@ -7,10 +7,46 @@ import SQLKit
 import StreetwCore
 import Vapor
 
+/// How far back a brand's catch-up reaches when the caller names no window.
+///
+/// Thirty days, and the number is a judgement rather than a limit. What somebody wants on
+/// following a label is *the current season* — the last drop, the collection that is out
+/// now — not a year of archaeology through things that sold out long ago. A month covers a
+/// weekly-drop brand's recent run and a seasonal brand's whole standing collection, and
+/// where it does not, the poller fills the page in from the next drop onwards.
+private let catchUpWindow: TimeInterval = 30 * 86_400
+
 func routes(_ app: Application) throws {
     // Kept as a bare 200 for the platform's health check — it must stay cheap and must
     // not fail the deploy just because the database is briefly unreachable.
     app.get("health") { _ async in "ok" }
+
+    /// **Who streetw is, to a storefront that asks.**
+    ///
+    /// This is not a route anybody using the app will ever hit. It exists because the
+    /// Universal Commerce Protocol is a negotiation: before a business answers a catalogue
+    /// query it fetches the *caller's* profile from the URI in the request and intersects
+    /// its capabilities with its own. Without it, `UCPSource` gets
+    /// `UCP discovery failed: missing ucp version` and nothing else — which is precisely
+    /// what a first attempt against Supreme returns.
+    ///
+    /// So the poller cannot read a UCP catalogue unless this is publicly reachable, and it
+    /// has to be reachable *from the merchant's network*, not from ours. If UCP sources
+    /// start failing everywhere at once, this is the thing to curl first.
+    ///
+    /// Unauthenticated by necessity and harmless by construction: the document is a fixed
+    /// statement about what this software can do, identical for every install, and names no
+    /// device, user or brand. `UCPAgent` builds it, so the profile served here and the URI
+    /// the adapter quotes can never disagree.
+    app.get(".well-known", "ucp") { _ async throws -> Response in
+        let response = Response(status: .ok, body: .init(data: try UCPAgent.profileJSON()))
+        response.headers.contentType = .json
+        // The spec asks for at least a minute. A business caches this between calls, and
+        // without it every catalogue page we read costs the merchant a round trip back to
+        // us — which is both rude and a way to make ourselves the slow part of their poll.
+        response.headers.cacheControl = .init(isPublic: true, maxAge: 3600)
+        return response
+    }
 
     /// The one to look at by eye. Actually queries the database, so a 200 here means
     /// the connection and the migrated schema are both real.
@@ -389,6 +425,55 @@ func routes(_ app: Application) throws {
         return FeedResponse(items: items, nextCursor: events.first?.createdAt)
     }
 
+    /// One brand's recent history, independent of the cursor.
+    ///
+    /// **What a newly followed brand is worth showing, and why `/v1/feed` cannot answer it.**
+    /// That route is a *cursor* over everything a device follows: the client sends the
+    /// timestamp of the last event it merged and gets what has happened since. Following a
+    /// brand the poller has been watching for months therefore delivers nothing at all — the
+    /// cursor is already past its whole history — so the brand's page sat empty, its counts
+    /// read zero, and there was no sign anything was being watched until it next dropped,
+    /// which for a two-collections-a-year label is months away.
+    ///
+    /// Widening the cursor instead would be wrong twice over: it would re-fetch every other
+    /// followed brand's back catalogue at the same time, and everything it returned would
+    /// arrive as unread — a feed full of drops that sold out in spring.
+    ///
+    /// So: one brand, a bounded window, and the client stores it pre-marked seen. It is a
+    /// *baseline*, the same idea `sources.baselined_at` encodes for the poller and
+    /// `Brand.lastSyncedAt == nil` encodes in the app — a brand's first sight of a catalogue
+    /// is context, not news.
+    ///
+    /// Authenticated but deliberately not gated on following: the client calls this in the
+    /// same breath as `POST /v1/follows` and the two are separate round trips, so requiring
+    /// the follow to have landed first would make the order of two requests load-bearing.
+    authed.get("brands", ":brandID", "feed") { req async throws -> FeedResponse in
+        let device = try await req.authenticatedDevice()
+        let user = try await device.$user.get(on: req.db)
+        guard let brandID = req.parameters.get("brandID", as: UUID.self) else {
+            throw Abort(.badRequest)
+        }
+        let limit = min((try? req.query.get(Int.self, at: "limit")) ?? 60, 200)
+        let since = (try? req.query.get(Date.self, at: "since"))
+            ?? Date().addingTimeInterval(-catchUpWindow)
+
+        let events = try await EventModel.query(on: req.db)
+            .filter(\.$brand.$id == brandID)
+            .filter(\.$createdAt > since)
+            .sort(\.$createdAt, .descending)
+            .limit(limit)
+            .with(\.$brand)
+            .with(\.$product) { $0.with(\.$variants) }
+            .all()
+
+        let profile = user.sizeProfile
+        let items = events.compactMap { FeedItem(event: $0, profile: profile) }
+        // No cursor. This is a side query about one brand and must never be mistaken for
+        // progress through the device's own feed — advancing the cursor from here would skip
+        // every other brand's events in the same window.
+        return FeedResponse(items: items, nextCursor: nil)
+    }
+
     // MARK: Watches
 
     /// Create a watch on a product, identified by the external id the client already
@@ -491,6 +576,60 @@ func routes(_ app: Application) throws {
         guard let notifier = req.application.notifier else { throw Abort(.serviceUnavailable) }
         let deviceID = try? req.query.get(UUID.self, at: "device")
         return await notifier.probe(deviceID: deviceID).summary
+    }
+
+    /// Walk a UCP handshake against one storefront and say what happened at each step.
+    ///
+    /// The same argument as `push-test`, and for a pipeline that is even harder to see into.
+    /// A UCP source has four ways to be silently useless — the storefront publishes no
+    /// profile, the profile advertises no catalogue capability, the business cannot fetch
+    /// *our* agent profile, or it can and refuses the version — and every one of them
+    /// surfaces as the same thing on a brand page: a source that never produces a drop.
+    /// Worse, three of the four are fixed on our side, and none of them can be reproduced
+    /// locally: the merchant has to be able to reach `PUBLIC_BASE_URL` from its own network,
+    /// which is exactly the condition a laptop cannot test.
+    ///
+    /// So this reports per stage rather than as a verdict. "0 products" is equally true when
+    /// a store has no UCP, when our profile 404s, and when the season is simply over, and
+    /// those have three different fixes.
+    ///
+    /// Reads only. It calls `search_catalog` and stores nothing.
+    app.post("admin", "ucp-test") { req async throws -> String in
+        guard let raw = try? req.query.get(String.self, at: "url"),
+              let base = BrandDiscovery.normalizedURL(raw)
+        else { throw Abort(.badRequest, reason: "pass ?url=") }
+
+        var lines = ["agent profile: \(UCPAgent.profileURL.absoluteString)"]
+
+        // Stage one: does the storefront advertise a machine interface at all?
+        let http = req.application.fetcher
+        guard let origin = await UCPSource.detect(at: base, http: http) else {
+            lines.append("discovery: no usable profile at \(base.host() ?? raw)\(UCPSource.discoveryPath)")
+            lines.append("  → this storefront is not watchable this way; nothing to fix here")
+            return lines.joined(separator: "\n")
+        }
+        lines.append("discovery: ok")
+
+        // Stage two: will the business talk to *us*? This is where a profile the merchant
+        // cannot reach shows up, and it is the only stage whose fix is on our side.
+        do {
+            let result = try await UCPSource(http: http).fetch(BrandSource(kind: .ucp, url: origin), since: nil)
+            lines.append("catalog: \(result.items.count) product(s)")
+            for item in result.items.prefix(3) {
+                let sizes = item.variants.compactMap(\.size).joined(separator: "/")
+                lines.append("  \(item.title) — \(item.priceText ?? "no price") — \(sizes.isEmpty ? "no sizes" : sizes)")
+            }
+            if result.items.isEmpty {
+                lines.append("  → answered, but empty. Between seasons, or the filter matched nothing.")
+            }
+        } catch let error as SourceError {
+            lines.append("catalog: refused — \(error.errorDescription ?? "unknown")")
+            if case .ucp = error {
+                lines.append("  → the business could not use our agent profile. Check that")
+                lines.append("    \(UCPAgent.profileURL.absoluteString) is reachable from the public internet.")
+            }
+        }
+        return lines.joined(separator: "\n")
     }
 
     app.post("admin", "sweep") { req async throws -> String in

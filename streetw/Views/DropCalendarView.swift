@@ -115,12 +115,39 @@ struct DropCalendarView: View {
                 DataLabel(text: entry.qualifier.uppercased(), size: 10, color: entry.isLocked ? .signal : .muted)
             }
             Spacer(minLength: 8)
-            if let when = entry.when {
-                DataLabel(text: when.uppercased(), size: 11, color: entry.isLocked ? .signal : .ink)
+            VStack(alignment: .trailing, spacing: 5) {
+                if let when = entry.when {
+                    DataLabel(text: when.uppercased(), size: 11, color: entry.isLocked ? .signal : .ink)
+                }
+                countdown(to: entry)
             }
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 16)
+    }
+
+    /// How long until it, ticking.
+    ///
+    /// A date is a fact and a countdown is a *prompt* — "11 Feb · 11:00" needs arithmetic
+    /// done in your head before it means anything, and the whole value of this screen is
+    /// knowing whether to be somewhere in nine minutes or nine days. Streetwear is decided
+    /// in the first minute of a release, so the page that lists releases has to say how far
+    /// away one is without being read carefully.
+    ///
+    /// `Text(_:style:)` re-renders itself, so there is no timer here and nothing to
+    /// invalidate — SwiftUI drives it. Below a day it counts in hours, minutes and seconds
+    /// and takes the accent, because that is when it is worth acting on; above a day it is
+    /// "in 3 days" in the quiet voice, because a second-by-second count of something four
+    /// days out is a distraction pretending to be information.
+    @ViewBuilder
+    private func countdown(to entry: Entry) -> some View {
+        if let date = entry.date, date > Date() {
+            let isImminent = date.timeIntervalSinceNow < 86_400
+            Text(date, style: isImminent ? .timer : .relative)
+                .font(.data(isImminent ? 13 : 10, isImminent ? .semibold : .regular))
+                .monospacedDigit()
+                .foregroundStyle(isImminent ? Color.signal : Color.muted)
+        }
     }
 
     // MARK: - Entries

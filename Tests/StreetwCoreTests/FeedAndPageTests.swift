@@ -851,6 +851,44 @@ struct DropCadenceTests {
         #expect(cadence?.weekday == calendar.component(.weekday, from: now))
     }
 
+    /// The window the poller drops to a one-minute cadence inside.
+    ///
+    /// The bug it exists for: a brand that drops weekly is "quiet for a week" right up until
+    /// the moment it isn't, so the source sat on the two-hour schedule at exactly the minute
+    /// it mattered and the notification arrived an hour or more after the drop.
+    @Test("A weekly brand is polled hard only around its own release hour")
+    func recognisesItsOwnDropWindow() throws {
+        let now = calendar.date(from: DateComponents(year: 2026, month: 8, day: 6, hour: 18))!
+        let cadence = try #require(
+            DropCadenceEstimator.estimate(from: weekly(from: now, count: 10, hour: 11), now: now, calendar: calendar)
+        )
+
+        func thursday(hour: Int, minute: Int = 0) -> Date {
+            calendar.date(from: DateComponents(year: 2026, month: 8, day: 6, hour: hour, minute: minute))!
+        }
+
+        // Early, because the point of the window is to be there before it happens.
+        #expect(cadence.isWithinWindow(thursday(hour: 10, minute: 15), calendar: calendar))
+        #expect(cadence.isWithinWindow(thursday(hour: 11), calendar: calendar))
+        // A release staggers, so the window outlasts the hour.
+        #expect(cadence.isWithinWindow(thursday(hour: 13), calendar: calendar))
+
+        // ...and nowhere else, or this would just be polling everything harder.
+        #expect(!cadence.isWithinWindow(thursday(hour: 8), calendar: calendar))
+        #expect(!cadence.isWithinWindow(thursday(hour: 18), calendar: calendar))
+        let wednesday = calendar.date(from: DateComponents(year: 2026, month: 8, day: 5, hour: 11))!
+        #expect(!cadence.isWithinWindow(wednesday, calendar: calendar))
+    }
+
+    /// A rhythm nobody should plan around must not spend request budget either.
+    @Test("An unreliable rhythm has no window")
+    func unreliableCadenceNeverOpensTheWindow() {
+        let vague = DropCadence(weekday: 5, hour: 11, confidence: 0.2, sampleSize: 20)
+        #expect(!vague.isReliable)
+        let thursdayAtEleven = calendar.date(from: DateComponents(year: 2026, month: 8, day: 6, hour: 11))!
+        #expect(!vague.isWithinWindow(thursdayAtEleven, calendar: calendar))
+    }
+
     @Test("Too little history yields no claim at all")
     func refusesToGuess() {
         let now = Date()

@@ -89,7 +89,12 @@ enum SharedSaveImporter {
 
     /// The revision of enrichment that `repair` stamps. Bump it when this file learns to
     /// find something it previously couldn't, and every thin save gets one more look.
-    static let enrichmentVersion = 1
+    ///
+    /// 2: enrichment now takes the catalogue's whole set of photographs over the single
+    /// Open Graph frame a share arrives with, so every link filed under revision 1 is owed
+    /// another look — and the images it gains are what put it back in front of
+    /// `ImageTagger`.
+    static let enrichmentVersion = 2
 
     /// How many thin saves to re-fetch per pass.
     ///
@@ -133,6 +138,72 @@ enum SharedSaveImporter {
             log.info("attached \(attached) saved items to a brand")
         }
         return attached
+    }
+
+    /// The revision of the site probe. Bump it when `SiteIdentityProbe` learns to read a
+    /// name it previously couldn't.
+    static let siteIdentityVersion = 1
+
+    /// How many *hosts* to probe per pass. Hosts, not rows: five saves from one shop are
+    /// one request.
+    private static let identifyBatch = 3
+
+    /// Works out what the site behind an unattributed save calls itself.
+    ///
+    /// A share from a brand nobody follows has no `brand`, and until now that meant it had
+    /// no name either — the wall showed a photograph with no wordmark, the detail page was
+    /// titled "Saved", and the one obvious thing to do with a label you have just discovered
+    /// (follow it) was not offered anywhere. The app was not missing the information; it had
+    /// the URL and declined to read it.
+    ///
+    /// So this is `BrandDiscovery`'s identity step, pointed at a save instead of at a brand:
+    /// one homepage fetch per host, `og:site_name` then the `<title>` with its marketing
+    /// tail removed, and the mark the site publishes alongside. Exactly the same code a
+    /// followed brand's name comes from, which is the point — "Billionaire Boys Club" should
+    /// not depend on whether you happened to add them.
+    ///
+    /// Stamped whatever happens, so a blog that announces nothing is asked once and then
+    /// left alone. Runs after the inbox and after `repair`, because both of those can make
+    /// this unnecessary: `attachBrands` may find a real brand, and a real brand outranks
+    /// anything a site says about itself.
+    @discardableResult
+    static func identifySites(in context: ModelContext) async -> Int {
+        let version = siteIdentityVersion
+        var descriptor = FetchDescriptor<BrandUpdate>(
+            predicate: #Predicate { $0.brand == nil && $0.siteIdentityVersion != version && !$0.saves.isEmpty }
+        )
+        descriptor.fetchLimit = 200
+
+        let anonymous = (try? context.fetch(descriptor)) ?? []
+        guard !anonymous.isEmpty else { return 0 }
+
+        // Grouped by host before anything is fetched. A collection is routinely several
+        // things from the same shop, and asking that shop who it is once per garment is
+        // both slower and ruder than asking it once.
+        var byHost: [String: [BrandUpdate]] = [:]
+        for update in anonymous {
+            guard let host = update.linkURL?.host() else {
+                update.siteIdentityVersion = version
+                continue
+            }
+            byHost[host, default: []].append(update)
+        }
+
+        var named = 0
+        for (host, rows) in byHost.sorted(by: { $0.key < $1.key }).prefix(identifyBatch) {
+            guard let origin = URL(string: "https://\(host)") else { continue }
+            let identity = await SiteIdentityProbe.discover(at: origin)
+            for row in rows {
+                row.siteIdentityVersion = version
+                if let name = identity.name { row.siteName = name }
+                if let logo = identity.logoURL { row.siteLogoURLString = logo.absoluteString }
+            }
+            if identity.name != nil { named += rows.count }
+            log.info("identified \(host, privacy: .public) as \(identity.name ?? "nothing", privacy: .public)")
+        }
+
+        try? context.save()
+        return named
     }
 
     /// Gives shares that landed as bare bookmarks another chance at the catalogue.
@@ -301,6 +372,13 @@ enum SharedSaveImporter {
         )
         update.variants = product?.variants ?? []
         update.productExternalID = product?.externalID
+        // Free: the Open Graph pass has already read the page, and `og:site_name` is the
+        // brand's own name for itself. `identifySites` improves on it later where it can
+        // (and is the only source at all on the catalogue path, which fetches no HTML), but
+        // a card should not be anonymous for the minutes in between.
+        if let declared = metadata.siteName, let tidied = BrandNaming.tidy(declared) {
+            update.siteName = tidied
+        }
         // Saved deliberately, so it is never "news" — it must not turn up in the feed
         // as an unread item the user has to dismiss.
         update.isSeen = true
@@ -347,7 +425,15 @@ enum SharedSaveImporter {
         // share of it — or of the same product under a different link — finds it. This is
         // also how a `shared:` row repaired long after the fact becomes matchable.
         if update.productExternalID == nil { update.productExternalID = product.externalID }
-        if update.imageURLStrings.isEmpty { update.imageURLStrings = product.imageURLStrings }
+        // Upgraded, not merely filled. A share arrives with at most one photograph — the one
+        // Open Graph publishes for link previews — while the catalogue record carries the
+        // whole set: the back, the detail, the on-body shot. Keeping the single frame
+        // because the field was technically non-empty left a gallery that said "1/1" about a
+        // garment the app had eight pictures of. Only ever *more*, so a storefront that
+        // publishes one is never talked down to zero.
+        if product.imageURLStrings.count > update.imageURLStrings.count {
+            update.imageURLStrings = product.imageURLStrings
+        }
         update.isAvailable = product.isAvailable
         update.priceText = product.priceText ?? update.priceText
         update.priceAmount = product.priceAmount ?? update.priceAmount

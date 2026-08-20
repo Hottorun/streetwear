@@ -29,10 +29,14 @@ struct BrandFeedView: View {
     /// to agree about what you asked for.
     private var updates: [BrandUpdate] {
         let profile = sizes.profile
-        return brand.updates
-            .filter { unseenOnly ? !$0.isSeen : true }
-            .filter { $0.passes(profile) }
-            .sorted(by: BrandUpdate.newestFirst)
+        // One card per garment. This page is the longest list in the app — a brand's whole
+        // output — so it is also where the same jacket appearing as a drop, a markdown and a
+        // restock is most obvious and least useful. See `BrandUpdate.oncePerProduct`.
+        return BrandUpdate.oncePerProduct(
+            brand.updates
+                .filter { unseenOnly ? !$0.isSeen : true }
+                .filter { $0.passes(profile) }
+        )
     }
 
     /// The lead photographs of the next couple of items, for the card at `position` to
@@ -101,8 +105,15 @@ struct BrandFeedView: View {
                     // Animated for the same reason the swipe is: the cards are being
                     // removed, and the pop that follows reads as a consequence of that
                     // rather than as the screen being yanked away.
+                    // Every row this page stood for, not only the cards it drew. The list is
+                    // one card per garment now, so clearing `updates` alone would leave the
+                    // folded-away siblings unread and the page would refuse to empty.
+                    let profile = sizes.profile
                     withAnimation(.easeOut(duration: 0.22)) {
-                        for update in updates { update.isSeen = true }
+                        for update in brand.updates where !update.isSeen {
+                            guard update.passes(profile) else { continue }
+                            update.isSeen = true
+                        }
                         brand.lastOpenedAt = Date()
                     }
                     try? context.save()
@@ -228,8 +239,17 @@ struct ImageGallery: View {
     /// One index, owned in one of two places. Written as a computed binding rather than by
     /// syncing two properties: the gallery and the colourway row would otherwise each
     /// write the other's copy, and a swipe would fight the selection that caused it.
+    ///
+    /// Clamped on the way out. `onChange` resets a reused gallery, but it runs *after* the
+    /// body that first sees the new photographs — so for one frame a stale index can point
+    /// past the end of a shorter set, and a `TabView` with no page for its selection draws
+    /// an empty rectangle. Clamping costs nothing and removes the flash.
     private var index: Binding<Int> {
-        selection ?? $localIndex
+        if let selection { return selection }
+        return Binding(
+            get: { min(max(localIndex, 0), max(urls.count - 1, 0)) },
+            set: { localIndex = $0 }
+        )
     }
 
     /// What to warm, in the order it is most likely to be wanted: forwards first, because
@@ -242,6 +262,23 @@ struct ImageGallery: View {
 
     var body: some View {
         gallery
+            // **A gallery belongs to a garment, and this one is reused by the next.**
+            //
+            // The card in a `LazyVStack` is a view *description*; SwiftUI keeps the
+            // underlying instance and its `@State` when the description at that position
+            // changes. So swiping to the seventh photograph of a jacket and then marking the
+            // brand read — which removes that card and pulls the next one up — left the
+            // index at 7, and the shirt that arrived opened on its seventh frame. Worse when
+            // the next product has fewer photographs than the last: the `TabView` has no
+            // page with that tag and draws nothing at all, which reads as an image that
+            // failed to load.
+            //
+            // Keyed on `urls` rather than on an id the gallery does not have: the set of
+            // photographs *is* the identity of what is being paged through, and a caller
+            // that legitimately swaps them (a colourway on its own handle) wants the same
+            // reset. An externally owned `selection` is left alone — that binding belongs to
+            // a page that knows when its own subject changed.
+            .onChange(of: urls) { _, _ in localIndex = 0 }
             .fullScreenCover(isPresented: $isZoomed) {
                 ImageViewer(urls: urls, initialIndex: index.wrappedValue)
             }

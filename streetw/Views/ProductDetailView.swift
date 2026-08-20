@@ -126,6 +126,11 @@ struct ProductDetailView: View {
             confirmation.bottomClearance = StorefrontBar.height
         }
         .onDisappear { confirmation.bottomClearance = 0 }
+        // What is left, now, rather than what was left when the event fired. This page is
+        // where somebody decides to buy something, and it was drawing its size run out of a
+        // record — see `StockRefresh`. Nothing waits on it: the run already on screen is a
+        // reasonable thing to be looking at, and it corrects itself when the answer lands.
+        .task(id: update.id) { await StockRefresh.refresh(update, in: context) }
     }
 
     // MARK: - Sections

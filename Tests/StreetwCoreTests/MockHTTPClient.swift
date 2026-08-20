@@ -18,6 +18,13 @@ final class MockHTTPClient: HTTPFetching, @unchecked Sendable {
     private var stubs: [String: Stub] = [:]
     private var defaultStub = Stub(status: 404)
     private(set) var requests: [(url: URL, etag: String?)] = []
+    /// Bodies sent by `post`, in order. The UCP tests assert on the *request* — that the
+    /// agent profile is named and that the cursor is carried — which nothing else in this
+    /// suite has ever needed to do.
+    private(set) var posted: [(url: URL, body: Data)] = []
+    /// Successive answers for `post`, popped in order, so a paging test can hand over page
+    /// one and then page two without the key having to encode a cursor nobody controls.
+    private var postStubs: [Stub] = []
 
     /// Key is "path?query" — enough to distinguish catalog pages.
     func stub(_ key: String, _ stub: Stub) {
@@ -42,6 +49,23 @@ final class MockHTTPClient: HTTPFetching, @unchecked Sendable {
 
     func setDefault(_ stub: Stub) {
         lock.withLock { defaultStub = stub }
+    }
+
+    /// Queues one answer for a `post`. Call once per expected round trip.
+    func stubPost(_ stub: Stub) {
+        lock.withLock { postStubs.append(stub) }
+    }
+
+    func stubPost(fixture: String) {
+        stubPost(Stub(body: Fixtures.data(fixture)))
+    }
+
+    func stubPost(json: String) {
+        stubPost(Stub(body: Data(json.utf8)))
+    }
+
+    var postedBodies: [String] {
+        lock.withLock { posted.map { String(decoding: $0.body, as: UTF8.self) } }
     }
 
     var requestedKeys: [String] {
@@ -74,6 +98,17 @@ final class MockHTTPClient: HTTPFetching, @unchecked Sendable {
             finalURL: stub.finalURL ?? url,
             etag: stub.etag
         )
+    }
+
+    func post(_ url: URL, json body: Data, accept: String) async throws -> HTTPResponse {
+        let stub = lock.withLock { () -> Stub in
+            posted.append((url, body))
+            // A queued answer if one is left, and a 404 once they run out — so a test that
+            // stubs two pages and finds a third request asked for is told, rather than
+            // being handed page two again and quietly looping.
+            return postStubs.isEmpty ? Stub(status: 404) : postStubs.removeFirst()
+        }
+        return HTTPResponse(data: stub.body, status: stub.status, finalURL: url)
     }
 }
 

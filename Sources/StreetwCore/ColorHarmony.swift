@@ -83,6 +83,16 @@ public enum ColorHarmony {
         score(first, second).score < 0.4
     }
 
+    /// Whether a word is a colour this understands, and what to call it.
+    ///
+    /// Exposed so anything reading free text — `StyleStatement`, above all — can tell a
+    /// colour from a garment without keeping a second list of colour words. Two lists would
+    /// disagree, and the symptom would be somebody writing "olive" and the app agreeing it
+    /// is a colour on one screen and treating it as a fabric on another.
+    public static func canonicalName(of raw: String) -> String? {
+        Swatch(name: raw)?.name
+    }
+
     /// One of the names `ColorNamer` produces, placed on the wheel.
     ///
     /// Hue is in degrees and only means anything for the chromatic ones; a neutral carries

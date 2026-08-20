@@ -24,11 +24,34 @@ actor Poller {
     /// How long until a source should be looked at again. Uniform polling is how you
     /// get blocked; this spends requests where something is actually happening.
     enum Cadence {
-        static func next(locked: Bool, hadRecentEvent: Bool, quietForAWeek: Bool, failures: Int) -> TimeInterval {
+        /// - Parameter inDropWindow: whether now is inside the brand's own usual release
+        ///   window, read from its publication history — see `DropCadence.isWithinWindow`.
+        ///
+        ///   **This is the fix for "the drop happened and streetw told me hours later".**
+        ///   The quiet cadence is two hours, and a brand that drops once a week is quiet
+        ///   right up until the moment it isn't: nothing had happened for six days, so the
+        ///   source was on the slowest schedule at exactly the minute it mattered. A
+        ///   Thursday 11am release could be found at 12:50 and pushed then, which in
+        ///   streetwear is not a late notification but a useless one. `quietForAWeek` was
+        ///   measuring the wrong thing — a weekly brand is not a dormant brand, it is a
+        ///   *punctual* one.
+        ///
+        ///   The window is what pays for itself: outside it the source stays lazy, so this
+        ///   spends the same request budget in a far better place rather than polling
+        ///   everything harder. It ranks above `hadRecentEvent` because a drop in progress
+        ///   is worth a minute, not five.
+        static func next(
+            locked: Bool,
+            hadRecentEvent: Bool,
+            quietForAWeek: Bool,
+            failures: Int,
+            inDropWindow: Bool = false
+        ) -> TimeInterval {
             if failures > 0 {
                 return min(pow(2.0, Double(failures)) * 60, 6 * 3600)
             }
             if locked { return 60 }               // a drop is imminent
+            if inDropWindow { return 60 }         // ...and so, historically, is this
             if hadRecentEvent { return 5 * 60 }
             if quietForAWeek { return 2 * 3600 }
             return 20 * 60
@@ -215,12 +238,38 @@ actor Poller {
                 locked: source.lockedAt != nil,
                 hadRecentEvent: hadEvent,
                 quietForAWeek: quiet,
-                failures: source.failureCount
+                failures: source.failureCount,
+                inDropWindow: try await isInDropWindow(brandID: brandID)
             )
         )
         try await source.save(on: db)
 
         try await reconcileLock(brandID: brandID, brand: brand)
+    }
+
+    /// Whether this brand is inside the release window its own history describes.
+    ///
+    /// Read fresh from the catalogue rather than cached on the brand: it costs one indexed
+    /// query on `products.brand_id` — which is what `AddProductBrandIndex` exists for — and
+    /// a cached rhythm is a rhythm that goes stale the season a brand moves from Saturdays
+    /// to Thursdays, which is exactly when being wrong is expensive.
+    ///
+    /// Bounded to the same 180 days `DropCadenceEstimator` reads, so the query returns what
+    /// the estimator would have kept anyway rather than a whole back catalogue.
+    private func isInDropWindow(brandID: UUID) async throws -> Bool {
+        let since = Date().addingTimeInterval(-180 * 86_400)
+        let dates = try await ProductModel.query(on: app.db)
+            .filter(\.$brand.$id == brandID)
+            .filter(\.$publishedAt >= since)
+            .sort(\.$publishedAt, .descending)
+            .limit(400)
+            .all()
+            .map(\.publishedAt)
+
+        guard let cadence = DropCadenceEstimator.estimate(from: dates), cadence.isReliable else {
+            return false
+        }
+        return cadence.isWithinWindow()
     }
 
     /// The brand is locked when *any* of its sources currently is.

@@ -42,17 +42,6 @@ struct FeedView: View {
     /// to happen, so it earns the accent rather than a plain dot.
     private var isLockedSomewhere: Bool { brands.contains { $0.isLockedForDrop } }
 
-    /// Markdowns still inside the window `MarkdownsView` shows.
-    private var markdownCount: Int {
-        let cutoff = Date().addingTimeInterval(-MarkdownsView.window)
-        let profile = sizes.profile
-        return brands.reduce(0) { total, brand in
-            total + brand.updates.count {
-                $0.kind == .priceDrop && $0.publishedAt >= cutoff && $0.passes(profile)
-            }
-        }
-    }
-
     /// How many briefs sit under a lead before the rest go behind "+N more".
     private static let briefLimit = 6
 
@@ -74,33 +63,67 @@ struct FeedView: View {
     /// `groups.isEmpty` checks in `body` re-walked every update of every brand — four full
     /// passes over as many as 400 rows per brand on each render. SwiftUI evaluates `body`
     /// often and for reasons that have nothing to do with this data.
+    ///
+    /// It is now **one** pass, and that is the fix for the visible lag when a brand is
+    /// marked read. Marking writes a row per update and saves, which invalidates the
+    /// `@Query` and re-renders — and this view was answering four more questions on the way
+    /// back, each of them another full walk of the same to-many relationships:
+    /// `markdownCount` counted every price drop in every brand, `filteredToNothing` looked
+    /// for any unseen row anywhere, and the two above. Every one of those calls
+    /// `BrandUpdate.passes`, which reads `gender`, which **re-runs the classifier over the
+    /// title, tags and handle whenever the stored verdict is from another revision** — the
+    /// steady state for anything the server classified. So dismissing one brand cost several
+    /// thousand string classifications before a frame could be drawn. (`Classification`
+    /// converges the stored answers in the background; this stops the render depending on
+    /// that having happened.)
     private struct Feed {
         var groups: [BrandGroup] = []
         var total: Int = 0
+        /// Markdowns still inside the window `MarkdownsView` shows.
+        var markdowns: Int = 0
+        /// Whether anything at all is unread, before the gender filter — the difference
+        /// between "all caught up" and "your filter hid everything".
+        var hasHiddenUnseen: Bool = false
     }
 
     private var feed: Feed {
         let profile = sizes.profile
         let filterGender = isFilteringGender
+        let markdownCutoff = Date().addingTimeInterval(-MarkdownsView.window)
 
-        let groups = brands
-            .compactMap { brand -> BrandGroup? in
-                var unseen = brand.updates.filter { !$0.isSeen }
-                if filterGender {
-                    // `passes`, not an inline `allows` — this screen and `BrandFeedView`
-                    // show the same items and drifted apart precisely because each had its
-                    // own copy of the rule.
-                    unseen = unseen.filter { $0.passes(profile) }
+        var result = Feed()
+        for brand in brands {
+            var unseen: [BrandUpdate] = []
+            for update in brand.updates {
+                // One `passes` per update per render, cached in a local. It reads `gender`,
+                // which is not free, and three separate questions below used to ask it
+                // again each.
+                let shown = !filterGender || update.passes(profile)
+                if !update.isSeen {
+                    if shown {
+                        unseen.append(update)
+                    } else {
+                        result.hasHiddenUnseen = true
+                    }
                 }
-                guard !unseen.isEmpty else { return nil }
-                return BrandGroup(
-                    brand: brand,
-                    updates: unseen.sorted(by: BrandUpdate.newestFirst)
-                )
+                if shown, update.kind == .priceDrop, update.publishedAt >= markdownCutoff {
+                    result.markdowns += 1
+                }
             }
-            .sorted { ($0.latest ?? .distantPast) > ($1.latest ?? .distantPast) }
+            guard !unseen.isEmpty else { continue }
+            // Sorted *and* deduplicated in one step. A garment that dropped and then
+            // restocked before anybody read either event is two rows and one jacket, and a
+            // spread that prints it twice reads as the feed repeating itself — see
+            // `BrandUpdate.oncePerProduct`. Note what this does to `markSeen`, which now has
+            // to clear the rows that were folded away as well as the ones on screen.
+            result.groups.append(
+                BrandGroup(brand: brand, updates: BrandUpdate.oncePerProduct(unseen))
+            )
+        }
 
-        return Feed(groups: groups, total: groups.reduce(0) { $0 + $1.updates.count })
+        result.groups.sort { ($0.latest ?? .distantPast) > ($1.latest ?? .distantPast) }
+        result.total = result.groups.reduce(0) { $0 + $1.updates.count }
+        return result
     }
 
     var body: some View {
@@ -152,11 +175,11 @@ struct FeedView: View {
                     // whose worth doesn't decay with the feed's ordering, so it gets a
                     // standing list — but an always-present icon onto an empty room is
                     // exactly what the other two were criticised for.
-                    if markdownCount > 0 {
+                    if feed.markdowns > 0 {
                         Button("Marked down", systemImage: "arrow.down.right") {
                             isShowingMarkdowns = true
                         }
-                        .badge(markdownCount)
+                        .badge(feed.markdowns)
                     }
                 }
                 ToolbarItem(placement: .topBarTrailing) {
@@ -183,17 +206,11 @@ struct FeedView: View {
         isFilteringGender ? sizes.profile.gender.label : nil
     }
 
-    /// True when there is unseen material but every bit of it was filtered away.
-    private var filteredToNothing: Bool {
-        guard isFilteringGender else { return false }
-        return brands.contains { brand in brand.updates.contains { !$0.isSeen } }
-    }
-
     private func stream(_ feed: Feed) -> some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 0, pinnedViews: []) {
                 if feed.groups.isEmpty {
-                    caughtUp
+                    caughtUp(feed)
                 } else {
                     masthead(feed)
                     ForEach(feed.groups) { group in
@@ -218,26 +235,26 @@ struct FeedView: View {
 
     /// The top of a feed with nothing in it. Short, because the recommendations under it
     /// are the actual answer to "what now".
-    private var caughtUp: some View {
+    private func caughtUp(_ feed: Feed) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(headline)
+            Text(headline(feed))
                 .font(.editorial(22))
                 .foregroundStyle(Color.ink)
-            DataLabel(text: subhead)
+            DataLabel(text: subhead(feed))
         }
         .padding(.horizontal, 20)
         .padding(.top, 8)
         .padding(.bottom, 28)
     }
 
-    private var headline: String {
+    private func headline(_ feed: Feed) -> String {
         if brands.isEmpty { return "Nothing on watch yet" }
-        return filteredToNothing ? "Nothing matches your filter" : "All caught up"
+        return feed.hasHiddenUnseen ? "Nothing matches your filter" : "All caught up"
     }
 
-    private var subhead: String {
+    private func subhead(_ feed: Feed) -> String {
         if brands.isEmpty { return "FOLLOW A BRAND AND STREETW STARTS WATCHING ITS CATALOG" }
-        if filteredToNothing {
+        if feed.hasHiddenUnseen {
             return "SHOWING \(sizes.profile.gender.label.uppercased()) ONLY — CHANGE IT IN SETTINGS"
         }
         return engine.lastSyncedAt == nil && remote.lastSyncedAt == nil
@@ -282,9 +299,30 @@ struct FeedView: View {
         }
     }
 
+    /// Clearing one brand's spread.
+    ///
+    /// Animated for the same reason `BrandFeedView`'s checkmark is: a whole section of the
+    /// page disappears, and without a transition that reads as the app stalling and then
+    /// jumping rather than as the thing you asked for. The write itself is a row per update
+    /// and one save — the cost that made this feel slow was never the writing, it was every
+    /// question `body` asked on the way back. See `Feed`.
     private func markSeen(_ group: BrandGroup) {
-        for update in group.updates { update.isSeen = true }
-        group.brand.lastOpenedAt = Date()
+        // **Every row the spread stood for, not only the ones drawn.** The group is
+        // deduplicated to one card per garment, so a jacket that dropped and then restocked
+        // contributes one tile and two unseen rows. Clearing the tile alone left the second
+        // row unread, so the brand came straight back into the feed showing the same jacket
+        // — the checkmark visibly failing to do the one thing it claims. The filter is
+        // applied for the opposite reason: what a Menswear setting is hiding was never read
+        // and must not be marked as though it had been.
+        let profile = sizes.profile
+        let filterGender = isFilteringGender
+        withAnimation(.easeOut(duration: 0.22)) {
+            for update in group.brand.updates where !update.isSeen {
+                guard !filterGender || update.passes(profile) else { continue }
+                update.isSeen = true
+            }
+            group.brand.lastOpenedAt = Date()
+        }
         try? context.save()
     }
 }

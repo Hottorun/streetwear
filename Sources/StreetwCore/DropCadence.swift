@@ -49,6 +49,52 @@ public struct DropCadence: Sendable, Hashable {
         return symbols.indices.contains(index) ? symbols[index] : "?"
     }
 
+    /// How long either side of the usual hour counts as "it could be happening now".
+    ///
+    /// Asymmetric on purpose. An hour before, because a brand that usually goes live at 11
+    /// sometimes goes live at 10:20 and the point of the window is to be early. Three hours
+    /// after, because the hour is a *mean* over months of drops and because a release
+    /// staggers — the storefront keeps publishing for a while after the first item lands.
+    public static let windowBefore: TimeInterval = 3_600
+    public static let windowAfter: TimeInterval = 3 * 3_600
+
+    /// Whether `date` falls in this brand's usual release window.
+    ///
+    /// **What this is for: latency.** The poller's quiet cadence is two hours, and a brand
+    /// that drops once a week is quiet right up until the moment it isn't — so a Thursday
+    /// 11am release could be found at 12:50 and pushed then. In streetwear that is not a
+    /// late notification, it is a useless one. Inside the window the poller drops to a
+    /// minute; outside it stays lazy, which is what pays for the window.
+    ///
+    /// Only ever consulted when `isReliable`, so a brand with no rhythm is never polled
+    /// harder on the strength of a guess.
+    public func isWithinWindow(_ date: Date = Date(), calendar: Calendar = .current) -> Bool {
+        guard isReliable else { return false }
+        // Measured against the *previous* occurrence as well as the next, since the window
+        // extends past the hour and "now" is then after it rather than before.
+        var components = DateComponents()
+        components.weekday = weekday
+        components.hour = hour
+        components.minute = 0
+
+        for direction in [Calendar.SearchDirection.backward, .forward] {
+            // `nextDate(after:)` is strict, so searching backward from the instant itself
+            // skips right over an exact hit and lands a week earlier — 11:00:00 on the day
+            // a brand drops at 11 would fall outside its own window. A second's grace on the
+            // backward search makes "now" count as the occurrence it is.
+            let from = direction == .backward ? date.addingTimeInterval(1) : date
+            guard let occurrence = calendar.nextDate(
+                after: from,
+                matching: components,
+                matchingPolicy: .nextTime,
+                direction: direction
+            ) else { continue }
+            let offset = date.timeIntervalSince(occurrence)
+            if offset >= -Self.windowBefore && offset <= Self.windowAfter { return true }
+        }
+        return false
+    }
+
     /// The next occurrence of this weekday and hour, strictly in the future.
     public func nextOccurrence(after now: Date = Date(), calendar: Calendar = .current) -> Date? {
         var components = DateComponents()

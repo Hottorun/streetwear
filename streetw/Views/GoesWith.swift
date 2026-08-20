@@ -21,6 +21,7 @@ import SwiftData
 import SwiftUI
 
 struct GoesWith: View {
+    @Environment(StyleStatementStore.self) private var statement: StyleStatementStore
     @Query(sort: \SavedItem.savedAt, order: .reverse) private var saves: [SavedItem]
 
     let subject: BrandUpdate
@@ -53,7 +54,11 @@ struct GoesWith: View {
         let ranked = Pairing.best(
             for: subject.garment,
             from: updates.map(\.garment),
-            limit: Self.limit
+            limit: Self.limit,
+            // What somebody has said outranks what the colour wheel worked out — see
+            // `StyleStatement`. Empty for anybody who has written nothing, which scores
+            // exactly as this did before.
+            statement: statement.statement
         )
         return ranked.compactMap { entry in
             byID[entry.garment.id].map { ($0, entry.verdict.reason) }

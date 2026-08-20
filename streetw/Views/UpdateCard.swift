@@ -272,7 +272,7 @@ struct CollectionTile: View {
                 // while the brand next to it, shipping JPEGs on a white sweep, showed as a
                 // lightbox in a dark tile. Neither was a fault in the photograph.
                 backdrop: .sweep,
-                mark: update?.brand?.name
+                mark: update?.brandLabel
             )
 
             VStack(alignment: .leading, spacing: 3) {
@@ -286,8 +286,12 @@ struct CollectionTile: View {
                     .foregroundStyle(Color.ink)
                     .lineLimit(2)
                     .fixedSize(horizontal: false, vertical: true)
-                if showsBrand, let brand = update?.brand {
-                    Wordmark(name: brand.name, size: 9, color: .muted)
+                // `brandLabel`, not `brand?.name`. A brand is only attached when the link
+                // matched something followed, so anything shared from a label nobody has
+                // added sat on the wall with no attribution at all — which is most of what
+                // sharing is for. The site's own name for itself is the honest answer.
+                if showsBrand, let label = update?.brandLabel {
+                    Wordmark(name: label, size: 9, color: .muted)
                 }
                 // The one annotation worth showing on the wall: which size this is to
                 // you. A note stays private to the item's own page — the collection is

@@ -56,6 +56,24 @@ public enum BrandDiscovery {
                 result.sources.append(BrandSource(kind: .sitemap, url: sitemap))
             }
 
+            // The interface a storefront advertises for machines, tried when nothing
+            // conventional answered.
+            //
+            // **Below the sitemap on purpose, though it carries far more.** UCP gives
+            // prices, variants and live stock where a sitemap gives a name and a date — so
+            // on the data alone it should outrank almost everything here. What holds it
+            // down is that it is the only source whose success depends on *us* being
+            // reachable: the merchant fetches `UCPAgent.profileURL` before answering, so a
+            // deployment that is down, or a build pointed at a host the outside world
+            // cannot resolve, turns every UCP call into a refusal. Demoting a perfectly
+            // good sitemap in favour of a source that can fail for reasons on our side is
+            // the wrong trade. Above a page watch is where the argument is unanswerable:
+            // a page watch on a client-rendered storefront reports healthy and finds
+            // nothing, forever.
+            if result.sources.isEmpty, let ucp = await UCPSource.detect(at: base, http: http) {
+                result.sources.append(BrandSource(kind: .ucp, url: ucp))
+            }
+
             // Page watching is the last resort, and only when there's no structured
             // source; otherwise it just fires on every marketing banner swap.
             if result.sources.isEmpty {

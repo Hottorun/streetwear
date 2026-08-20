@@ -125,6 +125,52 @@ public struct Recommender: Sendable {
     }
 }
 
+/// Whether a term from a brand's vocabulary is fit to be *printed* at somebody.
+///
+/// The vocabulary is deliberately unfiltered: `BrandVectorBuilder` keeps every token a
+/// merchandiser wrote because IDF is what decides whether it means anything, and a code
+/// nobody else uses is genuinely distinctive to the brand that uses it. That is right for
+/// the *arithmetic* and wrong for the *caption* — a card that reads "LIKE YOUR ITP" is
+/// telling somebody they have a taste for a three-letter internal code, under a brand it is
+/// trying to sell them.
+///
+/// So this gate sits between the score and the sentence, and nowhere else. Nothing about
+/// the ranking changes; a brand whose only shared terms are unreadable simply falls through
+/// to the category line, which is the fallback that already exists for a brand with no
+/// usable tags at all.
+enum Trait {
+    /// Words too short to say anything about a wardrobe, or that describe the shop rather
+    /// than the clothes.
+    ///
+    /// A three-letter floor is the crude half and it is worth the cost: "tee", "cap" and
+    /// "bag" are real losses, but they are also words that describe half of streetwear and
+    /// so persuade nobody, while every three-letter token seen in real catalogue data —
+    /// `itp`, `f26`, `rtv` — is an internal code. The named list is the part that matters:
+    /// these are ordinary English words that pass every structural test and still say
+    /// nothing ("LIKE YOUR SALE").
+    private static let uninformative: Set<String> = [
+        "new", "sale", "final", "shop", "all", "the", "and", "for", "with",
+        "mens", "men", "womens", "women", "unisex", "kids", "youth", "adult",
+        "size", "sizes", "color", "colour", "colors", "colours", "style", "styles",
+        "product", "products", "item", "items", "collection", "collections",
+        "featured", "restock", "restocked", "online", "exclusive", "available",
+        "spring", "summer", "autumn", "winter", "season", "arrival", "arrivals",
+        "clothing", "apparel", "accessories", "everything", "other", "misc"
+    ]
+
+    static func isPrintable(_ term: String) -> Bool {
+        // Four letters, not three. See above — the loss is words that were never
+        // persuasive; the gain is that no card advertises a merchandising code.
+        guard term.count >= 4 else { return false }
+        guard !uninformative.contains(term) else { return false }
+        // A word has both kinds of letter in it. This is what catches the longer codes
+        // that clear the length test — "sscw", "fwdrop" without its digits.
+        let vowels: Set<Character> = ["a", "e", "i", "o", "u", "y"]
+        let letters = Set(term)
+        return !letters.isDisjoint(with: vowels) && !letters.isSubset(of: vowels)
+    }
+}
+
 public extension BrandVector {
     /// What this brand and a taste profile actually have in common, most distinctive first.
     ///
@@ -141,7 +187,7 @@ public extension BrandVector {
         var scored: [(term: String, weight: Double)] = []
 
         for (term, weight) in vocabulary {
-            guard let mine = other.vocabulary[term] else { continue }
+            guard let mine = other.vocabulary[term], Trait.isPrintable(term) else { continue }
             scored.append((term, weight * mine))
         }
 

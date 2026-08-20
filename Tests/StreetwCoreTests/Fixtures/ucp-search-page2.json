@@ -1,0 +1,12 @@
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "content": [
+      {
+        "type": "text",
+        "text": "{\"ucp\":{\"version\":\"2026-04-08\"},\"products\":[{\"id\":\"gid://shopify/Product/8811223399\",\"handle\":\"cordura-shoulder-bag\",\"title\":\"Cordura Shoulder Bag\",\"description\":{\"plain\":\"1000D Cordura nylon.\"},\"price_range\":{\"min\":{\"amount\":11000,\"currency\":\"GBP\"},\"max\":{\"amount\":11000,\"currency\":\"GBP\"}},\"media\":[{\"type\":\"image\",\"url\":\"https://cdn.example.com/bag.jpg\"}],\"variants\":[{\"id\":\"gid://shopify/ProductVariant/9\",\"title\":\"Black\",\"price\":{\"amount\":11000,\"currency\":\"GBP\"},\"availability\":{\"available\":true}}]}],\"pagination\":{}}"
+      }
+    ]
+  }
+}

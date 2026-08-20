@@ -122,10 +122,41 @@ actor Notifier {
     /// notifications about drops that already sold out.
     private let maxAge: TimeInterval
 
-    init(app: Application, sender: (any PushSending)?, maxAge: TimeInterval = 6 * 3600) {
+    /// How long a brand stays quiet after it has interrupted somebody.
+    ///
+    /// **The fix for a drop arriving as a trickle.** A storefront does not publish a
+    /// collection in one write — it puts out a few products, then a few more, and the poller
+    /// is on a five-minute cadence while something is happening. Each pass found two or three
+    /// new events and each pass sent a push, so a single release read as "2 new items", then
+    /// "2 new items", then "3 new items" over half an hour. One-push-per-brand-per-*pass* was
+    /// never the right unit; a pass is an implementation detail of the poll loop.
+    ///
+    /// So the rule is one push per brand per cooldown, and the ordering matters: the **first**
+    /// sighting goes out immediately, because being told about a drop late is the one failure
+    /// this app cannot afford. Everything that lands during the cooldown is *held* — left
+    /// unmarked in the ledger, not discarded — and folded into one consolidated summary when
+    /// it lifts. A drop therefore reads as "New: Chore Jacket" and then, once, "14 new items
+    /// and 2 restocks".
+    ///
+    /// Fifteen minutes: comfortably longer than the five-minute active-drop cadence, so
+    /// consecutive polls merge, and short enough that the follow-up still arrives while the
+    /// thing is on sale.
+    ///
+    /// A watch alert is deliberately **not** subject to this. It is the one notification
+    /// somebody explicitly asked for, about one product in one size, and it is never part of
+    /// a trickle — see `notifyWatches`.
+    private let cooldown: TimeInterval
+
+    init(
+        app: Application,
+        sender: (any PushSending)?,
+        maxAge: TimeInterval = 6 * 3600,
+        cooldown: TimeInterval = 15 * 60
+    ) {
         self.app = app
         self.sender = sender
         self.maxAge = maxAge
+        self.cooldown = cooldown
     }
 
     /// Sends one synthetic notification straight to registered devices, bypassing
@@ -240,10 +271,31 @@ actor Notifier {
         var result = NotifyResult()
         let db = app.db
 
+        let now = Date()
+
+        // Brands still inside their cooldown, excluded **in the query** rather than filtered
+        // out afterwards. Their events must stay pending so they can be folded into one
+        // consolidated summary when the cooldown lifts — but a brand mid-drop can hold
+        // hundreds of them, and with the batch sorted oldest-first they would fill the whole
+        // `limit` and starve every other brand of notifications for a quarter of an hour.
+        // Leaving them out of the batch spends the budget on brands that can actually send.
+        let quiet: [UUID]
+        do {
+            quiet = try await BrandModel.query(on: db)
+                .filter(\.$lastNotifiedAt > now.addingTimeInterval(-cooldown))
+                .all()
+                .compactMap(\.id)
+        } catch {
+            app.logger.error("notifier: could not read the cooldown ledger: \(error)")
+            return result
+        }
+
         let pending: [EventModel]
         do {
-            pending = try await EventModel.query(on: db)
-                .filter(\.$notifiedAt == nil)
+            let query = EventModel.query(on: db).filter(\.$notifiedAt == nil)
+            // Guarded: an empty `!~` is not a query anybody wants to hand to a database.
+            if !quiet.isEmpty { query.filter(\.$brand.$id !~ quiet) }
+            pending = try await query
                 .sort(\.$createdAt)
                 .limit(limit)
                 .with(\.$brand)
@@ -256,7 +308,7 @@ actor Notifier {
         guard !pending.isEmpty else { return result }
         result.events = pending.count
 
-        let cutoff = Date().addingTimeInterval(-maxAge)
+        let cutoff = now.addingTimeInterval(-maxAge)
         let fresh = pending.filter { ($0.createdAt ?? .distantPast) >= cutoff }
 
         // Even with no sender configured we still walk the ledger forward. Otherwise
@@ -267,11 +319,24 @@ actor Notifier {
             // and brand. A watch is a far stronger statement than a follow — "I want this
             // exact thing in this exact size" — so when both would fire, the specific one
             // wins rather than the item being buried inside "3 restocks". The
-            // one-push-per-brand-per-pass rule still holds; this only decides *which* push
-            // that is.
+            // one-push-per-brand rule still holds; this only decides *which* push that is.
+            //
+            // Deliberately outside the cooldown. A watch is the one alert somebody asked
+            // for by name, it is about a single product in a single size, and it is never
+            // the thing that arrives as a trickle.
             let claimed = await notifyWatches(fresh, using: sender, into: &result)
 
+            let brands = try? await BrandModel.query(on: db)
+                .filter(\.$id ~~ Array(Set(fresh.map { $0.$brand.id })))
+                .all()
+            let byID = Dictionary(
+                (brands ?? []).compactMap { brand in brand.id.map { ($0, brand) } },
+                uniquingKeysWith: { first, _ in first }
+            )
+
             for (brandID, events) in Dictionary(grouping: fresh, by: { $0.$brand.id }) {
+                let brand = byID[brandID]
+                let before = result.sent
                 await notify(
                     brandID: brandID,
                     events: events,
@@ -279,6 +344,13 @@ actor Notifier {
                     skipping: claimed,
                     into: &result
                 )
+                // Stamped only when something actually went out. A brand filtered away for
+                // every follower — wrong gender, wrong size — has not interrupted anybody
+                // and must not be muted for a quarter of an hour on the strength of it.
+                if result.sent > before, let brand {
+                    brand.lastNotifiedAt = now
+                    try? await brand.save(on: db)
+                }
             }
         }
 

@@ -279,7 +279,7 @@ public struct ShopifySource: SourceAdapter {
 
     /// The handle out of `https://kith.com/products/foo?variant=1` — nil when the path
     /// isn't a product page at all.
-    static func productHandle(in url: URL) -> String? {
+    public static func productHandle(in url: URL) -> String? {
         let parts = url.pathComponents.filter { $0 != "/" }
         guard let index = parts.firstIndex(where: { $0.lowercased() == "products" }),
               parts.count > index + 1

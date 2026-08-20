@@ -211,7 +211,14 @@ enum FitSuggestions {
     ///   `ImageTagger` already stored, ranks the pairings, drops outright clashes, and
     ///   hands back the line that says why. Where nothing has been analysed yet it scores
     ///   everything the same and the order falls back to what it always was.
-    static func build(from saves: [SavedItem], limit: Int = 6) -> [SuggestedFit] {
+    /// - Parameter statement: what the wearer has written about how they dress, where they
+    ///   have written anything. It reorders and can rescue a pair the colour rules would
+    ///   have refused; it never proposes a fit the structural rules rejected.
+    static func build(
+        from saves: [SavedItem],
+        limit: Int = 6,
+        statement: StyleStatement = StyleStatement()
+    ) -> [SuggestedFit] {
         var bySlot: [GarmentSlot: [SavedItem]] = [:]
         // A suggestion is looked at before it is read, and a piece with no photograph
         // renders as a blank rectangle — so a proposal containing one looks broken however
@@ -249,19 +256,27 @@ enum FitSuggestions {
             let top = tops[index % tops.count]
             let bottom = bottoms[index % bottoms.count]
 
-            let harmony = ColorHarmony.score(top.update?.visionColor, bottom.update?.visionColor)
-            // The one pairing that reads as a bug rather than a suggestion.
-            guard !ColorHarmony.isClash(top.update?.visionColor, bottom.update?.visionColor) else {
-                continue
-            }
+            // Ranked through `Pairing` so a stated preference reaches this row as well as
+            // the product page's, but **vetoed** on the colour clash alone as it always was.
+            // `Pairing.isRefused` is a stricter bar built for a page that can print nothing
+            // at all; applying it here would empty the row on a thin wardrobe, which is
+            // exactly the wardrobe most in need of a suggestion. What a statement *can* do
+            // is rescue a clash it explicitly named.
+            guard let topGarment = top.update?.garment, let bottomGarment = bottom.update?.garment
+            else { continue }
+            let verdict = Pairing.score(topGarment, with: bottomGarment, statement: statement)
+            let stated = statement.statedPairing(between: topGarment, and: bottomGarment)
+            guard stated
+                || !ColorHarmony.isClash(top.update?.visionColor, bottom.update?.visionColor)
+            else { continue }
 
             var items = [top, bottom]
             if !footwear.isEmpty { items.append(footwear[index % footwear.count]) }
             if !outerwear.isEmpty { items.append(outerwear[index % outerwear.count]) }
 
-            let fit = SuggestedFit(items: items, reason: harmony.reason)
+            let fit = SuggestedFit(items: items, reason: verdict.reason)
             guard seen.insert(fit.id).inserted else { continue }
-            candidates.append((fit, harmony.score))
+            candidates.append((fit, verdict.score))
         }
 
         // Sorted on the colour reading, tie-broken on the id — so an unanalysed wardrobe,

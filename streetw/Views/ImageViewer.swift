@@ -114,23 +114,21 @@ private struct ZoomablePhotograph: View {
                         offset = bounded(offset, in: geometry.size)
                     }
             )
-            .simultaneousGesture(
-                // Only while zoomed in. At 1× a horizontal drag belongs to the pager, and
-                // claiming it here would make the gallery impossible to page through.
-                DragGesture()
-                    .onChanged { if live > 1.01 { drag = $0.translation } }
-                    .onEnded { value in
-                        guard live > 1.01 else { return }
-                        offset = bounded(
-                            CGSize(
-                                width: offset.width + value.translation.width,
-                                height: offset.height + value.translation.height
-                            ),
-                            in: geometry.size
-                        )
-                        drag = .zero
-                    }
-            )
+            // **Attached only while zoomed in — not merely inert while zoomed out.**
+            //
+            // This was a `simultaneousGesture` that checked the scale inside its handlers,
+            // which reads as the same thing and is not. A `DragGesture` on the content of a
+            // paging `TabView` competes with the pager's own pan for the touch, and the
+            // recogniser attached to the inner view wins: the gesture was declining to *do*
+            // anything at 1×, having already taken the drag away from the pager. So the
+            // full-screen viewer — reached by tapping the photograph on a product page, and
+            // the one place in the app where paging is the entire point — could not be
+            // swiped at all. The count in the corner said "1/8" and there was no way to
+            // reach any of the other seven.
+            //
+            // A gesture that is not attached cannot compete, so the pager gets the drag back
+            // at 1× and takes it away again the moment there is something to pan.
+            .gesture(pan(in: geometry.size), isEnabled: live > 1.01)
             .onTapGesture(count: 2) {
                 // The gesture people actually reach for. Toggling rather than stepping,
                 // because a double-tap is a request to see it big or see it whole.
@@ -146,6 +144,23 @@ private struct ZoomablePhotograph: View {
             .onTapGesture { if scale <= 1.01 { onDismiss() } }
             .animation(.easeOut(duration: 0.18), value: scale)
         }
+    }
+
+    /// Moving a magnified photograph around. Only ever attached while there is something to
+    /// move — see the call site.
+    private func pan(in canvas: CGSize) -> some Gesture {
+        DragGesture()
+            .onChanged { drag = $0.translation }
+            .onEnded { value in
+                offset = bounded(
+                    CGSize(
+                        width: offset.width + value.translation.width,
+                        height: offset.height + value.translation.height
+                    ),
+                    in: canvas
+                )
+                drag = .zero
+            }
     }
 
     /// Keeps the photograph overlapping the screen. A magnified image can be moved by

@@ -86,6 +86,7 @@ struct BrandRecommendations: View {
     @Environment(BrandSuggestions.self) private var suggestions: BrandSuggestions
     @Environment(RemoteSync.self) private var remote: RemoteSync
     @Environment(SizeProfileStore.self) private var sizes: SizeProfileStore
+    @Environment(StyleStatementStore.self) private var statement: StyleStatementStore
 
     @Environment(\.modelContext) private var context
 
@@ -150,6 +151,11 @@ struct BrandRecommendations: View {
     /// What this person likes and what they have refused, in the form the ranker wants.
     ///
     /// Both halves are built here, on the device, from rows that never leave it.
+    /// ...and, since there is now one, what they have said about themselves in words. That
+    /// is the only signal here somebody *chose* to give, so it applies from the first
+    /// sentence rather than waiting for the eight saves the behavioural half needs — a
+    /// person who has just installed the app and written "workwear, no logos" should not be
+    /// shown a list that ignores it for a fortnight.
     private var recommender: Recommender {
         let usable = saves.compactMap(\.update)
         let vectors = candidates.compactMap(\.vector)
@@ -170,6 +176,11 @@ struct BrandRecommendations: View {
             )
         }
 
+        taste = statement.statement.blended(
+            into: taste,
+            known: Set(vectors.flatMap(\.vocabulary.keys))
+        )
+
         return Recommender(taste: taste, dismissed: dismissals.compactMap(\.vector))
     }
 
@@ -181,32 +192,55 @@ struct BrandRecommendations: View {
     /// would rank better and would quietly undo the thing the collection is for, so the
     /// server ships the candidates *with their vectors* and the comparison happens here.
     /// Nothing about a save ever leaves the phone.
-    private var visible: [PopularBrand] {
-        let pool = candidates
-        let ranker = recommender
-        guard !ranker.taste.isEmpty || !ranker.dismissed.isEmpty else { return pool }
+    ///
+    /// The ranked list and every card's reason, built in **one** pass.
+    ///
+    /// `recommender` is a computed property that builds a taste vector from scratch over
+    /// every save in the store, and it was being read once by `visible` and then again by
+    /// `reason(for:)` for each of the six cards — seven full builds per evaluation of this
+    /// body, on a block that sits at the bottom of the feed, the brands tab *and* the style
+    /// tab. Every one of them re-tokenised every tag of every saved item. Nothing about the
+    /// answer changes; it is simply asked once.
+    private struct Ranked {
+        var items: [PopularBrand] = []
+        var reasons: [UUID: [String]] = [:]
 
-        // The server has already damped its own popularity term, so the headcount is not
-        // reapplied here — this pass is purely "does it look like what I keep, and does it
-        // look like what I turned down".
-        return pool
-            .map { item in (item, ranker.score(candidate: item.vector, affinity: item.affinity, popularity: nil)) }
-            .sorted { $0.1 > $1.1 }
-            .map(\.0)
+        func reason(for item: PopularBrand) -> [String] {
+            item.brand.id.flatMap { reasons[$0] } ?? []
+        }
     }
 
-    private var shown: [PopularBrand] { Array(visible.prefix(limit)) }
+    private var ranked: Ranked {
+        let ranker = recommender
+        let pool = candidates
 
-    /// The words a candidate shares with this wardrobe — the line the card prints instead
-    /// of a follower count.
-    private func reason(for item: PopularBrand) -> [String] {
-        guard let vector = item.vector else { return [] }
-        let taste = recommender.taste
-        guard !taste.isEmpty else { return [] }
-        return vector.sharedTraits(with: taste)
+        var result = Ranked()
+        if ranker.taste.isEmpty, ranker.dismissed.isEmpty {
+            result.items = pool
+        } else {
+            // The server has already damped its own popularity term, so the headcount is
+            // not reapplied here — this pass is purely "does it look like what I keep, and
+            // does it look like what I turned down".
+            result.items = pool
+                .map { item in (item, ranker.score(candidate: item.vector, affinity: item.affinity, popularity: nil)) }
+                .sorted { $0.1 > $1.1 }
+                .map(\.0)
+        }
+
+        guard !ranker.taste.isEmpty else { return result }
+        for item in result.items {
+            guard let id = item.brand.id, let vector = item.vector else { continue }
+            let traits = vector.sharedTraits(with: ranker.taste)
+            if !traits.isEmpty { result.reasons[id] = traits }
+        }
+        return result
     }
 
     var body: some View {
+        let ranked = self.ranked
+        let visible = ranked.items
+        let shown = Array(visible.prefix(limit))
+
         if !visible.isEmpty {
             VStack(alignment: .leading, spacing: 0) {
                 VStack(alignment: .leading, spacing: 6) {
@@ -221,7 +255,7 @@ struct BrandRecommendations: View {
                 ForEach(shown) { item in
                     SuggestedBrandCard(
                         item: item,
-                        reason: reason(for: item),
+                        reason: ranked.reason(for: item),
                         onOpen: { previewed = item },
                         onFollow: { await follow(item) },
                         onDismiss: { dismiss(item) }
@@ -245,7 +279,7 @@ struct BrandRecommendations: View {
             .sheet(isPresented: $isShowingAll) {
                 DiscoverView(
                     items: visible,
-                    reason: reason(for:),
+                    reason: ranked.reason(for:),
                     onFollow: { await follow($0) },
                     onDismiss: { dismiss($0) }
                 )
@@ -253,7 +287,7 @@ struct BrandRecommendations: View {
             .sheet(item: $previewed) { item in
                 BrandPreviewSheet(
                     item: item,
-                    reason: reason(for: item),
+                    reason: ranked.reason(for: item),
                     onFollow: { await follow(item) },
                     onDismiss: { dismiss(item) }
                 )

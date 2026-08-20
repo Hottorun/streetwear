@@ -14,6 +14,10 @@ public struct BrandSource: Codable, Hashable, Identifiable, Sendable {
         /// `/sitemap.xml` — the fallback for brands that are neither Shopify nor
         /// publishing a feed. Strictly better than watching a page for any change.
         case sitemap
+        /// The Universal Commerce Protocol endpoint a storefront advertises for machines,
+        /// for the ones that have switched their JSON catalogue off and pointed at this
+        /// instead. Supreme is the case that forced it — see `UCPSource`.
+        case ucp
 
         public var label: String {
             switch self {
@@ -23,6 +27,9 @@ public struct BrandSource: Codable, Hashable, Identifiable, Sendable {
             case .instagram: "Instagram"
             case .collections: "Collections"
             case .sitemap: "Sitemap"
+            // Named for what it gives rather than for the protocol: a brand page saying
+            // "UCP" tells somebody nothing, and what this actually is, is the catalogue.
+            case .ucp: "Agent catalog"
             }
         }
 
@@ -34,6 +41,7 @@ public struct BrandSource: Codable, Hashable, Identifiable, Sendable {
             case .instagram: "camera"
             case .collections: "square.grid.2x2"
             case .sitemap: "list.bullet.rectangle"
+            case .ucp: "shippingbox"
             }
         }
 

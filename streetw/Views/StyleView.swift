@@ -25,6 +25,7 @@ struct StyleView: View {
     @Environment(\.modelContext) private var context
     @Environment(BrandSuggestions.self) private var suggestions: BrandSuggestions
     @Environment(ServerSettings.self) private var settings: ServerSettings
+    @Environment(StyleStatementStore.self) private var statement: StyleStatementStore
 
     @Query(sort: \SavedItem.savedAt, order: .reverse) private var saves: [SavedItem]
     @Query(sort: \Fit.createdAt, order: .reverse) private var fits: [Fit]
@@ -36,7 +37,9 @@ struct StyleView: View {
     @State private var editing: Fit?
 
     private var profile: StyleProfile { StyleProfile.build(from: saves) }
-    private var suggested: [SuggestedFit] { FitSuggestions.build(from: saves) }
+    private var suggested: [SuggestedFit] {
+        FitSuggestions.build(from: saves, statement: statement.statement)
+    }
 
     var body: some View {
         NavigationStack {
@@ -83,7 +86,9 @@ struct StyleView: View {
             // canvas is built out of, and a fit can be composed from here without that tab
             // ever having been opened — which left the stickers un-lifted for exactly the
             // person who was about to need them.
-            .task(id: saves.count) { await ImageTagger.analyzePending(in: context) }
+            .task(id: ImageTagger.backlog(in: saves)) {
+                await ImageTagger.analyzePending(in: context)
+            }
         }
         // Ink, not the system blue. Every other tab does this; without it the controls on
         // this page are the only chroma in the app outside a photograph, which is exactly
@@ -443,6 +448,8 @@ struct SettingsSheet: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 26) {
                     SizeProfileSection()
+                    Rule()
+                    StyleStatementSection()
                     Rule()
                     NotificationsSection()
                 }

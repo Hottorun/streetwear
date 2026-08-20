@@ -147,10 +147,15 @@ struct BrandDetailView: View {
         .padding(.horizontal, 20)
     }
 
+    /// The same figure the brands list prints and the feed acts on. Counting everything
+    /// unseen here meant a filtered feed could be empty while this page insisted, in the
+    /// accent, that forty things were unread.
+    private var unread: Int { brand.unseenCount(matching: sizes.profile) }
+
     private var counts: some View {
         HStack(alignment: .top, spacing: 0) {
             count(brand.updates.count, "DROPS SEEN")
-            count(brand.unseenCount, "UNREAD", accent: brand.unseenCount > 0)
+            count(unread, "UNREAD", accent: unread > 0)
             count(savedFromBrand.count, "KEPT")
         }
         .padding(.horizontal, 20)

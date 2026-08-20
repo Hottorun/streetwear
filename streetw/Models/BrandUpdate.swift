@@ -43,6 +43,9 @@ final class BrandUpdate {
     /// from a formatted string would mean parsing currency by hand.
     var previousPriceAmount: Double?
     var isAvailable: Bool?
+    /// When the storefront was last asked what is actually left. Nil means never — see
+    /// `StockRefresh`.
+    var stockCheckedAt: Date?
     var tags: [String] = []
     var productType: String?
 
@@ -66,6 +69,30 @@ final class BrandUpdate {
     /// When the image was last analysed. Nil means "not yet"; set even when analysis
     /// fails, so a dead image URL isn't retried on every launch forever.
     var analyzedAt: Date?
+
+    /// Which photograph those answers are about.
+    ///
+    /// `analyzedAt` alone says *that* something was looked at, never *what* — and a row's
+    /// photograph can change after the fact. That is the ordinary path for a share, not an
+    /// edge case: a link from Safari lands with whatever Open Graph gave it, which is often
+    /// one marketing image and sometimes a URL that 404s. Either way the pass stamps the row
+    /// — deliberately, so a dead URL is not retried forever — and then
+    /// `SharedSaveImporter.repair` finds the product in the catalogue and fills in the real
+    /// photographs. Nothing ever looked at them: the row was already stamped, the cutout and
+    /// reading versions were already current, and the item sat in the collection with no
+    /// colour, no cutout, no measured aspect and no silhouette for as long as it existed.
+    ///
+    /// So the stamp records the subject as well as the time, and a photograph the analysis
+    /// has never seen makes every part of the pass due again. Nil on rows written before
+    /// this existed, which reads as "unknown subject" and earns one more look — the same
+    /// bargain the version fields make.
+    var analyzedImageURL: String?
+
+    /// True when the current lead photograph is not the one the analysis was run against.
+    var hasUnreadPhotograph: Bool {
+        guard let current = imageURLStrings.first else { return false }
+        return analyzedImageURL != current
+    }
     /// Filename of the subject lifted off this item's photograph, in `Cutout.directory`.
     ///
     /// A name rather than the bytes: a cutout is a few hundred KB of RGBA and there is one
@@ -164,6 +191,47 @@ final class BrandUpdate {
     /// thing. Nil for an event with no product behind it, and for rows written before this
     /// existed — `RemoteSync.backfill` fills those in.
     var productExternalID: String?
+
+    // MARK: - Who made it, when nobody is following them
+
+    /// What the site this was shared from calls itself.
+    ///
+    /// A shared link belongs to a brand whether or not that brand is in the app. `brand` is
+    /// only set when the link matches something already followed, so everything shared from
+    /// a label somebody has not added — which is most of what a share is *for* — arrived
+    /// anonymous: no wordmark on the wall, "Saved" for a page title, and nothing to tap
+    /// through to. The app knew the host and refused to say it.
+    ///
+    /// The host is not the answer either. `gvgallery.com` is "GV Gallery" and
+    /// `bbcicecream.com` is "Billionaire Boys Club", which is the same argument
+    /// `SiteIdentity` makes for a followed brand — and the same fetch answers it, so this is
+    /// read from `og:site_name` or the homepage `<title>` rather than invented from a
+    /// domain. Nil until that has been tried; `SharedSaveImporter.identifySites` fills it in
+    /// afterwards.
+    var siteName: String?
+
+    /// The mark that site publishes, so an unattributed save still gets a monogram.
+    var siteLogoURLString: String?
+
+    /// Which revision of the site probe last looked at this row's host. The `cutoutVersion`
+    /// pattern once more: a row written before the probe existed reads 0 and earns one look,
+    /// and the stamp lands even when the site said nothing, so a blog that publishes no name
+    /// is not re-fetched on every foreground.
+    var siteIdentityVersion: Int = 0
+
+    var siteLogoURL: URL? { siteLogoURLString.flatMap(URL.init(string:)) }
+
+    /// Who this is by, as far as anything knows. Never empty when there is a link.
+    ///
+    /// The followed brand first, because that is a fact rather than a reading; then what the
+    /// site calls itself; then the domain, tidied. A card that says "GV GALLERY" over a
+    /// shared hoodie is right even though nobody follows GV Gallery, and that name is what
+    /// makes the brand line on a saved item something to tap.
+    var brandLabel: String? {
+        if let name = brand?.name, !name.isEmpty { return name }
+        if let siteName, !siteName.isEmpty { return siteName }
+        return linkURL?.host().flatMap(BrandNaming.hostName(of:))
+    }
 
     /// Which revision of the share importer last tried to find this in a catalogue.
     ///
@@ -355,6 +423,34 @@ final class BrandUpdate {
         a.publishedAt == b.publishedAt
             ? a.externalID > b.externalID
             : a.publishedAt > b.publishedAt
+    }
+
+    /// One row per garment, newest first.
+    ///
+    /// **A list of a brand's output is a list of clothes, and the store holds events.** In
+    /// server mode a feed row is keyed `event:<uuid>` and one garment produces several over
+    /// its life — it drops, it is marked down, it comes back in an L — so a brand page, a
+    /// release and a brand's spread in the feed could each print the same jacket three
+    /// times, at three different prices, side by side. Nothing was wrong with any of the
+    /// rows; there is simply no reason for a person to be shown the same product twice in
+    /// one list.
+    ///
+    /// Keyed on `productExternalID`, which is the garment, never on `externalID`, which is
+    /// the *event*. A row with no product behind it — a page change, a drop lock, a share
+    /// that never found a catalogue record — keeps its own key and so is never folded into
+    /// anything: two different links must never collapse into one because neither could name
+    /// its product.
+    ///
+    /// The survivor is the newest by `newestFirst`, which is the same total ordering every
+    /// list already sorts by — so the choice is stable across relaunches rather than
+    /// whichever row the relationship happened to hand over first. Newest is also the right
+    /// one on the merits: a restock this morning describes the garment better than the drop
+    /// it announced in March.
+    static func oncePerProduct(_ updates: [BrandUpdate]) -> [BrandUpdate] {
+        var seen = Set<String>()
+        return updates
+            .sorted(by: newestFirst)
+            .filter { seen.insert($0.productExternalID ?? $0.externalID).inserted }
     }
 
     /// How much was taken off, 0…1. Nil when there is nothing to compare against.

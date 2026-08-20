@@ -123,6 +123,12 @@ public enum SourceError: LocalizedError, Equatable {
     /// every other failure here: there is nothing wrong with the source, and nothing a
     /// retry will change.
     case blockedByEdge
+    /// A UCP business answered and declined, with a reason. Distinct from every other case
+    /// because the fault is usually **ours** — an agent profile that failed to resolve, or
+    /// a protocol version the merchant does not implement — and those are fixed by changing
+    /// this app, not by retrying against the storefront. Folding them into `badResponse`
+    /// would hide the one class of failure we can actually do something about.
+    case ucp(String)
 
     public var errorDescription: String? {
         switch self {
@@ -131,6 +137,7 @@ public enum SourceError: LocalizedError, Equatable {
         case .emptyPayload: "Nothing returned"
         case .disallowedByRobots(let path): "robots.txt disallows \(path)"
         case .blockedByEdge: "Blocked by the site's bot protection"
+        case .ucp(let reason): "The store's agent endpoint refused: \(reason)"
         }
     }
 }
@@ -151,6 +158,7 @@ public enum SourceAdapters {
         case .collections: CollectionsSource(http: http)
         case .sitemap: SitemapSource(http: http)
         case .feed: FeedSource(http: http)
+        case .ucp: UCPSource(http: http)
         case .page: PageWatchSource(http: http)
         case .instagram: nil // link-out only, by design
         }
@@ -236,11 +244,29 @@ public struct HTTPResponse: Sendable {
 /// worse than a slightly wordier name here.
 public protocol HTTPFetching: Sendable {
     func get(_ url: URL, etag: String?) async throws -> HTTPResponse
+
+    /// A JSON body sent to an endpoint that answers with one.
+    ///
+    /// Added for `UCPSource` and nothing else, and deliberately narrow: this is not a
+    /// general-purpose request builder. Every catalogue source in this app is a GET,
+    /// because every catalogue source *should* be — a poll is a read. UCP is the exception
+    /// only because its transport is JSON-RPC, where "read the catalogue" is spelled as a
+    /// POST. Nothing here writes anything: `UCPSource` calls `search_catalog` and no other
+    /// method, and the cart and checkout tools the same endpoint exposes are never touched.
+    ///
+    /// `accept` exists because MCP servers negotiate between plain JSON and an event
+    /// stream on that header alone, and the ones that default to streaming are unreadable
+    /// with the plain decoder here.
+    func post(_ url: URL, json body: Data, accept: String) async throws -> HTTPResponse
 }
 
 public extension HTTPFetching {
     func get(_ url: URL) async throws -> HTTPResponse {
         try await get(url, etag: nil)
+    }
+
+    func post(_ url: URL, json body: Data) async throws -> HTTPResponse {
+        try await post(url, json: body, accept: "application/json")
     }
 }
 
@@ -270,6 +296,18 @@ public struct LiveHTTPFetcher: HTTPFetching {
             finalURL: http?.url,
             etag: http?.value(forHTTPHeaderField: "ETag")
         )
+    }
+
+    public func post(_ url: URL, json body: Data, accept: String) async throws -> HTTPResponse {
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.httpBody = body
+        request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue(accept, forHTTPHeaderField: "Accept")
+        let (data, response) = try await Net.session.data(for: request)
+        let http = response as? HTTPURLResponse
+        return HTTPResponse(data: data, status: http?.statusCode ?? 0, finalURL: http?.url)
     }
 }
 

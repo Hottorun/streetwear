@@ -165,6 +165,17 @@ struct StreetwAPI: Sendable {
         return try await send(path: "v1/feed", method: "GET", body: Optional<Never>.none, query: query)
     }
 
+    /// One brand's recent history, outside the feed cursor. See the route's own note for
+    /// why this cannot be a `since` on `/v1/feed`.
+    func brandFeed(brandID: UUID, limit: Int = 60) async throws -> FeedResponse {
+        try await send(
+            path: "v1/brands/\(brandID.uuidString)/feed",
+            method: "GET",
+            body: Optional<Never>.none,
+            query: [URLQueryItem(name: "limit", value: String(limit))]
+        )
+    }
+
     // MARK: Transport
 
     private func send<Body: Encodable, Response: Decodable>(

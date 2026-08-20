@@ -23,6 +23,9 @@ struct streetwApp: App {
     // first, see nil, and silently skip the sync — the server looked "not working".
     @State private var settings: ServerSettings
     @State private var sizes: SizeProfileStore
+    /// What the wearer has said about their own style, in words. Built here with the rest
+    /// so a view's `.task` can never see a nil where a preference should be.
+    @State private var statement: StyleStatementStore
     @State private var remote: RemoteSync
     @State private var engine: SyncEngine
     @State private var suggestions: BrandSuggestions
@@ -72,6 +75,7 @@ struct streetwApp: App {
         let route = MainActor.assumeIsolated { PushRoute() }
         _settings = State(initialValue: settings)
         _sizes = State(initialValue: sizes)
+        _statement = State(initialValue: MainActor.assumeIsolated { StyleStatementStore() })
         _remote = State(initialValue: remote)
         _engine = State(initialValue: SyncEngine(context: container.mainContext))
         _suggestions = State(initialValue: BrandSuggestions(remote: remote, settings: settings))
@@ -97,6 +101,7 @@ struct streetwApp: App {
             ContentView()
                 .environment(settings)
                 .environment(sizes)
+                .environment(statement)
                 .environment(remote)
                 .environment(engine)
                 .environment(suggestions)
@@ -136,6 +141,12 @@ struct streetwApp: App {
                     // product page is not news.
                     SharedSaveImporter.attachBrands(in: context)
                     await SharedSaveImporter.repair(in: context)
+                    // Last of the three, because the other two can make it unnecessary: a
+                    // real brand outranks whatever a site says about itself.
+                    await SharedSaveImporter.identifySites(in: context)
+                    // Costs no network and is why the feed does not re-classify its whole
+                    // store on every render — see `Classification`.
+                    Classification.settleGenders(in: context)
                 }
             }
         }

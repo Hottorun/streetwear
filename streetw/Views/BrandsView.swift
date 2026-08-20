@@ -91,7 +91,12 @@ struct BrandsView: View {
 /// the count printed rather than badged, because this is a list of things you follow,
 /// not a set of notifications to clear.
 struct BrandRow: View {
+    @Environment(SizeProfileStore.self) private var sizes: SizeProfileStore
+
     let brand: Brand
+
+    /// Counted through the same filter the feed applies — see `Brand.unseenCount(matching:)`.
+    private var unread: Int { brand.unseenCount(matching: sizes.profile) }
 
     private var watching: String {
         let kinds = brand.sources.filter(\.enabled).map { $0.kind.label.uppercased() }
@@ -116,9 +121,9 @@ struct BrandRow: View {
             // Labelled, because a bare "390" beside a wordmark says nothing about what
             // is being counted — and the brand page one tap away calls the same figure
             // UNREAD, so borrowing the word costs nothing and makes the two agree.
-            if brand.unseenCount > 0 {
+            if unread > 0 {
                 HStack(spacing: 5) {
-                    Text("\(brand.unseenCount)")
+                    Text("\(unread)")
                         .font(.data(12, .medium))
                         .foregroundStyle(Color.ink)
                     DataLabel(text: "UNREAD", size: 9)

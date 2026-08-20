@@ -28,12 +28,32 @@ struct CollectionReleaseView: View {
         return brand.members(of: update).filter { $0.passes(sizes.profile) }
     }
 
+    /// The pieces in this release you have already made a decision about.
+    ///
+    /// **The one thing that makes a release page usable at drop time.** A collection can be
+    /// sixty garments and the reason to open it in the first two minutes is not to browse —
+    /// it is to get to the three things you had already decided you wanted. Those were
+    /// somewhere in the grid, in publication order, indistinguishable from everything else.
+    ///
+    /// Saved *or* watched, because both are the same statement made in different tenses: one
+    /// is "I want this" and the other is "I want this the moment it exists". Watched first,
+    /// since a standing watch is the more urgent of the two.
+    private var yours: [BrandUpdate] {
+        members
+            .filter { $0.save != nil || !$0.activeWatches.isEmpty }
+            .sorted { a, b in
+                let (mine, theirs) = (!a.activeWatches.isEmpty, !b.activeWatches.isEmpty)
+                return mine == theirs ? BrandUpdate.newestFirst(a, b) : mine
+            }
+    }
+
     private let columns = [GridItem(.flexible(), spacing: 14), GridItem(.flexible(), spacing: 14)]
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
                 masthead
+                mine
 
                 if members.isEmpty {
                     // Honest about which of the two it is. A collection whose garments
@@ -65,6 +85,52 @@ struct CollectionReleaseView: View {
         .safeAreaInset(edge: .bottom) {
             if let link = update.linkURL {
                 StorefrontBar(url: link, isSoldOut: false)
+            }
+        }
+    }
+
+    /// Straight to the things you had already decided you wanted.
+    ///
+    /// Above the grid and never inside it — the whole point is not having to find them. It
+    /// is a horizontal rail rather than a second grid so that on a release where you have
+    /// kept one thing it costs one row, and the release itself is still the page.
+    @ViewBuilder
+    private var mine: some View {
+        let kept = yours
+        if !kept.isEmpty {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(alignment: .firstTextBaseline) {
+                    Text("Yours in this drop")
+                        .font(.editorial(19))
+                        .foregroundStyle(Color.ink)
+                    Spacer(minLength: 8)
+                    DataLabel(text: "\(kept.count)")
+                }
+                .padding(.horizontal, 20)
+
+                ScrollView(.horizontal) {
+                    LazyHStack(alignment: .top, spacing: 14) {
+                        ForEach(kept) { member in
+                            VStack(alignment: .leading, spacing: 6) {
+                                MemberTile(update: member)
+                                    .frame(width: 150)
+                                // Which of the two decisions this was, because they lead to
+                                // different actions: a watch is waiting on stock, a save is
+                                // waiting on you.
+                                DataLabel(
+                                    text: member.activeWatches.isEmpty ? "SAVED" : "WATCHING",
+                                    size: 9,
+                                    color: member.activeWatches.isEmpty ? .muted : .signal
+                                )
+                            }
+                            .productLink(member)
+                        }
+                    }
+                    .padding(.horizontal, 20)
+                }
+                .scrollIndicators(.hidden)
+
+                Rule().padding(.horizontal, 20)
             }
         }
     }

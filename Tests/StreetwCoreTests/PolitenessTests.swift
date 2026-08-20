@@ -126,6 +126,16 @@ struct PoliteFetcherTests {
             }
             return HTTPResponse(data: Data("{}".utf8), status: 200, finalURL: url)
         }
+
+        /// Recorded alongside the gets, because a JSON-RPC catalogue read spends the same
+        /// per-host budget as any other request and the spacing tests must see it.
+        func post(_ url: URL, json body: Data, accept: String) async throws -> HTTPResponse {
+            lock.withLock {
+                times.append(Date())
+                paths.append(url.path)
+            }
+            return HTTPResponse(data: Data("{}".utf8), status: 200, finalURL: url)
+        }
     }
 
     @Test("robots.txt is fetched once per host, then cached")

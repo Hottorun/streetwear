@@ -1,0 +1,54 @@
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "structuredContent": {
+      "ucp": { "version": "2026-04-08" },
+      "products": [
+        {
+          "id": "gid://shopify/Product/8811223344",
+          "handle": "box-logo-hooded-sweatshirt",
+          "title": "Box Logo Hooded Sweatshirt",
+          "url": "https://eu.supreme.com/products/box-logo-hooded-sweatshirt",
+          "description": { "plain": "Cotton fleece. Embroidered logo on chest." },
+          "categories": [{ "name": "Sweatshirts" }],
+          "tags": ["fw26", "hooded"],
+          "price_range": {
+            "min": { "amount": 19800, "currency": "GBP" },
+            "max": { "amount": 19800, "currency": "GBP" }
+          },
+          "media": [
+            { "type": "image", "url": "https://cdn.example.com/box-black.jpg" },
+            { "type": "image", "url": "https://cdn.example.com/box-ash.jpg" },
+            { "type": "video", "url": "https://cdn.example.com/box.mp4" }
+          ],
+          "variants": [
+            {
+              "id": "gid://shopify/ProductVariant/1",
+              "title": "Black / Medium",
+              "price": { "amount": 19800, "currency": "GBP" },
+              "availability": { "available": false },
+              "options": [
+                { "name": "Color", "label": "Black" },
+                { "name": "Size", "label": "Medium" }
+              ],
+              "media": [{ "type": "image", "url": "https://cdn.example.com/box-black.jpg" }]
+            },
+            {
+              "id": "gid://shopify/ProductVariant/2",
+              "title": "Ash Grey / Large",
+              "price": { "amount": 19800, "currency": "GBP" },
+              "availability": { "available": true },
+              "options": [
+                { "name": "Color", "label": "Ash Grey" },
+                { "name": "Size", "label": "Large" }
+              ],
+              "media": [{ "type": "image", "url": "https://cdn.example.com/box-ash.jpg" }]
+            }
+          ]
+        }
+      ],
+      "pagination": { "cursor": "eyJwYWdlIjoyfQ" }
+    }
+  }
+}

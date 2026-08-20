@@ -40,10 +40,19 @@ struct SaveDetailView: View {
     @Environment(\.modelContext) private var context
     @Environment(\.dismiss) private var dismiss
     @Environment(SizeProfileStore.self) private var sizes: SizeProfileStore
+    @Environment(RemoteSync.self) private var remote: RemoteSync
+    @Environment(ServerSettings.self) private var settings: ServerSettings
     @Query(sort: [SortDescriptor(\Board.sortIndex), SortDescriptor(\Board.createdAt)])
     private var boards: [Board]
 
     @Bindable var save: SavedItem
+
+    /// Pushed destinations inside this sheet's own stack. A path binding rather than
+    /// `NavigationLink(value:)`, because where the brand line goes is not known until it is
+    /// tapped — and for a brand nobody follows the answer is a sheet, not a push.
+    @State private var path = NavigationPath()
+    @State private var brandDestination: BrandDestination?
+    @State private var isResolvingBrand = false
 
     @State private var note: String = ""
     @State private var sizeNote: String = ""
@@ -79,7 +88,7 @@ struct SaveDetailView: View {
     }
 
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $path) {
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
                     if let update, !update.imageURLs.isEmpty {
@@ -93,7 +102,7 @@ struct SaveDetailView: View {
                             // The same fixed sweep the wall uses. Opening a tile must not
                             // change what the garment is standing on.
                             backdrop: .sweep,
-                            mark: update.brand?.name,
+                            mark: update.brandLabel,
                             selection: $imageIndex
                         )
                     }
@@ -159,7 +168,7 @@ struct SaveDetailView: View {
             }
             .scrollIndicators(.hidden)
             .background(Color.paper)
-            .navigationTitle(update?.brand?.name ?? "Saved")
+            .navigationTitle(update?.brandLabel ?? "Saved")
             .toolbarTitleDisplayMode(.inline)
             // This sheet has a stack of its own, so it needs its own destination table —
             // a route pushed onto a stack that hasn't registered it does nothing at all,
@@ -174,11 +183,17 @@ struct SaveDetailView: View {
             }
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
-                    Menu("More", systemImage: "ellipsis") {
-                        Button("Remove from collection", systemImage: "trash", role: .destructive) {
-                            isConfirmingRemoval = true
-                        }
+                    // The action itself, not a menu containing the action.
+                    //
+                    // This was an overflow menu whose entire contents was one item, so
+                    // removing something took two taps and a read to find out that the "···"
+                    // had nothing else behind it. A menu earns its place by holding a
+                    // choice; with one item it is a lid on a button. The confirmation is
+                    // still there and is where the caution belongs.
+                    Button("Remove from collection", systemImage: "trash", role: .destructive) {
+                        isConfirmingRemoval = true
                     }
+                    .labelStyle(.iconOnly)
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Done") { commit(); dismiss() }
@@ -210,9 +225,25 @@ struct SaveDetailView: View {
         }
         .tint(.ink)
         .sheet(item: $openedFit) { FitCanvas(fit: $0) }
+        .sheet(item: $brandDestination) { destination in
+            switch destination {
+            case .preview(let item):
+                BrandPreviewSheet(item: item, onFollow: { await follow(item) })
+            case .add(let query):
+                AddBrandView(prefill: query)
+            }
+        }
         .onAppear {
             note = save.note ?? ""
             sizeNote = save.sizeNote ?? ""
+        }
+        // The archive needs this more than the feed does, not less: the commonest reason to
+        // keep something is that it was gone, and "SOLD OUT" here is the answer to the one
+        // question the page is for. Reading it off a months-old snapshot would make the
+        // watch button offer to tell you about something that is already back.
+        .task(id: save.id) {
+            guard let update else { return }
+            await StockRefresh.refresh(update, in: context)
         }
         // Committed on the way out rather than on every keystroke: a note is written in
         // one go, and saving per character churns the store for no benefit.
@@ -228,6 +259,8 @@ struct SaveDetailView: View {
                 }
                 Spacer(minLength: 0)
             }
+
+            brandLine
 
             Text(update?.title ?? "Saved item")
                 .font(.editorial(25))
@@ -251,6 +284,52 @@ struct SaveDetailView: View {
                 Spacer(minLength: 0)
             }
         }
+    }
+
+    /// Who made it, as a way in rather than as a caption.
+    ///
+    /// The brand's name was on this page already — in the navigation bar, set at 13pt in
+    /// grey, and inert. It is the second most useful thing here after the garment itself:
+    /// the commonest thought while looking at something you kept from a label you have just
+    /// discovered is "what else do they make", and the app had no answer to it that did not
+    /// begin with going to another tab and typing the name in.
+    ///
+    /// One control, three honest destinations, decided by what is actually known:
+    ///
+    /// - **Followed** → the brand's own page, pushed onto this sheet's stack. Its releases,
+    ///   what you have kept from it, how it is watched.
+    /// - **Known but not followed** → the preview a recommendation opens. That page exists
+    ///   precisely to answer "should I follow this", which is the question being asked, and
+    ///   restyling a second version of it here would be two answers to one question.
+    /// - **Not in the catalog at all** → the add flow, with the site already filled in. This
+    ///   is the case shares are *for*, and until now it was the one with nothing behind it.
+    @ViewBuilder
+    private var brandLine: some View {
+        if let label = update?.brandLabel {
+            Button(action: openBrand) {
+                HStack(spacing: 8) {
+                    BrandMonogram(name: label, logoURL: monogramLogo, size: 22)
+                    Wordmark(name: label, size: 12)
+                    if isResolvingBrand {
+                        ProgressView().controlSize(.mini)
+                    } else {
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundStyle(Color.muted)
+                    }
+                    Spacer(minLength: 0)
+                }
+                .contentShape(.rect)
+            }
+            .buttonStyle(.borderless)
+            .disabled(isResolvingBrand)
+            .accessibilityLabel("Open \(label)")
+        }
+    }
+
+    /// The followed brand's mark, or the one the site publishes for a save that has none.
+    private var monogramLogo: URL? {
+        update?.brand?.logoURL ?? update?.siteLogoURL
     }
 
     /// The outfits this piece is in.
@@ -390,6 +469,97 @@ struct SaveDetailView: View {
         save.note = trimmedNote.isEmpty ? nil : trimmedNote
         save.sizeNote = trimmedSize.isEmpty ? nil : trimmedSize
         try? context.save()
+    }
+
+    // MARK: - The brand behind a save
+
+    /// Where the brand line goes when the brand is not one you follow.
+    ///
+    /// A push is only right for the followed case — the other two are questions rather than
+    /// places, and a question belongs in a sheet you can dismiss back to the garment you
+    /// were looking at.
+    private enum BrandDestination: Identifiable {
+        /// A brand the catalog knows and this device does not follow.
+        case preview(PopularBrand)
+        /// Nobody has added this site yet. Carries what to put in the search field.
+        case add(String)
+
+        var id: String {
+            switch self {
+            case .preview(let item): return item.brand.id?.uuidString ?? item.brand.name
+            case .add(let query): return "add:\(query)"
+            }
+        }
+    }
+
+    private func openBrand() {
+        // A brand row we already hold answers immediately, in both modes, with no network.
+        if let brand = update?.brand {
+            if brand.followed {
+                path.append(BrandRoute(brand: brand))
+            } else {
+                brandDestination = .preview(preview(of: brand))
+            }
+            return
+        }
+
+        guard let link = update?.linkURL else { return }
+        // The catalog is global and searched before anything is created — the same rule
+        // `AddBrandView` follows. Somebody who shares a Kith link while not following Kith
+        // should be offered the Kith that already exists, not a form about Kith.
+        guard settings.isConfigured else {
+            brandDestination = .add(link.host() ?? link.absoluteString)
+            return
+        }
+
+        isResolvingBrand = true
+        Task {
+            let found = try? await remote.searchBrands(link.absoluteString)
+            isResolvingBrand = false
+            if let dto = found?.first {
+                brandDestination = .preview(PopularBrand(brand: dto, followers: 0))
+            } else {
+                brandDestination = .add(link.host() ?? link.absoluteString)
+            }
+        }
+    }
+
+    /// A local brand in the shape the preview sheet speaks.
+    ///
+    /// Its photographs come from the rows already stored rather than from the wire, so an
+    /// unfollowed brand that has been polled before shows clothes instead of a wordmark and
+    /// a blank grid — which is the whole argument that sheet makes for itself.
+    private func preview(of brand: Brand) -> PopularBrand {
+        PopularBrand(
+            brand: BrandDTO(
+                id: brand.remoteID,
+                name: brand.name,
+                slug: brand.websiteURL?.host() ?? brand.name.lowercased(),
+                website: brand.websiteURL?.absoluteString,
+                instagramHandle: brand.instagramHandle,
+                currency: brand.currencyCode,
+                lockedForDrop: brand.isLockedForDrop,
+                logoURL: brand.logoURLString
+            ),
+            followers: 0,
+            previewImageURLs: brand.recentUpdates(limit: 40)
+                .compactMap { $0.imageURLStrings.first }
+        )
+    }
+
+    /// Following from the preview. The server owns the follow list when there is one, but a
+    /// brand already sitting in this store also has to be flipped locally — otherwise the
+    /// row stays `followed == false` until a sync happens to mention it, and the same line
+    /// keeps offering the same page.
+    private func follow(_ item: PopularBrand) async {
+        if settings.isConfigured, item.brand.id != nil {
+            try? await remote.followExisting(item.brand, sizes: sizes.profile)
+        }
+        if let brand = update?.brand {
+            brand.followed = true
+            try? context.save()
+        }
+        brandDestination = nil
     }
 
     /// Un-saving, from the page that is about the save. Deleting the `SavedItem` leaves the

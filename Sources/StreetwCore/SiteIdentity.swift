@@ -91,6 +91,15 @@ public enum BrandNaming {
         return cleaned
     }
 
+    /// The last resort, made available to callers that only ever have a hostname.
+    ///
+    /// A saved link from a brand nobody follows has no other source of a name until the
+    /// site has been probed, and "Gvgallery" over a photograph is a great deal better than
+    /// nothing over a photograph.
+    public static func hostName(of host: String) -> String? {
+        fromHost(host)
+    }
+
     /// The last resort. Drops the subdomains that are never part of a brand's name —
     /// regions especially, which is where "Usa" came from — and takes the registrable
     /// label rather than the first one.
@@ -112,7 +121,7 @@ public enum BrandNaming {
 
     /// Trims, collapses whitespace, decodes the handful of entities that turn up in a
     /// `<title>`, and evens out a name shouted in capitals.
-    static func tidy(_ raw: String) -> String? {
+    public static func tidy(_ raw: String) -> String? {
         var text = decodeEntities(raw)
             .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
             .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -177,14 +186,6 @@ public enum BrandNaming {
     }
 
     private static func decodeEntities(_ text: String) -> String {
-        var out = text
-        for (entity, replacement) in [
-            ("&amp;", "&"), ("&#38;", "&"), ("&ndash;", "–"), ("&mdash;", "—"),
-            ("&quot;", "\""), ("&#39;", "'"), ("&apos;", "'"), ("&nbsp;", " "),
-            ("&lsquo;", "'"), ("&rsquo;", "'")
-        ] {
-            out = out.replacingOccurrences(of: entity, with: replacement, options: .caseInsensitive)
-        }
-        return out
+        HTMLEntities.decode(text)
     }
 }

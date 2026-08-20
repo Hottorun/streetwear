@@ -73,6 +73,7 @@ func configure(_ app: Application) async throws {
     app.migrations.add(AddUserWaistSizes())
     app.migrations.add(AddEventPrice())
     app.migrations.add(AddProductBrandIndex())
+    app.migrations.add(AddBrandNotifyLedger())
     if Environment.get("AUTO_MIGRATE") != "false" {
         try await app.autoMigrate()
     }
@@ -87,7 +88,12 @@ func configure(_ app: Application) async throws {
     // Every outbound request goes through the politeness budget: robots.txt obeyed,
     // and at most one request per host per interval no matter how many sources are due.
     let interval = Environment.get("POLITE_INTERVAL").flatMap(Double.init) ?? 2.0
-    let poller = Poller(app: app, http: PoliteFetcher(minInterval: interval))
+    // One fetcher, stored, so anything else reaching a storefront queues behind the poller
+    // instead of alongside it. A second `PoliteFetcher` would keep a second per-host clock
+    // and the budget would quietly be twice what it says it is.
+    let fetcher = PoliteFetcher(minInterval: interval)
+    app.storage[FetcherKey.self] = fetcher
+    let poller = Poller(app: app, http: fetcher)
     app.storage[PollerKey.self] = poller
 
     // Push is optional: with no key the notifier still runs and still walks its ledger
@@ -156,6 +162,10 @@ struct PollerKey: StorageKey {
     typealias Value = Poller
 }
 
+struct FetcherKey: StorageKey {
+    typealias Value = any HTTPFetching
+}
+
 struct PollLoopKey: StorageKey {
     typealias Value = PollLoop
 }
@@ -174,6 +184,9 @@ struct APNSConfiguredKey: StorageKey {
 
 extension Application {
     var poller: Poller? { storage[PollerKey.self] }
+    /// Falls back to the bare client so a test app that never called `configure` still
+    /// works — the politeness budget is about production, and a stub never reaches a host.
+    var fetcher: any HTTPFetching { storage[FetcherKey.self] ?? Net.live }
     var notifier: Notifier? { storage[NotifierKey.self] }
     var reaper: Reaper? { storage[ReaperKey.self] }
 }

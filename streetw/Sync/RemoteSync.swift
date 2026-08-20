@@ -122,11 +122,42 @@ final class RemoteSync {
         try await api.follow(brandID: id)
         mergeBrands([dto], isCompleteList: false)
         try? context.save()
+        await catchUp(brandID: id)
     }
 
     func follow(brandID: UUID) async throws {
         guard let api else { throw APIError.notConfigured }
         try await api.follow(brandID: brandID)
+        await catchUp(brandID: brandID)
+    }
+
+    /// Fills in what a brand has been doing before you followed it.
+    ///
+    /// **The answer to "how much of a long-watched brand do I get".** Until this, the answer
+    /// was *none of it*: the feed cursor is one timestamp across every brand a device
+    /// follows, so following a shop the poller had been watching for six months asked the
+    /// server for events since the last sync and was told, correctly, that nothing had
+    /// happened. The brand page opened empty, "DROPS SEEN" read 0, and the app looked like
+    /// it had not started watching — for however long it took that label to publish
+    /// something, which for a two-collections-a-year brand can be months.
+    ///
+    /// So one bounded window of that brand's own history, and — this is the part that
+    /// matters — **stored as already seen**. It is the same rule as `SyncEngine.merge`'s
+    /// first sync and the poller's `baselined_at`: a catalogue you have just met is context,
+    /// not news. Dumping thirty days of Kith into the feed as unread would be the
+    /// two-hundred-and-fifty-product bug that rule exists to prevent, and it would arrive at
+    /// the exact moment somebody was deciding whether following was a good idea.
+    ///
+    /// Best effort and never fatal. A brand with no history simply has none, and a request
+    /// that fails leaves the follow standing — the next drop lands normally either way.
+    func catchUp(brandID: UUID, limit: Int = 60) async {
+        guard let api else { return }
+        guard let response = try? await api.brandFeed(brandID: brandID, limit: limit) else { return }
+        merge(response.items, asBaseline: true)
+        // Deliberately does **not** touch `cursor`. That is progress through this device's
+        // own feed, and moving it from here would skip every other brand's events inside the
+        // same window.
+        try? context.save()
     }
 
     func unfollow(_ brand: Brand) async {
@@ -225,6 +256,12 @@ final class RemoteSync {
             }
             await mergeWatches()
             try? context.save()
+
+            // The batch that just landed carries the server's classifier revision, which
+            // is not this build's whenever the two deploy apart — so without this every
+            // one of those rows re-derives its gender on every render for the rest of its
+            // life. See `Classification`.
+            Classification.settleGenders(in: context)
 
             // Also checked locally, not only trusted from the server: the app has the
             // variant data in hand and a push can be missed, denied or throttled. Firing
@@ -339,7 +376,10 @@ final class RemoteSync {
         )
     }
 
-    private func merge(_ items: [FeedItem]) {
+    /// - Parameter asBaseline: whether this batch is a brand's history rather than news. A
+    ///   baseline is stored pre-marked seen, so following a brand with a long catalogue
+    ///   fills its page in without emptying itself into the feed.
+    private func merge(_ items: [FeedItem], asBaseline: Bool = false) {
         guard !items.isEmpty else { return }
 
         let brands = (try? context.fetch(FetchDescriptor<Brand>())) ?? []
@@ -403,6 +443,7 @@ final class RemoteSync {
             // sends nil, and the app degrades exactly as it did before rather than
             // storing an empty list that reads as "no sizes".
             update.variants = item.variants ?? []
+            update.isSeen = asBaseline
             context.insert(update)
 
             if let gender = item.gender {
@@ -422,7 +463,8 @@ final class RemoteSync {
                 // product type and tags, without waiting on a deploy.
                 update.refreshGender()
             }
-            newItemCount += 1
+            // A baseline is not new material and must not be counted as any.
+            if !asBaseline { newItemCount += 1 }
         }
     }
 

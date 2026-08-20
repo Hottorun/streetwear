@@ -141,7 +141,7 @@ The Xcode project uses `PBXFileSystemSynchronizedRootGroup`. Any `.swift` file a
 ### Tests
 
 ```bash
-swift test                                    # all 98
+swift test                                    # all 297
 swift test --filter "Size normalisation"      # one suite
 swift test --filter relockFiresAgain          # one test
 ```
@@ -197,6 +197,9 @@ Adapters live in `streetw/Sources/` and are resolved through `SourceAdapters.ada
   A slug that still reads as a hash becomes `SitemapSource.unnamed` rather than being
   printed, and both merge paths upgrade a provisional title when a real one arrives later
   (`isProvisional`) — dedupe is on `externalID`, so nothing else would ever revisit it.
+- `UCPSource` — the Universal Commerce Protocol endpoint a storefront advertises **for
+  machines**, when it has switched its JSON catalogue off. See *Reading a storefront that
+  has closed its catalogue* below.
 - `PageWatchSource` — last resort, only when nothing structured was found.
 
 Discovery prefers them in that order, so a page watch is now genuinely a fallback rather
@@ -223,6 +226,64 @@ sources are pinned to. It swaps **only** `www.`: every other subdomain a brand r
 (`usa.`, `eu.`) is a region with its own currency, and switching someone off one would
 change every price in their feed.
 
+### Reading a storefront that has closed its catalogue
+
+Supreme is a Shopify store (`us.supreme.com` → `eu-production.myshopify.com`) with every
+machine-readable surface switched off. Probed directly, on the day this was written:
+
+```
+  /products.json                403   /collections/all.atom       403
+  /collections.json             403   /sitemap.xml                404
+  /products/<handle>.js|.json   403   /meta.json                  200  ← the only one
+  /collections/all              200 — HTML, client-rendered, no product links in it
+```
+
+So every adapter above declines and discovery lands on `PageWatchSource`, which hashes the
+visible text of a page whose products are drawn by JavaScript. **The hash never moves.** The
+brand row says "WATCHING", the source records no error, and the app delivers nothing, ever —
+the exact "every layer reports healthy and the feature does not exist" failure this file
+keeps a list of.
+
+The same robots.txt that fronts those 403s says *"Agents should use UCP/MCP for catalog"* and
+gives the discovery URL. The door was moved, not closed, and `UCPSource` walks through it.
+
+- **It is read-only by construction.** The endpoint also exposes `create_cart`,
+  `create_checkout` and `complete_checkout`. None appear in `UCPSource`, and `UCPAgent`
+  declares only the two catalogue capabilities — a business reads that profile to decide
+  what to send and what we can handle, so claiming `checkout` would be claiming to be a
+  shop. Supreme's own robots.txt draws the same line: "Checkouts are for humans."
+- **UCP is a negotiation, and the agent profile is the price of entry.** A business fetches
+  `UCPAgent.profileURL` *from its own network* before answering; without it every call gets
+  `UCP discovery failed`. So the server serves it at `/.well-known/ucp` and both modes quote
+  that URL — a phone cannot host one. **If UCP sources start failing everywhere at once,
+  curl that URL first.** Verified live: with no profile Supreme says "Missing ucp version";
+  with ours, "Unable to fetch agent profile: Http error" until the route is deployed.
+- **The status is not the message.** A refusal arrives as **422 with the reason in the
+  JSON-RPC body**, and that reason names the fix. Reading the status first reported "Server
+  returned 422" and threw the sentence away, so the body is decoded first and the status
+  only speaks when nothing in it can. `SourceError.ucp` is its own case because these
+  failures are usually *ours*.
+- **`search_catalog` is a search, not an enumeration.** No sort-by-newest, and the UCP
+  product model has **no publication date at all** — so this pages a bounded window and lets
+  dedupe on `externalID` decide what is new, `since` cannot narrow the request, and
+  `publishedAt` is "first seen". `Reshelving` can therefore say nothing here, which is its
+  documented safe default.
+- **`available: false` is sent deliberately.** The endpoint narrows to sale-ready items by
+  default, which would hide exactly the sold-out drop somebody wants telling about — and the
+  restock could never fire, because the product would never have been stored.
+- **Prices are minor units.** `{"amount": 19800, "currency": "GBP"}` is £198.00. Zero-decimal
+  currencies (JPY, KRW) are already whole and must not be divided.
+- **Discovery re-reads `/.well-known/ucp` every poll** rather than pinning the endpoint seen
+  the day a brand was added, which would mean silently polling a dead URL the day it moves.
+- **Ranked below the sitemap, above a page watch.** On data alone it should outrank nearly
+  everything — prices, variants, live stock. What holds it down is that it is the only
+  source whose success depends on *us* being reachable, and demoting a working sitemap for
+  something that can fail on our side is the wrong trade. Above a page watch the argument is
+  unanswerable.
+- **`POST /admin/ucp-test?url=` reports per stage**, for the same reason `push-test` does:
+  "0 products" is equally true when a store has no UCP, when our profile 404s, and when the
+  season is simply over, and those have three different fixes.
+
 ### Deliberate design decisions
 
 Changing these silently will break intended behavior:
@@ -238,6 +299,45 @@ Changing these silently will break intended behavior:
   does not** — a size you don't wear is said in vermilion, not by removing the product, because a
   sold-out size today is the restock this app exists to catch. A new screen that lists a brand's
   output calls `passes`; it does not write its own copy of the rule.
+- **A count is subject to the same filter as the list it counts.** `Brand.unseenCount` counts
+  everything unseen and no screen means that: the feed cleared to "all caught up" under a Menswear
+  setting while the brands list still claimed 40 unread and the brand page still printed UNREAD in
+  vermilion — about womenswear it had just decided not to show. Two screens describing one queue and
+  disagreeing about its size reads as the number being broken. Every visible count calls
+  `Brand.unseenCount(matching:)`; the unfiltered one survives only for a caller that genuinely means
+  every row.
+- **`FeedView.feed` is one pass, and that is a correctness property as much as a speed one.**
+  Marking a brand read writes a row per update and saves, which invalidates the `@Query` and
+  re-renders — and the view then answered four more questions on the way back, each a full walk of
+  every brand's `updates`, each calling `passes`, which reads `gender`, which **re-runs the
+  classifier whenever the stored revision differs from this build's** — the steady state for
+  anything the server classified. So dismissing one brand cost thousands of string classifications
+  before a frame could be drawn, which is the reported lag. Anything added to that body walks the
+  relationship once or not at all.
+- **A stored classification that keeps re-deriving has to be written back.** `Classification`
+  settles stale `genderVersion` rows in bounded batches after a sync and on foreground. It
+  recomputes *locally* and stamps the local revision, which is honest — the prohibition below is on
+  stamping the local number onto a **server-supplied** raw value, which freezes somebody else's
+  verdict forever.
+- **A product page says what is left now, not what was left when the event fired.** A feed row's
+  variants are a snapshot: right for a record, wrong for the one screen where somebody is deciding
+  to buy something. A hoodie that dropped on Friday and sold out on Saturday still printed a full
+  run of ticks with "IN YOUR SIZE" over it and a buy button underneath. `StockRefresh` re-reads the
+  storefront on `ProductDetailView` and `SaveDetailView` only, throttled by `stockCheckedAt`, and
+  touches **stock alone** — rewriting `priceText` would leave a markdown comparing today's price
+  against a "was" from another week. It fetches from the phone in both modes, the one documented
+  exception to the table further down: `SharedSaveImporter` already does the same through the same
+  adapter, and there is no route for "what is in stock right now" because the question is always
+  about the single product being looked at.
+- **Following a brand the poller has watched for months hands over its recent history, pre-marked
+  seen.** The feed cursor is one timestamp across every followed brand, so `GET /v1/feed` correctly
+  reports that nothing has happened since — the brand page opened empty, its counts read zero, and
+  nothing said it was being watched until the next drop, which for a seasonal label is months away.
+  `GET /v1/brands/:id/feed` is a bounded window over one brand and `RemoteSync.catchUp` merges it as
+  a **baseline**, the same rule as `SyncEngine`'s first sync and the poller's `baselined_at`. It
+  must never advance `cursor` — that would skip every other brand's events in the same window — and
+  must never arrive unread, which is the 250-product bug delivered at the exact moment somebody is
+  deciding whether following was a good idea.
 - **A collection is not a product** (`CollectionCard`, `CollectionReleaseView`). It is the one update
   that is *about* other updates, and it was drawn as a garment: no photograph (a season page rarely
   has one), an empty size run, no price, and a tap onto a product page with nothing on it — so
@@ -247,7 +347,22 @@ Changing these silently will break intended behavior:
   belong to one — `/collections.json` names a release and does not list it — from a distinctive word
   in the title (brands tag their seasons) falling back to a publication window. Deliberately a
   heuristic: the alternative is a network call per card in a scrolling feed, and being wrong costs a
-  page with a few extra garments rather than a missed drop.
+  page with a few extra garments rather than a missed drop. **`members(of:)` admits `.product`
+  only.** It filtered on `kind != .collection`, which lets in every other kind of event — and a
+  release lands in the middle of ordinary trading, so the window swept up restocks of last season's
+  stock and price drops off the sale rail and printed them as the contents of a new collection. A
+  restock is by definition not part of something only just announced, and the word match is no
+  protection because a re-shelved item from the same season carries the same season code.
+- **One garment, one row, in every list** (`BrandUpdate.oncePerProduct`). The store holds *events*:
+  a feed row is `event:<uuid>` and one jacket drops, is marked down and comes back in an L, so a
+  brand page, a release and a brand's spread each printed it three times at three prices. Keyed on
+  `productExternalID` — the garment — never on `externalID`, which is the event; a row with no
+  product behind it keeps its own key so two unrelated links can never collapse into one. The
+  survivor is the newest by `newestFirst`, so the choice is stable across relaunches. **Anything
+  that clears a list has to clear the rows it folded away**: `markSeen` and "Mark all seen" walk
+  `brand.updates`, not the deduplicated array, or the brand returns to the feed showing the same
+  jacket. `unseenCount(matching:)` counts distinct garments for the same reason — counting rows
+  said 40 above a page showing 25.
 - **`published_at` says when a product was last put on a shelf, not when it is new.**
   Storefronts rewrite it on every re-merchandising sweep — Kith's own tags say so
   (`081126NIKEremerch`, `shopifyflow:removedtag`) — so a fifth of its 250 newest products
@@ -342,7 +457,17 @@ verdict*, because nothing would ever revisit it.
   travels on the wire too** (`FeedItem.genderVersion`): the server decides gender so both
   platforms agree, but the two deploy on different schedules, and stamping the *local*
   number on a server-supplied verdict froze it forever the moment the phone shipped better
-  rules.
+  rules. **Re-deriving is not free and must not be the steady state** — see `Classification`
+  and the note about `FeedView.feed` above.
+- **A stamp says *when* something was looked at; it must also say *what*.**
+  `BrandUpdate.analyzedImageURL` sits beside `analyzedAt` because a row's photograph changes after
+  the fact, and on the commonest path: a link shared from Safari lands with one Open Graph image or
+  a URL that 404s, the pass stamps it (deliberately — a dead URL must not be retried forever), and
+  `SharedSaveImporter.repair` then fills in the catalogue's real photographs. Every version field
+  was already current, so nothing ever looked at them: no colour, no cutout, no measured aspect, no
+  silhouette, for as long as the item existed. A photograph the analysis has not seen makes the
+  whole pass due again. `ImageTagger.backlog` is the matching `.task(id:)` key — keying on
+  `saves.count` meant new *work* was invisible unless somebody happened to save something else.
 - **The classifier's inputs travel with its verdict.** `FeedItem` carries `productType` and
   `tags` because the client does not merely display them — gender, `GarmentSlot` and
   `StyleProfile` are all read off them, and with neither on the wire every server-backed
@@ -549,6 +674,47 @@ swallows the photograph's paging; attaching it nowhere loses the actions.
   *against* following, under every brand, on the block whose job is to make following attractive.
   `GarmentSlot.unknown` is excluded: it is the classifier declining to answer and is a large share
   of most catalogues, so it matches constantly and means nothing ("LIKE YOUR UNKNOWN").
+- **A term fit to be scored is not automatically fit to be printed.** The vocabulary keeps every
+  token a merchandiser wrote *on purpose* — IDF is what decides whether it means anything, and a
+  code nobody else uses is genuinely distinctive. That is right for the arithmetic and wrong for
+  the caption: the block was reading "LIKE YOUR ITP" under a brand it was trying to sell. `Trait`
+  gates the sentence and nothing else — four letters, a vowel and a consonant, and a short list of
+  ordinary words that describe the shop rather than the clothes ("sale", "mens"). A brand whose
+  only shared terms are unreadable falls through to the category line that already exists.
+- **The block builds its ranking once per render.** `recommender` rebuilds a taste vector over
+  every save in the store, and it was being read by `visible` and then again by `reason(for:)` for
+  each card — seven full builds per body, on a block that sits on three tabs.
+- **Anything written in `StyleStatement` is blended in additively and modestly.** A save is a
+  record of behaviour and a sentence is a claim; a stated word is worth about as much as a term
+  appearing in a handful of saves. Only terms the candidate set already uses survive, exactly as
+  the taste vector does for saves. Dislikes are deliberately *not* applied here — a brand is not
+  demoted for stocking one thing somebody avoids, and `BrandDismissal` is where a negative signal
+  about a brand belongs.
+
+### Saying it in words
+
+`StyleStatement` is the one place the app asks instead of inferring, and it is small on purpose.
+It reads three things out of free text — words you like, words a negated clause rules out, and
+things named either side of "with" — and ignores the rest. Written in `StreetwCore` because
+`Pairing` and `FitSuggestions` both consume it and must not disagree about the same two garments.
+
+- **"with" is the only word given structural meaning.** It is the only one that reliably names a
+  relationship between two garments rather than a property of one. "and" was tried and is useless:
+  "black and white" is one garment as often as it is two.
+- **A stated pairing outranks the colour wheel and can overrule its veto.** Everything else here is
+  inferred; this is somebody saying it. An app that refuses the outfit its user just described is
+  arguing with them. It cannot beat the **slot gate** — two tops do not become an outfit because
+  somebody typed "tees".
+- **It reorders; it never hides.** Same rule as the size profile, for the same reason: a filter you
+  did not know you had set is indistinguishable from a broken feed.
+- **The field prints what it understood.** A free-text box that silently changes behaviour is a
+  black box, and a black box that is sometimes wrong is worse than no box. The reading under it is
+  what makes it correctable.
+- **Local only.** It never goes to the server — the same bargain as the taste vector, and for a
+  stronger reason: it is a sentence somebody wrote about themselves.
+- **`FitSuggestions` ranks through `Pairing` but still vetoes on the colour clash alone.**
+  `Pairing.isRefused` is a stricter bar built for a page that may print nothing; applying it to the
+  fit row would empty it on a thin wardrobe, which is the wardrobe most in need of a suggestion.
 
 ### The share extension
 
@@ -627,6 +793,24 @@ swallows the photograph's paging; attaching it nowhere loses the actions.
   needs no version stamp because it costs no network and is idempotent. It is deliberately a
   heuristic and not the Public Suffix List — the worst outcome of an unlisted suffix is a save that
   stays unattributed, which is where it already was.
+- **A save has a brand name even when there is no brand.** `Brand` is only attached when the link
+  matches something followed, so everything shared from a label nobody has added — which is most of
+  what sharing is *for* — was anonymous: no wordmark on the wall, "Saved" for a page title, nothing
+  to tap. The host is not the answer either, since `bbcicecream.com` is Billionaire Boys Club. So
+  `SharedSaveImporter.identifySites` runs the same `SiteIdentityProbe` a followed brand's name comes
+  from — one homepage fetch **per host**, not per row, grouped before anything is requested — and
+  stores `siteName` and `siteLogoURLString`. `BrandUpdate.brandLabel` is the one accessor: followed
+  brand, then declared site name, then the tidied domain. Every surface that used to print
+  `brand?.name` now prints that.
+- **The brand line on a saved item is a way in, with three honest destinations.** Followed pushes
+  the brand page; known-but-unfollowed opens `BrandPreviewSheet`, which exists precisely to answer
+  "should I follow this"; unknown opens `AddBrandView(prefill:)`. The catalog is searched before the
+  add flow is offered, the same rule `AddBrandView` itself follows.
+- **Enrichment takes the catalogue's whole set of photographs over the single Open Graph frame.** A
+  share arrives with the one image published for link previews; keeping it because the field was
+  technically non-empty left a gallery reading "1/1" about a garment the app had eight pictures of.
+  Only ever *more*, so a storefront that publishes one is never talked down to zero — and the images
+  it gains are what put the row back in front of `ImageTagger`.
 - **The sold-out prompt is asked by the app, not the extension — because it cannot be asked
   earlier.** The extension does no networking, so at share time nobody knows whether the thing is
   in stock. `SharedSaveImporter` offers the watch on the next foreground, which in the usual
@@ -704,6 +888,7 @@ the local path in the `else`. Adding a new one means adding both halves:
 | Operation | Server route |
 |---|---|
 | launch/refresh sync | `GET /v1/follows` + `GET /v1/feed` |
+| catch up on a brand just followed | `GET /v1/brands/:id/feed` (merged as a baseline) |
 | find a brand | `GET /v1/brands?q=` (name **or** pasted URL) |
 | add a brand nobody has | `POST /v1/brands/discover` then `POST /v1/follows` |
 | "check site" preview | `GET /v1/brands/probe` (dry run — creates nothing) |
@@ -782,6 +967,16 @@ builds the executable. Omitting them yields a confusing "overlapping sources" er
   a push that should have been filtered.
 - **`next_check_at` is the schedule**, held in the row rather than in memory, so restarts
   resume and a second instance can later use `FOR UPDATE SKIP LOCKED`.
+- **A weekly brand is not a dormant brand, it is a punctual one.** `quietForAWeek` put a
+  source on the two-hour cadence, and a brand that drops once a week is quiet right up until
+  the moment it isn't — so it was on the slowest schedule at exactly the minute it mattered
+  and a Thursday 11am release could be found at 12:50. In streetwear that is not a late
+  notification, it is a useless one. `Cadence.next(inDropWindow:)` drops to a minute inside
+  the window `DropCadence.isWithinWindow` reads out of the brand's own publication history —
+  an hour before the usual hour and three after, since the hour is a mean and a release
+  staggers. Outside the window nothing changes, which is what pays for it: the same request
+  budget, spent where something is actually going to happen. Never opened on a rhythm that
+  isn't `isReliable`.
 - **A failed poll must still advance `next_check_at`** (`Poller.quarantine`). Without it, a
   source that errors after fetching stays "due" and every tick re-downloads the entire
   catalog — a hot loop against the brand. This actually happened; there's a test for it.
@@ -807,6 +1002,19 @@ builds the executable. Omitting them yields a confusing "overlapping sources" er
   writes hundreds of events in a single poll; fanning those out one-to-one is both a
   terrible experience and a fast route to being muted. `Notifier` groups by brand and
   sends a counted summary.
+- **…and one push per brand per *cooldown*, because a pass was never the right unit.** A
+  storefront does not publish a drop in one write — it puts out a few products, then a few
+  more — and the poller runs at a five-minute cadence while something is happening, so each
+  pass found two or three events and sent a push. One release read as "2 new items", then "2
+  new items", then "3 new items" over half an hour. `brands.last_notified_at` is the ledger,
+  in the row for the same reason `events.notified_at` is. The ordering is the point: the
+  **first** sighting goes out immediately, and everything landing inside the cooldown is
+  *held* — left unmarked, not discarded — and folded into one summary when it lifts. Three
+  details are load-bearing. Cooled-down brands are excluded **in the query**, or a brand
+  mid-drop fills the whole 500-event batch and starves everyone else for fifteen minutes.
+  The stamp lands only when a push actually went out, so a brand every follower filters away
+  is not muted on the strength of it. And a **watch alert is exempt** — it is the one alert
+  somebody asked for by name, about one product in one size, and it is never the trickle.
 - **`events.notified_at` is the push ledger**, in the row for the same reason as
   `next_check_at`. Events are marked even when nothing was sent — when no APNs key is
   configured, and when they are older than the 6h freshness window. Skipping that would
@@ -1165,6 +1373,23 @@ size run and the buy bar all pushed off the bottom, and it looked for all the wo
 products, which made it read as a fault in whichever card had been tapped. `SizeRun(wraps:)` uses
 `FlowRow`, which answers with the width it was **proposed** — that, not the extra lines, is the
 property that matters. Anything raising `limit` must set it.
+
+**`@State` belongs to the position, not to the thing.** A card in a `LazyVStack` is a view
+*description*; SwiftUI keeps the instance and its state when the description at that position
+changes. So paging to the seventh photograph of a jacket and then marking the brand read — which
+removes that card and pulls the next up — left `ImageGallery.localIndex` at 7, and the shirt that
+arrived opened on its seventh frame. Worse when the next product has fewer photographs: the
+`TabView` has no page with that tag and draws nothing, which reads as a failed image. It resets on
+`urls` (the set of photographs *is* the identity of what is being paged) and clamps on read,
+because `onChange` runs after the body that first sees the new set.
+
+**A `DragGesture` on the content of a paging `TabView` starves the pager, even when it does
+nothing.** `ImageViewer` attached one as a `simultaneousGesture` and checked the zoom scale inside
+its handlers, which reads as the same thing and is not: the recogniser had already taken the drag
+before deciding to ignore it. The full-screen viewer — the one place in the app where paging is the
+entire point — could not be swiped at all, and the "1/8" in the corner named seven photographs with
+no way to reach them. A gesture that is not attached cannot compete, so it is attached only while
+`live > 1.01`.
 
 **A lone `.cancellationAction` beside a `.searchable` becomes a "···" menu.** With a search field
 in the bar, iOS 26 has nowhere to put a leading text button and folds it into an overflow menu — so

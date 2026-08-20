@@ -56,6 +56,14 @@ final class StubHTTP: HTTPFetching, @unchecked Sendable {
         }
         return HTTPResponse(data: hit.1, status: hit.0, finalURL: url, etag: hit.2)
     }
+
+    /// Keyed by path like the gets, so a UCP catalogue read can be stubbed the same way.
+    /// Nothing in the server suite exercises one yet — the adapter's own tests live in
+    /// `StreetwCoreTests` — but a conformer that traps here would fail the *next* test to
+    /// need it rather than this one.
+    func post(_ url: URL, json body: Data, accept: String) async throws -> HTTPResponse {
+        try await get(url, etag: nil)
+    }
 }
 
 /// A one-product Shopify catalog whose single variant's stock can be flipped.
@@ -95,6 +103,31 @@ struct RouteTests {
                 let body = try res.content.decode(DeviceResponse.self)
                 #expect(!body.token.isEmpty)
             })
+        }
+    }
+
+    /// The poller cannot read a UCP catalogue unless this is publicly reachable — a
+    /// business fetches it before answering, and without it every `search_catalog` call
+    /// comes back `UCP discovery failed`. It has to be anonymous for the same reason.
+    @Test("The agent profile is served, unauthenticated and cacheable")
+    func servesTheAgentProfile() async throws {
+        try await withServer { app in
+            try await app.testing().test(.GET, ".well-known/ucp") { res async throws in
+                #expect(res.status == .ok)
+                #expect(res.headers.contentType == .json)
+                // The spec asks for at least a minute; without it, every page we read
+                // costs the merchant a round trip back to us.
+                #expect(res.headers.cacheControl?.maxAge ?? 0 >= 60)
+
+                let root = try JSONSerialization.jsonObject(with: Data(buffer: res.body)) as? [String: Any]
+                let ucp = try #require(root?["ucp"] as? [String: Any])
+                #expect(ucp["version"] as? String == UCPAgent.version)
+                let capabilities = try #require(ucp["capabilities"] as? [String: Any])
+                #expect(capabilities["dev.ucp.shopping.catalog.search"] != nil)
+                // streetw has no cart and cannot check out. Saying otherwise to a merchant
+                // would be claiming to be a shop.
+                #expect(capabilities["dev.ucp.shopping.checkout"] == nil)
+            }
         }
     }
 
@@ -160,6 +193,43 @@ struct RouteTests {
                 let feed = try res.content.decode(FeedResponse.self)
                 #expect(feed.items.count == 1)
                 #expect(feed.items.first?.brandName == "Test")
+            }
+        }
+    }
+
+    /// Following a brand the poller has watched for months used to hand over nothing: the
+    /// feed is a cursor across every followed brand, and that brand's whole history sits
+    /// behind it. The brand page opened empty and stayed empty until the next drop.
+    @Test("A brand's catch-up reaches behind the feed cursor")
+    func brandFeedReturnsHistoryTheCursorHasPassed() async throws {
+        try await withServer { app in
+            let brand = BrandModel(
+                name: "Palace", slug: "palace.com", website: "https://palace.com",
+                instagramHandle: nil, usesGeneratedName: false
+            )
+            try await brand.save(on: app.db)
+            let brandID = try brand.requireID()
+            try await EventModel(brandID: brandID, productID: nil, kind: .product).save(on: app.db)
+
+            var token = ""
+            try await app.testing().test(.POST, "v1/devices", beforeRequest: { req in
+                try req.content.encode(RegisterDevice())
+            }, afterResponse: { res async throws in
+                token = try res.content.decode(DeviceResponse.self).token
+            })
+            let auth = HTTPHeaders([("Authorization", "Bearer \(token)")])
+
+            // Deliberately *before* the follow: the client fires both in one breath and the
+            // order of two round trips must not decide whether the page has anything on it.
+            try await app.testing().test(
+                .GET, "v1/brands/\(brandID.uuidString)/feed", headers: auth
+            ) { res async throws in
+                let feed = try res.content.decode(FeedResponse.self)
+                #expect(feed.items.count == 1)
+                #expect(feed.items.first?.brandName == "Palace")
+                // No cursor. Advancing the device's own feed position from a side query
+                // about one brand would skip every other brand's events in the window.
+                #expect(feed.nextCursor == nil)
             }
         }
     }
@@ -966,6 +1036,81 @@ struct NotifierTests {
             try await event.save(on: app.db)
         }
         return event
+    }
+
+    /// The reported behaviour: "it sends me 2 items, then a bit later another 2 items".
+    ///
+    /// A storefront publishes a drop over several polls and the poller is on a five-minute
+    /// cadence while something is happening, so one release used to arrive as a string of
+    /// small pushes. The first sighting must still be immediate — being told late is the one
+    /// failure this app cannot afford — and everything after it is held and consolidated.
+    @Test("A drop is one alert and then one summary, not a trickle")
+    func consolidatesABurstIntoOnePush() async throws {
+        try await withServer { app in
+            let (brandID, _, _) = try await seed(app)
+            try await event(app, brandID: brandID, kind: .product, productTitle: "Chore Jacket")
+
+            let sender = RecordingSender()
+            let notifier = Notifier(app: app, sender: sender)
+
+            // The drop is noticed. This goes out at once.
+            #expect(await notifier.dispatch().sent == 1)
+            #expect(sender.sent.count == 1)
+
+            // The next two polls find more of the same drop. Neither may interrupt again.
+            try await event(app, brandID: brandID, kind: .product, productTitle: "Chore Pant")
+            #expect(await notifier.dispatch().sent == 0)
+            try await event(app, brandID: brandID, kind: .restock, sizes: ["M"], productTitle: "Box Tee")
+            #expect(await notifier.dispatch().sent == 0)
+            #expect(sender.sent.count == 1)
+
+            // Held, not thrown away: once the cooldown lifts they arrive as one summary.
+            let brand = try #require(try await BrandModel.find(brandID, on: app.db))
+            brand.lastNotifiedAt = Date().addingTimeInterval(-3600)
+            try await brand.save(on: app.db)
+
+            #expect(await notifier.dispatch().sent == 1)
+            #expect(sender.sent.count == 2)
+            #expect(sender.sent.last?.body == "1 new item and 1 restock")
+        }
+    }
+
+    /// A brand every follower filters away has not interrupted anybody, and must not be
+    /// muted for a quarter of an hour on the strength of it.
+    @Test("A push nobody received doesn't start the cooldown")
+    func filteredBrandIsNotCooledDown() async throws {
+        try await withServer { app in
+            var menswear = SizeProfile()
+            menswear.gender = .mens
+            let (brandID, _, _) = try await seed(app, profile: menswear)
+
+            let product = ProductModel(
+                brandID: brandID,
+                sourceID: nil,
+                item: FetchedItem(
+                    externalID: "shopify:w1",
+                    title: "Cargo Pant",
+                    linkURL: URL(string: "https://kith.com/products/womens-cargo-pant"),
+                    publishedAt: Date(),
+                    kind: .product,
+                    tags: ["womens"]
+                )
+            )
+            try await product.save(on: app.db)
+            try await EventModel(brandID: brandID, productID: try product.requireID(), kind: .product)
+                .save(on: app.db)
+
+            let sender = RecordingSender()
+            let notifier = Notifier(app: app, sender: sender)
+            #expect(await notifier.dispatch().sent == 0)
+
+            let brand = try #require(try await BrandModel.find(brandID, on: app.db))
+            #expect(brand.lastNotifiedAt == nil)
+
+            // ...so the next thing it publishes, which does pass, goes out immediately.
+            try await event(app, brandID: brandID, kind: .product, productTitle: "Chore Jacket")
+            #expect(await notifier.dispatch().sent == 1)
+        }
     }
 
     @Test("A restock only reaches people who wear the size that came back")

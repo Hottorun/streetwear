@@ -57,6 +57,23 @@ enum ImageTagger {
         }
     }
 
+    /// How many saved items currently have work outstanding.
+    ///
+    /// Exists to be a `.task(id:)` key. The screens that run this pass used to key it on
+    /// `saves.count`, which fires when something is kept and at no other time — but a
+    /// photograph can arrive long after the save does. `SharedSaveImporter.repair` finds a
+    /// shared link in the catalogue on some later foreground and fills in the real images,
+    /// and the count has not moved, so nothing looks at them until the person happens to
+    /// save something else. Keying on the backlog instead means new work *is* the trigger,
+    /// and the pass settling back to zero is what stops it.
+    static func backlog(in saves: [SavedItem]) -> Int {
+        saves.count { save in
+            guard let update = save.update, update.primaryImageURL != nil else { return false }
+            return update.analyzedAt == nil || update.hasUnreadPhotograph
+                || update.needsCutout || update.needsVisualReading
+        }
+    }
+
     /// One batch. Returns how many were looked at, so the caller knows whether the
     /// backlog is drained.
     private static func analyzeBatch(in context: ModelContext, limit: Int) async -> Int {
@@ -70,7 +87,8 @@ enum ImageTagger {
             .compactMap(\.update)
             .filter {
                 $0.primaryImageURL != nil
-                    && ($0.analyzedAt == nil || $0.needsCutout || $0.needsVisualReading)
+                    && ($0.analyzedAt == nil || $0.hasUnreadPhotograph
+                        || $0.needsCutout || $0.needsVisualReading)
             }
             .prefix(limit)
         guard !pending.isEmpty else { return 0 }
@@ -78,14 +96,24 @@ enum ImageTagger {
         var cut = 0
         for update in pending {
             guard let url = update.primaryImageURL else { continue }
-            let needsTags = update.analyzedAt == nil
-            let needsCutout = update.needsCutout
-            let needsReading = update.needsVisualReading
+            // A photograph nobody has looked at makes all three due again, whatever the
+            // stamps say. This is what rescues a link shared from Safari: it lands with an
+            // Open Graph image or none, gets analysed (or written off) against that, and
+            // then `SharedSaveImporter.repair` swaps in the catalogue's real photographs —
+            // at which point every version field is already current and, without this, the
+            // save would never be measured at all. See `analyzedImageURL`.
+            let isNewPhotograph = update.hasUnreadPhotograph
+            let needsTags = update.analyzedAt == nil || isNewPhotograph
+            let needsCutout = update.needsCutout || isNewPhotograph
+            let needsReading = update.needsVisualReading || isNewPhotograph
 
             guard let image = await load(url) else {
                 // Mark it anyway, on every count. A dead image URL will never resolve, and
                 // retrying it on every launch is a permanent background cost for nothing.
+                // Recording *which* URL failed is what lets a repaired row through later
+                // without reopening this one.
                 update.analyzedAt = Date()
+                update.analyzedImageURL = url.absoluteString
                 update.cutoutVersion = Cutout.version
                 update.visionVersion = VisualReading.version
                 continue
@@ -148,6 +176,7 @@ enum ImageTagger {
             // its measurements are written would be skipped on the next pass holding none
             // of them.
             if needsReading { update.visionVersion = VisualReading.version }
+            update.analyzedImageURL = url.absoluteString
         }
         try? context.save()
         log.info("looked at \(pending.count) saved items, lifted \(cut)")

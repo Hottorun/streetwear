@@ -73,8 +73,33 @@ final class Brand {
         self.addedAt = Date()
     }
 
+    /// Everything unread, whatever it is. Only for callers that genuinely mean *everything*
+    /// — which, on screen, is none of them.
     var unseenCount: Int {
         updates.count { !$0.isSeen }
+    }
+
+    /// Unread, counted the way the feed counts.
+    ///
+    /// **The number a person sees must be the number of things they can see.** The feed
+    /// filters with `BrandUpdate.passes`; this did not, so somebody on Menswear cleared
+    /// their feed and then found the brands list still claiming 40 unread and the brand page
+    /// still saying UNREAD in vermilion — about womenswear it had just decided not to show
+    /// them. Two screens describing the same queue and disagreeing about how big it is reads
+    /// as the count being broken, which is worse than either number alone.
+    ///
+    /// The same argument as `passes` itself: one rule, called from everywhere that counts or
+    /// lists a brand's output, rather than a copy per screen.
+    /// Counted in **garments**, matching what the feed draws. One product can hold several
+    /// unread events — it dropped, then it restocked — and the feed prints one card for it,
+    /// so counting rows would say 40 above a page showing 25. Distinct keys rather than
+    /// `oncePerProduct`, which sorts: a count does not care about the order.
+    func unseenCount(matching profile: SizeProfile) -> Int {
+        var seen = Set<String>()
+        for update in updates where !update.isSeen && update.passes(profile) {
+            seen.insert(update.productExternalID ?? update.externalID)
+        }
+        return seen.count
     }
 
     /// Stored as a string like the image lists, for the same SwiftData reason.
@@ -89,8 +114,11 @@ final class Brand {
     }
 
     /// Newest updates first, capped — the feed never wants all 250 products.
+    ///
+    /// Deduplicated, because a list of a brand's output is a list of *garments* and one
+    /// garment produces several rows — see `BrandUpdate.oncePerProduct`.
     func recentUpdates(limit: Int = 12) -> [BrandUpdate] {
-        updates.sorted(by: BrandUpdate.newestFirst).prefix(limit).map { $0 }
+        BrandUpdate.oncePerProduct(updates).prefix(limit).map { $0 }
     }
 
     /// The garments that landed with a collection announcement.
@@ -115,7 +143,19 @@ final class Brand {
         window: TimeInterval = 36 * 3_600,
         cap: Int = 60
     ) -> [BrandUpdate] {
-        let candidates = updates.filter { $0.kind != .collection && $0.id != collection.id }
+        // **Only things that dropped.** This filtered on `kind != .collection`, which admits
+        // every other kind of event a brand produces — and a release lands in the middle of
+        // ordinary trading, so the window swept up restocks of last season's stock, price
+        // drops on the sale rail and page changes, and printed them as the contents of a new
+        // collection. A restock is by definition *not* part of something that has only just
+        // been announced: it is a garment that already existed coming back. The word match
+        // is no protection either, since a re-shelved item from the same season carries the
+        // same season code.
+        //
+        // Deduplicated for the same reason `recentUpdates` is: one garment, one tile.
+        let candidates = BrandUpdate.oncePerProduct(
+            updates.filter { $0.kind == .product && $0.id != collection.id }
+        )
         let words = BrandUpdate.distinctiveWords(in: collection.title)
 
         // A word match is evidence; a timestamp is only an absence of evidence to the

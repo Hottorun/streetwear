@@ -46,6 +46,29 @@ public actor PoliteFetcher: HTTPFetching {
         return try await base.get(url, etag: etag)
     }
 
+    /// The same budget and the same robots check, for the one source kind whose reads are
+    /// spelled as writes.
+    ///
+    /// A JSON-RPC catalogue read is still a request against somebody's origin, so it queues
+    /// behind everything else going to that host. robots.txt is consulted too, even though
+    /// its `Disallow` rules are written for crawlers following links: a merchant who has
+    /// disallowed a path has said something, and this is not the place to decide it did not
+    /// apply to us.
+    public func post(_ url: URL, json body: Data, accept: String) async throws -> HTTPResponse {
+        guard let host = url.host() else {
+            throw SourceError.badResponse(0)
+        }
+
+        let rules = await robots(for: url, host: host)
+        let path = url.path.isEmpty ? "/" : url.path
+        guard rules.allows(path: path) else {
+            throw SourceError.disallowedByRobots(path)
+        }
+
+        try await waitForSlot(host: host, delay: max(minInterval, rules.crawlDelay ?? 0))
+        return try await base.post(url, json: body, accept: accept)
+    }
+
     /// Fetches and caches robots.txt. A missing or broken file is treated as permissive:
     /// failing closed would silently drop brands for an unrelated reason.
     private func robots(for url: URL, host: String) async -> RobotsRules {

@@ -181,17 +181,12 @@ public enum PageMetadataParser {
     }
 
     /// Titles routinely arrive as "Nike Dunk &amp; Co &#8211; Kith".
+    ///
+    /// This used to hold its own table of a dozen named entities, which is only ever a list
+    /// of the bugs already found — GV Gallery publishes its price as `&#036;190.00`, and a
+    /// saved item was captioned with the markup. `HTMLEntities` resolves numeric references
+    /// arithmetically, so there is nothing left for a table to miss.
     private static func decoded(_ raw: String) -> String {
-        var value = raw
-        let entities = [
-            "&amp;": "&", "&lt;": "<", "&gt;": ">", "&quot;": "\"",
-            "&#39;": "'", "&apos;": "'", "&nbsp;": " ",
-            "&#8211;": "–", "&ndash;": "–", "&#8212;": "—", "&mdash;": "—",
-            "&#8217;": "'", "&rsquo;": "'", "&#8216;": "'", "&lsquo;": "'"
-        ]
-        for (entity, character) in entities {
-            value = value.replacingOccurrences(of: entity, with: character)
-        }
-        return value.trimmingCharacters(in: .whitespacesAndNewlines)
+        HTMLEntities.decode(raw).trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }
