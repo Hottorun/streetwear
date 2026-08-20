@@ -57,10 +57,29 @@ public enum BrandNaming {
     /// everything; `og:site_name` is the same claim made to link previews; the `<title>`
     /// is the same claim with marketing attached. The hostname says nothing and comes last.
     public static func pick(shopName: String? = nil, siteName: String? = nil, host: String?) -> String? {
+        // The marketing tail is stripped from **all three** claims, not only the `<title>`.
+        //
+        // A merchant's own Shopify setting was treated as beyond question, and it is not:
+        // `/meta.json` says "REPRESENT | US" and `og:site_name` says the same, because the
+        // field is what appears in their tab and their checkout, where the region matters.
+        // On a brand row it is a wordmark with a country stapled to it, and it outranked
+        // everything so nothing else could correct it.
+        //
+        // Only the pipe-and-dash family splits — a plain hyphen deliberately does not, so
+        // "SNS - Sneakersnstuff" and "A-COLD-WALL*" survive intact. Splitting those would
+        // trade one wrong name for another.
         for candidate in [shopName, siteName] {
-            if let cleaned = candidate.flatMap(tidy) { return cleaned }
+            if let cleaned = candidate.flatMap(withoutTail) { return cleaned }
         }
         return host.flatMap(fromHost)
+    }
+
+    /// A name with everything after the first strong separator removed, where what is left
+    /// is still a name. Falls back to the whole thing rather than to nothing.
+    static func withoutTail(_ raw: String) -> String? {
+        guard let whole = tidy(raw) else { return nil }
+        guard let head = fromTitle(raw) else { return whole }
+        return head
     }
 
     /// `og:site_name`, then the `<title>` with its marketing tail removed.

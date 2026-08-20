@@ -371,6 +371,34 @@ struct BrandNamingTests {
         )
     }
 
+    /// ...but "beats everything" was taken too literally. `/meta.json` really does say
+    /// "REPRESENT | US" — the field is what shows in the merchant's tab and their checkout,
+    /// where the region matters — and because it outranked every other claim, a brand row
+    /// printed a wordmark with a country stapled to it and nothing could correct it.
+    @Test("A region tail is stripped from the merchant's own name too")
+    func stripsTheTailFromAShopName() {
+        // "REPRESENT", not "Represent": a single shouted word is how the brand writes
+        // itself and is left alone, exactly as "KITH" and "BAPE" are. Only the "| US" goes.
+        #expect(BrandNaming.pick(shopName: "REPRESENT | US", host: "representclo.com") == "REPRESENT")
+        #expect(BrandNaming.pick(shopName: "Kith – Official Site", host: "kith.com") == "Kith")
+    }
+
+    /// A plain hyphen is deliberately not a separator: splitting on it trades one wrong
+    /// name for another.
+    @Test("A hyphenated name survives intact")
+    func keepsHyphenatedNames() {
+        #expect(BrandNaming.pick(shopName: "SNS - SNEAKERSNSTUFF", host: "sneakersnstuff.com")
+            == "Sns - Sneakersnstuff")
+        #expect(BrandNaming.pick(shopName: "A-COLD-WALL*", host: "a-cold-wall.com") == "A-COLD-WALL*")
+    }
+
+    /// Falling back to the whole thing rather than to nothing: a name that is *only* a
+    /// generic head still has to produce something to put on a row.
+    @Test("A generic head falls back rather than vanishing")
+    func neverReturnsNothingForARealName() {
+        #expect(BrandNaming.pick(shopName: "Home | Palace", host: "palaceskateboards.com") != nil)
+    }
+
     @Test("og:site_name is read before the title, and either beats the host")
     func readsDeclaredName() {
         let withOG = """

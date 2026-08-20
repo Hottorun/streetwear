@@ -82,8 +82,14 @@ public struct UCPSource: SourceAdapter {
 
     public func fetch(_ source: BrandSource, since: Date?) async throws -> FetchResult {
         let origin = source.url
+        // Note what is *not* checked here: whether the profile still advertises a catalogue
+        // capability. A source that exists was attached because the endpoint answered, and
+        // a merchant editing its capability list must not silently turn a working brand
+        // into "not a UCP storefront" — Supreme did exactly that within hours of this being
+        // written. If the endpoint has genuinely stopped answering, the call below says so
+        // in the merchant's own words.
         guard let discovery = try await discover(at: origin) else {
-            // Not a UCP storefront, or no longer one. `notThisKind` rather than a bad
+            // No profile at all, or no MCP endpoint in it. `notThisKind` rather than a bad
             // response: nothing failed, this simply is not the right adapter any more, and
             // the brand page should say so rather than counting failures against a site
             // that answered perfectly well.
@@ -122,22 +128,32 @@ public struct UCPSource: SourceAdapter {
 
     struct Discovery: Sendable, Hashable {
         var endpoint: URL
+        /// Whether the profile *says* it can answer a catalogue search. A hint, not a
+        /// verdict — see `detect`.
+        var advertisesCatalog: Bool
     }
 
-    /// Reads `/.well-known/ucp` and picks the MCP shopping endpoint, if the business
-    /// advertises one *and* says it can answer a catalogue search.
+    /// Reads `/.well-known/ucp` and picks the MCP shopping endpoint.
     ///
-    /// Both halves are checked. A storefront that publishes a profile for checkout alone
-    /// would otherwise be attached as a catalogue source and then return nothing on every
-    /// poll — a source that reports healthy and produces no drops, which is the failure this
-    /// whole adapter exists to remove rather than to reproduce.
+    /// **The capability list is a hint and the endpoint is the truth**, which was learned
+    /// the expensive way and inside a single afternoon. Supreme's profile advertised
+    /// `dev.ucp.shopping.catalog.search` when this adapter was written and verified against
+    /// it; three hours later the same URL listed `dev.shopify.catalog` and no standard
+    /// catalogue capability at all, while the endpoint went on answering `search_catalog`
+    /// exactly as before. A gate that trusted the list turned a working source into
+    /// "not a UCP storefront" on a document edit nobody made on our side.
+    ///
+    /// So this returns an endpoint whenever one is published, and reports separately
+    /// whether the catalogue was advertised. `detect` uses that to decide whether to *ask*;
+    /// `fetch` ignores it entirely, because by then the source exists and the honest thing
+    /// is to try and report what came back.
     static func endpoint(inProfile data: Data) -> Discovery? {
         guard let root = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
               let ucp = root["ucp"] as? [String: Any]
         else { return nil }
 
         let capabilities = ucp["capabilities"] as? [String: Any] ?? [:]
-        guard capabilities[catalogSearchCapability] != nil else { return nil }
+        let advertised = catalogCapabilities.contains { capabilities[$0] != nil }
 
         let services = ucp["services"] as? [String: Any] ?? [:]
         guard let shopping = services["dev.ucp.shopping"] as? [[String: Any]] else { return nil }
@@ -148,12 +164,17 @@ public struct UCPSource: SourceAdapter {
                   let url = URL(string: raw),
                   url.scheme == "https"
             else { continue }
-            return Discovery(endpoint: url)
+            return Discovery(endpoint: url, advertisesCatalog: advertised)
         }
         return nil
     }
 
-    static let catalogSearchCapability = "dev.ucp.shopping.catalog.search"
+    /// The standard capability, and Shopify's vendor-namespaced one — which is what its
+    /// storefronts list when they list anything at all.
+    static let catalogCapabilities = [
+        "dev.ucp.shopping.catalog.search",
+        "dev.shopify.catalog"
+    ]
 
     private func discover(at origin: URL) async throws -> Discovery? {
         guard var components = URLComponents(url: origin, resolvingAgainstBaseURL: false) else {
@@ -175,6 +196,18 @@ public struct UCPSource: SourceAdapter {
 
     /// Whether a storefront can be watched this way. Used by discovery, which needs the
     /// answer before a `BrandSource` exists to fetch with.
+    ///
+    /// **Asks the endpoint when the profile doesn't say.** A storefront publishing an MCP
+    /// service but no catalogue capability might be checkout-only — in which case attaching
+    /// this would be exactly the failure the adapter exists to remove, a source that reports
+    /// healthy and never produces a drop — or it might be Supreme, whose endpoint answers
+    /// catalogue searches perfectly well while its profile has stopped mentioning them. The
+    /// list cannot tell those apart and one `search_catalog` call can, so it makes one.
+    ///
+    /// This costs a request, and it costs it **once, when a brand is added** — never on a
+    /// poll. That is the same bargain `SiteIdentityProbe` and `CollectionsSource.detect`
+    /// already make, and it buys a definite answer instead of a guess that goes stale when
+    /// somebody else edits a JSON file.
     public static func detect(at base: URL, http: any HTTPFetching = Net.live) async -> URL? {
         guard var components = URLComponents(url: base, resolvingAgainstBaseURL: false) else {
             return nil
@@ -184,8 +217,17 @@ public struct UCPSource: SourceAdapter {
         guard let url = components.url,
               let response = try? await http.get(url),
               response.status == 200,
-              endpoint(inProfile: response.data) != nil
+              let discovery = endpoint(inProfile: response.data)
         else { return nil }
+
+        if !discovery.advertisesCatalog {
+            // An error means it genuinely cannot answer; anything decodable — including an
+            // empty catalogue, which is what Supreme returns between drops — means it can.
+            guard let _ = try? await UCPSource(http: http)
+                .search(endpoint: discovery.endpoint, cursor: nil)
+            else { return nil }
+        }
+
         // The **storefront origin** is what gets stored, not the MCP endpoint: the endpoint
         // is discovered fresh each poll, and the origin is the thing a person recognises on
         // the brand page.

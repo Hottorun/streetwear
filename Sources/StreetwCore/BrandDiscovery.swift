@@ -50,28 +50,30 @@ public enum BrandDiscovery {
             if let feed = await FeedSource.detect(at: base, http: http) {
                 result.sources.append(BrandSource(kind: .feed, url: feed))
             }
+            // The interface a storefront advertises for machines, tried before the sitemap
+            // and after everything conventional.
+            //
+            // **Above the sitemap, and the reason is what each one leaves out.** A sitemap
+            // yields a name and a `lastmod` — no price, no variants, no sizes, no stock —
+            // so for a brand watched that way the size run renders empty, the size profile
+            // matches nothing, a watch has no variant to fire on and a restock cannot be
+            // detected at all. That is most of this app switched off for that brand. UCP
+            // carries all of it, measured: 250 products from Kith with prices and full size
+            // runs. The one thing it lacks is a publication date, which only affects
+            // ordering, and a first sighting is stamped when it is seen.
+            //
+            // Below Shopify and the feed because those are cheaper and need nothing from
+            // us. This is the only source whose success depends on **our** deployment being
+            // reachable — the merchant fetches `UCPAgent.profileURL` before answering — so
+            // when a storefront offers something that works without us, it wins.
+            if result.sources.isEmpty, let ucp = await UCPSource.detect(at: base, http: http) {
+                result.sources.append(BrandSource(kind: .ucp, url: ucp))
+            }
+
             // A sitemap is the fallback *before* page watching: it names individual
             // products, where a page watch can only say "something changed".
             if result.sources.isEmpty, let sitemap = await SitemapSource.detect(at: base, http: http) {
                 result.sources.append(BrandSource(kind: .sitemap, url: sitemap))
-            }
-
-            // The interface a storefront advertises for machines, tried when nothing
-            // conventional answered.
-            //
-            // **Below the sitemap on purpose, though it carries far more.** UCP gives
-            // prices, variants and live stock where a sitemap gives a name and a date — so
-            // on the data alone it should outrank almost everything here. What holds it
-            // down is that it is the only source whose success depends on *us* being
-            // reachable: the merchant fetches `UCPAgent.profileURL` before answering, so a
-            // deployment that is down, or a build pointed at a host the outside world
-            // cannot resolve, turns every UCP call into a refusal. Demoting a perfectly
-            // good sitemap in favour of a source that can fail for reasons on our side is
-            // the wrong trade. Above a page watch is where the argument is unanswerable:
-            // a page watch on a client-rendered storefront reports healthy and finds
-            // nothing, forever.
-            if result.sources.isEmpty, let ucp = await UCPSource.detect(at: base, http: http) {
-                result.sources.append(BrandSource(kind: .ucp, url: ucp))
             }
 
             // Page watching is the last resort, and only when there's no structured

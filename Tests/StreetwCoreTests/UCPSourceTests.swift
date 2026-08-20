@@ -29,18 +29,65 @@ struct UCPSourceTests {
         #expect(discovery.endpoint.absoluteString == "https://eu-production.myshopify.com/api/ucp/mcp")
     }
 
-    /// A storefront that publishes a profile for checkout and nothing else would otherwise
-    /// be attached as a catalogue source and then return nothing on every poll — a source
-    /// that reports healthy and never produces a drop, which is the exact failure this
-    /// adapter exists to remove.
-    @Test("A profile with no catalogue capability is not a catalogue source")
-    func refusesCheckoutOnlyProfiles() {
-        let json = """
+    /// Shopify's own storefronts list the vendor-namespaced capability, and some list it
+    /// *instead of* the standard one — Supreme's profile changed from one to the other
+    /// within hours of this adapter being written, while its endpoint went on answering.
+    @Test("Either catalogue capability counts as advertised")
+    func acceptsEitherCapabilityName() throws {
+        func profile(_ capability: String) -> Data {
+            Data("""
+            {"ucp":{"version":"2026-04-08",
+              "services":{"dev.ucp.shopping":[{"transport":"mcp","endpoint":"https://x.example/api"}]},
+              "capabilities":{"\(capability)":[{"version":"2026-04-08"}]}}}
+            """.utf8)
+        }
+        for name in UCPSource.catalogCapabilities {
+            let found = try #require(UCPSource.endpoint(inProfile: profile(name)))
+            #expect(found.advertisesCatalog, "\(name) should count")
+        }
+        #expect(UCPSource.endpoint(inProfile: profile("dev.ucp.shopping.checkout"))?.advertisesCatalog == false)
+    }
+
+    /// A profile that mentions no catalogue is ambiguous, not a refusal: it might be a
+    /// checkout-only store, or it might be a store that has simply stopped saying. Attaching
+    /// the first would be the failure this adapter exists to remove — a source that reports
+    /// healthy and never produces a drop — so `detect` asks rather than guesses.
+    @Test("An unadvertised catalogue is settled by asking the endpoint")
+    func probesWhenTheProfileIsSilent() async {
+        let checkoutOnly = """
         {"ucp":{"version":"2026-04-08",
           "services":{"dev.ucp.shopping":[{"transport":"mcp","endpoint":"https://x.example/api"}]},
           "capabilities":{"dev.ucp.shopping.checkout":[{"version":"2026-04-08"}]}}}
         """
-        #expect(UCPSource.endpoint(inProfile: Data(json.utf8)) == nil)
+
+        // It cannot answer: not a catalogue source.
+        let mute = MockHTTPClient()
+        mute.stub("/.well-known/ucp", MockHTTPClient.Stub(body: Data(checkoutOnly.utf8)))
+        mute.stubPost(MockHTTPClient.Stub(status: 500))
+        #expect(await UCPSource.detect(at: origin, http: mute) == nil)
+
+        // It answers — and an *empty* catalogue still counts, because that is what a
+        // storefront between drops legitimately returns.
+        let answering = MockHTTPClient()
+        answering.stub("/.well-known/ucp", MockHTTPClient.Stub(body: Data(checkoutOnly.utf8)))
+        answering.stubPost(json: #"{"jsonrpc":"2.0","id":1,"result":{"structuredContent":{"products":[]}}}"#)
+        #expect(await UCPSource.detect(at: origin, http: answering) == origin)
+    }
+
+    /// ...and a source that already exists is never dropped over a capability edit. The
+    /// poll path does not consult the list at all.
+    @Test("A capability list that stops mentioning the catalogue does not kill the source")
+    func fetchIgnoresTheCapabilityList() async throws {
+        let http = MockHTTPClient()
+        http.stub("/.well-known/ucp", MockHTTPClient.Stub(body: Data("""
+        {"ucp":{"version":"2026-04-08",
+          "services":{"dev.ucp.shopping":[{"transport":"mcp","endpoint":"https://x.example/api"}]},
+          "capabilities":{"dev.shopify.catalog":[{"version":"2026-04-08"}]}}}
+        """.utf8)))
+        http.stubPost(fixture: "ucp-search-page2.json")
+
+        let result = try await UCPSource(http: http).fetch(source(http), since: nil)
+        #expect(result.items.count == 1)
     }
 
     @Test("A transport we cannot speak is not adopted")
