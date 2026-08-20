@@ -256,8 +256,23 @@ gives the discovery URL. The door was moved, not closed, and `UCPSource` walks t
   `UCPAgent.profileURL` *from its own network* before answering; without it every call gets
   `UCP discovery failed`. So the server serves it at `/.well-known/ucp` and both modes quote
   that URL — a phone cannot host one. **If UCP sources start failing everywhere at once,
-  curl that URL first.** Verified live: with no profile Supreme says "Missing ucp version";
-  with ours, "Unable to fetch agent profile: Http error" until the route is deployed.
+  curl that URL first.** The failure ladder, all three seen live: no profile sent → "Missing
+  ucp version"; profile sent but the route not deployed → "Unable to fetch agent profile:
+  Http error"; deployed → it works.
+- **This is not a Supreme workaround — it is most of Shopify.** Probed live,
+  `/.well-known/ucp` with `catalog.search` is published by Kith, Palace, BBC ICECREAM,
+  Stüssy, Aimé Leon Dore, Allbirds and Gymshark; of the eight tried, only one had none. Those
+  brands all still serve `/products.json`, so `ShopifySource` keeps them — but any of them
+  could switch it off tomorrow, as Supreme did, and the fallback is now in place.
+- **Verified against real catalogues, not only fixtures.** `admin/ucp-test` against Kith,
+  Palace and BBC returns 250 products each (five pages of fifty, so paging works), with
+  prices converted correctly — `US$180`, not `US$18,000` — and real size runs including
+  Palace's hat sizes ("7 1/8"). Supreme itself answers `0 products`, which is **correct**:
+  its own page markup reads `{"allProductsCount":0,"products":[]}` between drops.
+- **`available: false` means "do not narrow", confirmed by measurement.** Against Kith it
+  returns 109/461 variants in stock where `true` returns 127/445 — so `false` genuinely
+  includes sold-out stock rather than selecting only it. Worth having checked: the opposite
+  reading would have silently hidden everything buyable.
 - **The status is not the message.** A refusal arrives as **422 with the reason in the
   JSON-RPC body**, and that reason names the fix. Reading the status first reported "Server
   returned 422" and threw the sentence away, so the body is decoded first and the status

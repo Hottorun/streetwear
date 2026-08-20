@@ -76,8 +76,8 @@ public struct UCPSource: SourceAdapter {
     static let maxPages = 5
     static let pageSize = 50
 
-    /// A merchant's answer can be slow; a poll must not be. Five pages at this cap is the
-    /// worst case and it is still inside the poller's lease.
+    /// Where a business publishes what it can do. Fixed by the spec, and read every poll
+    /// rather than resolved once — see the note at the top.
     public static let discoveryPath = "/.well-known/ucp"
 
     public func fetch(_ source: BrandSource, since: Date?) async throws -> FetchResult {
