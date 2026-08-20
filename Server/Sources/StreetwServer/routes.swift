@@ -706,6 +706,75 @@ func routes(_ app: Application) throws {
             + lines.sorted { $0.0 < $1.0 }.map(\.1)).joined(separator: "\n")
     }
 
+    /// Remove a brand — **refusing by default if anybody follows it.**
+    ///
+    /// `follows.brand_id` is `ON DELETE CASCADE`, so deleting a brand does not fail when it
+    /// has followers: it silently unfollows them, and they find out by noticing something
+    /// missing. That is the whole reason this guard exists rather than a bare delete, and
+    /// why the refusal names the count instead of just saying no.
+    ///
+    /// Exists because the catalogue is global and duplicates are therefore everybody's
+    /// problem: two rows for one shop, both polling, and a follower getting half the drops.
+    /// `admin/catalog` flags them; this is how the loser goes.
+    app.post("admin", "brands", ":brandID", "delete") { req async throws -> String in
+        guard let brandID = req.parameters.get("brandID", as: UUID.self),
+              let brand = try await BrandModel.find(brandID, on: req.db)
+        else { throw Abort(.notFound) }
+
+        let followers = try await FollowModel.query(on: req.db).filter(\.$brand.$id == brandID).count()
+        let force = (try? req.query.get(Bool.self, at: "force")) ?? false
+        guard followers == 0 || force else {
+            return "refused: \(brand.name) has \(followers) follower(s). "
+                + "Deleting cascades their follows away. Re-run with &force=true if that is intended."
+        }
+
+        let products = try await ProductModel.query(on: req.db).filter(\.$brand.$id == brandID).count()
+        try await brand.delete(on: req.db)
+        return "deleted \(brand.name) (\(brand.slug)) — \(products) product(s), \(followers) follower(s)"
+    }
+
+    /// Point a brand at a different host and rebuild what watches it.
+    ///
+    /// **For the case a delete cannot fix: the followed row is on the wrong host.** Palace
+    /// answers on the apex, `www.`, `usa.` and `eu.`, and only `www.` serves the Shopify
+    /// catalogue — so the row two people were following sat on `usa.` with a sitemap, which
+    /// carries a name and a date and no price, no sizes and no stock. Deleting it to keep
+    /// the better duplicate would take those two follows with it; keeping it leaves them on
+    /// the thin source. Neither is acceptable, so the row moves instead.
+    ///
+    /// The old products go with the old sources, deliberately. A sitemap product and a
+    /// Shopify product for the same garment carry different external ids, so leaving them
+    /// would put every item in that brand on screen twice — the duplicate problem again, one
+    /// level down. Clearing them also leaves every new source un-baselined, so the first
+    /// poll after this is context rather than a few hundred notifications.
+    app.post("admin", "brands", ":brandID", "repoint") { req async throws -> String in
+        guard let brandID = req.parameters.get("brandID", as: UUID.self),
+              let brand = try await BrandModel.find(brandID, on: req.db),
+              let raw = try? req.query.get(String.self, at: "url"),
+              let base = BrandDiscovery.normalizedURL(raw)
+        else { throw Abort(.badRequest, reason: "pass ?url=") }
+
+        let found = await BrandDiscovery.discover(website: raw, instagramHandle: nil, http: req.application.fetcher)
+        let usable = found.sources.filter { $0.kind.isAutomatic }
+        guard !usable.isEmpty else { return "refused: nothing watchable at \(raw), leaving \(brand.name) as it was" }
+
+        let before = try await ProductModel.query(on: req.db).filter(\.$brand.$id == brandID).count()
+        try await ProductModel.query(on: req.db).filter(\.$brand.$id == brandID).delete()
+        try await SourceModel.query(on: req.db).filter(\.$brand.$id == brandID).delete()
+
+        brand.website = base.absoluteString
+        brand.slug = base.host() ?? brand.slug
+        if let logo = found.logoURL { brand.logoURL = logo.absoluteString }
+        try await brand.save(on: req.db)
+
+        for source in usable {
+            try await SourceModel(brandID: brandID, kind: source.kind, url: source.url.absoluteString)
+                .save(on: req.db)
+        }
+        return "repointed \(brand.name) to \(brand.slug) — cleared \(before) product(s), "
+            + "now watched by \(usable.map(\.kind.rawValue).joined(separator: "+"))"
+    }
+
     app.post("admin", "sweep") { req async throws -> String in
         guard let reaper = req.application.reaper else { throw Abort(.serviceUnavailable) }
         let result = await reaper.sweep()

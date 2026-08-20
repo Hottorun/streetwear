@@ -155,6 +155,42 @@ struct RouteTests {
         }
     }
 
+    /// `follows.brand_id` cascades, so deleting a followed brand does not fail — it silently
+    /// unfollows people, who find out by noticing something missing. The guard is the whole
+    /// point of the route.
+    @Test("Deleting a followed brand is refused, not silently obeyed")
+    func deleteRefusesWhenFollowed() async throws {
+        try await withServer { app in
+            let brand = BrandModel(
+                name: "Stussy", slug: "www.stussy.com", website: "https://www.stussy.com",
+                instagramHandle: nil, usesGeneratedName: false
+            )
+            try await brand.save(on: app.db)
+            let brandID = try brand.requireID()
+
+            let user = UserModel()
+            try await user.save(on: app.db)
+            try await FollowModel(userID: try user.requireID(), brandID: brandID).save(on: app.db)
+
+            try await app.testing().test(.POST, "admin/brands/\(brandID)/delete") { res async throws in
+                #expect(res.body.string.contains("refused"))
+            }
+            #expect(try await BrandModel.find(brandID, on: app.db) != nil)
+
+            // An unfollowed duplicate goes without argument.
+            let dupe = BrandModel(
+                name: "Stüssy", slug: "stussy.com", website: "https://stussy.com",
+                instagramHandle: nil, usesGeneratedName: false
+            )
+            try await dupe.save(on: app.db)
+            let dupeID = try dupe.requireID()
+            try await app.testing().test(.POST, "admin/brands/\(dupeID)/delete") { res async throws in
+                #expect(res.body.string.contains("deleted"))
+            }
+            #expect(try await BrandModel.find(dupeID, on: app.db) == nil)
+        }
+    }
+
     @Test("The feed refuses anonymous callers")
     func feedRequiresAuth() async throws {
         try await withServer { app in
