@@ -99,6 +99,16 @@ func configure(_ app: Application) async throws {
     // Push is optional: with no key the notifier still runs and still walks its ledger
     // forward, it just doesn't deliver. That keeps the "first deploy with credentials"
     // case from firing every event ever recorded.
+    // Said at boot, the same way APNs says it, because the alternative is inferring it from
+    // a 503 on a route you were trying to use for something else. A variable set on the
+    // wrong service, or saved without a redeploy, looks identical from outside — this is the
+    // line that tells the two apart.
+    if Environment.get("ADMIN_TOKEN")?.isEmpty == false {
+        app.logger.notice("admin: ADMIN_TOKEN configured")
+    } else {
+        app.logger.warning("admin: ADMIN_TOKEN not set — every /admin route will refuse")
+    }
+
     let sender = app.configureAPNS()
     app.storage[APNSConfiguredKey.self] = sender != nil
     let notifier = Notifier(app: app, sender: sender)
