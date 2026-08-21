@@ -323,7 +323,12 @@ func routes(_ app: Application) throws {
               BrandDiscovery.normalizedURL(raw) != nil else {
             throw Abort(.badRequest, reason: "Not a usable URL")
         }
-        let found = await BrandDiscovery.discover(website: raw, instagramHandle: nil)
+        // Through the shared fetcher, so a dry run obeys robots.txt and queues behind the
+        // poller like everything else. Discovery was reaching storefronts with `Net.live`,
+        // which is the one thing BACKEND.md says outbound fetching must not do.
+        let found = await BrandDiscovery.discover(
+            website: raw, instagramHandle: nil, http: req.application.fetcher
+        )
         return BrandProbe(
             suggestedName: found.suggestedName,
             sources: found.sources.map {
@@ -370,7 +375,29 @@ func routes(_ app: Application) throws {
             return BrandDTO(existing, sources: existing.sources)
         }
 
-        let found = await BrandDiscovery.discover(website: body.url, instagramHandle: body.instagram)
+        let found = await BrandDiscovery.discover(
+            website: body.url, instagramHandle: body.instagram, http: req.application.fetcher
+        )
+
+        // **A site nobody can monitor is not added.**
+        //
+        // Discovery always yields *something* — it falls back to watching the page — and
+        // that fallback was enough to create a brand. On a storefront whose products are
+        // drawn by JavaScript the page hash never moves, so the row said "Page watch",
+        // recorded no error and delivered nothing for as long as it existed. Four brands in
+        // the live catalogue were in that state with somebody following each of them, and
+        // the catalogue is global, so one person adding a dead shop leaves it there for
+        // everybody to find and follow.
+        //
+        // Refusing is the kinder failure: it is a sentence somebody can read, now, instead
+        // of a brand page that stays empty and never explains itself.
+        guard found.canMonitor else {
+            throw Abort(
+                .unprocessableEntity,
+                reason: "streetw can't monitor \(base.host() ?? body.url) yet — "
+                    + "it doesn't publish a product catalogue, feed or sitemap we can read."
+            )
+        }
 
         // **The caller does not get to name the brand.** `body.name` is ignored, and that is
         // the point: the catalogue is *global*, so whatever the first person to add a shop

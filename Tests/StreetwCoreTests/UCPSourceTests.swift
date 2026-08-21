@@ -307,3 +307,33 @@ struct UCPSourceTests {
         #expect(url.path == "/.well-known/ucp")
     }
 }
+
+@Suite("Watchability")
+struct WatchabilityTests {
+    private func sources(_ kinds: [BrandSource.Kind]) -> DiscoveredSources {
+        var found = DiscoveredSources()
+        found.sources = kinds.map { BrandSource(kind: $0, url: URL(string: "https://brand.com")!) }
+        return found
+    }
+
+    /// A page watch hashes one page and says "something changed" — no product, no price, no
+    /// size, no stock — and on a storefront that draws its products in JavaScript the hash
+    /// never moves at all. Four brands in the live catalogue sat in exactly that state, each
+    /// with somebody following them, reporting no error and delivering nothing.
+    @Test("A page watch on its own is not monitoring")
+    func pageAloneIsNotWatchable() {
+        #expect(!sources([.page]).canMonitor)
+        #expect(!sources([]).canMonitor)
+        // Instagram is a stored link and was never automatic.
+        #expect(!sources([.instagram, .page]).canMonitor)
+    }
+
+    @Test("Any real source makes a brand watchable, page watch included alongside")
+    func realSourcesCount() {
+        for kind in [BrandSource.Kind.shopify, .collections, .feed, .sitemap, .ucp] {
+            #expect(sources([kind]).canMonitor, "\(kind.rawValue) should count")
+        }
+        // A brand with a catalogue *and* a page worth watching keeps both.
+        #expect(sources([.shopify, .page]).canMonitor)
+    }
+}

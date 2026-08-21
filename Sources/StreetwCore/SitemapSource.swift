@@ -213,23 +213,31 @@ public struct SitemapSource: SourceAdapter {
 
     // MARK: - Detection
 
+    /// **Attached only if it actually yields products, which is settled by reading it.**
+    ///
+    /// This used to judge on the *names* in the file — does anything look product-shaped —
+    /// and a name is a guess. Acne Studios and Palm Angels both passed that test and then
+    /// produced nothing on every poll for weeks: their sitemaps explode by locale, so the
+    /// index is real, the children are real, and no product is reachable within the budget.
+    /// Each sat in the catalogue reading "Sitemap", recording no error, delivering nothing,
+    /// with somebody following it.
+    ///
+    /// So detection now runs the same `fetch` a poll would and requires at least one item
+    /// out of it. That costs one full read at add time — the same bargain `UCPSource.detect`
+    /// makes — and it is *cheaper overall*, because the alternative is that read happening
+    /// every two hours forever against a source that was never going to answer.
     public static func detect(at base: URL, http: any HTTPFetching = Net.live) async -> URL? {
         for path in ["/sitemap.xml", "/sitemap_index.xml"] {
             var components = URLComponents(url: base, resolvingAgainstBaseURL: false)
             components?.path = path
             components?.query = nil
-            guard let url = components?.url,
-                  let response = try? await http.get(url),
-                  response.status == 200
-            else { continue }
+            guard let url = components?.url else { continue }
 
-            let entries = SitemapParser().parse(response.data)
-            guard !entries.isEmpty else { continue }
-            // Only worth attaching if it actually leads to products; a sitemap of
-            // marketing pages would produce a feed of noise.
-            if entries.contains(where: { looksLikeProduct($0.location) || looksLikeProducts($0.location) }) {
-                return url
-            }
+            let probe = BrandSource(kind: .sitemap, url: url)
+            guard let result = try? await SitemapSource(http: http).fetch(probe, since: nil),
+                  !result.items.isEmpty
+            else { continue }
+            return url
         }
         return nil
     }

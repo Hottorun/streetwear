@@ -15,6 +15,23 @@ public struct DiscoveredSources: Sendable {
         guard !sources.isEmpty else { return "No automatic sources found" }
         return sources.map(\.kind.label).joined(separator: " · ")
     }
+
+    /// Whether this site can actually be *monitored*, as opposed to merely watched.
+    ///
+    /// **A page watch is not monitoring a brand.** It hashes the visible text of one page and
+    /// says "something changed" — no product, no price, no size, no stock — and on a
+    /// storefront whose products are drawn by JavaScript, which is most of the ones that
+    /// reach this fallback, the hash never moves at all. The row then says "Page watch",
+    /// records no error, and delivers nothing for as long as it exists. Four brands in the
+    /// live catalogue were in exactly that state, each with somebody following it.
+    ///
+    /// So a page watch no longer counts as a reason to create a brand. Adding one is worse
+    /// than refusing: refusing is a sentence somebody can read, while adding is a promise the
+    /// app cannot keep and cannot see itself failing to keep. The source kind still exists —
+    /// a brand that has a real catalogue *and* a page worth watching keeps both.
+    public var canMonitor: Bool {
+        sources.contains { $0.kind.isAutomatic && $0.kind != .page }
+    }
 }
 
 public enum BrandDiscovery {

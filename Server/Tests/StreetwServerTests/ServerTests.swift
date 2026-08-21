@@ -320,9 +320,19 @@ struct RouteTests {
     @Test("A caller cannot name a brand")
     func discoverIgnoresTheSuppliedName() async throws {
         try await withServer { app in
+            // Discovery goes through the shared fetcher, so it can be stubbed rather than
+            // reaching the real internet from a test.
+            let http = StubHTTP()
+            http.stub("/products.json?limit=250&page=1", body: """
+            {"products":[{"id":1,"title":"Chore Coat","handle":"chore-coat","published_at":"2026-08-01T10:00:00Z",
+              "variants":[{"id":11,"title":"M","available":true,"price":"180.00"}]}]}
+            """)
+            http.stub("/meta.json", body: #"{"name":"Real Brand Name","currency":"USD"}"#)
+            app.storage[FetcherKey.self] = http
+
             let auth = try await deviceAuth(app)
             try await app.testing().test(.POST, "v1/brands/discover", headers: auth, beforeRequest: { req in
-                try req.content.encode(DiscoverBrand(url: "https://example.invalid", name: "TOTALLY LEGIT"))
+                try req.content.encode(DiscoverBrand(url: "https://example.com", name: "TOTALLY LEGIT"))
             }, afterResponse: { res async throws in
                 #expect(res.status == .ok)
                 #expect(try res.content.decode(BrandDTO.self).name != "TOTALLY LEGIT")
@@ -344,6 +354,30 @@ struct RouteTests {
             #expect(renamed.name == "Carhartt WIP")
             // ...and the correction is not undone by the next poll.
             #expect(!renamed.usesGeneratedName)
+        }
+    }
+
+    /// Discovery always yields *something* — it falls back to watching the page — and that
+    /// fallback was enough to create a brand. On a storefront whose products are drawn in
+    /// JavaScript the hash never moves, so the row said "Page watch", recorded no error and
+    /// delivered nothing for as long as it existed. Four brands in the live catalogue were
+    /// in that state, each with somebody following them.
+    @Test("A site nobody can monitor is refused rather than added")
+    func discoverRefusesUnwatchableSites() async throws {
+        try await withServer { app in
+            // Nothing answers: no catalogue, no feed, no sitemap. Discovery falls back to a
+            // page watch, which is not monitoring.
+            app.storage[FetcherKey.self] = StubHTTP()
+
+            let auth = try await deviceAuth(app)
+            try await app.testing().test(.POST, "v1/brands/discover", headers: auth, beforeRequest: { req in
+                try req.content.encode(DiscoverBrand(url: "https://nothing-here.example"))
+            }, afterResponse: { res async throws in
+                #expect(res.status == .unprocessableEntity)
+                #expect(res.body.string.contains("can't monitor"))
+            })
+            // ...and nothing was written, so the catalogue does not fill with dead rows.
+            #expect(try await BrandModel.query(on: app.db).count() == 0)
         }
     }
 

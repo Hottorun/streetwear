@@ -337,7 +337,19 @@ struct NewBrandView: View {
         return []
     }
 
-    private var canSave: Bool { !isProbing }
+    /// Whether the site can be monitored at all — see `DiscoveredSources.canMonitor`.
+    ///
+    /// A page watch is not monitoring: it hashes one page and says "something changed", and
+    /// on a storefront that draws its products in JavaScript the hash never moves. Offering
+    /// to add one is a promise the app cannot keep, so the button goes away and the screen
+    /// says why.
+    private var canMonitor: Bool {
+        if let probed { return probed.canMonitor }
+        if let discovered { return discovered.canMonitor }
+        return false
+    }
+
+    private var canSave: Bool { !isProbing && canMonitor }
 
     /// What this brand will be called, read off its own site.
     ///
@@ -372,8 +384,10 @@ struct NewBrandView: View {
                         ProgressView()
                         DataLabel(text: "CHECKING WHAT THIS SITE PUBLISHES")
                     }
-                } else {
+                } else if canMonitor {
                     watchableSection
+                } else {
+                    cannotMonitor
                 }
 
                 VStack(alignment: .leading, spacing: 8) {
@@ -458,6 +472,25 @@ struct NewBrandView: View {
                     .overlay(alignment: .bottom) { Rule() }
                 }
             }
+        }
+    }
+
+    /// The refusal, said plainly and with the reason.
+    ///
+    /// Not an error — nothing went wrong and there is nothing to retry. The site simply does
+    /// not publish anything a machine can read, which is a fact about the shop rather than a
+    /// fault in the app, and saying so is more use than a brand page that stays empty
+    /// forever without explaining itself.
+    private var cannotMonitor: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("streetw can't watch this one yet")
+                .font(.editorial(19))
+                .foregroundStyle(Color.ink)
+            Text("This site doesn't publish a product catalogue, feed or sitemap that streetw can read, so there'd be nothing to tell you about. Adding it would just be an empty page.")
+                .font(.editorial(14))
+                .foregroundStyle(Color.muted)
+                .fixedSize(horizontal: false, vertical: true)
+            DataLabel(text: "SOME BRANDS TURN THIS BACK ON — WORTH TRYING AGAIN LATER")
         }
     }
 

@@ -313,6 +313,14 @@ public struct BrandProbe: Codable, Sendable, Hashable {
     public var suggestedName: String?
     public var sources: [Source]
 
+    /// Whether this site can be monitored at all — see `DiscoveredSources.canMonitor`.
+    ///
+    /// Derived rather than sent, so a server too old to know about it still gives an honest
+    /// answer from the sources it did send, and the screen never has to guess.
+    public var canMonitor: Bool {
+        sources.contains { $0.isAutomatic && $0.kind != BrandSource.Kind.page.rawValue }
+    }
+
     public init(suggestedName: String?, sources: [Source]) {
         self.suggestedName = suggestedName
         self.sources = sources
