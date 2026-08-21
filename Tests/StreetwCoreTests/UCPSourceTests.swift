@@ -316,24 +316,31 @@ struct WatchabilityTests {
         return found
     }
 
-    /// A page watch hashes one page and says "something changed" — no product, no price, no
-    /// size, no stock — and on a storefront that draws its products in JavaScript the hash
-    /// never moves at all. Four brands in the live catalogue sat in exactly that state, each
-    /// with somebody following them, reporting no error and delivering nothing.
-    @Test("A page watch on its own is not monitoring")
-    func pageAloneIsNotWatchable() {
-        #expect(!sources([.page]).canMonitor)
-        #expect(!sources([]).canMonitor)
-        // Instagram is a stored link and was never automatic.
-        #expect(!sources([.instagram, .page]).canMonitor)
+    /// **A page watch counts**, and this test exists because it briefly did not.
+    ///
+    /// The argument for excluding it was that "something changed" is too thin to be worth a
+    /// brand row. Supreme disproves it: a page watch there fired on a real drop and reached
+    /// its follower before the brand's own email. Being early is the entire product, and it
+    /// is also the only source that detects a storefront locking down.
+    @Test("A page watch is a real source")
+    func pageWatchCounts() {
+        #expect(sources([.page]).canMonitor)
+        #expect(sources([.shopify, .page]).canMonitor)
     }
 
-    @Test("Any real source makes a brand watchable, page watch included alongside")
+    /// What is refused is a site where nothing answered at all.
+    @Test("Nothing readable means nothing to watch")
+    func nothingReadableIsRefused() {
+        #expect(!sources([]).canMonitor)
+        // Instagram is a stored deep link and has never been automatic — on its own it is
+        // not something the app can watch.
+        #expect(!sources([.instagram]).canMonitor)
+    }
+
+    @Test("Every automatic source kind counts")
     func realSourcesCount() {
-        for kind in [BrandSource.Kind.shopify, .collections, .feed, .sitemap, .ucp] {
+        for kind in [BrandSource.Kind.shopify, .collections, .feed, .sitemap, .ucp, .page] {
             #expect(sources([kind]).canMonitor, "\(kind.rawValue) should count")
         }
-        // A brand with a catalogue *and* a page worth watching keeps both.
-        #expect(sources([.shopify, .page]).canMonitor)
     }
 }

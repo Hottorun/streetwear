@@ -357,16 +357,16 @@ struct RouteTests {
         }
     }
 
-    /// Discovery always yields *something* — it falls back to watching the page — and that
-    /// fallback was enough to create a brand. On a storefront whose products are drawn in
-    /// JavaScript the hash never moves, so the row said "Page watch", recorded no error and
-    /// delivered nothing for as long as it existed. Four brands in the live catalogue were
-    /// in that state, each with somebody following them.
-    @Test("A site nobody can monitor is refused rather than added")
+    /// Narrow on purpose. This briefly refused anything whose only source was a page watch,
+    /// which was wrong: a page watch on Supreme reached its follower before the brand's own
+    /// drop email, and it is the only source that detects a storefront locking down. What is
+    /// refused is a site where *nothing answered* — adding one of those creates a brand row
+    /// that reports no error and delivers nothing forever, in a catalogue everybody shares.
+    @Test("A site nothing could read is refused rather than added")
     func discoverRefusesUnwatchableSites() async throws {
         try await withServer { app in
-            // Nothing answers: no catalogue, no feed, no sitemap. Discovery falls back to a
-            // page watch, which is not monitoring.
+            // Nothing answers at all — not even the homepage, so there is not even a page
+            // worth watching.
             app.storage[FetcherKey.self] = StubHTTP()
 
             let auth = try await deviceAuth(app)
@@ -374,7 +374,7 @@ struct RouteTests {
                 try req.content.encode(DiscoverBrand(url: "https://nothing-here.example"))
             }, afterResponse: { res async throws in
                 #expect(res.status == .unprocessableEntity)
-                #expect(res.body.string.contains("can't monitor"))
+                #expect(res.body.string.contains("couldn't read anything"))
             })
             // ...and nothing was written, so the catalogue does not fill with dead rows.
             #expect(try await BrandModel.query(on: app.db).count() == 0)

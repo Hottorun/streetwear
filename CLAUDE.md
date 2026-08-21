@@ -141,7 +141,7 @@ The Xcode project uses `PBXFileSystemSynchronizedRootGroup`. Any `.swift` file a
 ### Tests
 
 ```bash
-swift test                                    # all 306
+swift test                                    # all 311
 swift test --filter "Size normalisation"      # one suite
 swift test --filter relockFiresAgain          # one test
 ```
@@ -935,6 +935,15 @@ Three tiers, and the middle one is the part that was wrong for a long time.
   for the shop whose own metadata is wrong ("Official Carhartt WIP Store UK").
   **The add-brand screen shows the name rather than asking for it** — a text field that
   quietly does nothing is worse than no field.
+- **A page watch is a real source, and "something changed" is worth having.** This was
+  briefly refused as too thin to justify a brand row, on the theory that a JavaScript-rendered
+  storefront never moves its hash. That is false, and Supreme disproves it: a page watch there
+  fired on a real drop and reached its follower **before the brand's own email**. Being early
+  is the entire product. It is also the only source from which `StorefrontLock` is detected —
+  a password wall is what becomes "a drop looks imminent", the strongest signal in the app.
+  What discovery refuses is narrower and honest: a site where *nothing answered at all*, page
+  included. Everything else is verified before it is trusted — a sitemap must yield an item,
+  a UCP endpoint must answer — and the page watch was the one that was assumed.
 
 ### Everything must go over the server when one is configured
 

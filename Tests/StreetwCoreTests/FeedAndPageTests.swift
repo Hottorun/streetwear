@@ -286,8 +286,47 @@ struct BrandDiscoveryTests {
     func fallsBackToPageWatch() async {
         let http = MockHTTPClient()
         http.setDefault(.init(status: 404))
+        // The page itself answers, which is the whole basis of the fallback. Keyed on the
+        // empty path as well as "/" — `normalizedURL` strips the path entirely, so the
+        // request that actually goes out carries neither.
+        let page = MockHTTPClient.Stub(
+            body: Data("<html><body><h1>Brand</h1><p>New drop Thursday.</p></body></html>".utf8)
+        )
+        http.stub("", page)
+        http.stub("/", page)
 
         let found = await BrandDiscovery.discover(website: "example.com", instagramHandle: nil, http: http)
+
+        #expect(found.sources.map(\.kind) == [.page])
+        #expect(found.canMonitor, "a page watch is a real source — it beat Supreme's own email")
+    }
+
+    /// The narrow refusal: not "this source is too weak" but "there is nothing here".
+    ///
+    /// Everything else in discovery is verified before it is trusted — a sitemap has to
+    /// yield an item, a UCP endpoint has to answer — and the page watch was the one that was
+    /// assumed. A domain that does not resolve still got a source, and a brand row that
+    /// reported no error and delivered nothing forever.
+    @Test("A site that answers nothing at all gets no source")
+    func refusesAnUnreadableSite() async {
+        let http = MockHTTPClient()
+        http.setDefault(.init(status: 404))
+
+        let found = await BrandDiscovery.discover(website: "gone.example", instagramHandle: nil, http: http)
+
+        #expect(found.sources.isEmpty)
+        #expect(!found.canMonitor)
+    }
+
+    /// A storefront behind a password page is not unreadable — it is *about to drop*, which
+    /// is the strongest signal the app has. Refusing it would throw away the one thing a
+    /// page watch is best at.
+    @Test("A locked storefront is still worth watching")
+    func acceptsALockedStorefront() async {
+        let http = MockHTTPClient()
+        http.setDefault(.init(status: 401))
+
+        let found = await BrandDiscovery.discover(website: "dropping.example", instagramHandle: nil, http: http)
 
         #expect(found.sources.map(\.kind) == [.page])
     }

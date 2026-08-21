@@ -16,21 +16,25 @@ public struct DiscoveredSources: Sendable {
         return sources.map(\.kind.label).joined(separator: " · ")
     }
 
-    /// Whether this site can actually be *monitored*, as opposed to merely watched.
+    /// Whether there is anything here to watch at all.
     ///
-    /// **A page watch is not monitoring a brand.** It hashes the visible text of one page and
-    /// says "something changed" — no product, no price, no size, no stock — and on a
-    /// storefront whose products are drawn by JavaScript, which is most of the ones that
-    /// reach this fallback, the hash never moves at all. The row then says "Page watch",
-    /// records no error, and delivers nothing for as long as it exists. Four brands in the
-    /// live catalogue were in exactly that state, each with somebody following it.
+    /// **A page watch counts, and the reason is evidence rather than theory.** This briefly
+    /// did not count them — the argument being that hashing one page says "something
+    /// changed" and nothing else, and that on a JavaScript-rendered storefront the hash never
+    /// moves. The second half is simply false, and Supreme disproves it: a page watch on that
+    /// site fired on a real drop and reached its follower *before the brand's own email did*.
+    /// Being early is the entire product, and "something changed at Supreme" delivered on a
+    /// Thursday morning is worth more than a full size run delivered late.
     ///
-    /// So a page watch no longer counts as a reason to create a brand. Adding one is worse
-    /// than refusing: refusing is a sentence somebody can read, while adding is a promise the
-    /// app cannot keep and cannot see itself failing to keep. The source kind still exists —
-    /// a brand that has a real catalogue *and* a page worth watching keeps both.
+    /// It is also how `StorefrontLock` is detected at all — a password wall or a 403 is what
+    /// `PageWatchSource` turns into "a drop looks imminent", which is the strongest signal in
+    /// the app and exists on no other source kind.
+    ///
+    /// So the bar is only that *something answered*. `discover` no longer attaches a page
+    /// watch to a site it could not read, which is the honest version of the refusal: not
+    /// "this source is too weak to bother with" but "there is nothing here to look at".
     public var canMonitor: Bool {
-        sources.contains { $0.kind.isAutomatic && $0.kind != .page }
+        sources.contains { $0.kind.isAutomatic }
     }
 }
 
@@ -95,7 +99,18 @@ public enum BrandDiscovery {
 
             // Page watching is the last resort, and only when there's no structured
             // source; otherwise it just fires on every marketing banner swap.
-            if result.sources.isEmpty {
+            //
+            // **Attached only if the page can actually be read.** Everything else here is
+            // verified before it is trusted — a sitemap has to yield an item, a UCP endpoint
+            // has to answer — and this was the one that was assumed. A domain that does not
+            // resolve, or answers nothing but a bot wall, still got a source and a brand row
+            // that reported no error and delivered nothing forever. `isLocked` is
+            // deliberately allowed through: a storefront behind a password page is not
+            // unreadable, it is *about to drop*, and that is the strongest signal here.
+            if result.sources.isEmpty,
+               let watch = try? await PageWatchSource(http: http)
+                   .fetch(BrandSource(kind: .page, url: base), since: nil),
+               watch.isLocked || watch.fingerprint != nil {
                 result.sources.append(BrandSource(kind: .page, url: base))
             }
 

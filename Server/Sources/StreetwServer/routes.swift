@@ -379,23 +379,23 @@ func routes(_ app: Application) throws {
             website: body.url, instagramHandle: body.instagram, http: req.application.fetcher
         )
 
-        // **A site nobody can monitor is not added.**
+        // **A site nothing could read is not added.**
         //
-        // Discovery always yields *something* — it falls back to watching the page — and
-        // that fallback was enough to create a brand. On a storefront whose products are
-        // drawn by JavaScript the page hash never moves, so the row said "Page watch",
-        // recorded no error and delivered nothing for as long as it existed. Four brands in
-        // the live catalogue were in that state with somebody following each of them, and
-        // the catalogue is global, so one person adding a dead shop leaves it there for
-        // everybody to find and follow.
+        // Narrow on purpose. This briefly refused anything whose only source was a page
+        // watch, on the theory that "something changed" is not worth having — and that was
+        // wrong in the way that matters: a page watch on Supreme reached its follower before
+        // the brand's own drop email. Being early is the product. It is also the only source
+        // that detects a storefront locking down, which is the strongest signal here.
         //
-        // Refusing is the kinder failure: it is a sentence somebody can read, now, instead
-        // of a brand page that stays empty and never explains itself.
+        // What is refused is a site where *nothing answered at all* — no catalogue, no feed,
+        // no sitemap, and not even a readable page. Adding one of those creates a brand row
+        // that reports no error and delivers nothing forever, in a catalogue everybody
+        // shares.
         guard found.canMonitor else {
             throw Abort(
                 .unprocessableEntity,
-                reason: "streetw can't monitor \(base.host() ?? body.url) yet — "
-                    + "it doesn't publish a product catalogue, feed or sitemap we can read."
+                reason: "streetw couldn't read anything from \(base.host() ?? body.url) — "
+                    + "no catalogue, feed, sitemap or readable page. It may be down or blocking us."
             )
         }
 

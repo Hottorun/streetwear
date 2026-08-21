@@ -337,12 +337,11 @@ struct NewBrandView: View {
         return []
     }
 
-    /// Whether the site can be monitored at all — see `DiscoveredSources.canMonitor`.
+    /// Whether there is anything here to watch at all — see `DiscoveredSources.canMonitor`.
     ///
-    /// A page watch is not monitoring: it hashes one page and says "something changed", and
-    /// on a storefront that draws its products in JavaScript the hash never moves. Offering
-    /// to add one is a promise the app cannot keep, so the button goes away and the screen
-    /// says why.
+    /// A page watch counts. It says only "something changed", and that is worth having: on
+    /// Supreme it reached its follower before the brand's own drop email. What this refuses
+    /// is a site nothing could read — no catalogue, no feed, no sitemap and no page.
     private var canMonitor: Bool {
         if let probed { return probed.canMonitor }
         if let discovered { return discovered.canMonitor }
@@ -483,14 +482,14 @@ struct NewBrandView: View {
     /// forever without explaining itself.
     private var cannotMonitor: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("streetw can't watch this one yet")
+            Text("Nothing to watch here")
                 .font(.editorial(19))
                 .foregroundStyle(Color.ink)
-            Text("This site doesn't publish a product catalogue, feed or sitemap that streetw can read, so there'd be nothing to tell you about. Adding it would just be an empty page.")
+            Text("streetw couldn't read anything from this site — no catalogue, no feed, no sitemap, not even the page itself. It may be down, or blocking us.")
                 .font(.editorial(14))
                 .foregroundStyle(Color.muted)
                 .fixedSize(horizontal: false, vertical: true)
-            DataLabel(text: "SOME BRANDS TURN THIS BACK ON — WORTH TRYING AGAIN LATER")
+            DataLabel(text: "WORTH TRYING AGAIN LATER")
         }
     }
 
