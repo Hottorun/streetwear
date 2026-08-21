@@ -87,11 +87,14 @@ final class RemoteSync {
 
     // MARK: - Brands
 
-    func addBrand(url: String, name: String?, instagram: String?, sizes: SizeProfile) async throws -> BrandDTO {
+    /// No `name` parameter, deliberately. The catalogue is global, so the server reads a
+    /// brand's name off its own storefront and ignores whatever a client sends — see the
+    /// discover route. Passing one here would be offering a value that is thrown away.
+    func addBrand(url: String, instagram: String?, sizes: SizeProfile) async throws -> BrandDTO {
         try await ensureRegistered(sizes: sizes)
         guard let api else { throw APIError.notConfigured }
 
-        let brand = try await api.discover(DiscoverBrand(url: url, name: name, instagram: instagram))
+        let brand = try await api.discover(DiscoverBrand(url: url, instagram: instagram))
         if let id = brand.id {
             try await api.follow(brandID: id)
         }
@@ -99,12 +102,20 @@ final class RemoteSync {
     }
 
     /// Dry run via the server, so the phone never fetches storefronts itself.
+    ///
+    /// Registers first, because probing and searching now require a device token. Both are
+    /// reachable from the add-brand screen, which somebody can open before the launch sync
+    /// has finished — and a 401 swallowed by `try?` there leaves the search silently empty
+    /// for the rest of the session, which is the exact failure `BrandSuggestions` already
+    /// had once.
     func probe(url: String) async throws -> BrandProbe {
+        try await ensureRegistered(sizes: SizeProfile())
         guard let api else { throw APIError.notConfigured }
         return try await api.probe(url: url)
     }
 
     func searchBrands(_ query: String) async throws -> [BrandDTO] {
+        try await ensureRegistered(sizes: SizeProfile())
         guard let api else { throw APIError.notConfigured }
         return try await api.searchBrands(query)
     }

@@ -472,9 +472,11 @@ struct OnboardingView: View {
         for brand in chosen {
             progress = "Checking \(brand.name)"
             if settings.isConfigured {
+                // The starter pack's own label is not sent: the catalogue is global and the
+                // server takes a brand's name from its storefront. Ours would be one more
+                // client's opinion, and the shop's own is better.
                 _ = try? await remote.addBrand(
                     url: brand.domain,
-                    name: brand.name,
                     instagram: nil,
                     sizes: sizes.profile
                 )

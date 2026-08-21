@@ -463,6 +463,26 @@ public struct FeedResponse: Codable, Sendable {
     }
 }
 
+/// Whether a push could reach **this** device.
+///
+/// Replaces the app reading `/status`, which answered a global question — "does anybody
+/// have a token" — to a personal one, and did it from an endpoint that also counts users,
+/// names the environment and prints the database error verbatim. Two booleans about the
+/// caller are the whole of what Settings needs, and `devicesWithToken == 0` was never the
+/// right proxy anyway: it is false the moment one other person registers, while yours is
+/// still missing.
+public struct DeliveryStatus: Codable, Sendable {
+    /// Whether the deployment holds APNs credentials at all.
+    public var apnsConfigured: Bool
+    /// Whether *this* device has handed over a token.
+    public var hasToken: Bool
+
+    public init(apnsConfigured: Bool, hasToken: Bool) {
+        self.apnsConfigured = apnsConfigured
+        self.hasToken = hasToken
+    }
+}
+
 public struct StatusResponse: Codable, Sendable {
     public var database: String
     public var environment: String

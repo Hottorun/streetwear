@@ -22,6 +22,7 @@ extension FeedItem: @retroactive Content {}
 extension BrandProbe: @retroactive Content {}
 extension FeedResponse: @retroactive Content {}
 extension StatusResponse: @retroactive Content {}
+extension DeliveryStatus: @retroactive Content {}
 
 extension BrandSourceDTO {
     init(_ source: SourceModel) {

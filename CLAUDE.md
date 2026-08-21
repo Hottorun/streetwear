@@ -141,7 +141,7 @@ The Xcode project uses `PBXFileSystemSynchronizedRootGroup`. Any `.swift` file a
 ### Tests
 
 ```bash
-swift test                                    # all 297
+swift test                                    # all 306
 swift test --filter "Size normalisation"      # one suite
 swift test --filter relockFiresAgain          # one test
 ```
@@ -894,6 +894,47 @@ failing source is visible was blank in the mode the app ships in. Notes on the f
 - **Every route that hands over a brand hands over its sources**, because the client stores
   one `Brand` row whichever route it arrived on — a search result that is then followed
   must not overwrite a populated list with an empty one.
+
+### Who may call what
+
+Three tiers, and the middle one is the part that was wrong for a long time.
+
+- **Public**: `GET /health` and `GET /.well-known/ucp`. The first must stay cheap and must
+  not fail the deploy when the database blinks; the second has to be fetchable by a merchant
+  before it will answer a catalogue query, and is a fixed statement about the software naming
+  no device, user or brand.
+- **Device token** — everything under `/v1` except registration.
+- **`ADMIN_TOKEN`** — everything under `/admin`, including `/status`.
+
+- **`grouped(DeviceAuthenticator())` does not require a device.** It only *offers* to find
+  one, so every route under it was protected purely because its handler happened to call
+  `authenticatedDevice()`. The three that did not — catalogue search, site probe, brand
+  discovery — were wide open, and discovery makes the server fetch a URL a stranger chose and
+  write a row into a catalogue everybody shares. `RequireDevice` now sits in the group, so
+  membership *is* the guarantee it looks like and a new route cannot be accidentally public
+  by forgetting a line inside its body.
+- **A missing `ADMIN_TOKEN` refuses rather than allows.** `/admin/poll` makes the server
+  fetch fifty storefronts, `/admin/push-test` wakes every phone holding a token, and
+  `delete?force=true` removes a brand and cascades away every follow on it. "Open when unset
+  so nothing breaks" is a lock that stays unlocked until somebody remembers, on a deployment
+  where forgetting is silent. Compared with `constantTimeEquals`, because `==` on a secret
+  leaks its length and prefix to anyone willing to time the responses.
+- **The key is read once, where the group is built** — not per request. Partly cost, mostly
+  testability: `AdminAuthenticator.decide` is a pure function, because mutating the
+  environment while a parallel suite reads it is a race rather than a test.
+- **`/status` is a diagnostic, not a health check.** It counts users and devices and prints
+  the database error verbatim. `GET /v1/devices/me/delivery` is what the app needs instead —
+  two booleans about *the caller*, which is also the better question: a global
+  `devicesWithToken > 0` is satisfied by somebody else's phone while yours has no token.
+- **Nobody may name a brand.** `DiscoverBrand.name` is ignored. The catalogue is global, so
+  whatever the first person to add a shop typed became its name for everybody who followed
+  it — no review step and no second person to correct it, which makes a typo permanent and
+  anything worse a vandalism vector costing one request. The name comes from the storefront's
+  own `/meta.json`, `og:site_name` or `<title>`, and `usesGeneratedName` stays true so the
+  first poll can still improve it. `POST /admin/brands/:id/name` is the one trusted override,
+  for the shop whose own metadata is wrong ("Official Carhartt WIP Store UK").
+  **The add-brand screen shows the name rather than asking for it** — a text field that
+  quietly does nothing is worse than no field.
 
 ### Everything must go over the server when one is configured
 

@@ -320,7 +320,6 @@ struct NewBrandView: View {
     let draft: NewBrandDraft
     let onDone: () -> Void
 
-    @State private var name = ""
     @State private var instagram = ""
     @State private var probed: BrandProbe?
     @State private var discovered: DiscoveredSources?
@@ -338,8 +337,22 @@ struct NewBrandView: View {
         return []
     }
 
-    private var canSave: Bool {
-        !name.trimmingCharacters(in: .whitespaces).isEmpty && !isProbing
+    private var canSave: Bool { !isProbing }
+
+    /// What this brand will be called, read off its own site.
+    ///
+    /// **Shown rather than asked.** The catalogue is global: whatever the first person to
+    /// add a shop typed became its name for everybody who ever followed it, with no review
+    /// step and no second person to correct it — a typo was permanent and anything worse was
+    /// vandalism costing one tap. So the server now takes the name from the storefront's own
+    /// `/meta.json`, `og:site_name` or `<title>` and ignores what the client sends. A text
+    /// field here would be a control that quietly does nothing, which is worse than no
+    /// control at all.
+    private var declaredName: String {
+        probed?.suggestedName
+            ?? discovered?.suggestedName
+            ?? BrandDiscovery.normalizedURL(draft.url)?.host()
+            ?? draft.url
     }
 
     var body: some View {
@@ -365,10 +378,13 @@ struct NewBrandView: View {
 
                 VStack(alignment: .leading, spacing: 8) {
                     DataLabel(text: "NAME")
-                    TextField("What the brand is called", text: $name)
+                    Text(isProbing ? "…" : declaredName)
                         .font(.editorial(17))
                         .foregroundStyle(Color.ink)
                     Rule()
+                    Text("Taken from the site itself, so every brand is called the same thing for everyone.")
+                        .font(.data(10))
+                        .foregroundStyle(Color.muted)
                 }
 
                 VStack(alignment: .leading, spacing: 8) {
@@ -452,13 +468,9 @@ struct NewBrandView: View {
         if settings.isConfigured {
             // The server does the fetching, so the phone never sidesteps the shared
             // politeness budget.
-            let result = try? await remote.probe(url: draft.url)
-            probed = result
-            if name.isEmpty, let suggested = result?.suggestedName { name = suggested }
+            probed = try? await remote.probe(url: draft.url)
         } else {
-            let found = await BrandDiscovery.discover(website: draft.url, instagramHandle: nil)
-            discovered = found
-            if name.isEmpty, let suggested = found.suggestedName { name = suggested }
+            discovered = await BrandDiscovery.discover(website: draft.url, instagramHandle: nil)
         }
     }
 
@@ -466,14 +478,12 @@ struct NewBrandView: View {
         isSaving = true
         defer { isSaving = false }
 
-        let typed = name.trimmingCharacters(in: .whitespaces)
         let handle = instagram.trimmingCharacters(in: .whitespaces)
 
         if settings.isConfigured {
             do {
                 _ = try await remote.addBrand(
                     url: draft.url,
-                    name: typed,
                     instagram: handle.isEmpty ? nil : handle,
                     sizes: sizes.profile
                 )
@@ -486,14 +496,14 @@ struct NewBrandView: View {
         }
 
         let brand = Brand(
-            name: typed,
+            name: declaredName,
             websiteURL: BrandDiscovery.normalizedURL(draft.url),
             instagramHandle: BrandDiscovery.normalizedHandle(handle)
         )
         brand.sources = discovered?.sources ?? []
         brand.logoURLString = discovered?.logoURL?.absoluteString
-        // Only let the first sync overwrite the name if the user kept our guess.
-        brand.usesGeneratedName = (typed == discovered?.suggestedName)
+        // Nothing was typed, so the first sync is always free to improve on the guess.
+        brand.usesGeneratedName = true
         context.insert(brand)
         try? context.save()
 

@@ -118,11 +118,15 @@ struct NotificationsSection: View {
     private func checkDelivery() async -> DeliveryState {
         guard let baseURL = settings.baseURL else { return .unreachable }
         do {
-            let status = try await StreetwAPI(baseURL: baseURL, token: settings.token).status()
-            if status.apnsConfigured != true { return .noKey }
-            // Nil rather than zero on a server that predates the field — not knowing is
-            // not the same as knowing it's broken, so stay quiet.
-            if let tokens = status.devicesWithToken, tokens == 0 { return .noToken }
+            // Asks about *this* device rather than about everybody. The old check read
+            // `/status`, which reports the environment, the user count and the database
+            // error verbatim — a description of the deployment handed to anyone who asked,
+            // for two booleans. It also answered the wrong question: a global
+            // `devicesWithToken > 0` is satisfied by somebody else's phone while yours has
+            // no token at all.
+            let status = try await StreetwAPI(baseURL: baseURL, token: settings.token).delivery()
+            if !status.apnsConfigured { return .noKey }
+            if !status.hasToken { return .noToken }
             return .ok
         } catch {
             return .unreachable

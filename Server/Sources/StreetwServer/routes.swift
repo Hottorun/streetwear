@@ -48,9 +48,18 @@ func routes(_ app: Application) throws {
         return response
     }
 
+    /// Everything an operator can do, behind one key. See `AdminAuthenticator` — it refuses
+    /// outright when `ADMIN_TOKEN` is unset, rather than falling open.
+    ///
+    /// `/status` lives here too. It is a diagnostic, not a health check: it counts users and
+    /// devices, says whether push is configured, and reports the database error verbatim
+    /// when something is wrong — which is a description of the deployment's internals handed
+    /// to anybody who asks. `/health` stays public and is what an uptime monitor wants.
+    let admin = app.grouped("admin").grouped(AdminAuthenticator())
+
     /// The one to look at by eye. Actually queries the database, so a 200 here means
     /// the connection and the migrated schema are both real.
-    app.get("status") { req async -> StatusResponse in
+    admin.get("status") { req async -> StatusResponse in
         var status = StatusResponse(
             database: req.application.storage[DatabaseKindKey.self] ?? "unknown",
             environment: req.application.environment.name,
@@ -107,7 +116,9 @@ func routes(_ app: Application) throws {
         return DeviceResponse(deviceID: try device.requireID(), token: device.authToken)
     }
 
-    let authed = v1.grouped(DeviceAuthenticator())
+    // Both, and the order matters: find the device, then insist there was one. See
+    // `RequireDevice` — the authenticator alone never refused anybody.
+    let authed = v1.grouped(DeviceAuthenticator()).grouped(RequireDevice())
 
     authed.patch("devices", "me") { req async throws -> HTTPStatus in
         let device = try await req.authenticatedDevice()
@@ -125,6 +136,19 @@ func routes(_ app: Application) throws {
         return .noContent
     }
 
+    /// Whether a push could reach *this* device — the one question Settings asks.
+    ///
+    /// The app used to read `/status` for this, which answers about everybody and also
+    /// reports the environment, the user count and the database error. Two booleans about
+    /// the caller is the whole of what the screen needs.
+    authed.get("devices", "me", "delivery") { req async throws -> DeliveryStatus in
+        let device = try await req.authenticatedDevice()
+        return DeliveryStatus(
+            apnsConfigured: req.application.storage[APNSConfiguredKey.self] ?? false,
+            hasToken: device.apnsToken?.isEmpty == false
+        )
+    }
+
     // MARK: Brands
 
     /// Search the shared catalog by name *or* address.
@@ -134,7 +158,7 @@ func routes(_ app: Application) throws {
     /// interesting answer. A pasted URL is reduced to its host and matched against `slug`,
     /// which is exactly what discovery keys on, so "https://www.kith.com/products/foo"
     /// finds the Kith that is already here rather than proposing to create a second one.
-    v1.get("brands") { req async throws -> [BrandDTO] in
+    authed.get("brands") { req async throws -> [BrandDTO] in
         let raw = (try? req.query.get(String.self, at: "q"))?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
 
@@ -294,7 +318,7 @@ func routes(_ app: Application) throws {
     /// Dry run: what would we watch here? Creates nothing. Exists so the client's
     /// "check site" preview doesn't have to fetch storefronts from the phone, which
     /// would sidestep the server's politeness budget entirely.
-    v1.get("brands", "probe") { req async throws -> BrandProbe in
+    authed.get("brands", "probe") { req async throws -> BrandProbe in
         guard let raw = try? req.query.get(String.self, at: "url"),
               BrandDiscovery.normalizedURL(raw) != nil else {
             throw Abort(.badRequest, reason: "Not a usable URL")
@@ -314,7 +338,7 @@ func routes(_ app: Application) throws {
 
     /// Probe a URL and, if it is watchable, create the shared brand. Runs outside the
     /// poll loop so a slow discovery can't stall routine checks.
-    v1.post("brands", "discover") { req async throws -> BrandDTO in
+    authed.post("brands", "discover") { req async throws -> BrandDTO in
         let body = try req.content.decode(DiscoverBrand.self)
         guard let base = BrandDiscovery.normalizedURL(body.url) else {
             throw Abort(.badRequest, reason: "Not a usable URL")
@@ -347,12 +371,26 @@ func routes(_ app: Application) throws {
         }
 
         let found = await BrandDiscovery.discover(website: body.url, instagramHandle: body.instagram)
+
+        // **The caller does not get to name the brand.** `body.name` is ignored, and that is
+        // the point: the catalogue is *global*, so whatever the first person to add a shop
+        // typed becomes its name for everybody who ever follows it. A typo is permanent, and
+        // anything worse is a vandalism vector that costs one HTTP request — there is no
+        // second person to correct it and no review step between.
+        //
+        // The site's own account of itself is both more trustworthy and freely available:
+        // `/meta.json` is the merchant's own setting, `og:site_name` is what they publish to
+        // link previews, and the `<title>` is the same claim with marketing attached. See
+        // `BrandNaming.pick`. Where all three are silent the host is used, which is ugly and
+        // honest — and `usesGeneratedName` stays true so the first poll can still improve it
+        // from the storefront. An operator can override a bad one through
+        // `POST /admin/brands/:id/name`, which is behind the admin key.
         let brand = BrandModel(
-            name: body.name ?? found.suggestedName ?? slug,
+            name: found.suggestedName ?? slug,
             slug: slug,
             website: base.absoluteString,
             instagramHandle: BrandDiscovery.normalizedHandle(body.instagram),
-            usesGeneratedName: body.name == nil
+            usesGeneratedName: true
         )
         brand.logoURL = found.logoURL?.absoluteString
         try await brand.save(on: req.db)
@@ -572,7 +610,7 @@ func routes(_ app: Application) throws {
     // MARK: Ops
 
     /// Manual kick, for development and for verifying a new brand without waiting.
-    app.post("admin", "poll") { req async throws -> String in
+    admin.post("poll") { req async throws -> String in
         guard let poller = req.application.poller else { throw Abort(.serviceUnavailable) }
         let count = await poller.tick()
         return "checked \(count)"
@@ -580,7 +618,7 @@ func routes(_ app: Application) throws {
 
     /// Fan out anything pending without waiting for the loop. Reports what it did, so
     /// "did my push actually go anywhere" has an answer that isn't a log grep.
-    app.post("admin", "notify") { req async throws -> String in
+    admin.post("notify") { req async throws -> String in
         guard let notifier = req.application.notifier else { throw Abort(.serviceUnavailable) }
         let result = await notifier.dispatch()
         return "events \(result.events), sent \(result.sent), failed \(result.failed), pruned \(result.prunedTokens)"
@@ -590,7 +628,7 @@ func routes(_ app: Application) throws {
     ///
     /// Answers "does APNs work" without waiting for a storefront to restock something.
     /// Writes nothing, so it can be run repeatedly and cannot swallow a real alert.
-    app.post("admin", "push-test") { req async throws -> String in
+    admin.post("push-test") { req async throws -> String in
         guard let notifier = req.application.notifier else { throw Abort(.serviceUnavailable) }
         let deviceID = try? req.query.get(UUID.self, at: "device")
         return await notifier.probe(deviceID: deviceID).summary
@@ -612,7 +650,7 @@ func routes(_ app: Application) throws {
     /// those have three different fixes.
     ///
     /// Reads only. It calls `search_catalog` and stores nothing.
-    app.post("admin", "ucp-test") { req async throws -> String in
+    admin.post("ucp-test") { req async throws -> String in
         guard let raw = try? req.query.get(String.self, at: "url"),
               let base = BrandDiscovery.normalizedURL(raw)
         else { throw Abort(.badRequest, reason: "pass ?url=") }
@@ -659,7 +697,7 @@ func routes(_ app: Application) throws {
     /// storefront, a sitemap with no `lastmod`, a source erroring quietly behind a backoff.
     ///
     /// Sorted with the emptiest first, because the list is read to find what is broken.
-    app.get("admin", "catalog") { req async throws -> String in
+    admin.get("catalog") { req async throws -> String in
         let brands = try await BrandModel.query(on: req.db).with(\.$sources).sort(\.$name).all()
 
         // Counted in one grouped pass rather than a query per brand: this is 50+ brands and
@@ -716,7 +754,7 @@ func routes(_ app: Application) throws {
     /// Exists because the catalogue is global and duplicates are therefore everybody's
     /// problem: two rows for one shop, both polling, and a follower getting half the drops.
     /// `admin/catalog` flags them; this is how the loser goes.
-    app.post("admin", "brands", ":brandID", "delete") { req async throws -> String in
+    admin.post("brands", ":brandID", "delete") { req async throws -> String in
         guard let brandID = req.parameters.get("brandID", as: UUID.self),
               let brand = try await BrandModel.find(brandID, on: req.db)
         else { throw Abort(.notFound) }
@@ -747,7 +785,7 @@ func routes(_ app: Application) throws {
     /// would put every item in that brand on screen twice — the duplicate problem again, one
     /// level down. Clearing them also leaves every new source un-baselined, so the first
     /// poll after this is context rather than a few hundred notifications.
-    app.post("admin", "brands", ":brandID", "repoint") { req async throws -> String in
+    admin.post("brands", ":brandID", "repoint") { req async throws -> String in
         guard let brandID = req.parameters.get("brandID", as: UUID.self),
               let brand = try await BrandModel.find(brandID, on: req.db),
               let raw = try? req.query.get(String.self, at: "url"),
@@ -789,7 +827,7 @@ func routes(_ app: Application) throws {
     /// route that adds a *recurring* fetch safe: the poller can only ever be pointed at the
     /// storefront it is already polling. Without that this would be a standing request to
     /// fetch anything, every twenty minutes, on somebody else's say-so.
-    app.post("admin", "brands", ":brandID", "source") { req async throws -> String in
+    admin.post("brands", ":brandID", "source") { req async throws -> String in
         guard let brandID = req.parameters.get("brandID", as: UUID.self),
               let brand = try await BrandModel.find(brandID, on: req.db),
               let raw = try? req.query.get(String.self, at: "url"),
@@ -817,7 +855,31 @@ func routes(_ app: Application) throws {
             + (replaced.isEmpty ? "" : " (replaced \(replaced.count))")
     }
 
-    app.post("admin", "sweep") { req async throws -> String in
+    /// Correct a brand's name — the one trusted path, since the public one no longer exists.
+    ///
+    /// Discovery reads the name off the storefront and nobody else may set it, which is
+    /// right for a global catalogue and leaves exactly one gap: a shop whose own metadata is
+    /// wrong or absent. "Official Carhartt WIP Store UK" is the merchant's own `<title>` and
+    /// is nobody's idea of a brand name. This closes that gap without reopening it to
+    /// everybody.
+    ///
+    /// Clears `usesGeneratedName`, so the next poll does not put the storefront's version
+    /// back over the correction.
+    admin.post("brands", ":brandID", "name") { req async throws -> String in
+        guard let brandID = req.parameters.get("brandID", as: UUID.self),
+              let brand = try await BrandModel.find(brandID, on: req.db),
+              let value = try? req.query.get(String.self, at: "value"),
+              let name = BrandNaming.tidy(value)
+        else { throw Abort(.badRequest, reason: "pass ?value=") }
+
+        let was = brand.name
+        brand.name = name
+        brand.usesGeneratedName = false
+        try await brand.save(on: req.db)
+        return "renamed \(was) → \(name)"
+    }
+
+    admin.post("sweep") { req async throws -> String in
         guard let reaper = req.application.reaper else { throw Abort(.serviceUnavailable) }
         let result = await reaper.sweep()
         return "pruned \(result.events) events, \(result.products) products"

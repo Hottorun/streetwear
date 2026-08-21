@@ -14,9 +14,31 @@ import VaporTesting
 /// `test(...)`'s discardable return and silently picks that one — the app comes up with
 /// no routes and every request 404s, while multi-statement closures resolve to the local
 /// overload and pass. A confusing failure worth never reintroducing.
+/// The admin key the suite runs with. Set here rather than left unset because
+/// `AdminAuthenticator` refuses outright without one — which is the behaviour under test in
+/// `adminRefusesWithoutAKey`, and the wrong default for every other admin test.
+let testAdminToken = "test-admin-token"
+
+/// Bearer header for the operator routes.
+var adminAuth: HTTPHeaders { HTTPHeaders([("Authorization", "Bearer \(testAdminToken)")]) }
+
+/// A registered device's bearer header. Most of the catalogue is behind device auth now,
+/// including search and discovery — anonymous callers could previously make the server fetch
+/// arbitrary storefronts and create catalogue rows.
+func deviceAuth(_ app: Application) async throws -> HTTPHeaders {
+    var token = ""
+    try await app.testing().test(.POST, "v1/devices", beforeRequest: { req in
+        try req.content.encode(RegisterDevice())
+    }, afterResponse: { res async throws in
+        token = try res.content.decode(DeviceResponse.self).token
+    })
+    return HTTPHeaders([("Authorization", "Bearer \(token)")])
+}
+
 private func withServer(_ body: (Application) async throws -> Void) async throws {
     setenv("SQLITE_PATH", ":memory:", 1)
     setenv("DISABLE_POLLER", "true", 1)
+    setenv("ADMIN_TOKEN", testAdminToken, 1)
 
     let app = try await Application.make(.testing)
     do {
@@ -144,7 +166,8 @@ struct RouteTests {
             )
             try await existing.save(on: app.db)
 
-            try await app.testing().test(.POST, "v1/brands/discover", beforeRequest: { req in
+            let auth = try await deviceAuth(app)
+            try await app.testing().test(.POST, "v1/brands/discover", headers: auth, beforeRequest: { req in
                 try req.content.encode(DiscoverBrand(url: "https://www.stussy.com"))
             }, afterResponse: { res async throws in
                 #expect(res.status == .ok)
@@ -172,7 +195,7 @@ struct RouteTests {
             try await user.save(on: app.db)
             try await FollowModel(userID: try user.requireID(), brandID: brandID).save(on: app.db)
 
-            try await app.testing().test(.POST, "admin/brands/\(brandID)/delete") { res async throws in
+            try await app.testing().test(.POST, "admin/brands/\(brandID)/delete", headers: adminAuth) { res async throws in
                 #expect(res.body.string.contains("refused"))
             }
             #expect(try await BrandModel.find(brandID, on: app.db) != nil)
@@ -184,7 +207,7 @@ struct RouteTests {
             )
             try await dupe.save(on: app.db)
             let dupeID = try dupe.requireID()
-            try await app.testing().test(.POST, "admin/brands/\(dupeID)/delete") { res async throws in
+            try await app.testing().test(.POST, "admin/brands/\(dupeID)/delete", headers: adminAuth) { res async throws in
                 #expect(res.body.string.contains("deleted"))
             }
             #expect(try await BrandModel.find(dupeID, on: app.db) == nil)
@@ -205,7 +228,8 @@ struct RouteTests {
             let id = try brand.requireID()
 
             try await app.testing().test(
-                .POST, "admin/brands/\(id)/source?kind=sitemap&url=https://evil.example/x.xml"
+                .POST, "admin/brands/\(id)/source?kind=sitemap&url=https://evil.example/x.xml",
+                headers: adminAuth
             ) { res async throws in
                 #expect(res.body.string.contains("refused"))
             }
@@ -214,11 +238,112 @@ struct RouteTests {
             // Its own site, including a subdomain, is allowed — that is the whole use.
             try await app.testing().test(
                 .POST,
-                "admin/brands/\(id)/source?kind=sitemap&url=https://www.carhartt-wip.com/en-gb/product/sitemap.xml"
+                "admin/brands/\(id)/source?kind=sitemap&url=https://www.carhartt-wip.com/en-gb/product/sitemap.xml",
+                headers: adminAuth
             ) { res async throws in
                 #expect(res.status == .ok)
             }
             #expect(try await SourceModel.query(on: app.db).count() == 1)
+        }
+    }
+
+    /// `/admin/poll` makes the server fetch fifty storefronts, `/admin/push-test` wakes
+    /// every phone holding a token, and `delete?force=true` removes a brand and cascades
+    /// away every follow on it. All of that was reachable by anybody who knew the path.
+    @Test("Admin routes refuse without the key")
+    func adminRefusesWithoutTheKey() async throws {
+        try await withServer { app in
+            for path in ["admin/status", "admin/catalog"] {
+                try await app.testing().test(.GET, path) { res in
+                    #expect(res.status == .unauthorized, "\(path) must not answer anonymously")
+                }
+            }
+            for path in ["admin/poll", "admin/notify", "admin/push-test", "admin/sweep"] {
+                try await app.testing().test(.POST, path) { res in
+                    #expect(res.status == .unauthorized, "\(path) must not answer anonymously")
+                }
+            }
+            // A wrong key is refused as firmly as no key.
+            try await app.testing().test(
+                .GET, "admin/status", headers: HTTPHeaders([("Authorization", "Bearer nope")])
+            ) { res in
+                #expect(res.status == .unauthorized)
+            }
+        }
+    }
+
+    /// Closed by default. "Open when unset so nothing breaks" is a lock that stays unlocked
+    /// until somebody remembers, on a deployment where forgetting is silent and the cost is
+    /// a stranger deleting the catalogue.
+    ///
+    /// Tested on the decision rather than through the server: the key comes from the
+    /// environment, and mutating that while a parallel suite is reading it is a race, not a
+    /// test.
+    @Test("With no key configured, admin is closed rather than open")
+    func adminIsClosedWhenUnconfigured() {
+        typealias Gate = AdminAuthenticator
+        #expect(Gate.decide(offered: "anything", expected: nil) == .unconfigured)
+        #expect(Gate.decide(offered: "anything", expected: "") == .unconfigured)
+        #expect(Gate.decide(offered: nil, expected: "secret") == .unauthorized)
+        #expect(Gate.decide(offered: "wrong", expected: "secret") == .unauthorized)
+        // A prefix of the real key is not the real key.
+        #expect(Gate.decide(offered: "sec", expected: "secret") == .unauthorized)
+        #expect(Gate.decide(offered: "secret", expected: "secret") == .allow)
+    }
+
+    /// Being in the group named `authed` has to *mean* authenticated. It didn't: the
+    /// authenticator only offered to find a device, so a handler that never called
+    /// `authenticatedDevice()` was public — and discovery makes the server fetch a URL a
+    /// stranger chose and write a row into a catalogue everybody shares.
+    @Test("Search, probe and discovery all refuse anonymous callers")
+    func catalogueWritesRequireADevice() async throws {
+        try await withServer { app in
+            try await app.testing().test(.GET, "v1/brands?q=kith") { res in
+                #expect(res.status == .unauthorized)
+            }
+            try await app.testing().test(.GET, "v1/brands/probe?url=https://kith.com") { res in
+                #expect(res.status == .unauthorized)
+            }
+            try await app.testing().test(.POST, "v1/brands/discover", beforeRequest: { req in
+                try req.content.encode(DiscoverBrand(url: "https://kith.com"))
+            }, afterResponse: { res async throws in
+                #expect(res.status == .unauthorized)
+            })
+            #expect(try await BrandModel.query(on: app.db).count() == 0)
+        }
+    }
+
+    /// The catalogue is global, so whatever the first person to add a shop typed became its
+    /// name for everybody who ever followed it — no review step, no second person to
+    /// correct it. A typo was permanent and anything worse was vandalism costing one
+    /// request. The name comes off the storefront now, and the client's is ignored.
+    @Test("A caller cannot name a brand")
+    func discoverIgnoresTheSuppliedName() async throws {
+        try await withServer { app in
+            let auth = try await deviceAuth(app)
+            try await app.testing().test(.POST, "v1/brands/discover", headers: auth, beforeRequest: { req in
+                try req.content.encode(DiscoverBrand(url: "https://example.invalid", name: "TOTALLY LEGIT"))
+            }, afterResponse: { res async throws in
+                #expect(res.status == .ok)
+                #expect(try res.content.decode(BrandDTO.self).name != "TOTALLY LEGIT")
+            })
+
+            let brand = try #require(try await BrandModel.query(on: app.db).first())
+            #expect(brand.name != "TOTALLY LEGIT")
+            // Still marked as a guess, so the first poll may improve it from the storefront.
+            #expect(brand.usesGeneratedName)
+
+            // The operator can still correct one, through the key-protected route.
+            let id = try brand.requireID()
+            try await app.testing().test(
+                .POST, "admin/brands/\(id)/name?value=Carhartt%20WIP", headers: adminAuth
+            ) { res async throws in
+                #expect(res.status == .ok)
+            }
+            let renamed = try #require(try await BrandModel.find(id, on: app.db))
+            #expect(renamed.name == "Carhartt WIP")
+            // ...and the correction is not undone by the next poll.
+            #expect(!renamed.usesGeneratedName)
         }
     }
 
@@ -958,7 +1083,7 @@ struct StatusTests {
             )
             try await brand.save(on: app.db)
 
-            try await app.testing().test(.GET, "status") { res async throws in
+            try await app.testing().test(.GET, "admin/status", headers: adminAuth) { res async throws in
                 #expect(res.status == .ok)
                 let status = try res.content.decode(StatusResponse.self)
                 #expect(status.databaseConnected)
@@ -1587,7 +1712,7 @@ struct DiscoveryTests {
             _ = try await brand(app, name: "Kith", slug: "kith.com")
             _ = try await brand(app, name: "Noah", slug: "noahny.com")
 
-            try await app.testing().test(.GET, "v1/brands?q=\(query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed)!)") { res async throws in
+            try await app.testing().test(.GET, "v1/brands?q=\(query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed)!)", headers: try await deviceAuth(app)) { res async throws in
                 let found = try res.content.decode([BrandDTO].self)
                 #expect(found.map(\.name) == ["Kith"], "\(query) should find Kith and only Kith")
             }
@@ -1601,7 +1726,7 @@ struct DiscoveryTests {
         try await withServer { app in
             _ = try await brand(app, name: "Billionaire Boys Club", slug: "bbcicecream.com")
 
-            try await app.testing().test(.GET, "v1/brands?q=bbcicecream.com") { res async throws in
+            try await app.testing().test(.GET, "v1/brands?q=bbcicecream.com", headers: try await deviceAuth(app)) { res async throws in
                 #expect(try res.content.decode([BrandDTO].self).count == 1)
             }
         }
@@ -1953,7 +2078,7 @@ struct DiscoveryTests {
             try await SourceModel(brandID: brandID, kind: .shopify, url: "https://kith.com/products.json")
                 .save(on: app.db)
 
-            try await app.testing().test(.GET, "v1/brands?q=kith") { res async throws in
+            try await app.testing().test(.GET, "v1/brands?q=kith", headers: try await deviceAuth(app)) { res async throws in
                 let brands = try res.content.decode([BrandDTO].self)
                 let found = try #require(brands.first)
                 #expect(found.sources.map(\.kind) == ["shopify"])
@@ -1961,7 +2086,7 @@ struct DiscoveryTests {
 
             // Discovery of a brand already in the catalog returns the existing row, and it
             // is the same row with the same sources.
-            try await app.testing().test(.POST, "v1/brands/discover", beforeRequest: { req in
+            try await app.testing().test(.POST, "v1/brands/discover", headers: try await deviceAuth(app), beforeRequest: { req in
                 try req.content.encode(DiscoverBrand(url: "https://kith.com"))
             }, afterResponse: { res async throws in
                 let found = try res.content.decode(BrandDTO.self)

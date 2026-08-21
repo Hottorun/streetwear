@@ -87,8 +87,14 @@ struct StreetwAPI: Sendable {
 
     // MARK: Endpoints
 
-    func status() async throws -> StatusResponse {
-        try await send(path: "status", method: "GET", body: Optional<Never>.none)
+    /// Whether a push could reach *this* device.
+    ///
+    /// Was `/status`, which answers about everybody and also reports the environment, the
+    /// user count and the database error verbatim — a description of the deployment handed
+    /// to anyone who asked. That endpoint is behind the admin key now; this is the part the
+    /// app legitimately needs, scoped to the caller.
+    func delivery() async throws -> DeliveryStatus {
+        try await send(path: "v1/devices/me/delivery", method: "GET", body: Optional<Never>.none)
     }
 
     func register(_ body: RegisterDevice) async throws -> DeviceResponse {
@@ -100,7 +106,7 @@ struct StreetwAPI: Sendable {
     }
 
     func discover(_ body: DiscoverBrand) async throws -> BrandDTO {
-        try await send(path: "v1/brands/discover", method: "POST", body: body, authenticated: false)
+        try await send(path: "v1/brands/discover", method: "POST", body: body)
     }
 
     func probe(url: String) async throws -> BrandProbe {
@@ -108,8 +114,7 @@ struct StreetwAPI: Sendable {
             path: "v1/brands/probe",
             method: "GET",
             body: Optional<Never>.none,
-            query: [URLQueryItem(name: "url", value: url)],
-            authenticated: false
+            query: [URLQueryItem(name: "url", value: url)]
         )
     }
 
@@ -131,8 +136,7 @@ struct StreetwAPI: Sendable {
             path: "v1/brands",
             method: "GET",
             body: Optional<Never>.none,
-            query: [URLQueryItem(name: "q", value: query)],
-            authenticated: false
+            query: [URLQueryItem(name: "q", value: query)]
         )
     }
 
