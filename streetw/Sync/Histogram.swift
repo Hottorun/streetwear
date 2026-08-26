@@ -55,14 +55,28 @@ struct Histogram {
     /// removed, and what survives is shadow and stitching — which names the garment "Grey".
     /// Below a useful remainder, fall back to the whole frame and let it say "White", which
     /// is the true answer for exactly those items.
-    private var voting: [Pixel] {
-        Double(garment.count) / Double(max(all.count, 1)) < 0.08 ? all : garment
-    }
+    /// Stored, not computed. It was read by `palette()`, `lightness`, `saturation` and
+    /// `busyness` — four copies of a 2,304-element array of structs to answer four questions
+    /// about the same pixels.
+    private let voting: [Pixel]
+
+    /// The colour vote, counted once.
+    ///
+    /// `palette()` built this dictionary and `busyness` built the identical one again a few
+    /// lines later, so `ColorNamer.name` ran over every sampled pixel twice for no reason.
+    private let votes: [String: Int]
 
     init?(image: UIImage) {
         guard let sampled = Self.downsample(image, to: Self.sampleSize) else { return nil }
         all = sampled
         garment = sampled.filter { !ColorNamer.isLikelyBackdrop(red: $0.r, green: $0.g, blue: $0.b) }
+        voting = Double(garment.count) / Double(max(all.count, 1)) < 0.08 ? all : garment
+
+        var counted: [String: Int] = [:]
+        for pixel in voting {
+            counted[ColorNamer.name(red: pixel.r, green: pixel.g, blue: pixel.b).name, default: 0] += 1
+        }
+        votes = counted
     }
 
     // MARK: - Colour
@@ -80,11 +94,6 @@ struct Histogram {
     func palette() -> (dominant: String?, secondary: String?) {
         let pixels = voting
         guard !pixels.isEmpty else { return (nil, nil) }
-
-        var votes: [String: Int] = [:]
-        for pixel in pixels {
-            votes[ColorNamer.name(red: pixel.r, green: pixel.g, blue: pixel.b).name, default: 0] += 1
-        }
 
         let ranked = votes.sorted { $0.value == $1.value ? $0.key < $1.key : $0.value > $1.value }
         guard let winner = ranked.first else { return (nil, nil) }
@@ -129,11 +138,7 @@ struct Histogram {
         guard pixels.count > 16 else { return 0 }
 
         // Variety: how much of the vote sits outside the winning bucket. A plain garment
-        // puts nearly everything in one; a print spreads.
-        var votes: [String: Int] = [:]
-        for pixel in pixels {
-            votes[ColorNamer.name(red: pixel.r, green: pixel.g, blue: pixel.b).name, default: 0] += 1
-        }
+        // puts nearly everything in one; a print spreads. Counted in `init` — see `votes`.
         let top = votes.values.max() ?? pixels.count
         let variety = 1 - Double(top) / Double(pixels.count)
 

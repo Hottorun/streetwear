@@ -57,6 +57,15 @@ extension Color {
     /// the same fact the fit canvas already depends on and for the same reason.
     static let sweep = Color(uiColor: UIColor(hex: 0xF4F3EE))
 
+    /// Ink for type set **on** `sweep`, and fixed for exactly the same reason it is.
+    ///
+    /// `ink` inverts, which is right everywhere it sits on `paper` and wrong the moment
+    /// the ground underneath has stopped inverting with it: in dark mode a near-white
+    /// `ink` on the near-cream `sweep` is invisible. Anywhere one of these is used the
+    /// other almost certainly belongs with it — they are a pair, not two colours that
+    /// happen to look similar.
+    static let sweepInk = Color(uiColor: UIColor(hex: 0x14140F))
+
     private static func adaptive(light: Int, dark: Int) -> Color {
         Color(uiColor: UIColor { $0.userInterfaceStyle == .dark ? UIColor(hex: dark) : UIColor(hex: light) })
     }

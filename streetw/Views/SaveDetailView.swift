@@ -77,18 +77,32 @@ struct SaveDetailView: View {
         return all.filter { $0.color?.caseInsensitiveCompare(selectedColorway) == .orderedSame }
     }
 
-    private var runEntries: [SizeRun.Entry] {
-        SizeRun.entries(for: visibleVariants, profile: sizes.profile)
+    /// The size run and the sold-out state, worked out once per render.
+    ///
+    /// Both were computed properties, and each read rebuilt `visibleVariants` under it.
+    /// Between the size section, the colourway section, the watch section, the buy bar and
+    /// the note, that was six passes over a garment's whole variant list to draw one page —
+    /// the same defect, and the same fix, as `ProductDetailView`.
+    private struct Stock {
+        var entries: [SizeRun.Entry] = []
+        var isSoldOut = false
     }
 
-    /// Sold out in everything currently shown — the state the watcher exists for.
-    private var isSoldOut: Bool {
-        guard !visibleVariants.isEmpty else { return update?.isAvailable == false }
-        return !visibleVariants.contains { $0.available }
+    private func stock() -> Stock {
+        let variants = visibleVariants
+        return Stock(
+            entries: SizeRun.entries(for: variants, profile: sizes.profile),
+            isSoldOut: variants.isEmpty
+                ? update?.isAvailable == false
+                : !variants.contains { $0.available }
+        )
     }
 
     var body: some View {
-        NavigationStack(path: $path) {
+        let stock = stock()
+        let colorways = self.colorways
+
+        return NavigationStack(path: $path) {
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
                     if let update, !update.imageURLs.isEmpty {
@@ -108,8 +122,8 @@ struct SaveDetailView: View {
                     }
 
                     VStack(alignment: .leading, spacing: 26) {
-                        heading
-                        if !runEntries.isEmpty { sizeSection }
+                        heading(isSoldOut: stock.isSoldOut)
+                        if !stock.entries.isEmpty { sizeSection(stock.entries) }
                         if !colorways.isEmpty {
                             ColorwaySection(colorways: colorways, selected: $selectedColorway)
                                 .onChange(of: selectedColorway) { _, colour in
@@ -121,7 +135,7 @@ struct SaveDetailView: View {
                             WatchSection(
                                 update: update,
                                 colorway: selectedColorway,
-                                isSoldOut: isSoldOut
+                                isSoldOut: stock.isSoldOut
                             )
                         }
                         wornIn
@@ -178,7 +192,7 @@ struct SaveDetailView: View {
             // is an annotation you can come back to; going to look at the thing is not.
             .safeAreaInset(edge: .bottom) {
                 if let link = update?.linkURL {
-                    StorefrontBar(url: link, isSoldOut: isSoldOut)
+                    StorefrontBar(url: link, isSoldOut: stock.isSoldOut)
                 }
             }
             .toolbar {
@@ -250,7 +264,7 @@ struct SaveDetailView: View {
         .onDisappear { commit() }
     }
 
-    private var heading: some View {
+    private func heading(isSoldOut: Bool) -> some View {
         VStack(alignment: .leading, spacing: 9) {
             HStack(spacing: 8) {
                 DataLabel(text: "KEPT \(Stamp.short(save.savedAt).uppercased())")
@@ -374,7 +388,7 @@ struct SaveDetailView: View {
         }
     }
 
-    private var sizeSection: some View {
+    private func sizeSection(_ entries: [SizeRun.Entry]) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
                 DataLabel(text: "SIZES")
@@ -385,7 +399,7 @@ struct SaveDetailView: View {
             }
             // Wrapped, for the same reason as `ProductDetailView`: an unlimited run is
             // `.fixedSize()` end to end and would otherwise set the width of the page.
-            SizeRun(entries: runEntries, size: 14, limit: .max, wraps: true)
+            SizeRun(entries: entries, size: 14, limit: .max, wraps: true)
         }
     }
 

@@ -90,9 +90,46 @@ struct BrandRecommendations: View {
 
     @Environment(\.modelContext) private var context
 
-    @Query private var followed: [Brand]
+    /// Predicated, because an unfollowed brand can never filter a suggestion out — and
+    /// because this block is mounted on three tabs and every row it holds is a row whose
+    /// changes rebuild it.
+    @Query(filter: #Predicate<Brand> { $0.followed }) private var followed: [Brand]
     @Query(sort: \SavedItem.savedAt, order: .reverse) private var saves: [SavedItem]
     @Query private var dismissals: [BrandDismissal]
+
+    /// The ranking, held rather than recomputed per render.
+    ///
+    /// **This is the block that made marking a brand read feel slow everywhere.** It sits
+    /// at the tail of the feed's `LazyVStack`, so once scrolled to it stays realised; and
+    /// `FeedView.markSeen` writes `brand.lastOpenedAt`, which invalidates the `Brand` query
+    /// above and re-evaluates this body. That rebuilt a taste vector over every save in the
+    /// store — `BrandVectorBuilder.taste` tokenises every tag and runs both classifiers per
+    /// saved item — plus `sharedTraits` over all thirty candidates, on the tap whose
+    /// slowness is the complaint. None of it depends on `lastOpenedAt`.
+    ///
+    /// So the answer is computed in a `.task` keyed on the things it *actually* reads. The
+    /// key is deliberately a set of counts and one value: it changes when somebody saves,
+    /// dismisses, follows, or edits their statement, and does not change when a date is
+    /// stamped on a brand row.
+    @State private var ranked = Ranked()
+
+    private struct Key: Equatable {
+        var candidates: Int
+        var saves: Int
+        var dismissals: Int
+        var followed: Int
+        var statement: StyleStatement
+    }
+
+    private var key: Key {
+        Key(
+            candidates: suggestions.brands.count,
+            saves: saves.count,
+            dismissals: dismissals.count,
+            followed: followed.count,
+            statement: statement.statement
+        )
+    }
 
     @State private var previewed: PopularBrand?
 
@@ -156,9 +193,12 @@ struct BrandRecommendations: View {
     /// sentence rather than waiting for the eight saves the behavioural half needs — a
     /// person who has just installed the app and written "workwear, no logos" should not be
     /// shown a list that ignores it for a fortnight.
-    private var recommender: Recommender {
+    /// - Parameter pool: the candidates, passed in rather than read again. `candidates`
+    ///   walks every followed brand and every dismissal to build three sets, and it was
+    ///   being evaluated once here and once more by the caller.
+    private func recommender(pool: [PopularBrand]) -> Recommender {
         let usable = saves.compactMap(\.update)
-        let vectors = candidates.compactMap(\.vector)
+        let vectors = pool.compactMap(\.vector)
 
         var taste = BrandVector()
         if usable.count >= Self.minimumSavesToReRank, !vectors.isEmpty {
@@ -210,9 +250,9 @@ struct BrandRecommendations: View {
         }
     }
 
-    private var ranked: Ranked {
-        let ranker = recommender
+    private func rank() -> Ranked {
         let pool = candidates
+        let ranker = recommender(pool: pool)
 
         var result = Ranked()
         if ranker.taste.isEmpty, ranker.dismissed.isEmpty {
@@ -237,7 +277,20 @@ struct BrandRecommendations: View {
     }
 
     var body: some View {
-        let ranked = self.ranked
+        // **The wrapper is load-bearing, not decoration.** `block` resolves to `EmptyView`
+        // whenever there is nothing to show and nothing loading — and a `.task` attached to
+        // an `EmptyView` never runs, because an empty view produces no node to attach it to.
+        // That state is reachable on the very first render (fresh `@State`, suggestions
+        // already cached from another tab), so the task would never fire and the block would
+        // stay blank forever. A zero-height stack is a real node and always gets its task.
+        VStack(alignment: .leading, spacing: 0) {
+            block
+        }
+        .task(id: key) { ranked = rank() }
+    }
+
+    @ViewBuilder
+    private var block: some View {
         let visible = ranked.items
         let shown = Array(visible.prefix(limit))
 

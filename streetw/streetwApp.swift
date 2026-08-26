@@ -36,6 +36,9 @@ struct streetwApp: App {
     @State private var confirmation: SaveConfirmation
     /// How the Style tab asks the collection to open at a facet.
     @State private var collection: CollectionRoute
+    /// What the server said about each poll hint, so the drop calendar can say per row
+    /// whether anything is actually going to be watching. See `DropHintStore`.
+    @State private var hints: DropHintStore
 
     init() {
         Net.configureSharedCache()
@@ -43,7 +46,7 @@ struct streetwApp: App {
 
         let schema = Schema([
             Brand.self, BrandUpdate.self, SavedItem.self, Board.self, StockWatch.self, Fit.self,
-            BrandDismissal.self
+            BrandDismissal.self, PlannedDrop.self
         ])
         let container: ModelContainer
         do {
@@ -82,6 +85,7 @@ struct streetwApp: App {
         _route = State(initialValue: route)
         _confirmation = State(initialValue: MainActor.assumeIsolated { SaveConfirmation() })
         _collection = State(initialValue: MainActor.assumeIsolated { CollectionRoute() })
+        _hints = State(initialValue: MainActor.assumeIsolated { DropHintStore() })
 
         // The app delegate is built by UIKit and can't be handed these, so they are
         // published here — the same moment they become valid.
@@ -108,6 +112,7 @@ struct streetwApp: App {
                 .environment(route)
                 .environment(confirmation)
                 .environment(collection)
+                .environment(hints)
                 .task { await DevSeed.runIfRequested(in: sharedModelContainer.mainContext) }
         }
         .modelContainer(sharedModelContainer)
@@ -147,6 +152,28 @@ struct streetwApp: App {
                     // Costs no network and is why the feed does not re-classify its whole
                     // store on every render — see `Classification`.
                     Classification.settleGenders(in: context)
+                    // Same reason, for the date the feed orders brands by: without it,
+                    // every brand followed before the field existed makes the feed walk
+                    // its whole catalogue to work out where the spread goes.
+                    Classification.settleActivityDates(in: context)
+                    // **The reminders are re-scheduled here as well as when one is edited,
+                    // and the reason is permission.** A drop can be written down before
+                    // notifications are allowed — that is the ordinary order of events, since
+                    // the reason to allow them is having something to be told about — and the
+                    // grant happens in iOS Settings, where this app is not running. Nothing
+                    // would ever go back and schedule the alerts, and the failure is silent
+                    // in the worst way: the row sits on Upcoming looking armed, and the drop
+                    // passes without a word. It is a rewrite from the store, so running it
+                    // on every foreground costs a handful of writes and is the repair for
+                    // every other way this can drift too.
+                    await DropReminders.refresh(in: context)
+                    // And the server's half of the same fact. The reminder fires at eleven;
+                    // this is what makes the products be *there* at eleven, on the brands
+                    // whose rhythm the poller cannot read. On foreground for the same
+                    // reason the line above is — a drop written down offline, or on a build
+                    // before this existed, would otherwise never be sent — and it costs
+                    // nothing when the set has not changed. See `DropHints`.
+                    await DropHints.refresh(in: context, via: remote, status: hints)
                 }
             }
         }

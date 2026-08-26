@@ -50,7 +50,24 @@ enum Silhouette {
     /// legitimate: no cutout was produced (Vision does not run in the Simulator and
     /// `Seamless` declines on anything but a flat sweep), the photograph is a lookbook shot
     /// with no single garment in it, or the slot is one where shape says nothing.
-    static func measure(_ image: CGImage, slot: GarmentSlot) -> String? {
+    /// Off the main thread, always.
+    ///
+    /// This was synchronous, and its only caller is `ImageTagger`, which is `@MainActor` —
+    /// so it ran **on the main thread in full**. That matters more than it sounds: the scan
+    /// below opens a `CGContext` and calls `draw`, which forces the complete decode of the
+    /// source image. And on the commonest path — Vision found no subject and `Seamless`
+    /// declined, which is every brand not shooting on a flat sweep, and everything in the
+    /// Simulator — that source is the **undecoded 2000–3200px original**. Twelve of those
+    /// per batch, in a loop that drains the whole backlog, is the Saved and Style tabs
+    /// freezing.
+    ///
+    /// Everything here is pure pixel arithmetic over an immutable image, so it has no
+    /// business on the main actor at all.
+    static func measure(_ image: CGImage, slot: GarmentSlot) async -> String? {
+        await Task.detached(priority: .utility) { scan(image, slot: slot) }.value
+    }
+
+    private static func scan(_ image: CGImage, slot: GarmentSlot) -> String? {
         guard SilhouetteBands.speaks(for: slot) else { return nil }
         guard let mask = Mask(image, side: workingSide) else { return nil }
         guard let widths = mask.bodyWidths(threshold: bodyThreshold), widths.count > 8 else {

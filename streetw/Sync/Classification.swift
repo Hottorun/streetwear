@@ -58,4 +58,35 @@ enum Classification {
         log.info("settled gender on \(stale.count) rows at revision \(current)")
         return stale.count
     }
+
+    /// Fills in `Brand.lastActivityAt` on rows written before it existed. Returns how many.
+    ///
+    /// Same argument as the gender pass, one level up. The feed orders brands by that date,
+    /// and `Brand.activityKey` falls back to walking the brand's whole `updates`
+    /// relationship when it is nil — correct, and a walk of the entire catalogue *per
+    /// brand, per render* for as long as nobody writes the value. Nothing else would: the
+    /// field is only stamped when an update is stored, so a brand that has published
+    /// nothing since the app updated pays that cost forever.
+    ///
+    /// Cheap — one date comparison per row, no classifier, no network — and bounded by the
+    /// number of brands somebody follows rather than by the size of the store, so there is
+    /// no batch here. It is idempotent and needs no version stamp: a brand either has the
+    /// date or does not.
+    @discardableResult
+    static func settleActivityDates(in context: ModelContext) -> Int {
+        let descriptor = FetchDescriptor<Brand>(
+            predicate: #Predicate { $0.lastActivityAt == nil }
+        )
+        let unstamped = (try? context.fetch(descriptor)) ?? []
+        guard !unstamped.isEmpty else { return 0 }
+
+        for brand in unstamped {
+            // `activityKey` is the fallback walk itself, so this is the one place it is
+            // meant to be paid — and paying it here is what stops the feed paying it.
+            brand.lastActivityAt = brand.activityKey
+        }
+        try? context.save()
+        log.info("settled activity date on \(unstamped.count) brands")
+        return unstamped.count
+    }
 }

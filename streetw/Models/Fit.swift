@@ -68,8 +68,9 @@ final class Fit {
     /// existed, written on every save and drawn by every card; nothing could get it out.
     /// Reading the file rather than re-rendering keeps sharing free and guarantees what
     /// leaves is exactly what the collection shows.
+    @MainActor
     var renderImage: UIImage? {
-        renderURL.flatMap { UIImage(contentsOfFile: $0.path(percentEncoded: false)) }
+        LocalImage.load(renderURL)
     }
 
     /// The canvas, in draw order. Anything placed but no longer in `items` is dropped —

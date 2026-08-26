@@ -22,7 +22,6 @@ struct ContentView: View {
     /// opens straight to a tab so screenshots don't need UI automation.
     @State private var selection = UserDefaults.standard.string(forKey: "startTab") ?? "feed"
 
-    @Query private var brands: [Brand]
     /// Sticky, so skipping the starter pack doesn't offer it again on every launch —
     /// someone who intends to add one brand by hand shouldn't be asked twice.
     @AppStorage("didOfferStarterPack") private var didOfferStarterPack = false
@@ -86,6 +85,22 @@ struct ContentView: View {
         // Sync at the root, not in FeedView: a configured server should be live
         // whichever tab the app happens to open on.
         .task(id: settings.baseURLString) {
+            // **A device with no token cannot have follows, so it must not wait.**
+            //
+            // The first sync is four sequential round trips — register, follows, feed,
+            // watches — and gating the whole of onboarding behind it meant a brand-new
+            // user sat looking at an empty tab for as long as all four took: measured at
+            // ten seconds against a cold server, and never less than the three or four a
+            // warm one costs. That is the first thing anybody ever sees of this app, and
+            // it reads as a launch that failed rather than as a sync in progress.
+            //
+            // The wait was there for a real reason — see below — but it only ever applied
+            // to somebody who *has* follows to wait for. A device that has never
+            // registered has no server identity, so the answer is already known locally
+            // and known to be empty. `hasDecidedOnboarding` latches, so this is the one
+            // decision and the call after the sync becomes a no-op.
+            if !settings.isRegistered { decideOnboarding() }
+
             if settings.isConfigured, remote.lastSyncedAt == nil {
                 await remote.sync(sizes: sizes.profile)
             }
@@ -185,10 +200,24 @@ struct ContentView: View {
         }
     }
 
+    /// **Asked once, with a fetch, rather than held as a `@Query`.**
+    ///
+    /// This read an unpredicated `@Query<Brand>` whose only reader was this function, which
+    /// runs once per launch and latches. The cost was everything else: a `@Query` makes its
+    /// view depend on the table, and this is the *root* view — the `TabView` owning all four
+    /// tabs, the toast overlay and six sheets. So every write to any `Brand` row rebuilt the
+    /// whole app's view tree, and `FeedView.markSeen` stamps `brand.lastOpenedAt` on exactly
+    /// the tap the user reports as slow. One question asked once should not subscribe the
+    /// root of the app to a table for the rest of the session.
+    ///
+    /// `fetchLimit = 1`, because the question is "is there any", not "how many".
     private func decideOnboarding() {
         guard !hasDecidedOnboarding else { return }
         hasDecidedOnboarding = true
-        isOnboarding = brands.isEmpty && !didOfferStarterPack
+        var descriptor = FetchDescriptor<Brand>()
+        descriptor.fetchLimit = 1
+        let hasBrand = ((try? context.fetch(descriptor))?.isEmpty == false)
+        isOnboarding = !hasBrand && !didOfferStarterPack
     }
 }
 

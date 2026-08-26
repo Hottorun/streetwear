@@ -33,6 +33,33 @@ final class Brand {
     var sources: [BrandSource] = []
 
     var lastSyncedAt: Date?
+
+    /// The newest thing this brand has published, read or not.
+    ///
+    /// Stored rather than derived, for two reasons that turned out to be the same reason.
+    /// It is what the feed orders brands by — a key computed from *unread* items changes as
+    /// you read them, which slid a whole spread down the page under brands you had already
+    /// dealt with. And computing it meant walking every update of every brand on each
+    /// evaluation of the feed's body, which measured 44–426ms per rebuild on a real store
+    /// and 1.4s on the first.
+    ///
+    /// Maintained by whatever writes updates. Nil on rows written before this existed;
+    /// `Brand.activityKey` falls back to walking that one brand, so an old row sorts
+    /// correctly and pays the cost once rather than the whole store paying it always.
+    var lastActivityAt: Date?
+
+    /// What the feed sorts on. Never derived from unread items — see `lastActivityAt`.
+    var activityKey: Date {
+        if let lastActivityAt { return lastActivityAt }
+        return updates.max { $0.publishedAt < $1.publishedAt }?.publishedAt ?? addedAt
+    }
+
+    /// Records a batch's newest publication date. Only ever moves forward: an event is a
+    /// record of something that happened, and a late-arriving old row does not make the
+    /// brand less recently active.
+    func noteActivity(_ date: Date) {
+        if date > (lastActivityAt ?? .distantPast) { lastActivityAt = date }
+    }
     /// Last time the user actually looked at this brand's updates. Drives "new since".
     var lastOpenedAt: Date?
 

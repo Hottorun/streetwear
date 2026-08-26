@@ -187,6 +187,9 @@ final class SyncEngine {
         update.refreshGender()
         update.isSeen = markSeen
         context.insert(update)
+        // See `Brand.lastActivityAt`: the feed's sort order, stored so it never has to be
+        // recomputed by walking every update the brand has.
+        update.brand?.noteActivity(item.publishedAt)
         if !markSeen { newItemCount += 1 }
     }
 
@@ -212,10 +215,18 @@ final class SyncEngine {
         // more than the same thing getting cheaper, so a restock wins when both happen.
         let dropped = PriceChange.isDrop(from: update.priceAmount, to: item.priceAmount)
 
+        // A restock and a markdown are events, so they move the brand's activity date the
+        // same way a new product does — see `Brand.lastActivityAt`. They are written by
+        // *rewriting* an existing row rather than inserting one, which is why this needs
+        // saying twice: the insert path stamps it and this one would otherwise not, so a
+        // brand whose only news was a restock kept the date of its last new product and
+        // sorted below brands that had done nothing since. In server mode the question
+        // does not arise — every event is its own row there, and `merge` inserts it.
         if !returned.isEmpty || wholeProductReturned {
             update.kind = .restock
             update.restockedSizes = returned
             update.publishedAt = Date()
+            update.brand?.noteActivity(update.publishedAt)
             update.isSeen = false
             newItemCount += 1
         } else if dropped {
@@ -226,7 +237,13 @@ final class SyncEngine {
             // the markdowns list is ordered by.
             update.previousPriceAmount = update.priceAmount
             update.publishedAt = Date()
+            update.brand?.noteActivity(update.publishedAt)
             update.isSeen = false
+            // A second cut is a new markdown, so a dismissal of the first one is spent.
+            // This path *rewrites* the row rather than inserting one — in server mode every
+            // event is its own row and the question never arises — so without this, waving
+            // off a 10% cut in March would silently swallow the 40% cut in June.
+            update.markdownDismissedAt = nil
             newItemCount += 1
         }
 

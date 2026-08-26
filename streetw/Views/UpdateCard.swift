@@ -479,35 +479,9 @@ private func removeSave(_ update: BrandUpdate, in context: ModelContext) {
     try? context.save()
 }
 
-// MARK: - Compatibility
-
-/// Still used by `BrandDetailView`'s horizontal strips.
-struct UpdateCarousel: View {
-    let updates: [BrandUpdate]
-    var width: CGFloat = 150
-
-    var body: some View {
-        ScrollView(.horizontal) {
-            LazyHStack(alignment: .top, spacing: 14) {
-                ForEach(updates) { update in
-                    FeedTile(update: update)
-                        .frame(width: width)
-                }
-            }
-            .padding(.horizontal, 20)
-            .scrollTargetLayout()
-        }
-        .scrollTargetBehavior(.viewAligned)
-        .scrollIndicators(.hidden)
-    }
-}
-
-struct EmptyStateView: View {
-    let symbol: String
-    let title: String
-    let message: String
-
-    var body: some View {
-        EditorialEmptyState(title: title, action: message)
-    }
-}
+// `UpdateCarousel` used to live here, and `BrandDetailView` was its only caller. A
+// horizontal strip is the wrong shape for a brand's output: it can only be read by
+// swiping, one and a half tiles at a time, so seeing twenty things took twenty gestures
+// and seeing two hundred was not possible at all. The brand page draws a vertical grid
+// now. `EmptyStateView` went with it — it forwarded to `EditorialEmptyState` and had no
+// callers left.

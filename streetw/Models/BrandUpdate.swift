@@ -42,6 +42,23 @@ final class BrandUpdate {
     /// because rows written before this existed have no numeric history, and inferring one
     /// from a formatted string would mean parsing currency by hand.
     var previousPriceAmount: Double?
+
+    /// When this markdown was waved off, if it was.
+    ///
+    /// **Deliberately not `isSeen`.** The markdowns list exists precisely because it is
+    /// *not* emptied by reading things — a feed is ordered by recency and a price cut is
+    /// worth as much a week later as it was on the day, so scrolling past one in the feed
+    /// must not remove it from the standing list. But that left the list with no way to say
+    /// "I have looked at this one and I don't want it", and a standing list you cannot
+    /// shorten stops being a list of things to act on and becomes wallpaper.
+    ///
+    /// So it is its own mark: seen and dismissed are different verdicts about the same row,
+    /// and this one is only ever set from the markdowns screen. The product is untouched —
+    /// still in the feed, still on the brand page, still saveable — and if the brand cuts
+    /// the price *again* the event is rewritten and this is cleared, because that is a new
+    /// markdown rather than the one that was waved off.
+    var markdownDismissedAt: Date?
+
     var isAvailable: Bool?
     /// When the storefront was last asked what is actually left. Nil means never — see
     /// `StockRefresh`.
@@ -93,6 +110,20 @@ final class BrandUpdate {
         guard let current = imageURLStrings.first else { return false }
         return analyzedImageURL != current
     }
+    /// Which of this product's photographs is a photograph of the *product* — see
+    /// `ProductShot`. Nil until the item has been analysed, and nil forever for anything
+    /// whose gallery is models all the way down.
+    ///
+    /// Stored beside the images rather than replacing `primaryImageURL`, because the two
+    /// answer different questions. The lead photograph is what the brand chose to sell the
+    /// thing with and is what the feed, the gallery and the collection wall should keep
+    /// showing; this is the one worth *measuring*, and the one the fit canvas should fall
+    /// back to when there is no cutout — a model in trousers and boots is not a stand-in
+    /// for a shirt.
+    var packshotURLString: String?
+
+    var packshotURL: URL? { packshotURLString.flatMap(URL.init(string:)) }
+
     /// Filename of the subject lifted off this item's photograph, in `Cutout.directory`.
     ///
     /// A name rather than the bytes: a cutout is a few hundred KB of RGBA and there is one
@@ -182,6 +213,21 @@ final class BrandUpdate {
 
     /// True when this photograph has not been through the current deeper read.
     var needsVisualReading: Bool { visionVersion != VisualReading.version }
+
+    /// Whether `ImageTagger` has anything left to do here.
+    ///
+    /// One accessor rather than the same four-clause condition written out at each of the
+    /// three places that ask — the batch selector, the `.task(id:)` key on two tabs, and the
+    /// queue builder. They must agree exactly: a key that says there is work and a selector
+    /// that finds none re-runs the pass on every render forever, and the reverse leaves
+    /// items unmeasured with nothing to trigger another look.
+    ///
+    /// Tests the image list rather than `primaryImageURL`, which parses a `URL` to answer a
+    /// question about emptiness.
+    var needsAnalysis: Bool {
+        guard hasPhotograph else { return false }
+        return analyzedAt == nil || hasUnreadPhotograph || needsCutout || needsVisualReading
+    }
 
     /// The product this row is about, as the catalogue keys it — `shopify:<id>`.
     ///
@@ -397,7 +443,24 @@ final class BrandUpdate {
     /// `isAvailable(in:)` is still here for anywhere that genuinely wants the stricter
     /// question.
     func passes(_ profile: SizeProfile) -> Bool {
-        profile.allows(gender)
+        // **The classifier is not run when the answer cannot depend on it.**
+        //
+        // `SizeProfile.allows` returns true immediately for `.everything`, but Swift
+        // evaluates the argument before the call — so reading `gender` here happened
+        // regardless, and `gender` re-runs `GenderClassifier` in full whenever the stored
+        // revision differs from this build's, which is the documented steady state for
+        // anything the server classified. That is a `lowercased()`, three
+        // `replacingOccurrences`, a split, a `URL.lastPathComponent` and a per-tag tokenise,
+        // per product.
+        //
+        // `FeedView` guarded this at its own call site with `if filterGender`; nothing else
+        // did, so every other list in the app — a brand page, "+36 more", the unread counts,
+        // the markdowns, a release — paid the full classifier per row for a filter that was
+        // switched off. Making the short-circuit structural is what stops six copies of that
+        // guard drifting apart. It does not replace `Classification`'s background settling;
+        // it stops the render depending on it having happened.
+        guard profile.gender != .everything else { return true }
+        return profile.allows(gender)
     }
 
     /// Newest first, and **totally ordered** — the comparator every list of a brand's
@@ -446,11 +509,43 @@ final class BrandUpdate {
     /// whichever row the relationship happened to hand over first. Newest is also the right
     /// one on the merits: a restock this morning describes the garment better than the drop
     /// it announced in March.
+    /// **Sorted on a copy of the keys, not on the models.**
+    ///
+    /// `sorted(by: newestFirst)` reads `publishedAt` and sometimes `externalID` on *both*
+    /// sides of every comparison, and a comparison sort does about n·log n of them — for a
+    /// 400-product brand that is some seven thousand reads through SwiftData's persisted
+    /// accessors, which are an order of magnitude dearer than a stored property. Measured on
+    /// a real store this was **18–22ms, and 97% of the whole derivation**: faulting the
+    /// relationship cost 0ms (it is cached), filtering 400 rows cost 0.4ms, and every
+    /// millisecond above that was here. It is paid again on every render of every list of a
+    /// brand's output — which includes the re-render that marking one card read causes.
+    ///
+    /// Decorating first reads each property exactly **once per row** and sorts plain value
+    /// tuples. Same total ordering, same survivors, same stability guarantees — `newestFirst`
+    /// is still the definition and is still what the comparator below implements, so the two
+    /// cannot drift.
     static func oncePerProduct(_ updates: [BrandUpdate]) -> [BrandUpdate] {
+        // One pass over the models. Everything after this touches only the copies.
+        var keys = updates.enumerated().map { position, update in
+            (
+                position: position,
+                published: update.publishedAt,
+                externalID: update.externalID,
+                product: update.productExternalID ?? update.externalID
+            )
+        }
+        keys.sort { a, b in
+            a.published == b.published ? a.externalID > b.externalID : a.published > b.published
+        }
+
         var seen = Set<String>()
-        return updates
-            .sorted(by: newestFirst)
-            .filter { seen.insert($0.productExternalID ?? $0.externalID).inserted }
+        seen.reserveCapacity(keys.count)
+        var result: [BrandUpdate] = []
+        result.reserveCapacity(keys.count)
+        for key in keys where seen.insert(key.product).inserted {
+            result.append(updates[key.position])
+        }
+        return result
     }
 
     /// How much was taken off, 0…1. Nil when there is nothing to compare against.
@@ -526,5 +621,19 @@ final class BrandUpdate {
         imageURLStrings.compactMap(URL.init(string:))
     }
 
-    var primaryImageURL: URL? { imageURLs.first }
+    /// The lead photograph, parsed on its own.
+    ///
+    /// This read `imageURLs.first`, which parses **every** photograph a storefront
+    /// publishes — eight to twelve per product — and allocates an array of them to throw
+    /// all but one away. Every tile in every grid calls it, and `BrandSpread.lead` calls it
+    /// down a brand's products until one answers, so a feed of forty-nine cards was parsing
+    /// several hundred URLs it had no intention of using.
+    var primaryImageURL: URL? { imageURLStrings.first.flatMap(URL.init(string:)) }
+
+    /// Whether there is a photograph at all, without parsing one.
+    ///
+    /// The question every grid actually asks before drawing a tile. `primaryImageURL != nil`
+    /// answers it by building a `URL`, which is the expensive half of a test whose result is
+    /// a `Bool`.
+    var hasPhotograph: Bool { imageURLStrings.first?.isEmpty == false }
 }

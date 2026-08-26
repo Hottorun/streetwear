@@ -62,28 +62,47 @@ struct FitCanvas: View {
     /// rather than renumbering everything behind it.
     @State private var topZ = 0
 
-    /// What can actually be put on a canvas.
+    /// What the tray is made of, worked out **once** per render.
     ///
-    /// A photograph is not decoration here, it *is* the piece — there is nothing else to
-    /// lift a cutout from and nothing else to drag around. Some products genuinely have
-    /// none (Palace's sitemap publishes entries with no image), and those were arriving in
-    /// the tray as blank tiles that placed a blank rectangle you could move, scale and
-    /// rotate but never see. Kept out of the tray rather than drawn as a placeholder: a
-    /// collage is made of pictures, and offering one that isn't there is offering nothing.
-    private var wearable: [SavedItem] {
-        saves.filter { $0.update?.imageURLStrings.isEmpty == false }
+    /// The same correction `StyleView` and `FeedView` already carry, and this screen needed
+    /// it more than either: these were four computed properties reading each other, on a
+    /// view whose `@Query` is unpredicated — so every `context.save()` anywhere in the app,
+    /// including each batch of the photograph analysis draining in the background, rebuilt
+    /// the lot while somebody was arranging a fit.
+    ///
+    /// `wearable` filters the whole collection and faults `save.update` per row. It was read
+    /// by `trayItems`, by `traySlots` and again by `drop`. And `traySlots` runs
+    /// `GarmentClassifier.classify` on every save — a slot is computed, not stored — so the
+    /// chip row alone classified the entire collection on each pass, and `trayItems` did it
+    /// again for the filter.
+    private struct Tray {
+        var wearable: [SavedItem] = []
+        /// Paired with the slot rather than asking for it twice: `SavedItem.slot`
+        /// classifies from scratch on every read.
+        var items: [SavedItem] = []
+        var slots: [GarmentSlot] = []
     }
 
-    private var trayItems: [SavedItem] {
-        guard let trayFilter else { return wearable }
-        return wearable.filter { $0.slot == trayFilter }
-    }
+    private func buildTray() -> Tray {
+        // A photograph is not decoration here, it *is* the piece — there is nothing else to
+        // lift a cutout from and nothing else to drag around. Some products genuinely have
+        // none (Palace's sitemap publishes entries with no image), and those were arriving
+        // in the tray as blank tiles that placed a blank rectangle you could move, scale and
+        // rotate but never see. Kept out of the tray rather than drawn as a placeholder: a
+        // collage is made of pictures, and offering one that isn't there is offering nothing.
+        let wearable = saves.filter { $0.update?.imageURLStrings.isEmpty == false }
 
-    /// Slots that actually have something in them, in the order a fit is read.
-    private var traySlots: [GarmentSlot] {
-        Array(Set(wearable.map(\.slot)))
+        // Classified once, then used for both the chips and the filter.
+        let classified = wearable.map { (item: $0, slot: $0.slot) }
+        let slots = Set(classified.map(\.slot))
             .filter { $0 != .unknown }
             .sorted { $0.stackOrder < $1.stackOrder }
+
+        let items = trayFilter.map { filter in
+            classified.filter { $0.slot == filter }.map(\.item)
+        } ?? wearable
+
+        return Tray(wearable: wearable, items: items, slots: slots)
     }
 
     private var placedItems: [(item: SavedItem, placement: FitPlacement)] {
@@ -93,11 +112,13 @@ struct FitCanvas: View {
     }
 
     var body: some View {
-        NavigationStack {
+        let tray = buildTray()
+
+        return NavigationStack {
             VStack(spacing: 0) {
-                canvas
+                canvas(tray)
                 Rule()
-                tray
+                trayRow(tray)
             }
             .background(Color.paper)
             .navigationTitle(fit == nil ? "New fit" : "Edit fit")
@@ -161,7 +182,7 @@ struct FitCanvas: View {
 
     // MARK: - Canvas
 
-    private var canvas: some View {
+    private func canvas(_ tray: Tray) -> some View {
         GeometryReader { geometry in
             ZStack {
                 Color.paper
@@ -189,7 +210,7 @@ struct FitCanvas: View {
             // coordinate space, so the only frame its arithmetic can trust is the canvas.
             .coordinateSpace(.named(Self.space))
             .dropDestination(for: String.self) { payloads, location in
-                drop(payloads, at: location, in: geometry.size)
+                drop(payloads, at: location, in: geometry.size, from: tray.wearable)
             } isTargeted: {
                 isDropTarget = $0
             }
@@ -223,13 +244,13 @@ struct FitCanvas: View {
 
     // MARK: - Tray
 
-    private var tray: some View {
+    private func trayRow(_ tray: Tray) -> some View {
         VStack(alignment: .leading, spacing: 10) {
-            if !traySlots.isEmpty {
+            if !tray.slots.isEmpty {
                 ScrollView(.horizontal) {
                     HStack(spacing: 16) {
                         trayChip(label: "ALL", isOn: trayFilter == nil) { trayFilter = nil }
-                        ForEach(traySlots, id: \.self) { slot in
+                        ForEach(tray.slots, id: \.self) { slot in
                             trayChip(label: slot.label.uppercased(), isOn: trayFilter == slot) {
                                 trayFilter = trayFilter == slot ? nil : slot
                             }
@@ -240,7 +261,7 @@ struct FitCanvas: View {
                 .scrollIndicators(.hidden)
             }
 
-            if wearable.isEmpty {
+            if tray.wearable.isEmpty {
                 Text("Save a few things first — a fit is made from your collection.")
                     .font(.editorial(14))
                     .foregroundStyle(Color.muted)
@@ -249,7 +270,7 @@ struct FitCanvas: View {
             } else {
                 ScrollView(.horizontal) {
                     LazyHStack(spacing: 10) {
-                        ForEach(trayItems) { item in
+                        ForEach(tray.items) { item in
                             Button { toggle(item) } label: {
                                 TrayTile(item: item, isPlaced: chosen[item.id] != nil)
                             }
@@ -361,7 +382,12 @@ struct FitCanvas: View {
     /// Dropping something that is already placed **moves** it instead of adding a second
     /// copy: one saved thing is one garment, and two of the same jacket is not a fit — the
     /// tray marks what is already down for exactly this reason.
-    private func drop(_ payloads: [String], at point: CGPoint, in size: CGSize) -> Bool {
+    private func drop(
+        _ payloads: [String],
+        at point: CGPoint,
+        in size: CGSize,
+        from wearable: [SavedItem]
+    ) -> Bool {
         guard size.width > 0, size.height > 0,
               let id = payloads.compactMap(Self.itemID(fromPayload:)).first,
               let item = wearable.first(where: { $0.id == id })
@@ -500,7 +526,7 @@ struct FitCanvas: View {
             // two garments and two grey squares. Better to keep the previous render, or
             // none at all and let the card draw the live surface, than to bake in a hole.
             guard await FitRender.warm(target) else { return }
-            target.renderFile = FitRender.write(target)
+            target.renderFile = await FitRender.write(target)
             try? context.save()
         }
         dismiss()
@@ -748,8 +774,25 @@ struct FitPieceImage: View {
     /// cache and draws nothing.
     static let drawnWidth = 400
 
+    /// Cached, because this is read from a body that re-evaluates on every frame of a drag.
+    /// See `LocalImage`.
     private var cutout: UIImage? {
-        item.update?.cutoutURL.flatMap { UIImage(contentsOfFile: $0.path(percentEncoded: false)) }
+        LocalImage.load(item.update?.cutoutURL)
+    }
+
+    /// The photograph to fall back to when there is no cutout — the **packshot**, not the
+    /// lead shot.
+    ///
+    /// They are usually the same photograph and on a lookbook-first brand they are not: a
+    /// Stüssy shirt's lead image is a model in trousers and boots, and dropping that onto a
+    /// fit as a stand-in for a shirt is worse than dropping nothing. `ProductShot` decides;
+    /// this only has to ask. Nil until the item has been analysed, which is why the lead
+    /// shot remains the fallback's fallback.
+    ///
+    /// **`FitRender.warm` must ask for the same URL at the same width**, or the renderer
+    /// finds an empty cache and writes a fit with a hole in it.
+    static func source(for item: SavedItem) -> URL? {
+        item.update?.packshotURL ?? item.update?.primaryImageURL
     }
 
     /// The photograph, but only if it is already decoded.
@@ -760,7 +803,7 @@ struct FitPieceImage: View {
     /// saved fit produced. Reading the decoded cache directly gives the renderer a real
     /// image; `FitRender.warm` is what guarantees it is there.
     private var warmed: UIImage? {
-        item.update?.primaryImageURL
+        Self.source(for: item)
             .map { ImageRendition.sized($0, width: Self.drawnWidth) }
             .flatMap { ImageLoader.shared.cached($0) }
     }
@@ -774,7 +817,7 @@ struct FitPieceImage: View {
             // Not yet decoded: on screen this fills in a moment later. A renderer never
             // reaches here, because it warms the cache first.
             UpdateImage(
-                url: item.update?.primaryImageURL,
+                url: Self.source(for: item),
                 aspect: 1,
                 contentMode: .fit,
                 drawnWidth: Self.drawnWidth

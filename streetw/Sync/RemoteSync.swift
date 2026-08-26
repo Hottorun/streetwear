@@ -5,6 +5,7 @@
 // from. That means the whole UI, saving, style profile and size filtering keep working
 // unchanged whether the app is in server mode or standalone mode.
 
+import CryptoKit
 import Foundation
 import StreetwCore
 import SwiftData
@@ -180,6 +181,45 @@ final class RemoteSync {
         }
     }
 
+    // MARK: - Poll hints
+
+    /// Hands the server this device's whole set of "this brand drops at this moment", so
+    /// the poll queue drops to a minute around each one. `DropHints` decides what is in the
+    /// set; this only carries it.
+    ///
+    /// Returns nil when there is nothing to say — no server, no registration, or a set the
+    /// server already holds. A `nil` is therefore not a failure and the caller must not
+    /// treat it as one.
+    ///
+    /// Best effort throughout, and the degradation is mild by construction: without a hint
+    /// the brand is polled on its ordinary cadence and the local reminders still fire at the
+    /// minute, which is exactly where this feature stood before the route existed.
+    /// Which device the server thinks this is, as something safe to write down.
+    ///
+    /// `DropHints` folds this into the fingerprint it caches, because re-registering issues
+    /// a new device and the hints the server holds belong to the old one — without it a
+    /// reinstall reads "already sent" forever and the hints silently never exist. A digest
+    /// rather than the token, so a credential is not copied into `UserDefaults` a second
+    /// time for a cache key.
+    var hintIdentity: String {
+        guard let token = settings.token else { return "anonymous" }
+        return SHA256.hash(data: Data(token.utf8))
+            .prefix(8)
+            .map { String(format: "%02x", $0) }
+            .joined()
+    }
+
+    @discardableResult
+    func pushPollHints(_ hints: [PollHint]) async -> PollHintsResponse? {
+        guard settings.isConfigured, settings.isRegistered, let api else { return nil }
+        do {
+            return try await api.putPollHints(hints)
+        } catch {
+            lastError = error.localizedDescription
+            return nil
+        }
+    }
+
     // MARK: - Watches
 
     /// Mirrors a local watch onto the server, which is what lets it fire while the app is
@@ -273,6 +313,9 @@ final class RemoteSync {
             // one of those rows re-derives its gender on every render for the rest of its
             // life. See `Classification`.
             Classification.settleGenders(in: context)
+            // And the date the feed sorts brands by, for brands followed before the field
+            // existed — `Brand.activityKey` walks the whole catalogue until it is written.
+            Classification.settleActivityDates(in: context)
 
             // Also checked locally, not only trusted from the server: the app has the
             // variant data in hand and a push can be missed, denied or throttled. Firing
@@ -328,14 +371,14 @@ final class RemoteSync {
             }
 
             if let brand = byRemoteID[id] {
-                brand.name = dto.name
+                brand.name = Self.displayName(dto.name)
                 brand.currencyCode = dto.currency
                 brand.isLockedForDrop = dto.lockedForDrop
                 if let logo = dto.logoURL { brand.logoURLString = logo }
                 brand.sources = dto.sources.map(Self.source(from:))
             } else {
                 let brand = Brand(
-                    name: dto.name,
+                    name: Self.displayName(dto.name),
                     websiteURL: dto.website.flatMap(URL.init(string:)),
                     instagramHandle: dto.instagramHandle
                 )
@@ -375,6 +418,24 @@ final class RemoteSync {
     ///
     /// An unrecognised `kind` becomes `.page` rather than being dropped, so a brand watched
     /// by something this build has never heard of still reports that it is watched at all.
+    /// A brand name fit to draw, whatever the catalogue happens to hold.
+    ///
+    /// **Whitespace only — deliberately not the full `BrandNaming` treatment.** The proper
+    /// clean-up now happens where `ShopifySource` reads `/meta.json`, which is where it
+    /// belongs; this is the repair for every row already written before that, and for the
+    /// one name the catalogue lets a human set by hand (`POST /admin/brands/:id/name`).
+    /// Re-running `withoutTail` here would silently truncate a deliberate override at its
+    /// first pipe, which is a worse failure than the one being fixed.
+    ///
+    /// It matters because the catalogue is global and the name is a wordmark: Stüssy's own
+    /// `/meta.json` publishes `" Stüssy"`, and a leading space is a visible indent on every
+    /// card, brand row and Upcoming entry, against neighbours that have none. Healing on
+    /// read means an install fixes itself on the next sync rather than waiting for a server
+    /// deploy and a re-poll of a brand whose name the poller has no reason to revisit.
+    static func displayName(_ raw: String) -> String {
+        raw.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     private static func source(from dto: BrandSourceDTO) -> BrandSource {
         BrandSource(
             id: dto.id,
@@ -456,6 +517,9 @@ final class RemoteSync {
             update.variants = item.variants ?? []
             update.isSeen = asBaseline
             context.insert(update)
+            // What the feed orders brands by, kept as a stored fact so the feed never has
+            // to walk the store to work it out — see `Brand.lastActivityAt`.
+            brand.noteActivity(item.createdAt)
 
             if let gender = item.gender {
                 update.genderRaw = gender

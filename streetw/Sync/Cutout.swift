@@ -20,6 +20,7 @@
 //   Support. The original URL is untouched, so the feed still shows the photograph as shot.
 
 import CoreImage
+import CoreVideo
 import Foundation
 import OSLog
 import UIKit
@@ -36,7 +37,25 @@ enum Cutout {
     ///
     /// Bump it whenever the lift changes — a better mask on an item already marked
     /// subject-less would otherwise only ever reach items saved after the update.
-    static let version = 1
+    ///
+    /// **2 is a repair, not a better lift.** `ImageTagger` used to stamp this on *any*
+    /// failure to fetch the photograph, including being offline for the second the pass
+    /// ran — so an unknown number of saved items are sitting at version 1 marked
+    /// "subject-less" when nobody ever actually looked at them. Those are the pieces that
+    /// draw as raw product shots on the fit canvas. Bumping makes every one of them due
+    /// again, which is the only thing that heals a collection that already has them.
+    ///
+    /// It is also what re-picks *which photograph* gets lifted. Everything analysed before
+    /// `ProductShot` existed was cut from the gallery's first image, which on a
+    /// lookbook-first brand is a model — so those items hold a cutout of a person and
+    /// nothing else would ever revisit them either.
+    ///
+    /// **3 is the verification gate.** Until it, a lift was written down the moment Vision
+    /// returned *anything* — see `isSticker` and `substantialInstances` for the two ways
+    /// that produced a "cutout" which is not one. Every item already carrying one of those
+    /// is holding a bad sticker with a current version stamp, so nothing but a bump reaches
+    /// them.
+    static let version = 3
 
     /// Where the PNGs live. Application Support rather than Caches: re-cutting is not free,
     /// and a canvas whose stickers vanish under storage pressure would be worse than one
@@ -84,28 +103,57 @@ enum Cutout {
         var mask: CGImage?
     }
 
-    static func make(from image: UIImage, named name: String) async -> Lift {
+    /// - Parameter writeFile: whether the sticker is wanted on disk. False when the caller
+    ///   only needs the mask — `ImageTagger` re-runs the lift whenever *either* the cutout
+    ///   or the deeper reading is due, and encoding a full-resolution RGBA PNG for a row
+    ///   whose sticker is already current is several hundred milliseconds spent to
+    ///   overwrite a file with its own contents.
+    static func make(from image: UIImage, named name: String, writeFile: Bool = true) async -> Lift {
         guard let cgImage = image.cgImage else {
             log.info("no cgImage for \(name, privacy: .public)")
             return Lift()
         }
 
-        if let lifted = await subject(in: cgImage, named: name) {
-            return Lift(file: write(lifted, named: name), mask: render(lifted))
+        // **Vision first, but no longer on trust.** Both candidates go through the same
+        // gate, and a refused Vision lift now falls through to `Seamless` instead of ending
+        // the search — which until this it did, because "Vision returned something" was
+        // read as "Vision returned a garment".
+        if let lifted = await subject(in: cgImage, named: name),
+           let raster = render(lifted),
+           isSticker(raster, from: "vision", named: name) {
+            return Lift(file: writeFile ? write(raster, named: name) : nil, mask: raster)
         }
-        if let trimmed = Seamless.lift(cgImage) {
+        if let trimmed = Seamless.lift(cgImage),
+           let raster = render(trimmed),
+           isSticker(raster, from: "seamless", named: name) {
             log.info("backdrop removed for \(name, privacy: .public)")
-            return Lift(file: write(trimmed, named: name), mask: render(trimmed))
+            return Lift(file: writeFile ? write(raster, named: name) : nil, mask: raster)
         }
         // Nothing to lift, which is ordinary — but the photograph may have arrived already
         // cut out. Palace ships transparent PNGs, so those items have an outline worth
         // measuring even though every lift path correctly declined to touch them.
-        return Lift(file: nil, mask: cgImage)
+        return Lift(file: nil, mask: outline(of: cgImage))
     }
 
     /// A `CIImage` has no pixels until something renders it, and `Silhouette` reads bytes.
     private static func render(_ image: CIImage) -> CGImage? {
-        CIContext().createCGImage(image, from: image.extent)
+        shared.createCGImage(image, from: image.extent)
+    }
+
+    /// The original photograph, offered as an outline **only when it carries one**.
+    ///
+    /// `make` used to hand the untouched source back as the mask whenever nothing lifted,
+    /// on the strength of one real case: a brand shipping transparent PNGs (Palace) needs no
+    /// lift and still has a perfectly good outline. But that is the rare path. The common
+    /// one is an ordinary opaque JPEG, and handing that over meant `Silhouette` opened a
+    /// context and drew a 2000–3200px image — forcing its full decode — purely to reach its
+    /// own "an image with no transparency is not a cutout" guard and refuse. One decode per
+    /// saved item, for a refusal knowable from four bytes of metadata.
+    private static func outline(of cgImage: CGImage) -> CGImage? {
+        switch cgImage.alphaInfo {
+        case .none, .noneSkipFirst, .noneSkipLast: nil
+        default: cgImage
+        }
     }
 
     /// Vision's answer, or nil for any reason at all — no subject, no hardware, no
@@ -125,12 +173,16 @@ enum Cutout {
                 log.info("no foreground instances in \(name, privacy: .public)")
                 return nil
             }
-            // Every instance, cropped to what was kept. A jacket photographed with its
-            // belt detached is two instances and both are the garment; cropping afterwards
-            // is what stops a sticker carrying half a frame of transparent margin around
-            // it, which on a canvas reads as an item you can't line up.
+
+            let kept = substantialInstances(of: observation, named: name)
+            guard !kept.isEmpty else { return nil }
+
+            // The instances worth keeping, cropped to what was kept. A jacket photographed
+            // with its belt detached is two instances and both are the garment; cropping
+            // afterwards is what stops a sticker carrying half a frame of transparent margin
+            // around it, which on a canvas reads as an item you can't line up.
             let masked = try observation.generateMaskedImage(
-                for: observation.allInstances,
+                for: kept,
                 imageFrom: handler,
                 croppedToInstancesExtent: true
             )
@@ -143,8 +195,165 @@ enum Cutout {
         }
     }
 
+    // MARK: - Deciding whether a lift is a garment
+
+    /// Which foreground instances are the product, and whether they add up to a subject at
+    /// all. Empty means "refuse this lift".
+    ///
+    /// `allInstances` was taken wholesale, which is two separate mistakes.
+    ///
+    /// **A speck is an instance.** A hanger, a care tag, a folded price card, a hard shadow
+    /// that reads as its own object: Vision returns each as a foreground instance, and
+    /// including one drags the crop out to enclose it — so a hoodie arrives on the canvas as
+    /// a hoodie in the corner of a much larger transparent rectangle with a grey dot in the
+    /// opposite corner. Anything under a twentieth of the largest instance is dropped.
+    ///
+    /// **And "everything" is an instance.** On a busy or low-contrast photograph the model
+    /// happily returns a foreground covering essentially the whole frame. That produced a
+    /// sticker indistinguishable from the original product shot — and, because a file was
+    /// written, it looked to every later pass like the lift had *worked*, so `Seamless`
+    /// never got its turn and no version stamp ever came back to it.
+    ///
+    /// Measured on the mask Vision hands back at its own resolution, not on the full-size
+    /// masked image, so this costs one small buffer per instance rather than a
+    /// multi-megapixel render.
+    private static func substantialInstances(
+        of observation: InstanceMaskObservation,
+        named name: String
+    ) -> IndexSet {
+        var shares: [(instance: Int, share: Double)] = []
+        for instance in observation.allInstances {
+            guard let mask = try? observation.generateMask(for: IndexSet(integer: instance)),
+                  let share = coveredShare(of: mask)
+            else { continue }
+            shares.append((instance, share))
+        }
+        // Nothing could be measured — an unfamiliar buffer format, or a request that will
+        // not produce per-instance masks. Degrade to what this did before rather than
+        // refusing a lift that may well be fine.
+        guard let largest = shares.map(\.share).max(), largest > 0 else {
+            return observation.allInstances
+        }
+
+        var kept = IndexSet()
+        var covered = 0.0
+        for entry in shares where entry.share >= largest * instanceFloor {
+            kept.insert(entry.instance)
+            covered += entry.share
+        }
+
+        guard covered >= minSubjectShare, covered <= maxSubjectShare else {
+            log.info(
+                """
+                refusing vision lift for \(name, privacy: .public): \
+                subject covers \(covered, format: .fixed(precision: 3)) of the frame
+                """
+            )
+            return IndexSet()
+        }
+        return kept
+    }
+
+    /// How much of a single-channel Vision mask is set, 0…1. Nil for a format this cannot
+    /// read, which the caller treats as "no measurement" rather than as zero.
+    private static func coveredShare(of buffer: CVPixelBuffer) -> Double? {
+        CVPixelBufferLockBaseAddress(buffer, .readOnly)
+        defer { CVPixelBufferUnlockBaseAddress(buffer, .readOnly) }
+
+        guard let base = CVPixelBufferGetBaseAddress(buffer) else { return nil }
+        let width = CVPixelBufferGetWidth(buffer)
+        let height = CVPixelBufferGetHeight(buffer)
+        let stride = CVPixelBufferGetBytesPerRow(buffer)
+        guard width > 0, height > 0 else { return nil }
+
+        var set = 0
+        switch CVPixelBufferGetPixelFormatType(buffer) {
+        case kCVPixelFormatType_OneComponent8:
+            for y in 0..<height {
+                let row = base.advanced(by: y * stride).assumingMemoryBound(to: UInt8.self)
+                for x in 0..<width where row[x] > 127 { set += 1 }
+            }
+        case kCVPixelFormatType_OneComponent32Float:
+            for y in 0..<height {
+                let row = base.advanced(by: y * stride).assumingMemoryBound(to: Float.self)
+                for x in 0..<width where row[x] > 0.5 { set += 1 }
+            }
+        default:
+            return nil
+        }
+        return Double(set) / Double(width * height)
+    }
+
+    /// Whether what came back is a garment lifted off something, or the photograph with its
+    /// corners shaved.
+    ///
+    /// The test is the one `Silhouette.Mask` already applies before it will measure an
+    /// outline, and the fact that the two disagreed is what this closes: a sticker could be
+    /// refused as un-measurable — "an image with no transparency is not a cutout, it is the
+    /// original" — and still be written to disk and drawn on the canvas. So the same
+    /// question is now asked one step earlier, where it decides whether a file is written at
+    /// all, and the bar is set a little looser than the silhouette's because a garment can
+    /// legitimately be measurable-but-boxy (a folded stack, a flat-laid tee cropped tight)
+    /// and still be a perfectly good sticker.
+    ///
+    /// Both paths go through it. `Seamless` has its own refusals, but they are about the
+    /// *frame* — how much was erased — where this is about the sticker that came out.
+    private static func isSticker(_ image: CGImage, from path: String, named name: String) -> Bool {
+        guard let fill = opaqueShare(of: image) else { return false }
+        guard fill >= minBoxFill, fill <= maxBoxFill else {
+            log.info(
+                """
+                refusing \(path, privacy: .public) lift for \(name, privacy: .public): \
+                fills \(fill, format: .fixed(precision: 3)) of its own box
+                """
+            )
+            return false
+        }
+        return true
+    }
+
+    /// The share of a lifted image's own bounding box that is opaque, read at a size where
+    /// counting is trivial. An image with no alpha channel at all comes back as 1.
+    private static func opaqueShare(of image: CGImage) -> Double? {
+        let scale = min(1, Double(gaugeSide) / Double(max(image.width, image.height)))
+        let width = max(Int((Double(image.width) * scale).rounded()), 1)
+        let height = max(Int((Double(image.height) * scale).rounded()), 1)
+
+        var buffer = [UInt8](repeating: 0, count: width * height)
+        guard let context = CGContext(
+            data: &buffer,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: width,
+            space: CGColorSpaceCreateDeviceGray(),
+            bitmapInfo: CGImageAlphaInfo.alphaOnly.rawValue
+        ) else { return nil }
+
+        context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+        return Double(buffer.count { $0 > 24 }) / Double(buffer.count)
+    }
+
+    /// An instance smaller than this share of the largest one is a prop, not the product.
+    private static let instanceFloor = 0.05
+
+    /// How much of the frame the kept instances must cover to be a subject. The ceiling is
+    /// the load-bearing one: past it nothing has been lifted off anything.
+    private static let minSubjectShare = 0.02
+    private static let maxSubjectShare = 0.90
+
+    /// How much of its own bounding box a sticker may fill. A garment cropped to its outline
+    /// leaves real gaps — between a shoe's laces, under a sleeve, either side of a collar —
+    /// and past this there are none, which means the outline is the frame.
+    private static let minBoxFill = 0.02
+    private static let maxBoxFill = 0.92
+
+    /// The long edge the alpha gauge works at. This is counting a proportion, not finding an
+    /// edge, so 160 is ample and keeps the check off a multi-megapixel buffer.
+    private static let gaugeSide = 160
+
     /// Writes a lifted image out as PNG, returning the filename.
-    private static func write(_ image: CIImage, named name: String) -> String? {
+    private static func write(_ image: CGImage, named name: String) -> String? {
         guard let png = encode(image) else {
             log.error("cutout for \(name, privacy: .public) would not encode as PNG")
             return nil
@@ -159,8 +368,19 @@ enum Cutout {
         }
     }
 
+    /// Deletes a sticker **and forgets the decoded copy of it**.
+    ///
+    /// The second half is the part that was missing, and it made a whole class of repair
+    /// invisible. A cutout's filename is derived from the item's id, so re-cutting one
+    /// overwrites the same path — and `LocalImage` is keyed on that path. So bumping
+    /// `version` did everything it was supposed to (re-fetch, re-lift, write a better PNG)
+    /// and the canvas went on drawing the *old* sticker out of the in-memory cache for the
+    /// rest of the session. `FitRender.remove` had always got this right; this had not.
+    @MainActor
     static func remove(_ name: String) {
-        try? FileManager.default.removeItem(at: url(for: name))
+        let file = url(for: name)
+        LocalImage.forget(file)
+        try? FileManager.default.removeItem(at: file)
     }
 
     /// A stable, filesystem-safe name so a re-run overwrites rather than accumulating.
@@ -168,12 +388,29 @@ enum Cutout {
 
     /// PNG, and it has to stay that way — JPEG would flatten the transparency into black
     /// and every sticker would arrive as a silhouette.
-    private static func encode(_ ciImage: CIImage) -> Data? {
-        let context = CIContext()
+    /// One context for the whole pass, not one per image.
+    ///
+    /// A `CIContext` is expensive to build — it sets up a Metal command queue and its own
+    /// caches — and this file was minting a fresh one twice per garment, once to rasterise
+    /// the lift and once to encode it. Sharing it is also what lets those caches do
+    /// anything at all: a context discarded after one image has nothing to remember.
+    ///
+    /// Safe to share: `CIContext` is documented as thread-safe, and the whole cutout pass
+    /// runs off the main actor.
+    private static let shared = CIContext()
+
+    /// Encodes the **already rasterised** lift, rather than the recipe for it.
+    ///
+    /// This used to take the `CIImage` and let `pngRepresentation` render it, while
+    /// `render` rendered the very same image again for the mask — two full rasterisations of
+    /// one lift. There is now exactly one, and it is the buffer the plausibility gate has
+    /// already read.
+    private static func encode(_ image: CGImage) -> Data? {
+        let ciImage = CIImage(cgImage: image)
         guard let colorSpace = ciImage.colorSpace ?? CGColorSpace(name: CGColorSpace.sRGB) else {
             return nil
         }
-        return context.pngRepresentation(
+        return shared.pngRepresentation(
             of: ciImage,
             format: .RGBA8,
             colorSpace: colorSpace
@@ -307,6 +544,24 @@ enum Seamless {
             return worst <= spread ? mean : nil
         }
 
+        /// **The tolerance is measured against the border's colour and nothing else, and
+        /// that is not a limitation to fix.**
+        ///
+        /// The obvious improvement is to also accept a pixel that is indistinguishable from
+        /// the backdrop pixel it was reached *from* — a small per-step tolerance, so a sweep
+        /// with a gradient in it (paper falls off towards the bottom of a frame) is followed
+        /// rather than abandoned halfway. It was tried, at a step tolerance of 0.035, and
+        /// measured against six real Kith product shots: it erases more (0.895 → 0.927 of the
+        /// frame on one), and what it erases is **the garment**. A running shoe's white
+        /// midsole is a couple of percent from Kith's `#EBEBEB` sweep and shades into it
+        /// gradually, so the fill walks in off the backdrop and hollows the sole out; on a
+        /// white sneaker it took most of the upper as well. The renders are unambiguous.
+        ///
+        /// This is the same fact the global-match warning below is about, arriving by a
+        /// different route: any rule that lets the fill reach a light garment through a soft
+        /// edge will eat light garments. A fixed distance from a known backdrop colour is the
+        /// only test that cannot.
+        ///
         /// Flood-fills transparency inwards from the edges. Deliberately *not* a global
         /// "every pixel near this colour" pass: the white square of a graphic print, or the
         /// gap between a shoe's laces, is the same colour as the sweep, and erasing those

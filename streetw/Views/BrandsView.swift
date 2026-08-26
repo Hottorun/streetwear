@@ -11,12 +11,41 @@ struct BrandsView: View {
     @Environment(RemoteSync.self) private var remote: RemoteSync
     @Environment(ServerSettings.self) private var settings: ServerSettings
     @Environment(BrandSuggestions.self) private var suggestions: BrandSuggestions
+    @Environment(SizeProfileStore.self) private var sizes: SizeProfileStore
 
     @Query(sort: \Brand.name) private var brands: [Brand]
+
+    /// The unread queue, narrowed by the store — the same correction `FeedView` made.
+    ///
+    /// `BrandRow` asked `Brand.unseenCount(matching:)` for itself, which walks that brand's
+    /// **entire** catalogue — every product ever synced, read or not — to count the unread
+    /// few, and builds a `Set<String>` doing it. `List` is lazy, but with eight rows on
+    /// screen that is eight full catalogue walks, re-run on every `context.save()` anywhere
+    /// in the app.
+    ///
+    /// One indexed query answers it for every row at once. `unseenCount(matching:)` stays
+    /// for callers that are not drawing a list.
+    @Query(filter: #Predicate<BrandUpdate> { !$0.isSeen })
+    private var unseen: [BrandUpdate]
+
     @State private var isAdding = false
 
+    /// Unread garments per brand, counted the way the feed counts: through `passes`, and
+    /// deduplicated per product, so this row and the brand page agree.
+    private func unreadByBrand() -> [UUID: Int] {
+        let profile = sizes.profile
+        var seen: [UUID: Set<String>] = [:]
+        for update in unseen {
+            guard let id = update.brand?.id, update.passes(profile) else { continue }
+            seen[id, default: []].insert(update.productExternalID ?? update.externalID)
+        }
+        return seen.mapValues(\.count)
+    }
+
     var body: some View {
-        NavigationStack {
+        let unread = unreadByBrand()
+
+        return NavigationStack {
             Group {
                 if brands.isEmpty {
                     EditorialEmptyState(
@@ -27,7 +56,7 @@ struct BrandsView: View {
                     List {
                         ForEach(brands) { brand in
                             NavigationLink(value: BrandRoute(brand: brand)) {
-                                BrandRow(brand: brand)
+                                BrandRow(brand: brand, unread: unread[brand.id] ?? 0)
                             }
                             .listRowBackground(Color.paper)
                             .listRowSeparatorTint(Color.hairline)
@@ -91,12 +120,11 @@ struct BrandsView: View {
 /// the count printed rather than badged, because this is a list of things you follow,
 /// not a set of notifications to clear.
 struct BrandRow: View {
-    @Environment(SizeProfileStore.self) private var sizes: SizeProfileStore
-
     let brand: Brand
-
-    /// Counted through the same filter the feed applies — see `Brand.unseenCount(matching:)`.
-    private var unread: Int { brand.unseenCount(matching: sizes.profile) }
+    /// Counted by the list rather than by the row, out of one indexed query — see
+    /// `BrandsView.unreadByBrand`. Asking per row made every visible row walk that brand's
+    /// whole catalogue.
+    let unread: Int
 
     private var watching: String {
         let kinds = brand.sources.filter(\.enabled).map { $0.kind.label.uppercased() }
@@ -168,8 +196,20 @@ struct BrandMonogram: View {
     }
 
     var body: some View {
+        // **Fixed, not adaptive — a logo does not invert any more than a photograph
+        // does.** This drew on `wash`, which goes to near-black at night, and a brand
+        // wordmark is almost always a dark mark authored for a light ground: on the
+        // Brands list in dark mode Kith and Palace were black on black, and the only row
+        // that survived was the one whose logo had failed to load and fallen back to
+        // typeset initials. A list of brands where the identifiable ones are the broken
+        // ones.
+        //
+        // It is the same fact `sweep` already exists for on the collection wall and the
+        // fit canvas, and it is settled the same way. The cost is a light tile in a dark
+        // list, which is what a wordmark looks like anyway — a credit line under a
+        // photograph — and is much the smaller of the two prices.
         Rectangle()
-            .fill(Color.wash)
+            .fill(Color.sweep)
             .frame(width: size, height: size)
             .overlay {
                 if let logoURL {
@@ -194,7 +234,11 @@ struct BrandMonogram: View {
         Text(initials)
             .font(.wordmark(size * 0.38, .semibold))
             .tracking(size * 0.02)
-            .foregroundStyle(Color.ink)
+            // `sweepInk`, because the tile behind it stopped inverting. Adaptive `ink`
+            // here would be near-white on near-cream in dark mode — trading two
+            // invisible logos for every invisible initial, which is worse: the fallback
+            // is what a brand with no artwork has instead of a mark.
+            .foregroundStyle(Color.sweepInk)
             .minimumScaleFactor(0.7)
             .padding(.horizontal, size * 0.08)
     }

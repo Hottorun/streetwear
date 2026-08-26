@@ -36,26 +36,160 @@ struct StyleView: View {
     @State private var isComposing = false
     @State private var editing: Fit?
 
-    private var profile: StyleProfile { StyleProfile.build(from: saves) }
-    private var suggested: [SuggestedFit] {
-        FitSuggestions.build(from: saves, statement: statement.statement)
+    /// Everything this page derives from the collection, worked out **once**.
+    ///
+    /// All three of these were computed properties, and SwiftUI re-runs a computed property
+    /// on every read. `profile` was read nine times in one evaluation of `body` — once to
+    /// decide whether to draw the taste block and then once per facet line — and `suggested`
+    /// three times, and `owned` three. So a single render rebuilt the whole style profile
+    /// nine times over, and each rebuild walks every save, faults `save.update` and
+    /// `update.brand`, and runs sixty-odd substring scans over any item the photograph
+    /// analysis has not reached yet. `FitSuggestions.build` is worse per pass: it classifies
+    /// every save and then scores pairs of them.
+    ///
+    /// This is the discipline `FeedView.feed` and `BrandRecommendations.ranked` already
+    /// follow — one struct, computed at the top of `body`, threaded down as a parameter.
+    /// Nothing about the answer changes; it is simply asked once.
+    private struct Reading {
+        var profile = StyleProfile()
+        var suggested: [SuggestedFit] = []
+        var owned: [SavedItem] = []
+        var missing: [(slot: GarmentSlot, note: String)] = []
+    }
+
+    /// Once per *change*, not once per `body` — which are very different numbers.
+    ///
+    /// Deriving once per render was the right correction and it stopped short. `body` runs
+    /// far more often than the collection changes, and three of the reasons are routine and
+    /// expensive:
+    ///
+    /// - **Every one of the three `@Query`s here is unpredicated**, so this view is
+    ///   subscribed to the whole `SavedItem`, `Fit` and `Board` tables — and in fact to any
+    ///   `context.save()` at all. `ImageTagger.analyzePending` saves once per batch of
+    ///   twelve while it drains, so analysing two hundred saves rebuilt the entire style
+    ///   profile and every fit suggestion seventeen times, on the main actor, while the
+    ///   person was looking at the page.
+    /// - **Local state re-renders too.** Opening Settings, opening the composer, keeping a
+    ///   suggestion: each flips a `@State` and each rebuilt everything, for a sheet.
+    /// - **So does anything else on the tab.** A sync landing, a card marked read.
+    ///
+    /// None of those change the answer. So the answer is kept and rebuilt only when the
+    /// inputs move, behind a fingerprint that is cheap in the way the builds are not: one
+    /// walk over already-faulted scalars, no classification, no string scanning. Note what
+    /// it must *not* miss — the analysis landing is precisely what changes this reading, a
+    /// colour and a silhouette and a category all arriving at once, which is why the two
+    /// version stamps are in the digest.
+    ///
+    /// Held in a reference type rather than in `@State` on purpose: this is a memo, and it
+    /// must be invisible to SwiftUI's dependency graph. Publishing it from inside `body`
+    /// would be a write during evaluation, and the thing that decides when to recompute is
+    /// already `@Query`.
+    @State private var memo = ReadingMemo()
+
+    @MainActor
+    private final class ReadingMemo {
+        private var key: Fingerprint?
+        private var value = Reading()
+
+        struct Fingerprint: Equatable {
+            var count: Int
+            var digest: Int
+            var statement: StyleStatement
+        }
+
+        func reading(for saves: [SavedItem], statement: StyleStatement) -> Reading {
+            let fingerprint = Fingerprint(
+                count: saves.count,
+                digest: Self.digest(of: saves),
+                statement: statement
+            )
+            if fingerprint == key { return value }
+
+            let owned = saves.filter { $0.type == .wardrobe && $0.update != nil }
+            value = Reading(
+                profile: StyleProfile.build(from: saves),
+                suggested: FitSuggestions.build(from: saves, statement: statement),
+                owned: owned,
+                missing: Self.missingSlots(owned: owned, saves: saves)
+            )
+            key = fingerprint
+            return value
+        }
+
+        /// Everything the two builds read that can actually *change* after a save exists,
+        /// reduced to one integer.
+        ///
+        /// Deliberately shallow. Title, tags and product type are written once when a row
+        /// arrives and never edited, so they are covered by the item being present at all;
+        /// what moves underneath a standing collection is the photograph analysis, and every
+        /// field it writes is stamped by one of these three versions. `savedAt` catches a
+        /// save being replaced rather than added, which `count` alone would miss.
+        ///
+        /// `brand` is left out on purpose: reading it here would fault the relationship for
+        /// every save on every `body`, which is the cost this exists to avoid. A brand
+        /// attached after the fact — `SharedSaveImporter.attachBrands` healing an old row —
+        /// therefore shows up in the taste block on the next change rather than instantly,
+        /// which is the right trade for a facet nobody is watching at that moment.
+        private static func digest(of saves: [SavedItem]) -> Int {
+            var hasher = Hasher()
+            for save in saves {
+                hasher.combine(save.id)
+                hasher.combine(save.savedAt)
+                hasher.combine(save.type)
+                guard let update = save.update else { continue }
+                hasher.combine(update.analyzedAt)
+                hasher.combine(update.visionVersion)
+                hasher.combine(update.cutoutVersion)
+            }
+            return hasher.finalize()
+        }
+
+        /// Slots a fit needs and this wardrobe cannot fill, plus the ones it is thin on.
+        ///
+        /// Only the slots a fit is actually built from — proposing that somebody is short of
+        /// headwear is a fashion opinion, and this is meant to be an observation.
+        ///
+        /// - Parameter owned: the wardrobe. It falls back to everything saved, since most
+        ///   people never split the two and an empty section would just look broken.
+        private static func missingSlots(
+            owned: [SavedItem],
+            saves: [SavedItem]
+        ) -> [(slot: GarmentSlot, note: String)] {
+            let pool = owned.isEmpty ? saves.filter { $0.update != nil } : owned
+            guard pool.count >= 3 else { return [] }
+
+            var counts: [GarmentSlot: Int] = [:]
+            for save in pool { counts[save.slot, default: 0] += 1 }
+
+            return GarmentSlot.essential
+                .sorted { $0.stackOrder < $1.stackOrder }
+                .compactMap { slot in
+                    switch counts[slot] ?? 0 {
+                    case 0: return (slot, "nothing yet")
+                    case 1: return (slot, "only one")
+                    default: return nil
+                    }
+                }
+        }
     }
 
     var body: some View {
-        NavigationStack {
+        let reading = memo.reading(for: saves, statement: statement.statement)
+
+        return NavigationStack {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 34) {
-                    if fits.isEmpty && suggested.isEmpty && saves.isEmpty {
+                    if fits.isEmpty && reading.suggested.isEmpty && saves.isEmpty {
                         emptyWardrobe
                     } else {
                         if !fits.isEmpty { myFits }
-                        if !suggested.isEmpty { suggestedFits }
-                        gaps
+                        if !reading.suggested.isEmpty { suggestedFits(reading.suggested) }
+                        gaps(reading)
                     }
 
                     // Below the reading of your own wardrobe, not above it. This is the
                     // tab about you; a shop at the top of it made the page read as one.
-                    if !profile.isEmpty { taste }
+                    if !reading.profile.isEmpty { taste(reading.profile) }
 
                     BrandRecommendations(
                         title: "Discover",
@@ -156,7 +290,7 @@ struct StyleView: View {
         }
     }
 
-    private var suggestedFits: some View {
+    private func suggestedFits(_ suggested: [SuggestedFit]) -> some View {
         VStack(alignment: .leading, spacing: 14) {
             sectionHeader("From your wardrobe", "TAP TO KEEP ONE")
 
@@ -196,17 +330,16 @@ struct StyleView: View {
     /// back to everything saved, since most people never split the two and an empty
     /// section would just look broken.
     @ViewBuilder
-    private var gaps: some View {
-        let missing = missingSlots
-        if !missing.isEmpty {
+    private func gaps(_ reading: Reading) -> some View {
+        if !reading.missing.isEmpty {
             VStack(alignment: .leading, spacing: 14) {
                 sectionHeader(
                     "What's missing",
-                    owned.isEmpty ? "FROM YOUR SAVES" : "FROM YOUR WARDROBE"
+                    reading.owned.isEmpty ? "FROM YOUR SAVES" : "FROM YOUR WARDROBE"
                 )
 
                 VStack(alignment: .leading, spacing: 12) {
-                    ForEach(missing, id: \.slot) { entry in
+                    ForEach(reading.missing, id: \.slot) { entry in
                         HStack(alignment: .firstTextBaseline, spacing: 12) {
                             Text(entry.slot.label)
                                 .font(.editorial(15))
@@ -222,34 +355,7 @@ struct StyleView: View {
         }
     }
 
-    /// The wardrobe, or everything if nothing has been filed as owned.
-    private var owned: [SavedItem] {
-        saves.filter { $0.type == .wardrobe && $0.update != nil }
-    }
-
-    /// Slots a fit needs and this wardrobe cannot fill, plus the ones it is thin on.
-    ///
-    /// Only the slots a fit is actually built from — proposing that somebody is short of
-    /// headwear is a fashion opinion, and this is meant to be an observation.
-    private var missingSlots: [(slot: GarmentSlot, note: String)] {
-        let pool = owned.isEmpty ? saves.filter { $0.update != nil } : owned
-        guard pool.count >= 3 else { return [] }
-
-        var counts: [GarmentSlot: Int] = [:]
-        for save in pool { counts[save.slot, default: 0] += 1 }
-
-        return GarmentSlot.essential
-            .sorted { $0.stackOrder < $1.stackOrder }
-            .compactMap { slot in
-                switch counts[slot] ?? 0 {
-                case 0: return (slot, "nothing yet")
-                case 1: return (slot, "only one")
-                default: return nil
-                }
-            }
-    }
-
-    private var taste: some View {
+    private func taste(_ profile: StyleProfile) -> some View {
         VStack(alignment: .leading, spacing: 14) {
             sectionHeader("Your taste", "FROM \(profile.totalSaves) SAVED \(profile.totalSaves == 1 ? "ITEM" : "ITEMS")")
 
@@ -323,12 +429,13 @@ struct FitCard: View {
     let fit: Fit
     var width: CGFloat = 168
 
-    private var render: UIImage? {
-        fit.renderURL.flatMap { UIImage(contentsOfFile: $0.path(percentEncoded: false)) }
-    }
-
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        // Read once. This was a computed property read twice per body — here and again by
+        // the `ShareLink` in the context menu, whose content builder runs when the card is
+        // built rather than when the menu is opened.
+        let render = LocalImage.load(fit.renderURL)
+
+        return VStack(alignment: .leading, spacing: 8) {
             Group {
                 if let render {
                     Image(uiImage: render).resizable().scaledToFit()

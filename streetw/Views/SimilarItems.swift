@@ -15,23 +15,51 @@
 import StreetwCore
 import SwiftData
 import SwiftUI
+import Vision
 
 struct SimilarItems: View {
     @Environment(SizeProfileStore.self) private var sizes: SizeProfileStore
-    @Query private var everything: [BrandUpdate]
+    @Environment(\.modelContext) private var context
 
     private let subject: BrandUpdate
+
+    /// The answer, worked out once after the page is on screen.
+    ///
+    /// This was a `@Query` with **no predicate and no limit** — every event ever synced,
+    /// materialised and then scanned in `body`, faulting each row's brand relationship and
+    /// running two classifiers over it. On a store a few weeks old that is thousands of
+    /// rows, and it ran *before the push could draw its first frame*, then twice more:
+    /// `ProductDetailView` marks the item seen and `StockRefresh` stamps it, and each save
+    /// invalidated the query. That is the lag on opening a product.
+    ///
+    /// Nothing about this row needs to be live. It is a suggestion about the item on
+    /// screen, so it is computed once per subject, after the transition, out of a bounded
+    /// fetch — and the page appears immediately with the row filling in behind it.
+    @State private var found: [BrandUpdate] = []
 
     /// Below this the match is coincidence — two products that happen to share the word
     /// "cotton" are not alternatives, and a row of those is worse than no row.
     private static let minimumScore = 2.0
     private static let limit = 8
 
+    /// How far back a candidate may be. "More like this" is an argument to act now, so a
+    /// jacket from three seasons ago is not a useful answer even when it scores well —
+    /// which makes the bound honest rather than merely cheap.
+    private static let window: TimeInterval = 180 * 24 * 3_600
+    /// A ceiling on the scan, whatever the window admits. A brand mid-season publishes
+    /// hundreds of products in a sweep and eight of them are going to be shown.
+    private static let candidateLimit = 600
+
     init(to update: BrandUpdate) {
         self.subject = update
     }
 
-    private func score(_ candidate: BrandUpdate, against terms: Set<String>, slot: GarmentSlot) -> Double {
+    private func score(
+        _ candidate: BrandUpdate,
+        against terms: Set<String>,
+        slot: GarmentSlot,
+        fingerprint: FeaturePrintObservation?
+    ) -> Double {
         var score = 0.0
         // The strongest single signal: a jacket is an alternative to a jacket. It is not
         // enough on its own, or this becomes "other outerwear".
@@ -41,7 +69,9 @@ struct SimilarItems: View {
         // genuine variant of what you are looking at, but a page full of one brand is a
         // catalogue rather than a suggestion.
         if candidate.brand?.id == subject.brand?.id { score += 0.5 }
-        score += resemblance(to: candidate)
+        if let fingerprint {
+            score += resemblance(of: candidate, to: fingerprint)
+        }
         return score
     }
 
@@ -59,9 +89,9 @@ struct SimilarItems: View {
     /// contributes nothing. A term that only *sometimes* exists must not be able to
     /// outrank the one that always does, or the ranking would reorder itself as the
     /// analysis backlog drained.
-    private func resemblance(to candidate: BrandUpdate) -> Double {
+    private func resemblance(of candidate: BrandUpdate, to subject: FeaturePrintObservation) -> Double {
         guard let distance = VisualReading.distance(
-            subject.visionFeaturePrint,
+            subject,
             candidate.visionFeaturePrint
         ) else { return 0 }
         // Vision's distance is unbounded and small numbers mean "alike". Anything past the
@@ -76,21 +106,36 @@ struct SimilarItems: View {
     /// scores that start at 1.5 for a matching slot.
     private static let resemblanceHorizon = 1.1
 
-    private var matches: [BrandUpdate] {
+    private func matches() -> [BrandUpdate] {
         let profile = sizes.profile
         let slot = subject.garmentSlot
         let terms = Set(subject.matchTerms)
         guard !terms.isEmpty || slot != .unknown else { return [] }
 
+        // Narrowed by the store rather than by walking it — the same correction `FeedView`
+        // made. SQLite answers the date bound from an index and hands back the newest few
+        // hundred rows instead of the catalogue.
+        let cutoff = Date().addingTimeInterval(-Self.window)
+        var descriptor = FetchDescriptor<BrandUpdate>(
+            predicate: #Predicate { $0.publishedAt >= cutoff },
+            sortBy: [SortDescriptor(\.publishedAt, order: .reverse)]
+        )
+        descriptor.fetchLimit = Self.candidateLimit
+        let candidates = (try? context.fetch(descriptor)) ?? []
+        // Decoded once, not once per candidate — see `VisualReading.fingerprint`.
+        let fingerprint = VisualReading.fingerprint(subject.visionFeaturePrint)
+
         var scored: [(update: BrandUpdate, score: Double)] = []
-        for candidate in everything {
+        for candidate in candidates {
             guard candidate.id != subject.id else { continue }
             guard candidate.kind != .collection else { continue }
-            guard candidate.primaryImageURL != nil else { continue }
+            // Cheapest and most selective first: `followed` rejects whole brands, where the
+            // photograph test rejects almost nothing and used to build a `URL` to do it.
             guard candidate.brand?.followed == true else { continue }
+            guard candidate.hasPhotograph else { continue }
             guard candidate.passes(profile) else { continue }
 
-            let value = score(candidate, against: terms, slot: slot)
+            let value = score(candidate, against: terms, slot: slot, fingerprint: fingerprint)
             if value >= Self.minimumScore { scored.append((candidate, value)) }
         }
 
@@ -102,7 +147,15 @@ struct SimilarItems: View {
     }
 
     var body: some View {
-        let found = matches
+        content
+            // Keyed on the subject, so paging from one product to another recomputes and
+            // nothing else does. `ProductDetailView` saves twice on appearance and neither
+            // of those may cost this scan again.
+            .task(id: subject.id) { found = matches() }
+    }
+
+    @ViewBuilder
+    private var content: some View {
         if !found.isEmpty {
             VStack(alignment: .leading, spacing: 14) {
                 Rule().padding(.horizontal, 20)

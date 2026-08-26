@@ -42,18 +42,23 @@ struct ProductDetailView: View {
         }
     }
 
-    private var runEntries: [SizeRun.Entry] {
-        SizeRun.entries(for: visibleVariants, profile: sizes.profile)
-    }
-
-    /// Sold out in everything currently shown — the state the watcher exists for.
-    private var isSoldOut: Bool {
-        guard !visibleVariants.isEmpty else { return update.isAvailable == false }
-        return !visibleVariants.contains { $0.available }
-    }
+    // The size run and the sold-out state are derived once at the top of `body` and passed
+    // down — see the note there.
 
     var body: some View {
-        ScrollView {
+        // Each of these once per render, not four times.
+        //
+        // They were plain computed properties, and every read redoes the work: `runEntries`
+        // was read twice (the `isEmpty` check and then `sizeSection`), `colorways` twice,
+        // `isSoldOut` twice, and each of those rebuilt `visibleVariants` underneath — so a
+        // sneaker's forty-eight variants were filtered, normalised and deduplicated four
+        // times over to draw one page.
+        let variants = visibleVariants
+        let colorways = self.colorways
+        let entries = SizeRun.entries(for: variants, profile: sizes.profile)
+        let isSoldOut = variants.isEmpty ? update.isAvailable == false : !variants.contains { $0.available }
+
+        return ScrollView {
             VStack(alignment: .leading, spacing: 0) {
                 ImageGallery(
                     urls: update.imageURLs,
@@ -75,7 +80,7 @@ struct ProductDetailView: View {
 
                 VStack(alignment: .leading, spacing: 26) {
                     heading
-                    if !runEntries.isEmpty { sizeSection }
+                    if !entries.isEmpty { sizeSection(entries) }
                     if !colorways.isEmpty {
                         ColorwaySection(colorways: colorways, selected: $selectedColorway)
                             .onChange(of: selectedColorway) { _, colour in
@@ -116,12 +121,19 @@ struct ProductDetailView: View {
                 }
             }
         }
-        .safeAreaInset(edge: .bottom) { buyBar }
+        .safeAreaInset(edge: .bottom) { buyBar(isSoldOut: isSoldOut) }
         .onAppear {
             // Opening the page is acknowledging the item, the same as tapping through to
             // the site used to be.
-            update.isSeen = true
-            try? context.save()
+            //
+            // Guarded, because a `save()` invalidates every `@Query` in the app and rebuilds
+            // whatever they feed — and `onAppear` fires again on every return to this page.
+            // Writing "already true" back and paying for a store-wide invalidation is the
+            // most expensive way to do nothing.
+            if !update.isSeen {
+                update.isSeen = true
+                try? context.save()
+            }
             // Lift the save confirmation clear of the buy bar while this page is up.
             confirmation.bottomClearance = StorefrontBar.height
         }
@@ -163,7 +175,7 @@ struct ProductDetailView: View {
         }
     }
 
-    private var sizeSection: some View {
+    private func sizeSection(_ entries: [SizeRun.Entry]) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
                 DataLabel(text: "SIZES")
@@ -177,7 +189,7 @@ struct ProductDetailView: View {
             // room to print all of it, and printing all of it is the reason to be here —
             // but only across several lines. Unwrapped, a run that long is wider than the
             // phone and takes the whole page's width with it.
-            SizeRun(entries: runEntries, size: 14, limit: .max, wraps: true)
+            SizeRun(entries: entries, size: 14, limit: .max, wraps: true)
         }
     }
 
@@ -214,7 +226,7 @@ struct ProductDetailView: View {
     /// Pinned to the bottom rather than buried in the scroll: buying is what the page is
     /// for, and it must be reachable without hunting for it.
     @ViewBuilder
-    private var buyBar: some View {
+    private func buyBar(isSoldOut: Bool) -> some View {
         if let link = update.linkURL {
             StorefrontBar(url: link, isSoldOut: isSoldOut)
         }

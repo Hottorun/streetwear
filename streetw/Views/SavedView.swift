@@ -69,9 +69,15 @@ struct SavedView: View {
     /// Counted on the label the tile would actually print, not on the brand row behind it —
     /// a wall of shares from three shops nobody follows has three labels and no brands, and
     /// silencing all of them would leave the same wordmark logic in the wrong state.
-    private var isMixedBrand: Bool {
+    ///
+    /// **Takes the wall as a parameter rather than reading `visible`.** It was a computed
+    /// property read from *inside* the `ForEach` element closure, so it was evaluated once
+    /// for every tile the lazy stack realised — and each evaluation re-ran the whole filter
+    /// chain and faulted `save.update` → `update.brand` down it. With forty tiles on screen
+    /// that is forty full passes over the collection to answer one yes/no question about it.
+    private static func isMixedBrand(_ wall: [SavedItem]) -> Bool {
         var seen: Set<String> = []
-        for save in visible {
+        for save in wall {
             guard let label = save.update?.brandLabel else { continue }
             seen.insert(label)
             if seen.count > 1 { return true }
@@ -104,25 +110,49 @@ struct SavedView: View {
 
     /// Split by hand rather than with `LazyVGrid`, which forces every row to the height
     /// of its tallest cell and would flatten the wall back into a table.
-    private var columns: ([SavedItem], [SavedItem]) {
+    private static func columns(_ wall: [SavedItem]) -> ([SavedItem], [SavedItem]) {
         var left: [SavedItem] = []
         var right: [SavedItem] = []
-        for (index, item) in visible.enumerated() {
+        for (index, item) in wall.enumerated() {
             if index.isMultiple(of: 2) { left.append(item) } else { right.append(item) }
         }
         return (left, right)
     }
 
+    /// The wall and everything read off it, worked out **once** per render.
+    ///
+    /// `visible` is a filter chain over every save — a relationship fault per item, a
+    /// `CollectionFacet.matches` when a facet is on, and a `matches(query)` that re-trims and
+    /// re-lowercases the query string per item. It was being evaluated at least five times
+    /// per body (twice for the empty checks, twice more via `columns.0` and `columns.1`,
+    /// each of which re-ran the split) and then once *per realised tile* through
+    /// `isMixedBrand`.
+    private struct Wall {
+        var items: [SavedItem] = []
+        var left: [SavedItem] = []
+        var right: [SavedItem] = []
+        var isMixedBrand = false
+        var isEmpty: Bool { items.isEmpty }
+    }
+
+    private func buildWall() -> Wall {
+        let items = visible
+        let (left, right) = Self.columns(items)
+        return Wall(items: items, left: left, right: right, isMixedBrand: Self.isMixedBrand(items))
+    }
+
     var body: some View {
-        NavigationStack {
+        let wall = buildWall()
+
+        return NavigationStack {
             Group {
-                if visible.isEmpty, visibleFits.isEmpty {
+                if wall.isEmpty, visibleFits.isEmpty {
                     EditorialEmptyState(
                         title: emptyTitle,
                         action: emptyAction
                     )
                 } else {
-                    wall
+                    self.wall(wall)
                 }
             }
             .background(Color.paper)
@@ -238,11 +268,11 @@ struct SavedView: View {
         }
     }
 
-    private var wall: some View {
+    private func wall(_ wall: Wall) -> some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
                 boardFits
-                if visible.isEmpty {
+                if wall.isEmpty {
                     // Fits and nothing else. The wall stays, so the line explains the
                     // absence of tiles rather than the whole page claiming to be empty.
                     Text(emptyAction)
@@ -252,8 +282,8 @@ struct SavedView: View {
                         .padding(.horizontal, 20)
                 } else {
                     HStack(alignment: .top, spacing: 14) {
-                        column(columns.0, offset: 0)
-                        column(columns.1, offset: 1)
+                        column(wall.left, offset: 0, showsBrand: wall.isMixedBrand)
+                        column(wall.right, offset: 1, showsBrand: wall.isMixedBrand)
                     }
                     .padding(.horizontal, 20)
                 }
@@ -290,14 +320,14 @@ struct SavedView: View {
         }
     }
 
-    private func column(_ items: [SavedItem], offset: Int) -> some View {
+    private func column(_ items: [SavedItem], offset: Int, showsBrand: Bool) -> some View {
         LazyVStack(alignment: .leading, spacing: 22) {
             ForEach(items) { save in
                 CollectionTile(
                     save: save,
                     aspect: aspect(for: save, offset: offset),
                     onOpen: { opened = save },
-                    showsBrand: isMixedBrand
+                    showsBrand: showsBrand
                 )
             }
         }

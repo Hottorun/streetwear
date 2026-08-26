@@ -22,6 +22,58 @@ struct FeedView: View {
     @Query(filter: #Predicate<Brand> { $0.followed }, sort: \Brand.name)
     private var brands: [Brand]
 
+    /// **The unread queue, narrowed by the store rather than by walking it.**
+    ///
+    /// This screen used to query `Brand` and walk `brand.updates` for every followed brand,
+    /// which faults in the entire catalogue — every product ever synced, read or not — on
+    /// each evaluation of `body`. Measured on a real store that was 1.4s for the first build
+    /// and 44–426ms for every rebuild after, and marking a brand read triggers a rebuild.
+    /// That is the lag.
+    ///
+    /// A predicate on `isSeen` hands the same question to SQLite, which answers it from an
+    /// index instead of by materialising thousands of objects. Sorted here too, so the
+    /// grouping below inherits the order.
+    @Query(
+        filter: #Predicate<BrandUpdate> { !$0.isSeen },
+        sort: [SortDescriptor(\BrandUpdate.publishedAt, order: .reverse)]
+    )
+    private var unseen: [BrandUpdate]
+
+    /// Price drops inside the window `MarkdownsView` shows, counted for the toolbar badge.
+    ///
+    /// Its own query for the same reason: it asks about *read* rows too, so it cannot come
+    /// out of `unseen`, and folding it into a walk of everything is what made that walk
+    /// necessary in the first place.
+    @Query private var markdowns: [BrandUpdate]
+
+    init() {
+        // **Narrowed on two stored columns, and the kind confirmed in Swift.**
+        //
+        // `kind` is a Codable enum and `#Predicate` over one is fragile, so it cannot do
+        // the narrowing — but the date alone cannot either: a brand's first sync stamps its
+        // whole back catalogue with today, so a thirty-day window is *the entire store* on a
+        // freshly added brand, and counting a badge would walk all of it and run `passes`
+        // over every row. `previousPriceAmount` is written only where `kind` is set to
+        // `.priceDrop`, which makes it a faithful index for the question and reduces the
+        // fetch to the handful of rows that could possibly answer it.
+        //
+        // It is a superset, not the answer: a marked-down product that later restocks keeps
+        // the old price and stops being a markdown, so the kind is still checked below.
+        //
+        // The dismissal clause is not an optimisation — it is the rule that a count is
+        // subject to the same filter as the list it counts. Without it, waving markdowns off
+        // empties the sheet while the badge that opens it goes on claiming twelve, and a
+        // number that disagrees with the page behind it reads as the number being broken.
+        let cutoff = Date().addingTimeInterval(-MarkdownsView.window)
+        _markdowns = Query(
+            filter: #Predicate<BrandUpdate> {
+                $0.publishedAt >= cutoff
+                    && $0.previousPriceAmount != nil
+                    && $0.markdownDismissedAt == nil
+            }
+        )
+    }
+
     @State private var isShowingCalendar = false
     @State private var isShowingWatches = false
     @State private var isShowingMarkdowns = false
@@ -89,40 +141,53 @@ struct FeedView: View {
     private var feed: Feed {
         let profile = sizes.profile
         let filterGender = isFilteringGender
-        let markdownCutoff = Date().addingTimeInterval(-MarkdownsView.window)
 
         var result = Feed()
-        for brand in brands {
-            var unseen: [BrandUpdate] = []
-            for update in brand.updates {
-                // One `passes` per update per render, cached in a local. It reads `gender`,
-                // which is not free, and three separate questions below used to ask it
-                // again each.
-                let shown = !filterGender || update.passes(profile)
-                if !update.isSeen {
-                    if shown {
-                        unseen.append(update)
-                    } else {
-                        result.hasHiddenUnseen = true
-                    }
-                }
-                if shown, update.kind == .priceDrop, update.publishedAt >= markdownCutoff {
-                    result.markdowns += 1
-                }
+        var byBrand: [UUID: [BrandUpdate]] = [:]
+        var brandsByID: [UUID: Brand] = [:]
+
+        // `unseen` is already narrowed by the store to rows with `isSeen == false`, so this
+        // walks the unread queue rather than the catalogue. On a synced device those differ
+        // by orders of magnitude.
+        for update in unseen {
+            guard let brand = update.brand, brand.followed else { continue }
+            if filterGender, !update.passes(profile) {
+                result.hasHiddenUnseen = true
+                continue
             }
-            guard !unseen.isEmpty else { continue }
-            // Sorted *and* deduplicated in one step. A garment that dropped and then
-            // restocked before anybody read either event is two rows and one jacket, and a
-            // spread that prints it twice reads as the feed repeating itself — see
-            // `BrandUpdate.oncePerProduct`. Note what this does to `markSeen`, which now has
-            // to clear the rows that were folded away as well as the ones on screen.
+            byBrand[brand.id, default: []].append(update)
+            brandsByID[brand.id] = brand
+        }
+
+        for (id, updates) in byBrand {
+            guard let brand = brandsByID[id] else { continue }
             result.groups.append(
-                BrandGroup(brand: brand, updates: BrandUpdate.oncePerProduct(unseen))
+                BrandGroup(
+                    brand: brand,
+                    updates: BrandUpdate.oncePerProduct(updates),
+                    sortKey: brand.activityKey
+                )
             )
         }
 
-        result.groups.sort { ($0.latest ?? .distantPast) > ($1.latest ?? .distantPast) }
+        // Ordered on the brand's newest activity overall, **not** on its newest *unread*
+        // item — and that distinction is the whole of a bug that made the feed feel broken.
+        //
+        // Sorting on the unread items means the sort key changes as you read them. Clear the
+        // top card of a brand whose remaining unread things are older, and the brand's key
+        // drops to that older date and the whole spread slides down the page, under brands
+        // you had already dealt with. You are reading a list that reorders itself underneath
+        // your thumb, and the item you wanted next is now somewhere else.
+        //
+        // A brand's newest activity does not move when you read something, so the spread
+        // stays where it is until the brand itself publishes again. `latest` is still the
+        // newest *unread* date, because that is what the header prints — the two questions
+        // are different and were being answered by one value.
+        result.groups.sort {
+            $0.sortKey == $1.sortKey ? $0.brand.name < $1.brand.name : $0.sortKey > $1.sortKey
+        }
         result.total = result.groups.reduce(0) { $0 + $1.updates.count }
+        result.markdowns = markdowns.count { $0.kind == .priceDrop && $0.passes(profile) }
         return result
     }
 
@@ -314,10 +379,18 @@ struct FeedView: View {
         // — the checkmark visibly failing to do the one thing it claims. The filter is
         // applied for the opposite reason: what a Menswear setting is hiding was never read
         // and must not be marked as though it had been.
+        //
+        // Read out of `unseen` rather than out of `brand.updates`. They answer the same
+        // question here — every unread row of this brand — but the relationship is the
+        // brand's *whole* catalogue, so touching it faults in every product ever synced
+        // for it and then runs `passes` over all of them, on the tap whose slowness is the
+        // complaint. `unseen` is already narrowed by the store and already in memory,
+        // because it is what drew the spread being dismissed.
         let profile = sizes.profile
         let filterGender = isFilteringGender
+        let brandID = group.brand.id
         withAnimation(.easeOut(duration: 0.22)) {
-            for update in group.brand.updates where !update.isSeen {
+            for update in unseen where update.brand?.id == brandID {
                 guard !filterGender || update.passes(profile) else { continue }
                 update.isSeen = true
             }
@@ -334,40 +407,51 @@ private struct BrandSpread: View {
     let briefLimit: Int
     let onDismiss: () -> Void
 
-    /// Releases this brand has just announced.
+    /// How the spread is laid out, decided in one pass.
     ///
-    /// Hoisted above the products rather than mixed in with them, because a collection is
-    /// *about* those products — it is the headline and they are the contents, and a season
-    /// announcement filed between two hoodies is the wrong way round. They also used to be
-    /// the emptiest cards in the feed: a collection page rarely publishes a photograph, so
-    /// it drew a grey square, a blank size run and no price.
-    private var releases: [BrandUpdate] {
-        group.updates.filter { $0.kind == .collection }
+    /// These were five computed properties that read each other: `briefs` re-derived
+    /// `lead`, which re-derived `products`, and `overflow` re-derived both — so drawing one
+    /// spread filtered `group.updates` about six times, and `lead` walked the products
+    /// calling `primaryImageURL` (which parsed every photograph of every product it passed)
+    /// until one answered. Marking any brand read re-renders every visible spread.
+    private struct Layout {
+        /// Releases this brand has just announced.
+        ///
+        /// Hoisted above the products rather than mixed in with them, because a collection
+        /// is *about* those products — it is the headline and they are the contents, and a
+        /// season announcement filed between two hoodies is the wrong way round. They also
+        /// used to be the emptiest cards in the feed: a collection page rarely publishes a
+        /// photograph, so it drew a grey square, a blank size run and no price.
+        var releases: [BrandUpdate] = []
+        /// The newest item *that has a photograph*. A lead is carried by its image, and the
+        /// newest thing a brand posts is often a page change with nothing to show — leading
+        /// on that wastes the biggest slot on the page.
+        var lead: BrandUpdate?
+        var briefs: [BrandUpdate] = []
+        var overflow = 0
     }
 
-    private var products: [BrandUpdate] {
-        group.updates.filter { $0.kind != .collection }
-    }
+    private func layout() -> Layout {
+        var result = Layout()
+        var products: [BrandUpdate] = []
+        for update in group.updates {
+            if update.kind == .collection { result.releases.append(update) } else { products.append(update) }
+        }
 
-    /// The newest item *that has a photograph*. A lead is carried by its image, and the
-    /// newest thing a brand posts is often a page change with nothing to show — leading on
-    /// that wastes the biggest slot on the page.
-    private var lead: BrandUpdate? {
-        products.first { $0.primaryImageURL != nil } ?? products.first
-    }
-
-    private var briefs: [BrandUpdate] {
-        Array(products.filter { $0.id != lead?.id }.prefix(briefLimit))
-    }
-
-    private var overflow: Int {
-        max(0, products.count - (lead == nil ? 0 : 1) - briefs.count)
+        result.lead = products.first(where: \.hasPhotograph) ?? products.first
+        let leadID = result.lead?.id
+        result.briefs = Array(products.lazy.filter { $0.id != leadID }.prefix(briefLimit))
+        result.overflow = max(0, products.count - (result.lead == nil ? 0 : 1) - result.briefs.count)
+        return result
     }
 
     private let columns = [GridItem(.flexible(), spacing: 14), GridItem(.flexible(), spacing: 14), GridItem(.flexible())]
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        let layout = layout()
+        let (releases, lead, briefs, overflow) = (layout.releases, layout.lead, layout.briefs, layout.overflow)
+
+        return VStack(alignment: .leading, spacing: 0) {
             Rule()
                 .padding(.horizontal, 20)
                 .padding(.bottom, 14)
@@ -446,7 +530,18 @@ struct BrandGroup: Identifiable {
     var brand: Brand
     var updates: [BrandUpdate]
 
+    /// Where this spread sits on the page: the brand's newest activity, read or not.
+    ///
+    /// Deliberately *not* derived from `updates`, which shrinks as things are read. Ties
+    /// break on the name so two brands that published in the same second do not swap places
+    /// between renders — the same reason `BrandUpdate.newestFirst` breaks its ties.
+    var sortKey: Date = .distantPast
+
     var id: UUID { brand.id }
+
+    /// The newest thing here you have not read — what the header stamps. A different
+    /// question from `sortKey`, and answering both with one value is what made the feed
+    /// reorder itself as you read it.
     var latest: Date? { updates.first?.publishedAt }
 
     /// "12 new products", "3 restocked", "New FW26 collection" — the line the user reads.

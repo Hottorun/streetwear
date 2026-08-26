@@ -169,6 +169,17 @@ struct StreetwAPI: Sendable {
         return try await send(path: "v1/feed", method: "GET", body: Optional<Never>.none, query: query)
     }
 
+    /// Replaces this device's whole set of poll hints. See `DropHints` for what goes in it
+    /// and `PollHintPolicy` for what the server will accept.
+    ///
+    /// `PUT`, not `POST`, because that is what it is: the body is the complete set, and an
+    /// empty one withdraws everything. The response says what was taken and what was
+    /// refused, per brand — "your hint didn't work" is equally true for a brand you have
+    /// unfollowed and a date that has already passed.
+    func putPollHints(_ hints: [PollHint]) async throws -> PollHintsResponse {
+        try await send(path: "v1/poll-hints", method: "PUT", body: PollHintSync(hints: hints))
+    }
+
     /// One brand's recent history, outside the feed cursor. See the route's own note for
     /// why this cannot be a `since` on `/v1/feed`.
     func brandFeed(brandID: UUID, limit: Int = 60) async throws -> FeedResponse {

@@ -137,7 +137,7 @@ struct CachedImage<Content: View, Placeholder: View, Failure: View>: View {
 
         phase = .loading
         do {
-            let image = try await ImageLoader.shared.load(resolved)
+            let image = try await ImageLoader.shared.load(resolved, width: width)
             phase = .loaded(image)
         } catch is CancellationError {
             // Scrolled away. Emphatically *not* a failure: leaving it in `.loading` means
@@ -164,7 +164,20 @@ actor ImageLoader {
     private let decoded = NSCache<NSURL, UIImage>()
 
     private init() {
-        decoded.countLimit = 220
+        // **Bounded by bytes, not by count.** A count limit is meaningless when the entries
+        // span three orders of magnitude: this one cache holds 130pt feed tiles, 400pt
+        // leads and the 1600px renditions `ImageViewer` asks for, and 220 of the large ones
+        // is well over a gigabyte. Now that the images arriving here are genuinely
+        // rasterised rather than lazy wrappers, that is a real gigabyte — it would draw a
+        // memory warning, `NSCache` would drop everything, and every visible photograph
+        // would be fetched and decoded again. The churn reads as the whole app getting
+        // slower the longer it is used.
+        //
+        // A fraction of physical memory rather than a fixed number, so the budget is one an
+        // older phone can actually honour. The count limit stays as a backstop for a screen
+        // full of very small images.
+        decoded.totalCostLimit = min(160 << 20, Int(ProcessInfo.processInfo.physicalMemory / 16))
+        decoded.countLimit = 400
     }
 
     nonisolated func cached(_ url: URL) -> UIImage? {
@@ -185,38 +198,123 @@ actor ImageLoader {
     /// awaits the same request rather than starting a second.
     nonisolated func prefetch(_ urls: [URL], width: Int) {
         let resolved = urls.map { ImageRendition.sized($0, width: width) }
-        Task.detached(priority: .utility) { await self.warm(resolved) }
+        Task.detached(priority: .utility) { await self.enqueue(resolved, width: width) }
     }
 
-    /// One at a time. The photograph the user is actually looking at is competing for the
-    /// same connection, and three parallel prefetches would slow down the one load that
-    /// somebody is waiting on.
-    private func warm(_ urls: [URL]) async {
-        for url in urls {
-            guard decoded.object(forKey: url as NSURL) == nil, inFlight[url] == nil else { continue }
-            _ = try? await load(url)
+    /// **One drain, with a bounded queue.**
+    ///
+    /// `prefetch` used to start its own detached task per call, and it is called per card:
+    /// `BrandFeedView` fires one from every `GalleryCard` and another on every gallery page
+    /// change. Scrolling a brand's whole output therefore spawned hundreds of independent
+    /// serial queues which — since `URLSession` caps connections per host — collapsed into
+    /// one unbounded, unordered FIFO. The photograph somebody is looking at *now* queued
+    /// behind three hundred images they had already scrolled past.
+    ///
+    /// Newest wins: a prefetch is a guess about where attention is going, and the most
+    /// recent guess is the best one. Older entries are dropped rather than queued, which is
+    /// the whole point — an unbounded queue of stale guesses is worse than no prefetch.
+    private var queue: [(url: URL, width: Int)] = []
+    private var isDraining = false
+    private static let queueDepth = 12
+
+    private func enqueue(_ urls: [URL], width: Int) async {
+        for url in urls where decoded.object(forKey: url as NSURL) == nil && inFlight[url] == nil {
+            queue.removeAll { $0.url == url }
+            queue.append((url, width))
+        }
+        if queue.count > Self.queueDepth {
+            queue.removeFirst(queue.count - Self.queueDepth)
+        }
+        guard !isDraining else { return }
+        isDraining = true
+        defer { isDraining = false }
+        // One at a time. The photograph the user is actually looking at is competing for the
+        // same connection, and parallel prefetches would slow down the one load that
+        // somebody is waiting on.
+        while !queue.isEmpty {
+            let next = queue.removeLast()
+            guard decoded.object(forKey: next.url as NSURL) == nil else { continue }
+            _ = try? await load(next.url, width: next.width)
         }
     }
 
-    func load(_ url: URL) async throws -> UIImage {
+    /// - Parameter width: the width in **points** this will be drawn at. It decides how far
+    ///   the photograph is downsampled on the way in — see `decode`. It is passed rather
+    ///   than inferred from the URL because the URL often does not say: `ImageRendition`
+    ///   leaves unknown hosts alone, and those are the ones publishing the largest files.
+    func load(_ url: URL, width: Int = 400) async throws -> UIImage {
         if let hit = decoded.object(forKey: url as NSURL) { return hit }
 
         // A grid can ask for the same URL from several cells at once — a product's
         // colourways often share a photograph. One request, many awaiters.
         if let existing = inFlight[url] { return try await existing.value }
 
+        let maxPixel = ImageRendition.pixels(for: width)
         let task = Task<UIImage, any Error> {
-            try await Self.fetch(url)
+            try await Self.fetch(url, maxPixel: maxPixel)
         }
         inFlight[url] = task
         defer { inFlight[url] = nil }
 
         let image = try await task.value
-        decoded.setObject(image, forKey: url as NSURL)
+        decoded.setObject(image, forKey: url as NSURL, cost: image.byteCost)
         return image
     }
 
-    private static func fetch(_ url: URL) async throws -> UIImage {
+    /// Turns downloaded bytes into a photograph that is **already rasterised**.
+    ///
+    /// This was `UIImage(data:)`, and that is the single most expensive line the app had.
+    /// `UIImage(data:)` parses the container header and wraps a data provider — it produces
+    /// no pixels. The bitmap decode is deferred until CoreAnimation needs the layer
+    /// contents, which happens **on the main thread, inside the commit**, at the moment the
+    /// image is first drawn. So every photograph in the app was decoded on the main thread
+    /// no matter how carefully the download was moved off it.
+    ///
+    /// The scale of it: `drawnWidth: 400` asks for a 1200px rendition, which is a 5.7MB
+    /// bitmap and 15–40ms of JPEG decode. A brand spread commits seven of those in one
+    /// frame. And `ImageRendition.sized` leaves an unrecognised host's URL alone, so a
+    /// brand shipping 3200² PNGs — Palace does — was decoding 41MB bitmaps in the commit,
+    /// hundreds of milliseconds each.
+    ///
+    /// Two keys carry the fix. `kCGImageSourceShouldCacheImmediately` forces the
+    /// rasterisation to happen *here*, on the cooperative pool, rather than later on the
+    /// main thread. `kCGImageSourceThumbnailMaxPixelSize` caps it at the size actually being
+    /// drawn, which is what protects the hosts `sized` cannot rewrite. The transform key is
+    /// not optional: `UIImage(cgImage:)` carries no orientation, so without it an EXIF
+    /// -rotated photograph would draw on its side where `UIImage(data:)` had quietly
+    /// corrected it.
+    ///
+    /// Alpha is preserved, which is load-bearing — a transparent PNG showing the app's own
+    /// backdrop through the garment is the whole reason `UpdateImage` takes a `backdrop`.
+    /// `decode`, for a caller that does its own fetching and wants nil rather than a throw.
+    ///
+    /// `ImageTagger` is the one: it needs to tell a dead URL from a dead network, so it
+    /// cannot hand the download to `load` — but it wants exactly this decode, and was doing
+    /// `UIImage(data:)` instead. Everything in the doc comment below is why that mattered.
+    nonisolated static func decoded(_ data: Data, maxPixel: Int) -> UIImage? {
+        try? decode(data, maxPixel: maxPixel)
+    }
+
+    nonisolated private static func decode(_ data: Data, maxPixel: Int) throws -> UIImage {
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil) else {
+            throw ImageError.notAnImage
+        }
+        let options: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceShouldCacheImmediately: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceThumbnailMaxPixelSize: maxPixel
+        ]
+        guard let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else {
+            // Anything ImageIO cannot thumbnail, `UIImage` will not do better with. Falling
+            // back keeps a format nobody anticipated drawing rather than showing a hole.
+            guard let image = UIImage(data: data) else { throw ImageError.notAnImage }
+            return image
+        }
+        return UIImage(cgImage: cgImage)
+    }
+
+    private static func fetch(_ url: URL, maxPixel: Int) async throws -> UIImage {
         var lastError: (any Error)?
 
         for attempt in 0..<attempts {
@@ -239,8 +337,7 @@ actor ImageLoader {
                     continue
                 }
 
-                guard let image = UIImage(data: data) else { throw ImageError.notAnImage }
-                return image
+                return try decode(data, maxPixel: maxPixel)
             } catch is CancellationError {
                 throw CancellationError()
             } catch let error as ImageError {
@@ -266,6 +363,66 @@ actor ImageLoader {
     private enum ImageError: Error {
         case badStatus(Int)
         case notAnImage
+    }
+}
+
+extension UIImage {
+    /// What this occupies once rasterised, which is what a cache budget has to be measured
+    /// in. `NSCache` has no idea how big a `UIImage` is and will happily hold a gigabyte of
+    /// them under a count limit.
+    nonisolated var byteCost: Int {
+        guard let cgImage else { return 1 }
+        return cgImage.bytesPerRow * cgImage.height
+    }
+}
+
+/// Images the app wrote itself — cutouts and fit renders — read once instead of per frame.
+///
+/// `BrandUpdate.cutoutURL` carried a comment arguing the opposite: that a cutout should be
+/// read as a file each time *because* `UIImage(contentsOfFile:)` decodes lazily. That has
+/// it backwards. Lazy decoding is the reason to cache, not the reason not to: each call
+/// mints a **fresh** `UIImage` with a fresh data provider, so CoreAnimation can never reuse
+/// a rasterisation it has already paid for, and a 900² RGBA fit render is decoded again on
+/// the main thread every time the card is drawn.
+///
+/// Two call sites made that expensive rather than merely wasteful. `FitCard` read the same
+/// render twice per body — once to draw and once to build the share item — in a
+/// horizontally scrolling row. And `FitPieceImage.cutout` is read from `FitCanvas`, whose
+/// body re-evaluates on every frame of a drag, for a dozen pieces: a dozen `open(2)` calls
+/// and a dozen decodes at 120Hz.
+///
+/// Decoded eagerly on insertion so the cost is paid once and explicitly, and budgeted by
+/// bytes for the same reason `ImageLoader`'s cache is.
+@MainActor
+enum LocalImage {
+    private static let cache: NSCache<NSString, UIImage> = {
+        let cache = NSCache<NSString, UIImage>()
+        cache.totalCostLimit = 64 << 20
+        return cache
+    }()
+
+    static func load(_ url: URL?) -> UIImage? {
+        guard let url else { return nil }
+        let key = url.path(percentEncoded: false) as NSString
+        if let hit = cache.object(forKey: key) { return hit }
+        guard let image = UIImage(contentsOfFile: key as String) else { return nil }
+        // Rasterise now rather than leaving it to the first draw, which would be inside a
+        // CoreAnimation commit. `preparingForDisplay` can decline, in which case the lazy
+        // image is still better cached than re-read.
+        let ready = image.preparingForDisplay() ?? image
+        cache.setObject(ready, forKey: key, cost: ready.byteCost)
+        return ready
+    }
+
+    /// Drops an entry whose file has been rewritten underneath it.
+    ///
+    /// A fit render is named after the fit, so editing one overwrites the same path — and a
+    /// cache keyed on the path would go on showing the previous arrangement for the rest of
+    /// the session. Cutouts are named per lift and never rewritten, but forgetting one on
+    /// deletion costs nothing.
+    static func forget(_ url: URL?) {
+        guard let url else { return }
+        cache.removeObject(forKey: url.path(percentEncoded: false) as NSString)
     }
 }
 

@@ -51,10 +51,40 @@ enum ImageTagger {
     /// changes. That is now visible rather than academic: the wall sizes each tile from
     /// the measured aspect, so an unmeasured item is drawn to a guess.
     static func analyzePending(in context: ModelContext, limit: Int = 12) async {
-        while !Task.isCancelled {
-            let analyzed = await analyzeBatch(in: context, limit: limit)
-            if analyzed < limit { return }
+        // **The queue is worked out once, not once per batch.**
+        //
+        // `analyzeBatch` used to fetch the entire `SavedItem` table itself, fault every
+        // save's `update`, filter, and then take twelve — and the loop below calls it until
+        // the backlog drains. On a collection of two hundred that is seventeen full table
+        // scans and roughly `N²/limit` relationship faults to do `N` items of work, all on
+        // the main actor.
+        //
+        // Nothing is lost by hoisting it: the pass only ever *removes* rows from this list
+        // by satisfying them, and a save made while it runs is picked up by the `.task(id:)`
+        // key that started it in the first place.
+        var queue = pending(in: context)
+        while !Task.isCancelled, !queue.isEmpty {
+            let batch = Array(queue.prefix(limit))
+            // **Counts items *resolved*, not items looked at.** An item whose photograph
+            // could not be fetched this minute stays pending on purpose (see `load`), so
+            // counting attempts would spin this loop forever against an offline network,
+            // re-requesting the same twelve URLs as fast as they can fail.
+            _ = await analyzeBatch(batch, in: context)
+            queue.removeFirst(batch.count)
         }
+    }
+
+    /// Everything saved that has work outstanding, newest first.
+    private static func pending(in context: ModelContext) -> [BrandUpdate] {
+        let saves = (try? context.fetch(
+            FetchDescriptor<SavedItem>(sortBy: [SortDescriptor(\.savedAt, order: .reverse)])
+        )) ?? []
+        // Two independent reasons to look at a photograph, and they have to be tracked
+        // separately. `analyzedAt` is stamped once and forever; the cutout arrived later
+        // and carries its own version, so everything saved before it existed is still due
+        // even though it was analysed long ago. Filtering on `analyzedAt` alone is what
+        // left the canvas with no stickers at all on an established collection.
+        return saves.compactMap(\.update).filter(\.needsAnalysis)
     }
 
     /// How many saved items currently have work outstanding.
@@ -67,33 +97,15 @@ enum ImageTagger {
     /// save something else. Keying on the backlog instead means new work *is* the trigger,
     /// and the pass settling back to zero is what stops it.
     static func backlog(in saves: [SavedItem]) -> Int {
-        saves.count { save in
-            guard let update = save.update, update.primaryImageURL != nil else { return false }
-            return update.analyzedAt == nil || update.hasUnreadPhotograph
-                || update.needsCutout || update.needsVisualReading
-        }
+        saves.count { $0.update?.needsAnalysis == true }
     }
 
-    /// One batch. Returns how many were looked at, so the caller knows whether the
-    /// backlog is drained.
-    private static func analyzeBatch(in context: ModelContext, limit: Int) async -> Int {
-        let saves = (try? context.fetch(FetchDescriptor<SavedItem>())) ?? []
-        // Two independent reasons to look at a photograph, and they have to be tracked
-        // separately. `analyzedAt` is stamped once and forever; the cutout arrived later
-        // and carries its own version, so everything saved before it existed is still due
-        // even though it was analysed long ago. Filtering on `analyzedAt` alone is what
-        // left the canvas with no stickers at all on an established collection.
-        let pending = saves
-            .compactMap(\.update)
-            .filter {
-                $0.primaryImageURL != nil
-                    && ($0.analyzedAt == nil || $0.hasUnreadPhotograph
-                        || $0.needsCutout || $0.needsVisualReading)
-            }
-            .prefix(limit)
+    /// One batch. Returns how many were resolved.
+    private static func analyzeBatch(_ pending: [BrandUpdate], in context: ModelContext) async -> Int {
         guard !pending.isEmpty else { return 0 }
 
         var cut = 0
+        var resolved = 0
         for update in pending {
             guard let url = update.primaryImageURL else { continue }
             // A photograph nobody has looked at makes all three due again, whatever the
@@ -107,17 +119,50 @@ enum ImageTagger {
             let needsCutout = update.needsCutout || isNewPhotograph
             let needsReading = update.needsVisualReading || isNewPhotograph
 
-            guard let image = await load(url) else {
-                // Mark it anyway, on every count. A dead image URL will never resolve, and
-                // retrying it on every launch is a permanent background cost for nothing.
-                // Recording *which* URL failed is what lets a repaired row through later
-                // without reopening this one.
-                update.analyzedAt = Date()
-                update.analyzedImageURL = url.absoluteString
-                update.cutoutVersion = Cutout.version
-                update.visionVersion = VisualReading.version
+            // **A photograph that did not answer is not a photograph that never will.**
+            //
+            // This used to write the item off on *any* failure to load: stamp `analyzedAt`,
+            // both versions and `analyzedImageURL`, and move on. The reasoning — a dead URL
+            // must not be retried forever — is right about a 404 and wrong about everything
+            // else, and everything else is the common case: a phone that was offline for
+            // the second the pass ran, a CDN timing out, a rate limit. One such moment
+            // permanently cost that item its cutout, its colours, its silhouette and its
+            // measured aspect, with every version field current so nothing would ever look
+            // again. On the fit canvas that is a garment drawn as a raw product shot — a
+            // white rectangle on the canvas, next to pieces that lifted fine.
+            //
+            // So a definitive answer is written off and an inconclusive one is left pending.
+            let loaded = await load(url)
+            guard case .image(let lead) = loaded else {
+                if case .gone = loaded {
+                    // Recording *which* URL failed is what lets a repaired row through
+                    // later without reopening this one — see `analyzedImageURL`.
+                    update.analyzedAt = Date()
+                    update.analyzedImageURL = url.absoluteString
+                    update.cutoutVersion = Cutout.version
+                    update.visionVersion = VisualReading.version
+                    resolved += 1
+                }
                 continue
             }
+
+            // **Everything below measures the packshot, not necessarily the lead shot.**
+            //
+            // A brand that leads its gallery with a lookbook — Stüssy publishes four model
+            // shots and one packshot, model first — was having its *model* measured: the
+            // cutout lifted a person, `Silhouette` recorded a human outline as the shape of
+            // a shirt, and the dominant colour came off a lookbook background. See
+            // `ProductShot`. `analyzedImageURL` is still stamped with the **lead** URL
+            // below, because that field's job is to notice the gallery being replaced.
+            let shot = await ProductShot.choose(
+                first: ProductShot.Choice(url: url, image: lead),
+                others: Array(update.imageURLs.dropFirst()),
+                load: { candidate in
+                    if case .image(let image) = await load(candidate) { image } else { nil }
+                }
+            )
+            let image = shot.image
+            update.packshotURLString = shot.url.absoluteString
 
             if needsTags {
                 // Free: the image is already decoded, and the wall would otherwise be
@@ -159,16 +204,28 @@ enum ImageTagger {
                 //
                 // The old file goes first: the name is derived from the item id, so a lift
                 // that now finds nothing would otherwise leave last revision's sticker on
-                // disk with no row pointing at it.
-                if needsCutout, let stale = update.cutoutFile { Cutout.remove(stale) }
-                let lift = await Cutout.make(from: image, named: Cutout.name(for: update.id))
+                // disk with no row pointing at it — and `Cutout.remove` is also what drops
+                // the decoded copy, or the canvas draws the previous revision's sticker for
+                // the rest of the session however good the new one is.
+                //
+                // Removed by the name this pass is about to write rather than by the stored
+                // one. They are the same string whenever a sticker is recorded, and when the
+                // row says nil the file can still be there — a lift that found nothing last
+                // time round leaves exactly that orphan.
+                let name = Cutout.name(for: update.id)
+                if needsCutout { Cutout.remove(name) }
+                // `writeFile` only when the sticker is actually due. When this is running for
+                // the reading alone the mask is all that is wanted, and encoding a
+                // full-resolution RGBA PNG to overwrite a current file with its own contents
+                // is the most expensive no-op in the pass.
+                let lift = await Cutout.make(from: image, named: name, writeFile: needsCutout)
                 if needsCutout {
                     update.cutoutFile = lift.file
                     update.cutoutVersion = Cutout.version
                     if lift.file != nil { cut += 1 }
                 }
                 if needsReading, let mask = lift.mask {
-                    update.visionSilhouette = Silhouette.measure(mask, slot: update.garmentSlot)
+                    update.visionSilhouette = await Silhouette.measure(mask, slot: update.garmentSlot)
                 }
             }
 
@@ -177,10 +234,11 @@ enum ImageTagger {
             // of them.
             if needsReading { update.visionVersion = VisualReading.version }
             update.analyzedImageURL = url.absoluteString
+            resolved += 1
         }
         try? context.save()
-        log.info("looked at \(pending.count) saved items, lifted \(cut)")
-        return pending.count
+        log.info("looked at \(pending.count) saved items, resolved \(resolved), lifted \(cut)")
+        return resolved
     }
 
     // MARK: - Categories
@@ -235,14 +293,61 @@ enum ImageTagger {
 
     // MARK: - Loading
 
-    /// Goes through the shared cache the feed already fills, so an item saved from the
-    /// feed is usually analysed without a second download.
-    private static func load(_ url: URL) async -> UIImage? {
+    /// What came back, and — crucially — whether asking again could ever change it.
+    ///
+    /// The distinction is the whole point: a caller that treats every failure as permanent
+    /// writes an item off for being offline for one second. See the use site.
+    private enum Load {
+        case image(UIImage)
+        /// The host answered and what it said is not a picture: a 404, a removed asset, a
+        /// format nothing here can decode. Asking again gets the same answer.
+        case gone
+        /// Nothing usable came back *this time* — no network, a timeout, a 5xx, a rate
+        /// limit. Temporary by definition, so the item stays due.
+        case unavailable
+    }
+
+    /// How wide a photograph is worth fetching *to be measured*.
+    ///
+    /// Everything downstream works far below this already — `Histogram` samples a 48² grid,
+    /// `Silhouette` a 256px outline, `Seamless` a 1200px canvas — and the cutout's largest
+    /// consumer is `FitPieceImage` at `drawnWidth` points. So a full-resolution original buys
+    /// nothing and costs on every axis at once: the download, the decode, and every Vision
+    /// request in the pass, which are all proportional to the pixels handed to them.
+    ///
+    /// Matching `FitPieceImage.drawnWidth` is deliberate rather than a coincidence of
+    /// numbers. It resolves to the same rendition the canvas asks the CDN for, so the two
+    /// share a `URLCache` entry instead of pulling one photograph twice at two sizes.
+    private static let measuredWidth = FitPieceImage.drawnWidth
+
+    private static func load(_ url: URL) async -> Load {
         do {
-            let (data, _) = try await URLSession.shared.data(from: url)
-            return UIImage(data: data)
+            // Asked for at the size it will be used at. `sized` leaves an unrecognised host
+            // alone, which is exactly the class of host that ships 3200² PNGs — so the cap
+            // in `decode` is what protects those, and the two work as a pair.
+            var request = URLRequest(url: ImageRendition.sized(url, width: measuredWidth))
+            request.setValue(Net.userAgent, forHTTPHeaderField: "User-Agent")
+            let (data, response) = try await URLSession.shared.data(for: request)
+            if let http = response as? HTTPURLResponse {
+                // 429 and 5xx are the CDN asking to be left alone for a moment, which is
+                // the opposite of a reason to give up on the item forever.
+                if http.statusCode == 429 || http.statusCode >= 500 { return .unavailable }
+                if http.statusCode >= 400 { return .gone }
+            }
+            // A 200 carrying something that will not decode is a genuine dead end: an
+            // error page served as HTML, or a format this OS has no decoder for.
+            //
+            // Decoded through `ImageLoader` rather than `UIImage(data:)`, which is the same
+            // correction the feed already made and this pass never got. `UIImage(data:)`
+            // produces **no pixels** — it wraps a data provider, and the rasterisation is
+            // deferred to whoever first asks for `cgImage`. Here that is `Histogram`, called
+            // from a `@MainActor` type: the whole multi-megapixel decode landed on the main
+            // thread, twelve times a batch, in a loop that drains the entire backlog.
+            return ImageLoader
+                .decoded(data, maxPixel: ImageRendition.pixels(for: measuredWidth))
+                .map(Load.image) ?? .gone
         } catch {
-            return nil
+            return .unavailable
         }
     }
 }

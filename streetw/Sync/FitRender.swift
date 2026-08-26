@@ -46,7 +46,10 @@ enum FitRender {
     static func warm(_ fit: Fit) async -> Bool {
         var isComplete = true
         for entry in fit.placed where entry.item.update?.cutoutFile == nil {
-            guard let url = entry.item.update?.primaryImageURL else {
+            // The same photograph `FitPieceImage` will draw, at the same width — asking for
+            // a different one warms a cache entry the renderer never looks in, and writes a
+            // fit with a hole where the piece should be.
+            guard let url = FitPieceImage.source(for: entry.item) else {
                 // A product whose source published no photograph at all. Nothing will ever
                 // decode for it, so this is not a retryable failure — it is a fit with a
                 // permanent gap, and the live canvas is the honest way to show it.
@@ -69,7 +72,7 @@ enum FitRender {
     /// it is just a picture of empty tiles.
     @MainActor
     @discardableResult
-    static func write(_ fit: Fit, side: CGFloat = 900) -> String? {
+    static func write(_ fit: Fit, side: CGFloat = 900) async -> String? {
         let renderer = ImageRenderer(
             content: FitCanvasSurface(fit: fit, isEditing: false)
                 .frame(width: side, height: side)
@@ -79,22 +82,39 @@ enum FitRender {
         // and multiplying by 3 on a Pro would write a 2700px PNG for a 168pt card.
         renderer.scale = 1
 
-        guard let image = renderer.uiImage, let data = image.pngData() else {
+        guard let image = renderer.uiImage else {
             log.error("could not render fit \(fit.id, privacy: .public)")
             return nil
         }
         let name = name(for: fit.id)
-        do {
-            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-            try data.write(to: url(for: name), options: .atomic)
-            return name
-        } catch {
-            log.error("could not write fit render: \(error.localizedDescription)")
-            return nil
-        }
+        // The **render** has to be on the main actor — `ImageRenderer` draws a SwiftUI view.
+        // Compressing 810,000 pixels to PNG and writing them out does not, and at 50–150ms
+        // it is the larger half. That whole cost used to land on the main thread at the
+        // moment somebody taps Done, which is the hitch on saving a fit.
+        guard await encode(image, to: url(for: name)) else { return nil }
+        // The file is named after the fit, so an edit overwrites the path a card may already
+        // have cached. Without this the row goes on showing the previous arrangement.
+        LocalImage.forget(url(for: name))
+        return name
     }
 
-    nonisolated static func remove(_ name: String) {
+    private nonisolated static func encode(_ image: UIImage, to destination: URL) async -> Bool {
+        await Task.detached(priority: .userInitiated) {
+            guard let data = image.pngData() else { return false }
+            do {
+                try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+                try data.write(to: destination, options: .atomic)
+                return true
+            } catch {
+                log.error("could not write fit render: \(error.localizedDescription)")
+                return false
+            }
+        }.value
+    }
+
+    @MainActor
+    static func remove(_ name: String) {
+        LocalImage.forget(url(for: name))
         try? FileManager.default.removeItem(at: url(for: name))
     }
 }

@@ -27,6 +27,28 @@ struct BrandFeedView: View {
     /// "+36 more" and being shown the womenswear a Menswear setting had just hidden reads
     /// as the setting being broken — the page you came from and the page you land on have
     /// to agree about what you asked for.
+    ///
+    /// **This is the page where marking a card read felt slow, and the cost was measured
+    /// rather than guessed at.** Marking one read is a `context.save()`, which re-renders
+    /// this view, which re-derives the whole list — twice, as it happens. Broken into
+    /// phases against a real 400-product Kith catalogue on an iPhone 17 Pro:
+    ///
+    /// | phase | cost |
+    /// |---|---|
+    /// | reading `brand.updates` | **0.0ms** — the relationship is already faulted and cached |
+    /// | `!isSeen` + `passes` over 400 rows | 0.4ms |
+    /// | `oncePerProduct` | **18–22ms** |
+    ///
+    /// So essentially all of it was the sort inside `oncePerProduct`, and none of it was
+    /// what it looked like from the outside. Two plausible fixes were wrong and are worth
+    /// naming so they are not tried again: narrowing this to a `@Query` on `BrandUpdate`
+    /// with a `$0.brand?.id == brandID` predicate made it **three times slower** (54–92ms —
+    /// the relationship traversal is a correlated subquery, and the relationship it replaces
+    /// was free), and memoising the result buys little once the sort is cheap. The fix is in
+    /// `BrandUpdate.oncePerProduct`, where it also serves every other list in the app.
+    ///
+    /// One mark-read, end to end: **44.3ms before, 8.2ms after** — from four dropped frames
+    /// at 120Hz to none.
     private var updates: [BrandUpdate] {
         let profile = sizes.profile
         // One card per garment. This page is the longest list in the app — a brand's whole
@@ -60,10 +82,16 @@ struct BrandFeedView: View {
     }
 
     var body: some View {
-        ScrollView {
-            // One evaluation, reused by the `ForEach` and by the warm-up below it.
-            let updates = self.updates
+        // **Hoisted above the `ScrollView`, not inside its content closure.**
+        //
+        // The `let` used to sit inside the builder, which scoped it to the content — so the
+        // `.onChange(of: updates.isEmpty)` modifier applied *outside* it resolved to the
+        // computed property again and re-evaluated the whole thing: a full walk of the
+        // brand's catalogue, `passes` per row, and `oncePerProduct`'s sort, twice per render
+        // on the longest list in the app.
+        let updates = self.updates
 
+        return ScrollView {
             LazyVStack(alignment: .leading, spacing: 40) {
                 ForEach(Array(updates.enumerated()), id: \.element.id) { position, update in
                     // A release is not a garment and must not be drawn as one here either

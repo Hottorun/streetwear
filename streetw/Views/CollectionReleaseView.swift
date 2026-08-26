@@ -23,9 +23,44 @@ struct CollectionReleaseView: View {
 
     let update: BrandUpdate
 
-    private var members: [BrandUpdate] {
-        guard let brand = update.brand else { return [] }
-        return brand.members(of: update).filter { $0.passes(sizes.profile) }
+    /// The release's contents and everything read off them, worked out **once**.
+    ///
+    /// `Brand.members(of:)` is O(the brand's entire catalogue) and expensive at that: it
+    /// faults the whole `updates` relationship, runs `oncePerProduct` (a full sort), builds
+    /// a fresh joined-and-lowercased string per candidate for the word match, and sorts
+    /// again. It was a computed property read **six times** per evaluation of this body —
+    /// once via `yours`, twice by the masthead's count, and three more in the grid branch.
+    ///
+    /// `yours` was worse than its share: `$0.save` and `$0.activeWatches` are both to-many
+    /// relationships, so the filter faulted two per member and the comparator then
+    /// re-evaluated `activeWatches` O(n log n) times. The watch flag is computed once per
+    /// member here and the sort reads a `Bool`.
+    private struct Release {
+        var members: [BrandUpdate] = []
+        var yours: [BrandUpdate] = []
+        /// Which of `yours` are watched rather than merely saved — the tile prints it, and
+        /// asking again would fault the relationship a third time.
+        var watched: Set<UUID> = []
+    }
+
+    private func read() -> Release {
+        guard let brand = update.brand else { return Release() }
+        let profile = sizes.profile
+        let members = brand.members(of: update).filter { $0.passes(profile) }
+
+        var watched: Set<UUID> = []
+        var yours: [(update: BrandUpdate, isWatched: Bool)] = []
+        for member in members {
+            let isWatched = !member.activeWatches.isEmpty
+            guard isWatched || member.save != nil else { continue }
+            if isWatched { watched.insert(member.id) }
+            yours.append((member, isWatched))
+        }
+        // Watched first, since a standing watch is the more urgent of the two.
+        yours.sort { a, b in
+            a.isWatched == b.isWatched ? BrandUpdate.newestFirst(a.update, b.update) : a.isWatched
+        }
+        return Release(members: members, yours: yours.map(\.update), watched: watched)
     }
 
     /// The pieces in this release you have already made a decision about.
@@ -38,24 +73,17 @@ struct CollectionReleaseView: View {
     /// Saved *or* watched, because both are the same statement made in different tenses: one
     /// is "I want this" and the other is "I want this the moment it exists". Watched first,
     /// since a standing watch is the more urgent of the two.
-    private var yours: [BrandUpdate] {
-        members
-            .filter { $0.save != nil || !$0.activeWatches.isEmpty }
-            .sorted { a, b in
-                let (mine, theirs) = (!a.activeWatches.isEmpty, !b.activeWatches.isEmpty)
-                return mine == theirs ? BrandUpdate.newestFirst(a, b) : mine
-            }
-    }
-
     private let columns = [GridItem(.flexible(), spacing: 14), GridItem(.flexible(), spacing: 14)]
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 24) {
-                masthead
-                mine
+        let release = read()
 
-                if members.isEmpty {
+        return ScrollView {
+            VStack(alignment: .leading, spacing: 24) {
+                masthead(release)
+                mine(release)
+
+                if release.members.isEmpty {
                     // Honest about which of the two it is. A collection whose garments
                     // haven't been polled yet is a different thing from one the brand
                     // published empty, and the second is common enough — a merchandiser
@@ -67,7 +95,7 @@ struct CollectionReleaseView: View {
                     .frame(minHeight: 220)
                 } else {
                     LazyVGrid(columns: columns, alignment: .leading, spacing: 22) {
-                        ForEach(members) { member in
+                        ForEach(release.members) { member in
                             MemberTile(update: member)
                                 .productLink(member)
                         }
@@ -95,8 +123,8 @@ struct CollectionReleaseView: View {
     /// is a horizontal rail rather than a second grid so that on a release where you have
     /// kept one thing it costs one row, and the release itself is still the page.
     @ViewBuilder
-    private var mine: some View {
-        let kept = yours
+    private func mine(_ release: Release) -> some View {
+        let kept = release.yours
         if !kept.isEmpty {
             VStack(alignment: .leading, spacing: 12) {
                 HStack(alignment: .firstTextBaseline) {
@@ -118,9 +146,9 @@ struct CollectionReleaseView: View {
                                 // different actions: a watch is waiting on stock, a save is
                                 // waiting on you.
                                 DataLabel(
-                                    text: member.activeWatches.isEmpty ? "SAVED" : "WATCHING",
+                                    text: release.watched.contains(member.id) ? "WATCHING" : "SAVED",
                                     size: 9,
-                                    color: member.activeWatches.isEmpty ? .muted : .signal
+                                    color: release.watched.contains(member.id) ? .signal : .muted
                                 )
                             }
                             .productLink(member)
@@ -135,7 +163,7 @@ struct CollectionReleaseView: View {
         }
     }
 
-    private var masthead: some View {
+    private func masthead(_ release: Release) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             DataLabel(text: "COLLECTION · \(Stamp.short(update.publishedAt).uppercased())")
 
@@ -152,8 +180,9 @@ struct CollectionReleaseView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
 
-            if !members.isEmpty {
-                DataLabel(text: "\(members.count) \(members.count == 1 ? "PIECE" : "PIECES")")
+            if !release.members.isEmpty {
+                let count = release.members.count
+                DataLabel(text: "\(count) \(count == 1 ? "PIECE" : "PIECES")")
                     .padding(.top, 2)
             }
 
@@ -214,14 +243,26 @@ struct CollectionCard: View {
 
     let update: BrandUpdate
 
-    private var members: [BrandUpdate] {
-        guard let brand = update.brand else { return [] }
-        return brand.members(of: update)
-            .filter { $0.passes(sizes.profile) && $0.primaryImageURL != nil }
+    /// The contents, for the preview strip and the count under it.
+    ///
+    /// Only the strip's worth is kept. `Brand.members(of:)` walks the brand's whole
+    /// catalogue and sorts it twice; the card draws eight tiles, and the count says how many
+    /// there are, so nothing beyond that needs holding.
+    private func members() -> (shown: [BrandUpdate], total: Int) {
+        guard let brand = update.brand else { return ([], 0) }
+        let profile = sizes.profile
+        let all = brand.members(of: update).filter { $0.passes(profile) && $0.hasPhotograph }
+        return (Array(all.prefix(8)), all.count)
     }
 
     var body: some View {
-        NavigationLink(value: ReleaseRoute(update: update)) {
+        // **Once per card, not four times.** This card is drawn inside the feed's
+        // `LazyVStack`, and `members` was a computed property read four times per body — so
+        // marking a brand read, which re-renders every visible spread, paid four full walks
+        // of that brand's catalogue per collection on screen.
+        let members = members()
+
+        return NavigationLink(value: ReleaseRoute(update: update)) {
             VStack(alignment: .leading, spacing: 0) {
                 // The brand's own artwork when there is any — a lookbook cover is worth the
                 // whole width — and nothing at all when there isn't. A collection with no
@@ -253,10 +294,10 @@ struct CollectionCard: View {
                 }
                 .padding(.horizontal, 20)
 
-                if !members.isEmpty {
+                if !members.shown.isEmpty {
                     ScrollView(.horizontal) {
                         HStack(spacing: 10) {
-                            ForEach(members.prefix(8)) { member in
+                            ForEach(members.shown) { member in
                                 UpdateImage(
                                     url: member.primaryImageURL,
                                     kind: member.kind,
@@ -276,7 +317,7 @@ struct CollectionCard: View {
                     // between opening the release and opening one garment.
                     .allowsHitTesting(false)
 
-                    DataLabel(text: "\(members.count) \(members.count == 1 ? "PIECE" : "PIECES") IN THIS RELEASE")
+                    DataLabel(text: "\(members.total) \(members.total == 1 ? "PIECE" : "PIECES") IN THIS RELEASE")
                         .padding(.horizontal, 20)
                         .padding(.top, 12)
                 }

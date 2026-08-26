@@ -38,7 +38,20 @@ enum VisualReading {
 
     /// Bump whenever any measurement below changes, so rows carrying an older answer get
     /// one more look. See `BrandUpdate.visionVersion`.
-    static let version = 1
+    ///
+    /// **2 is a repair, exactly as `Cutout.version` 2 is**, and for the same fault:
+    /// `ImageTagger` stamped this alongside the cutout on any failure to fetch the
+    /// photograph, transient ones included, so rows exist at version 1 with no colour, no
+    /// busyness, no silhouette and nothing that will ever ask again. Those items are
+    /// invisible to the style reading and to every fit suggestion.
+    ///
+    /// **3 travels with `Cutout.version` 3, and it has to.** The silhouette is measured by
+    /// `Silhouette` but stamped under *this* version, and its only input is the mask
+    /// `Cutout` produces — so a revision that changes which lifts are accepted changes the
+    /// answer here too. `ImageTagger` runs the lift when either is due and writes the
+    /// silhouette only when the reading is, so bumping the cutout alone would re-cut every
+    /// sticker and leave every shape measured against the mask that was just replaced.
+    static let version = 3
 
     /// What one photograph turned out to be. Every field is optional or zero-defaulted,
     /// because each measurement can decline independently and a partial reading is worth
@@ -153,14 +166,23 @@ enum VisualReading {
     /// sink every unanalysed item to the bottom of its list — which, on a collection where
     /// the pass has not finished draining, is most of it.
     static func distance(_ one: Data?, _ other: Data?) -> Double? {
-        guard let one, let other else { return nil }
-        do {
-            let decoder = PropertyListDecoder()
-            let a = try decoder.decode(FeaturePrintObservation.self, from: one)
-            let b = try decoder.decode(FeaturePrintObservation.self, from: other)
-            return try a.distance(to: b)
-        } catch {
-            return nil
-        }
+        guard let decoded = fingerprint(one) else { return nil }
+        return distance(decoded, other)
+    }
+
+    /// Decodes a stored fingerprint once, for a caller comparing one subject against many.
+    ///
+    /// `distance(_:_:)` decodes **both** sides, and the ranking that uses it holds one side
+    /// fixed — so scoring a product against a few hundred candidates decoded the subject's
+    /// own two-kilobyte plist a few hundred times. Splitting the decode out is free and
+    /// removes it from the loop.
+    static func fingerprint(_ data: Data?) -> FeaturePrintObservation? {
+        guard let data else { return nil }
+        return try? PropertyListDecoder().decode(FeaturePrintObservation.self, from: data)
+    }
+
+    static func distance(_ one: FeaturePrintObservation, _ other: Data?) -> Double? {
+        guard let other = fingerprint(other) else { return nil }
+        return try? one.distance(to: other)
     }
 }
