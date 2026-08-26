@@ -2,6 +2,20 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<!--
+	  Answers, once and in the build, the export-compliance question App Store Connect
+	  otherwise asks on every single upload — and holds the build in "Missing Compliance"
+	  until somebody clicks through it by hand.
+
+	  `false` is the correct answer rather than the convenient one. The question is whether
+	  the app uses *non-exempt* encryption; everything here is HTTPS to our own server and
+	  to storefront CDNs through URLSession, which is standard TLS and exempt. Nothing in
+	  this app implements or bundles its own cryptography. If that ever stops being true —
+	  a proprietary cipher, or encrypting stored data with a scheme of our own — this key
+	  has to change, because it is a legal declaration and not a build setting.
+	-->
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
 	<key>BGTaskSchedulerPermittedIdentifiers</key>
 	<array>
 		<string>functional.streetw.refresh</string>

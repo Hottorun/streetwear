@@ -1,0 +1,127 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  The privacy manifest. Required since May 2024, and its absence is not a warning: the
+  upload is rejected at intake with ITMS-91053 ("Missing API declaration") before any
+  human sees the build. It is easy to miss precisely because nothing local catches it —
+  the app builds, runs and tests clean without it.
+
+  It lives in `streetw/` rather than beside the .xcodeproj, which is the opposite of where
+  `streetw-Info.plist` sits and for the same reason. That directory is a
+  PBXFileSystemSynchronizedRootGroup, so anything dropped in it is copied into the bundle
+  as a resource — which is wrong for an Info.plist and exactly right for this, since Apple
+  looks for it at the root of the built .app.
+
+  Two things are declared and the distinction matters:
+
+  - `NSPrivacyAccessedAPITypes` is the part that blocks the upload. It is about *calling*
+    an API Apple considers fingerprintable, regardless of what you do with the result.
+  - `NSPrivacyCollectedDataTypes` is the nutrition label, and it must agree with the
+    answers given in App Store Connect. ASC is the authoritative copy; a contradiction
+    between the two is its own review problem.
+-->
+<plist version="1.0">
+<dict>
+	<!--
+	  No tracking, in Apple's specific sense of the word: nothing here is joined with data
+	  from other companies' apps or sites, and nothing is sold to a data broker. This is
+	  what keeps the app out of App Tracking Transparency — with this false, no
+	  `NSUserTrackingUsageDescription` is needed and the ATT prompt must never appear.
+	-->
+	<key>NSPrivacyTracking</key>
+	<false/>
+	<key>NSPrivacyTrackingDomains</key>
+	<array/>
+
+	<key>NSPrivacyAccessedAPITypes</key>
+	<array>
+		<dict>
+			<!--
+			  The only required-reason API this app touches. It is used in six files —
+			  `ServerSettings` (the server address and device token), `SizeProfileStore`,
+			  `StyleStatementStore`, `RemoteSync`'s feed cursor, and the `@AppStorage`
+			  flags in `ContentView`/`streetwApp`.
+
+			  `CA92.1` is the right reason: every read and write is this app's own data,
+			  in its own container. It is *not* `1C8F.1`, which covers a suite shared
+			  through an App Group — the app group here carries the share-extension inbox
+			  as files on disk, and no `UserDefaults(suiteName:)` exists anywhere in the
+			  project.
+
+			  Deliberately nothing else is declared. FileTimestamp in particular does not
+			  apply: `SharedInbox.pending()` lists the inbox directory with
+			  `includingPropertiesForKeys: nil` and orders by a date carried *inside* each
+			  JSON payload, so no filesystem timestamp is ever read. Declaring a category
+			  that isn't used is not a safe default — it puts a claim on the nutrition
+			  label that the code cannot support.
+			-->
+			<key>NSPrivacyAccessedAPIType</key>
+			<string>NSPrivacyAccessedAPICategoryUserDefaults</string>
+			<key>NSPrivacyAccessedAPITypeReasons</key>
+			<array>
+				<string>CA92.1</string>
+			</array>
+		</dict>
+	</array>
+
+	<key>NSPrivacyCollectedDataTypes</key>
+	<array>
+		<dict>
+			<!--
+			  The device row: a server-issued bearer token and an APNs device token. There
+			  is no account, no email and no name anywhere in this system — but the row is
+			  persistent and everything below hangs off it, so it is reported as linked
+			  rather than pretending pseudonymity is anonymity.
+			-->
+			<key>NSPrivacyCollectedDataType</key>
+			<string>NSPrivacyCollectedDataTypeDeviceID</string>
+			<key>NSPrivacyCollectedDataTypeLinked</key>
+			<true/>
+			<key>NSPrivacyCollectedDataTypeTracking</key>
+			<false/>
+			<key>NSPrivacyCollectedDataTypePurposes</key>
+			<array>
+				<string>NSPrivacyCollectedDataTypePurposeAppFunctionality</string>
+			</array>
+		</dict>
+		<dict>
+			<!--
+			  Which brands are followed and which products are watched. This is the whole
+			  point of the server: it polls once for everyone and sends a push when
+			  something a follower cares about moves.
+			-->
+			<key>NSPrivacyCollectedDataType</key>
+			<string>NSPrivacyCollectedDataTypeProductInteraction</string>
+			<key>NSPrivacyCollectedDataTypeLinked</key>
+			<true/>
+			<key>NSPrivacyCollectedDataTypeTracking</key>
+			<false/>
+			<key>NSPrivacyCollectedDataTypePurposes</key>
+			<array>
+				<string>NSPrivacyCollectedDataTypePurposeAppFunctionality</string>
+			</array>
+		</dict>
+		<dict>
+			<!--
+			  The size profile and the gender filter, sent so the server can decide whether
+			  a restock is worth waking someone for.
+
+			  Note what is *not* here, and is not an oversight: saves, boards, fits, the
+			  style statement, the taste vector and every dismissal stay on the device by
+			  design. The recommender ships candidate vectors down and compares locally
+			  precisely so none of that has to be collected.
+			-->
+			<key>NSPrivacyCollectedDataType</key>
+			<string>NSPrivacyCollectedDataTypeOtherDataTypes</string>
+			<key>NSPrivacyCollectedDataTypeLinked</key>
+			<true/>
+			<key>NSPrivacyCollectedDataTypeTracking</key>
+			<false/>
+			<key>NSPrivacyCollectedDataTypePurposes</key>
+			<array>
+				<string>NSPrivacyCollectedDataTypePurposeAppFunctionality</string>
+			</array>
+		</dict>
+	</array>
+</dict>
+</plist>
