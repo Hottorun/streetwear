@@ -74,6 +74,7 @@ func configure(_ app: Application) async throws {
     app.migrations.add(AddEventPrice())
     app.migrations.add(AddProductBrandIndex())
     app.migrations.add(AddBrandNotifyLedger())
+    app.migrations.add(CreatePollHints())
     if Environment.get("AUTO_MIGRATE") != "false" {
         try await app.autoMigrate()
     }

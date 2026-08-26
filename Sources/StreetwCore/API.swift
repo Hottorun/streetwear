@@ -151,7 +151,81 @@ public struct WatchDTO: Codable, Sendable, Hashable, Identifiable {
     }
 }
 
+/// "This brand drops at this moment — poll it harder around then."
+///
+/// The whole of what a hand-entered date sends to the server. A brand and an instant, and
+/// nothing else: not the title, not the note, not which of somebody's several drops this
+/// is. See `PollHintPolicy` for everything that constrains it, and `PlannedDrop` for why
+/// the calendar itself never leaves the phone.
+///
+/// There is no window in this type on purpose. How long a hint lasts is the server's
+/// decision and is echoed back in `PollHintsResponse` — a client that could name its own
+/// window could name a fortnight.
+public struct PollHint: Codable, Sendable, Hashable {
+    public var brandID: UUID
+    public var releaseAt: Date
+
+    public init(brandID: UUID, releaseAt: Date) {
+        self.brandID = brandID
+        self.releaseAt = releaseAt
+    }
+}
+
+/// The caller's **whole** set of hints, replacing whatever it held before.
+///
+/// A replace rather than a create/delete pair, and for the reason `DropReminders.refresh`
+/// rewrites the notification centre rather than diffing it: reconciling a set across edits,
+/// deletions, brands being unfollowed and a device being offline for a week is a mechanism
+/// that can drift, and drift here means the server quietly polling a storefront hard for a
+/// drop somebody deleted last month. Sending the whole set costs one small request and
+/// cannot drift.
+public struct PollHintSync: Codable, Sendable {
+    public var hints: [PollHint]
+
+    public init(hints: [PollHint]) {
+        self.hints = hints
+    }
+}
+
 // MARK: - Responses
+
+/// What the server actually took, and what it refused and why.
+///
+/// Both halves are load-bearing. `accepted` is what the client stores as "already sent", so
+/// it can skip the request next time nothing has changed. `rejected` names a reason per
+/// brand, because "your hint didn't work" is equally true when you don't follow the brand,
+/// when the date has passed, and when you sent too many — three different fixes, the same
+/// as `/admin/push-test` reports per device rather than as a count.
+public struct PollHintsResponse: Codable, Sendable {
+    public struct Rejected: Codable, Sendable, Hashable {
+        public var brandID: UUID
+        public var reason: PollHintPolicy.Rejection
+
+        public init(brandID: UUID, reason: PollHintPolicy.Rejection) {
+            self.brandID = brandID
+            self.reason = reason
+        }
+    }
+
+    public var accepted: [PollHint]
+    public var rejected: [Rejected]
+    /// The window the server applies, in seconds either side. Echoed so the app can say
+    /// what it bought without hard-coding a number that only the server decides.
+    public var windowBefore: TimeInterval
+    public var windowAfter: TimeInterval
+
+    public init(
+        accepted: [PollHint],
+        rejected: [Rejected] = [],
+        windowBefore: TimeInterval = PollHintPolicy.windowBefore,
+        windowAfter: TimeInterval = PollHintPolicy.windowAfter
+    ) {
+        self.accepted = accepted
+        self.rejected = rejected
+        self.windowBefore = windowBefore
+        self.windowAfter = windowAfter
+    }
+}
 
 public struct DeviceResponse: Codable, Sendable {
     public var deviceID: UUID

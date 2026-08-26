@@ -163,8 +163,8 @@ public enum GenderClassifier {
         handle: String? = nil
     ) -> Gender {
         var named = Signals()
-        consider(tokens(in: title), into: &named)
-        if let handle { consider(tokens(in: handle), into: &named) }
+        consider(lowered: title.lowercased(), into: &named)
+        if let handle { consider(lowered: handle.lowercased(), into: &named) }
 
         // The name settled it. Tags cannot overrule the manufacturer's own designation.
         if !named.isSilent { return named.resolved }
@@ -176,22 +176,45 @@ public enum GenderClassifier {
             // far too ambiguous to act on by itself.
             if womensTags.contains(lowered) { filed.womens = true }
             if mensTags.contains(lowered) { filed.mens = true }
-            consider(tokens(in: lowered), into: &filed)
+            // Already lowercased above; `consider` would otherwise do it a second time,
+            // once per tag.
+            consider(lowered: lowered, into: &filed)
         }
-        if let productType { consider(tokens(in: productType), into: &filed) }
+        if let productType { consider(lowered: productType.lowercased(), into: &filed) }
 
         return filed.resolved
     }
 
-    private static func consider(_ words: some Sequence<String>, into signals: inout Signals) {
-        for word in words {
-            if unisexWords.contains(word) { signals.unisex = true }
+    /// Reads one already-lowercased field into `signals`.
+    ///
+    /// Tokenising and *looking* are one step on purpose. They used to be two, with
+    /// `tokens(in:)` returning `[String]` — so every field allocated an array of freshly
+    /// built strings that was walked once and thrown away, and `classify` reads thirteen
+    /// fields on a product with ten tags. Measured, that array-building was the bulk of the
+    /// classifier's cost. Iterating the `Substring`s directly keeps one allocation instead
+    /// of two and lets short tokens stay inline.
+    private static func consider(lowered text: String, into signals: inout Signals) {
+        var text = text
+        // **The phrase pass only runs on text that could contain one.** Every entry in
+        // `cutPhrases` begins with "baby", so a string without that word cannot match any of
+        // them — and this is called once per field, so three `replacingOccurrences` apiece
+        // was thirty-nine string rebuilds per classification for a rule that fires on a
+        // handful of products in the whole catalogue.
+        if text.contains(cutMarker) {
+            for phrase in cutPhrases {
+                text = text.replacingOccurrences(of: phrase, with: " ")
+            }
+        }
+
+        for word in text.split(whereSeparator: { !$0.isLetter && !$0.isNumber }) {
+            let token = String(word)
+            if unisexWords.contains(token) { signals.unisex = true }
             // Order is irrelevant here because these are whole tokens, never substrings —
             // which is the entire point. "womens" contains "mens", so any substring
             // search classifies every women's product as men's.
-            if womensWords.contains(word) { signals.womens = true }
-            if mensWords.contains(word) { signals.mens = true }
-            if kidsWords.contains(word) { signals.kids = true }
+            if womensWords.contains(token) { signals.womens = true }
+            if mensWords.contains(token) { signals.mens = true }
+            if kidsWords.contains(token) { signals.kids = true }
         }
     }
 
@@ -207,15 +230,8 @@ public enum GenderClassifier {
         )
     }
 
-    /// Splits on anything that isn't a letter or digit, so "Women's" yields "women" and
-    /// "mens-fall-24" yields "mens". Runs of noise collapse rather than producing empties.
-    private static func tokens(in text: String) -> [String] {
-        var lowered = text.lowercased()
-        for phrase in cutPhrases {
-            lowered = lowered.replacingOccurrences(of: phrase, with: " ")
-        }
-        return lowered
-            .split { !$0.isLetter && !$0.isNumber }
-            .map(String.init)
-    }
+    /// The word every entry in `cutPhrases` starts with. A cheap gate in front of them —
+    /// **it must stay in step with that list**: a phrase added there that does not contain
+    /// this word would silently never be applied.
+    private static let cutMarker = "baby"
 }

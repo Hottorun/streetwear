@@ -360,3 +360,41 @@ final class WatchModel: Model, @unchecked Sendable {
 
     var target: WatchTarget { WatchTarget(size: size, color: color) }
 }
+
+/// "This brand drops at this moment" — a date somebody typed, spending nothing but poll
+/// cadence.
+///
+/// Personal, like `FollowModel` and `WatchModel`, and for the same reason those are not a
+/// violation of the global-catalog rule: the *brand* stays one row for everybody, and this
+/// is one person's claim about it. Nothing here is ever read back to another user — there
+/// is no route that returns somebody else's hints, and no event, product or notification is
+/// derived from one. The only thing it can do is make `Poller` look sooner.
+///
+/// The two columns that are not obvious:
+///
+/// - **`release_at` is the only thing the client sets.** The window around it is
+///   `PollHintPolicy`'s and is applied at query time rather than stored, so tightening it
+///   on a deployment takes effect immediately rather than only for hints written after.
+/// - **Unique on (user_id, brand_id).** One hint per brand per person, which is what stops
+///   a client covering a whole week by posting a row every hour. `PUT /v1/poll-hints`
+///   replaces the caller's whole set, so the constraint is a guard rather than a thing
+///   normal use can hit.
+final class PollHintModel: Model, @unchecked Sendable {
+    static let schema = "poll_hints"
+
+    @ID(key: .id) var id: UUID?
+    @Parent(key: "user_id") var user: UserModel
+    @Parent(key: "brand_id") var brand: BrandModel
+    @Field(key: "release_at") var releaseAt: Date
+    @Timestamp(key: "created_at", on: .create) var createdAt: Date?
+
+    init() {}
+
+    init(userID: UUID, brandID: UUID, releaseAt: Date) {
+        self.$user.id = userID
+        self.$brand.id = brandID
+        self.releaseAt = releaseAt
+    }
+
+    var asPollHint: PollHint { PollHint(brandID: $brand.id, releaseAt: releaseAt) }
+}

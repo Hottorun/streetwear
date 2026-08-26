@@ -2541,3 +2541,421 @@ struct ProbeTests {
         }
     }
 }
+
+/// Poll hints — a hand-entered release time, spending nothing but poll cadence.
+///
+/// Written from the refusals outwards, because this is the one route where a client asks
+/// the server to spend requests against somebody else's storefront. Each test below pins one
+/// of the constraints named in `PollHintPolicy` and on the route itself; the last two pin the
+/// property that actually bounds the damage, which is that hinted sources are claimed against
+/// a separate budget and cannot starve the ordinary queue.
+@Suite("Poll hints")
+struct PollHintTests {
+    /// A registered device, and the user id behind it — needed to write the follow rows the
+    /// route insists on.
+    private func hinter(_ app: Application) async throws -> (HTTPHeaders, UUID) {
+        var token = ""
+        try await app.testing().test(.POST, "v1/devices", beforeRequest: { req in
+            try req.content.encode(RegisterDevice())
+        }, afterResponse: { res async throws in
+            token = try res.content.decode(DeviceResponse.self).token
+        })
+        let device = try #require(
+            try await DeviceModel.query(on: app.db).filter(\.$authToken == token).first()
+        )
+        return (HTTPHeaders([("Authorization", "Bearer \(token)")]), device.$user.id)
+    }
+
+    @discardableResult
+    private func brand(_ app: Application, slug: String = "example.com") async throws -> UUID {
+        let brand = BrandModel(
+            name: slug, slug: slug, website: "https://\(slug)",
+            instagramHandle: nil, usesGeneratedName: false
+        )
+        try await brand.save(on: app.db)
+        return try brand.requireID()
+    }
+
+    @Test("Hinting refuses anonymous callers")
+    func requiresADevice() async throws {
+        try await withServer { app in
+            try await app.testing().test(.PUT, "v1/poll-hints", beforeRequest: { req in
+                try req.content.encode(PollHintSync(hints: []))
+            }, afterResponse: { res async throws in
+                #expect(res.status == .unauthorized)
+            })
+        }
+    }
+
+    /// **The vector.** A hint makes the server fetch a storefront harder; asking for that on
+    /// a brand you have no relationship with is resource exhaustion with an id attached.
+    @Test("A hint for a brand you don't follow is refused, and nothing is stored")
+    func refusesABrandYouDoNotFollow() async throws {
+        try await withServer { app in
+            let (auth, _) = try await hinter(app)
+            let brandID = try await brand(app)
+
+            try await app.testing().test(.PUT, "v1/poll-hints", headers: auth, beforeRequest: { req in
+                try req.content.encode(PollHintSync(hints: [
+                    PollHint(brandID: brandID, releaseAt: Date().addingTimeInterval(3600))
+                ]))
+            }, afterResponse: { res async throws in
+                let body = try res.content.decode(PollHintsResponse.self)
+                #expect(body.accepted.isEmpty)
+                #expect(body.rejected.map(\.reason) == [.notFollowing])
+            })
+
+            #expect(try await PollHintModel.query(on: app.db).count() == 0)
+        }
+    }
+
+    /// And a brand id that is not in the catalogue at all is a *different* answer, because
+    /// the two have different fixes — one is "follow it", the other is "stop sending this".
+    @Test("An unknown brand is told so, rather than lumped in with a missing follow")
+    func namesAnUnknownBrand() async throws {
+        try await withServer { app in
+            let (auth, _) = try await hinter(app)
+
+            try await app.testing().test(.PUT, "v1/poll-hints", headers: auth, beforeRequest: { req in
+                try req.content.encode(PollHintSync(hints: [
+                    PollHint(brandID: UUID(), releaseAt: Date().addingTimeInterval(3600))
+                ]))
+            }, afterResponse: { res async throws in
+                let body = try res.content.decode(PollHintsResponse.self)
+                #expect(body.rejected.map(\.reason) == [.unknownBrand])
+            })
+        }
+    }
+
+    @Test("A hint on a followed brand is stored, and the window comes back with it")
+    func storesAFollowedBrandsHint() async throws {
+        try await withServer { app in
+            let (auth, userID) = try await hinter(app)
+            let brandID = try await brand(app)
+            try await FollowModel(userID: userID, brandID: brandID).save(on: app.db)
+            let releaseAt = Date().addingTimeInterval(3600)
+
+            try await app.testing().test(.PUT, "v1/poll-hints", headers: auth, beforeRequest: { req in
+                try req.content.encode(PollHintSync(hints: [
+                    PollHint(brandID: brandID, releaseAt: releaseAt)
+                ]))
+            }, afterResponse: { res async throws in
+                let body = try res.content.decode(PollHintsResponse.self)
+                #expect(body.accepted.count == 1)
+                #expect(body.rejected.isEmpty)
+                // The window is the server's to decide and is echoed rather than accepted.
+                #expect(body.windowBefore == PollHintPolicy.windowBefore)
+                #expect(body.windowAfter == PollHintPolicy.windowAfter)
+            })
+
+            let stored = try #require(try await PollHintModel.query(on: app.db).first())
+            #expect(stored.$brand.id == brandID)
+            #expect(abs(stored.releaseAt.timeIntervalSince(releaseAt)) < 1)
+        }
+    }
+
+    /// Refused whole rather than truncated. Keeping the first twenty of somebody's thirty is
+    /// a quiet wrong answer, and quiet wrong answers are what this codebase keeps a list of.
+    @Test("More than the cap is refused outright, not trimmed")
+    func refusesAnOversizedSetWhole() async throws {
+        try await withServer { app in
+            let (auth, userID) = try await hinter(app)
+            var hints: [PollHint] = []
+            for index in 0...(PollHintPolicy.maxPerUser) {
+                let brandID = try await brand(app, slug: "brand\(index).com")
+                try await FollowModel(userID: userID, brandID: brandID).save(on: app.db)
+                hints.append(PollHint(brandID: brandID, releaseAt: Date().addingTimeInterval(3600)))
+            }
+
+            try await app.testing().test(.PUT, "v1/poll-hints", headers: auth, beforeRequest: { req in
+                try req.content.encode(PollHintSync(hints: hints))
+            }, afterResponse: { res async throws in
+                let body = try res.content.decode(PollHintsResponse.self)
+                #expect(body.accepted.isEmpty)
+                #expect(body.rejected.allSatisfy { $0.reason == .tooMany })
+            })
+
+            #expect(try await PollHintModel.query(on: app.db).count() == 0)
+        }
+    }
+
+    /// Two hints for one brand is how a client would try to cover a whole week an hour at a
+    /// time. Neither wins — the caller has not said which should, and the unique index would
+    /// otherwise decide it by insertion order.
+    @Test("Two hints for one brand refuse each other")
+    func refusesTwoForOneBrand() async throws {
+        try await withServer { app in
+            let (auth, userID) = try await hinter(app)
+            let brandID = try await brand(app)
+            try await FollowModel(userID: userID, brandID: brandID).save(on: app.db)
+
+            try await app.testing().test(.PUT, "v1/poll-hints", headers: auth, beforeRequest: { req in
+                try req.content.encode(PollHintSync(hints: [
+                    PollHint(brandID: brandID, releaseAt: Date().addingTimeInterval(3600)),
+                    PollHint(brandID: brandID, releaseAt: Date().addingTimeInterval(7200))
+                ]))
+            }, afterResponse: { res async throws in
+                let body = try res.content.decode(PollHintsResponse.self)
+                #expect(body.accepted.isEmpty)
+                #expect(body.rejected.map(\.reason) == [.tooMany])
+            })
+
+            #expect(try await PollHintModel.query(on: app.db).count() == 0)
+        }
+    }
+
+    @Test("A date whose window has already closed is refused")
+    func refusesAClosedWindow() async throws {
+        try await withServer { app in
+            let (auth, userID) = try await hinter(app)
+            let brandID = try await brand(app)
+            try await FollowModel(userID: userID, brandID: brandID).save(on: app.db)
+
+            try await app.testing().test(.PUT, "v1/poll-hints", headers: auth, beforeRequest: { req in
+                try req.content.encode(PollHintSync(hints: [
+                    PollHint(
+                        brandID: brandID,
+                        releaseAt: Date().addingTimeInterval(-PollHintPolicy.windowAfter - 600)
+                    )
+                ]))
+            }, afterResponse: { res async throws in
+                let body = try res.content.decode(PollHintsResponse.self)
+                #expect(body.rejected.map(\.reason) == [.outOfRange])
+            })
+        }
+    }
+
+    /// The body is the complete set, so an empty one is how the app withdraws everything —
+    /// which is what it sends when the last planned drop is deleted.
+    @Test("An empty set withdraws what was there")
+    func anEmptySetWithdraws() async throws {
+        try await withServer { app in
+            let (auth, userID) = try await hinter(app)
+            let brandID = try await brand(app)
+            try await FollowModel(userID: userID, brandID: brandID).save(on: app.db)
+            try await PollHintModel(
+                userID: userID, brandID: brandID, releaseAt: Date().addingTimeInterval(3600)
+            ).save(on: app.db)
+
+            try await app.testing().test(.PUT, "v1/poll-hints", headers: auth, beforeRequest: { req in
+                try req.content.encode(PollHintSync(hints: []))
+            }, afterResponse: { res async throws in
+                #expect(res.status == .ok)
+            })
+
+            #expect(try await PollHintModel.query(on: app.db).count() == 0)
+        }
+    }
+
+    /// "Follow, hint, unfollow" would otherwise leave a window standing on a brand the caller
+    /// has no relationship with — exactly what the check on the write refuses. Enforced on the
+    /// server rather than trusted to the client.
+    @Test("Unfollowing takes the hint with it")
+    func unfollowingWithdrawsTheHint() async throws {
+        try await withServer { app in
+            let (auth, userID) = try await hinter(app)
+            let brandID = try await brand(app)
+            try await FollowModel(userID: userID, brandID: brandID).save(on: app.db)
+            try await PollHintModel(
+                userID: userID, brandID: brandID, releaseAt: Date().addingTimeInterval(3600)
+            ).save(on: app.db)
+
+            try await app.testing().test(
+                .DELETE, "v1/follows/\(brandID.uuidString)", headers: auth
+            ) { res in
+                #expect(res.status == .noContent)
+            }
+
+            #expect(try await PollHintModel.query(on: app.db).count() == 0)
+        }
+    }
+
+    @Test("A device only ever reads its own hints back")
+    func readsOnlyItsOwn() async throws {
+        try await withServer { app in
+            let (mine, myUserID) = try await hinter(app)
+            let (theirs, theirUserID) = try await hinter(app)
+            let brandID = try await brand(app)
+            try await PollHintModel(
+                userID: myUserID, brandID: brandID, releaseAt: Date().addingTimeInterval(3600)
+            ).save(on: app.db)
+            try await PollHintModel(
+                userID: theirUserID, brandID: brandID, releaseAt: Date().addingTimeInterval(7200)
+            ).save(on: app.db)
+
+            try await app.testing().test(
+                .GET, "v1/poll-hints", headers: mine,
+                afterResponse: { res async throws in
+                    let hints = try res.content.decode([PollHint].self)
+                    #expect(hints.count == 1)
+                    #expect(abs(hints[0].releaseAt.timeIntervalSinceNow - 3600) < 5)
+                }
+            )
+            try await app.testing().test(
+                .GET, "v1/poll-hints", headers: theirs,
+                afterResponse: { res async throws in
+                    let hints = try res.content.decode([PollHint].self)
+                    #expect(hints.count == 1)
+                    #expect(abs(hints[0].releaseAt.timeIntervalSinceNow - 7200) < 5)
+                }
+            )
+        }
+    }
+}
+
+/// What a hint actually buys, and what it cannot take.
+@Suite("Hinted polling")
+struct HintedPollingTests {
+    private func seed(_ app: Application, slug: String) async throws -> (UUID, SourceModel) {
+        let brand = BrandModel(
+            name: slug, slug: slug, website: "https://\(slug)",
+            instagramHandle: nil, usesGeneratedName: false
+        )
+        try await brand.save(on: app.db)
+        let brandID = try brand.requireID()
+        let source = SourceModel(brandID: brandID, kind: .shopify, url: "https://\(slug)")
+        try await source.save(on: app.db)
+        return (brandID, source)
+    }
+
+    private func user(_ app: Application) async throws -> UUID {
+        let user = UserModel()
+        try await user.save(on: app.db)
+        return try user.requireID()
+    }
+
+    private func stub(_ http: StubHTTP) {
+        http.stub("/products.json?limit=250&page=1", body: #"{"products": []}"#)
+        http.stub("/meta.json", body: #"{"name": "Example"}"#)
+    }
+
+    /// The whole point: a brand with no readable rhythm is on the twenty-minute cadence, and
+    /// somebody's stated release time puts it on sixty seconds for the hour around it. The
+    /// same minute a lock already buys, so this is not a new capability.
+    @Test("A hinted brand drops to a minute")
+    func hintTightensTheCadence() async throws {
+        try await withServer { app in
+            let http = StubHTTP()
+            stub(http)
+            let (brandID, source) = try await seed(app, slug: "hinted.com")
+            try await PollHintModel(
+                userID: try await user(app), brandID: brandID, releaseAt: Date()
+            ).save(on: app.db)
+
+            await Poller(app: app, http: http).tick()
+
+            let reloaded = try #require(try await SourceModel.find(source.requireID(), on: app.db))
+            let gap = reloaded.nextCheckAt.timeIntervalSinceNow
+            #expect(gap > 30 && gap <= 65, "expected a minute, got \(gap)s")
+        }
+    }
+
+    /// And a hint outside its window buys nothing at all — otherwise a date typed in March
+    /// would poll a storefront hard until somebody deleted it.
+    @Test("A hint outside its window changes nothing")
+    func aDistantHintIsInert() async throws {
+        try await withServer { app in
+            let http = StubHTTP()
+            stub(http)
+            let (brandID, source) = try await seed(app, slug: "later.com")
+            try await PollHintModel(
+                userID: try await user(app),
+                brandID: brandID,
+                releaseAt: Date().addingTimeInterval(6 * 3600)
+            ).save(on: app.db)
+
+            await Poller(app: app, http: http).tick()
+
+            let reloaded = try #require(try await SourceModel.find(source.requireID(), on: app.db))
+            // The quiet cadence — this brand has no events, so two hours.
+            #expect(reloaded.nextCheckAt.timeIntervalSinceNow > 600)
+        }
+    }
+
+    /// **The property that makes hints safe.** Hinted sources are claimed against their own
+    /// budget, so they cannot displace the ordinary queue no matter how many exist.
+    ///
+    /// Set up so a plain `ORDER BY next_check_at LIMIT 20` would fail it: the hinted sources
+    /// are the *most* overdue, so without the exclusion they would take the first slots and
+    /// two of the twenty unhinted brands would go unpolled this pass.
+    @Test("Hinted brands cannot starve the ordinary queue")
+    func hintsDoNotStarveTheQueue() async throws {
+        try await withServer { app in
+            let http = StubHTTP()
+            stub(http)
+            let userID = try await user(app)
+            let past = Date().addingTimeInterval(-3600)
+
+            var ordinary: [UUID] = []
+            for index in 0..<20 {
+                let (_, source) = try await seed(app, slug: "plain\(index).com")
+                source.nextCheckAt = past
+                try await source.save(on: app.db)
+                ordinary.append(try source.requireID())
+            }
+            for index in 0..<2 {
+                let (brandID, source) = try await seed(app, slug: "hinted\(index).com")
+                // Older than every unhinted row, so a single sorted claim would prefer them.
+                source.nextCheckAt = past.addingTimeInterval(-3600)
+                try await source.save(on: app.db)
+                try await PollHintModel(
+                    userID: userID, brandID: brandID, releaseAt: Date()
+                ).save(on: app.db)
+            }
+
+            let polled = await Poller(app: app, http: http).tick(limit: 20)
+            #expect(polled == 22, "20 ordinary + 2 hinted, on separate budgets")
+
+            for id in ordinary {
+                let source = try #require(try await SourceModel.find(id, on: app.db))
+                #expect(source.lastCheckedAt != nil, "an unhinted source was crowded out")
+            }
+        }
+    }
+
+    /// And the hinted budget is itself fixed, so hinting more brands divides it rather than
+    /// buying more requests. This is what bounds the load a stranger can create.
+    @Test("The hinted budget is a ceiling, not a per-brand allowance")
+    func theHintedBudgetIsFixed() async throws {
+        try await withServer { app in
+            let http = StubHTTP()
+            stub(http)
+            let userID = try await user(app)
+
+            for index in 0..<(Poller.hintBudget + 4) {
+                let (brandID, source) = try await seed(app, slug: "many\(index).com")
+                source.nextCheckAt = Date().addingTimeInterval(-3600)
+                try await source.save(on: app.db)
+                try await PollHintModel(
+                    userID: userID, brandID: brandID, releaseAt: Date()
+                ).save(on: app.db)
+            }
+
+            let polled = await Poller(app: app, http: http).tick(limit: 20)
+            #expect(polled == Poller.hintBudget,
+                    "nine hinted brands must still cost only \(Poller.hintBudget) polls")
+        }
+    }
+
+    /// A spent hint is a row nothing reads, on the one table the poller queries every tick.
+    @Test("Retention prunes hints whose window is long closed")
+    func retentionPrunesSpentHints() async throws {
+        try await withServer { app in
+            let userID = try await user(app)
+            let (liveBrand, _) = try await seed(app, slug: "live.com")
+            let (deadBrand, _) = try await seed(app, slug: "dead.com")
+            try await PollHintModel(
+                userID: userID, brandID: liveBrand, releaseAt: Date().addingTimeInterval(3600)
+            ).save(on: app.db)
+            try await PollHintModel(
+                userID: userID, brandID: deadBrand, releaseAt: Date().addingTimeInterval(-5 * 86_400)
+            ).save(on: app.db)
+
+            let result = await Reaper(app: app).sweep()
+
+            #expect(result.pollHints == 1)
+            let remaining = try await PollHintModel.query(on: app.db).all()
+            #expect(remaining.map { $0.$brand.id } == [liveBrand])
+        }
+    }
+}

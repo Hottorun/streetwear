@@ -79,6 +79,17 @@ public struct Garment: Sendable, Hashable {
         self.secondaryColor = secondaryColor
         self.busyness = busyness
         self.textCoverage = textCoverage
+        self.slot = GarmentClassifier.classify(
+            title: title,
+            productType: productType,
+            tags: tags,
+            visionCategories: visionCategories
+        )
+        self.vocabulary = Set(
+            ([title, productType ?? ""] + tags + visionCategories)
+                .flatMap { $0.lowercased().split { !$0.isLetter && !$0.isNumber } }
+                .map(String.init)
+        )
     }
 
     /// Whether this piece is doing the talking.
@@ -96,28 +107,25 @@ public struct Garment: Sendable, Hashable {
         return !vocabulary.isDisjoint(with: Pairing.statementWords)
     }
 
-    public var slot: GarmentSlot {
-        GarmentClassifier.classify(
-            title: title,
-            productType: productType,
-            tags: tags,
-            visionCategories: visionCategories
-        )
-    }
-
-    /// Every word this garment is described by, lowercased and whole.
+    /// Where this sits in an outfit, and every word it is described by.
     ///
+    /// **Stored, not computed, and that is a performance property.** Both were computed
+    /// properties with no memory, and `Pairing.best` scores one subject garment against a
+    /// whole wardrobe — so the *subject's* classification and vocabulary were rebuilt once
+    /// per candidate, and `isStatement` read the vocabulary a third time on the words path.
+    /// A wardrobe of two hundred meant two hundred `GarmentClassifier.classify` calls and
+    /// two hundred set builds to answer one question about one garment, on `GoesWith`,
+    /// which sits on both the product page and the saved-item page.
+    ///
+    /// Deriving them in `init` costs nothing that was not already being paid: every
+    /// `Garment` that is constructed is constructed in order to be scored, and the gate is
+    /// the first thing `score` reads.
+    public let slot: GarmentSlot
+
     /// Whole tokens, never substrings — the rule the whole codebase runs on. "shorts"
     /// contains "short" and "sweatshirt" contains "sweat", and a `contains` check here
     /// would read a sweatshirt as gym kit and a pair of shorts as summer-only.
-    var vocabulary: Set<String> {
-        let source = [title, productType ?? ""] + tags + visionCategories
-        return Set(
-            source
-                .flatMap { $0.lowercased().split { !$0.isLetter && !$0.isNumber } }
-                .map(String.init)
-        )
-    }
+    let vocabulary: Set<String>
 }
 
 public enum Pairing {

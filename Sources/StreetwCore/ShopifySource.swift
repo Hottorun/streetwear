@@ -154,7 +154,23 @@ public struct ShopifySource: SourceAdapter {
               let response = try? await http.get(url), response.status == 200,
               let meta = try? JSONDecoder().decode(Meta.self, from: response.data)
         else { return nil }
-        return ShopInfo(name: meta.name, currency: meta.currency)
+        // **Tidied here, at the source, and not left to the caller.**
+        //
+        // A merchant's `/meta.json` name is typed into an admin field by a human and is not
+        // clean: Stüssy publishes `" Stüssy"` — a literal leading space — and Represent
+        // publishes `"REPRESENT | US"`. `BrandNaming` exists to deal with exactly that and
+        // three call sites read this field; **two of them bypassed it**, in the same way,
+        // independently. `BrandDiscovery` hands the value to `BrandNaming.pick` and gets a
+        // clean name; `SyncEngine` and the server's `Poller` both assign it straight onto
+        // `brand.name`, so the space and the marketing tail went into the catalogue.
+        //
+        // That is not a cosmetic bug. The catalogue is **global** — the name the first
+        // person to add a storefront receives is the name everybody who follows it
+        // inherits — and the wordmark is drawn on every card, every brand row and every
+        // Upcoming entry, where a leading space is a visible indent against its neighbours.
+        // Cleaning it where the field is produced is what stops a fourth caller repeating
+        // it, and `pick` applying the same rules again is harmless: they are idempotent.
+        return ShopInfo(name: meta.name.flatMap(BrandNaming.withoutTail), currency: meta.currency)
     }
 
     // MARK: - One product, by its page

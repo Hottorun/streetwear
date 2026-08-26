@@ -235,22 +235,33 @@ public enum GarmentClassifier {
         (.footwear, "running shoe")
     ]
 
+    /// `table` with each word list hashed, built once.
+    ///
+    /// `match` used to call `Set(entry.words)` inside its own loop, so every call rebuilt
+    /// all six sets — roughly 130 string hashes and six allocations — and `classify` calls
+    /// `match` once per field: a product with ten tags cost up to seventy-eight of them.
+    /// That was invisible until something asked for a slot in a loop, which
+    /// `BrandUpdate.garmentSlot`, `SimilarItems` and `Pairing` all do, per row, from a view
+    /// body. The order is `table`'s order and must stay that way — it is what makes "Fleece
+    /// Jacket" outerwear and a bare "fleece" a top.
+    private static let index: [(slot: GarmentSlot, words: Set<String>)] =
+        table.map { ($0.slot, Set($0.words)) }
+
     private static func match(_ text: String) -> GarmentSlot {
         let lowered = text.lowercased()
         for entry in phrases where lowered.contains(entry.phrase) { return entry.slot }
 
-        let tokens = text.lowercased()
+        let tokens = lowered
             .split { !$0.isLetter && !$0.isNumber }
             .map(String.init)
         guard !tokens.isEmpty else { return .unknown }
 
-        for entry in table {
-            let words = Set(entry.words)
+        for entry in index {
             // Raw token first, then a de-pluralised form, so a catalogue category of
             // "Sweatshirts" places the same as "Sweatshirt". Matching the raw token first
             // matters: "shorts" must stay a bottom rather than being reduced to the bare
             // "short" that is deliberately not in the list.
-            if tokens.contains(where: { words.contains($0) || words.contains(singular($0)) }) {
+            if tokens.contains(where: { entry.words.contains($0) || entry.words.contains(singular($0)) }) {
                 return entry.slot
             }
         }

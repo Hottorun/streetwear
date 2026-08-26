@@ -17,11 +17,13 @@
 import Fluent
 import Foundation
 import SQLKit
+import StreetwCore
 import Vapor
 
 struct ReapResult: Sendable, Equatable {
     var events = 0
     var products = 0
+    var pollHints = 0
 }
 
 actor Reaper {
@@ -89,8 +91,32 @@ actor Reaper {
                 try await sql.raw("DELETE FROM variants WHERE product_id NOT IN (SELECT id FROM products)").run()
             }
 
-            if result.events > 0 || result.products > 0 {
-                app.logger.info("retention: pruned \(result.events) events, \(result.products) products")
+            // A poll hint whose window has closed is spent. Nothing reads it — the queue
+            // asks `PollHintPolicy.activeRange`, which a past release date can never fall
+            // into again — so leaving it is a row that accumulates forever and slows the
+            // one query the poller runs on every tick. Pruned on the sweep rather than at
+            // the moment it expires, because "which hints are dead" is a table scan and
+            // this is the pass that already owns those.
+            //
+            // A day's grace past the window, so a device that has been offline sees its own
+            // hints on `GET /v1/poll-hints` for a while after the fact rather than finding
+            // them silently gone.
+            let hintCutoff = Date()
+                .addingTimeInterval(-PollHintPolicy.windowAfter)
+                .addingTimeInterval(-86_400)
+            result.pollHints = try await PollHintModel.query(on: app.db)
+                .filter(\.$releaseAt < hintCutoff)
+                .count()
+            if result.pollHints > 0 {
+                try await PollHintModel.query(on: app.db)
+                    .filter(\.$releaseAt < hintCutoff)
+                    .delete()
+            }
+
+            if result.events > 0 || result.products > 0 || result.pollHints > 0 {
+                app.logger.info(
+                    "retention: pruned \(result.events) events, \(result.products) products, \(result.pollHints) poll hints"
+                )
             }
         } catch {
             app.logger.error("retention: sweep failed: \(error)")

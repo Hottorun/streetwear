@@ -23,6 +23,9 @@ extension BrandProbe: @retroactive Content {}
 extension FeedResponse: @retroactive Content {}
 extension StatusResponse: @retroactive Content {}
 extension DeliveryStatus: @retroactive Content {}
+extension PollHint: @retroactive Content {}
+extension PollHintSync: @retroactive Content {}
+extension PollHintsResponse: @retroactive Content {}
 
 extension BrandSourceDTO {
     init(_ source: SourceModel) {

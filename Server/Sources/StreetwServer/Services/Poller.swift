@@ -40,44 +40,106 @@ actor Poller {
         ///   spends the same request budget in a far better place rather than polling
         ///   everything harder. It ranks above `hadRecentEvent` because a drop in progress
         ///   is worth a minute, not five.
+        /// - Parameter hinted: whether somebody has written down a release time for this
+        ///   brand and it is happening around now — see `PollHintPolicy`.
+        ///
+        ///   The same minute as a lock and a historical window, and deliberately not less:
+        ///   a hint is only reached by brands with *no* readable rhythm, since a brand with
+        ///   one is already at 60 seconds inside its own window. So this is not a new
+        ///   capability, it is the existing one extended to the case the estimator cannot
+        ///   see — a brand that never locks and never publishes a date until the products
+        ///   are already up.
+        ///
+        ///   Ranked below `locked`, which is an *observation*, and above everything else
+        ///   for the reason `inDropWindow` is: a drop that is actually in progress is worth
+        ///   a minute rather than five. It cannot escape the failure backoff above it —
+        ///   somebody's date must never turn a site that is refusing us into a retry every
+        ///   sixty seconds.
         static func next(
             locked: Bool,
             hadRecentEvent: Bool,
             quietForAWeek: Bool,
             failures: Int,
-            inDropWindow: Bool = false
+            inDropWindow: Bool = false,
+            hinted: Bool = false
         ) -> TimeInterval {
             if failures > 0 {
                 return min(pow(2.0, Double(failures)) * 60, 6 * 3600)
             }
             if locked { return 60 }               // a drop is imminent
             if inDropWindow { return 60 }         // ...and so, historically, is this
+            if hinted { return 60 }               // ...and somebody says so about this one
             if hadRecentEvent { return 5 * 60 }
             if quietForAWeek { return 2 * 3600 }
             return 20 * 60
         }
     }
 
+    /// How many hinted sources may be claimed per tick, over and above the ordinary queue.
+    ///
+    /// **This is the number that makes poll hints safe, and it is a constant on purpose.**
+    /// Everything else about a hint — following the brand, one per brand, a fixed window, a
+    /// cap per person — bounds what one account can *ask for*. This bounds what all of them
+    /// together can *get*: five sources per tick, whether one person hinted one brand or a
+    /// thousand people hinted a thousand. Hinting more does not buy more requests, it
+    /// divides the same ones. `PoliteFetcher` then spaces those five per host on top.
+    ///
+    /// Separate from `tick`'s own `limit` rather than carved out of it, so the answer to
+    /// "can hints starve the ordinary queue" is no by construction rather than by tuning:
+    /// the normal claim explicitly excludes hinted brands, and its budget is untouched.
+    static let hintBudget = 5
+
+    /// And how many hint rows are read to decide which brands those are.
+    ///
+    /// Ordered by `release_at`, so under a cap the soonest drops win — which is the right
+    /// tie-break, and means a flood of far-off hints cannot displace the one happening in
+    /// four minutes.
+    static let maxActiveHints = 200
+
     /// One pass over everything currently due.
+    ///
+    /// Two claims, against two budgets. The ordinary queue takes `limit` sources and
+    /// **excludes** any brand somebody has hinted at; hinted brands then take up to
+    /// `hintBudget` of their own. Written this way round so a brand in a hint window cannot
+    /// fill the general claim — a hint moves a source's `next_check_at` to sixty seconds,
+    /// which without the exclusion would make it due on nearly every tick and let a handful
+    /// of hinted brands own the whole pass. Whether that would actually happen depends on
+    /// how many hints exist, which is exactly the thing a stranger controls.
     @discardableResult
     func tick(limit: Int = 20) async -> Int {
         guard !isRunning else { return 0 }
         isRunning = true
         defer { isRunning = false }
 
+        // Once per tick, not once per source: the answer is the same for every source in
+        // the pass, and it decides both claims as well as each source's next cadence.
+        let hinted = await activeHintedBrandIDs()
+
         let due: [SourceModel]
         do {
-            due = try await claimDue(limit: limit)
+            due = try await claimDue(limit: limit, excluding: hinted)
         } catch {
             app.logger.error("poller: queue query failed: \(error)")
             return 0
         }
 
+        var hintedDue: [SourceModel] = []
+        if !hinted.isEmpty {
+            do {
+                hintedDue = try await claimHinted(limit: Self.hintBudget, brandIDs: hinted)
+            } catch {
+                // Non-fatal by design. A hint is an optimisation on top of a queue that
+                // already works, so a failure here must cost latency on a few brands rather
+                // than the whole pass.
+                app.logger.error("poller: hinted queue query failed: \(error)")
+            }
+        }
+
         var polled = 0
-        for source in due {
+        for source in due + hintedDue {
             // One domain at a time — see the politeness budget in BACKEND.md.
             do {
-                try await poll(source)
+                try await poll(source, isHinted: hinted.contains(source.$brand.id))
                 polled += 1
             } catch {
                 app.logger.error("poller: \(source.url) failed: \(error)")
@@ -107,32 +169,83 @@ actor Poller {
     ///
     /// SQLite has no `SKIP LOCKED` and no second instance to protect against, so it
     /// keeps the plain query.
-    private func claimDue(limit: Int) async throws -> [SourceModel] {
+    /// The ordinary queue, minus anything a hint is currently covering.
+    private func claimDue(limit: Int, excluding hinted: Set<UUID>) async throws -> [SourceModel] {
+        try await claim(limit: limit, brandIDs: hinted, matching: false)
+    }
+
+    /// And the hinted brands, against their own budget. Never called with an empty set —
+    /// `matching: true` with nothing to match would claim the entire queue.
+    private func claimHinted(limit: Int, brandIDs: Set<UUID>) async throws -> [SourceModel] {
+        try await claim(limit: limit, brandIDs: brandIDs, matching: true)
+    }
+
+    /// - Parameters:
+    ///   - brandIDs: brands the claim is restricted to, or excluded from.
+    ///   - matching: `true` claims only those brands' sources, `false` claims everything
+    ///     except them. An empty set with `matching: false` is the original unfiltered
+    ///     query, which is the common case and stays byte-identical.
+    private func claim(limit: Int, brandIDs: Set<UUID>, matching: Bool) async throws -> [SourceModel] {
         let db = app.db
         guard let sql = db as? any SQLDatabase, sql.dialect.name == "postgresql" else {
-            return try await dueWithoutClaim(limit: limit)
+            return try await dueWithoutClaim(limit: limit, brandIDs: brandIDs, matching: matching)
         }
 
         let now = Date()
+        let lease = now.addingTimeInterval(Self.leaseDuration)
         let ids: [UUID]
         do {
-            ids = try await sql.raw("""
-                UPDATE sources SET next_check_at = \(bind: now.addingTimeInterval(Self.leaseDuration)) \
-                WHERE id IN ( \
-                    SELECT id FROM sources \
-                    WHERE enabled = true AND next_check_at <= \(bind: now) \
-                    ORDER BY next_check_at LIMIT \(bind: limit) \
-                    FOR UPDATE SKIP LOCKED \
-                ) RETURNING id
-                """).all(decodingColumn: "id", as: UUID.self)
+            // Three literal statements rather than one composed from fragments. The
+            // composed version is shorter and this one is the only piece of the poller no
+            // local test can reach — SQLite has neither `SKIP LOCKED` nor `= ANY`, so this
+            // is exercised only against the deployed database, and "read it and be sure" is
+            // worth more here than "write it once".
+            //
+            // `= ANY(array)` rather than a generated `IN (…)` list for the same reason:
+            // one bound parameter whatever the length, so there is no string building
+            // anywhere near a query that takes locks.
+            let query: SQLQueryString
+            let brands = Array(brandIDs)
+            if brands.isEmpty {
+                query = """
+                    UPDATE sources SET next_check_at = \(bind: lease) \
+                    WHERE id IN ( \
+                        SELECT id FROM sources \
+                        WHERE enabled = true AND next_check_at <= \(bind: now) \
+                        ORDER BY next_check_at LIMIT \(bind: limit) \
+                        FOR UPDATE SKIP LOCKED \
+                    ) RETURNING id
+                    """
+            } else if matching {
+                query = """
+                    UPDATE sources SET next_check_at = \(bind: lease) \
+                    WHERE id IN ( \
+                        SELECT id FROM sources \
+                        WHERE enabled = true AND next_check_at <= \(bind: now) \
+                        AND brand_id = ANY(\(bind: brands)) \
+                        ORDER BY next_check_at LIMIT \(bind: limit) \
+                        FOR UPDATE SKIP LOCKED \
+                    ) RETURNING id
+                    """
+            } else {
+                query = """
+                    UPDATE sources SET next_check_at = \(bind: lease) \
+                    WHERE id IN ( \
+                        SELECT id FROM sources \
+                        WHERE enabled = true AND next_check_at <= \(bind: now) \
+                        AND brand_id <> ALL(\(bind: brands)) \
+                        ORDER BY next_check_at LIMIT \(bind: limit) \
+                        FOR UPDATE SKIP LOCKED \
+                    ) RETURNING id
+                    """
+            }
+            ids = try await sql.raw(query).all(decodingColumn: "id", as: UUID.self)
         } catch {
-            // This statement is the one piece of the poller that no local test can
-            // reach — SQLite has no `SKIP LOCKED`, so it is only ever exercised against
-            // the deployed database. Degrading to the unclaimed query keeps polling
-            // alive if it turns out to be wrong there; a single instance behaves exactly
-            // as it did before claiming existed.
+            // Degrading to the unclaimed query keeps polling alive if the statement above
+            // turns out to be wrong on the deployment; a single instance behaves exactly as
+            // it did before claiming existed.
             app.logger.error("poller: claim failed, falling back to plain queue: \(error)")
-            return try await dueWithoutClaim(limit: limit)
+            return try await dueWithoutClaim(limit: limit, brandIDs: brandIDs, matching: matching)
         }
 
         guard !ids.isEmpty else { return [] }
@@ -142,14 +255,48 @@ actor Poller {
             .all()
     }
 
-    private func dueWithoutClaim(limit: Int) async throws -> [SourceModel] {
-        try await SourceModel.query(on: app.db)
+    private func dueWithoutClaim(
+        limit: Int,
+        brandIDs: Set<UUID> = [],
+        matching: Bool = false
+    ) async throws -> [SourceModel] {
+        var builder = SourceModel.query(on: app.db)
             .filter(\.$enabled == true)
             .filter(\.$nextCheckAt <= Date())
+        if !brandIDs.isEmpty {
+            let brands = Array(brandIDs)
+            builder = matching
+                ? builder.filter(\.$brand.$id ~~ brands)
+                : builder.filter(\.$brand.$id !~ brands)
+        }
+        return try await builder
             .sort(\.$nextCheckAt)
             .limit(limit)
             .with(\.$brand)
             .all()
+    }
+
+    /// Which brands are inside somebody's stated release window right now.
+    ///
+    /// One bounded query per tick. Ordered by `release_at` under `maxActiveHints` so the
+    /// soonest drops survive the cap — a flood of far-off hints cannot displace the one
+    /// happening in four minutes. Failure is silent and empty: a hint is an optimisation,
+    /// and a poll queue that stops when this table is unreadable would be a worse trade
+    /// than a few brands being found late.
+    private func activeHintedBrandIDs() async -> Set<UUID> {
+        let range = PollHintPolicy.activeRange()
+        do {
+            let rows = try await PollHintModel.query(on: app.db)
+                .filter(\.$releaseAt >= range.lowerBound)
+                .filter(\.$releaseAt <= range.upperBound)
+                .sort(\.$releaseAt)
+                .limit(Self.maxActiveHints)
+                .all()
+            return Set(rows.map { $0.$brand.id })
+        } catch {
+            app.logger.error("poller: could not read poll hints: \(error)")
+            return []
+        }
     }
 
     /// Best-effort schedule bump for a source we failed to update normally.
@@ -167,7 +314,11 @@ actor Poller {
         }
     }
 
-    private func poll(_ source: SourceModel) async throws {
+    /// - Parameter isHinted: whether this brand is inside somebody's stated release window.
+    ///   Passed in rather than looked up, because `tick` has already asked once for the
+    ///   whole pass and asking again per source would put a query on the hot path for an
+    ///   answer that cannot have changed.
+    private func poll(_ source: SourceModel, isHinted: Bool = false) async throws {
         let db = app.db
         let brand = source.brand
         guard let brandID = brand.id, let sourceID = source.id else { return }
@@ -239,7 +390,10 @@ actor Poller {
                 hadRecentEvent: hadEvent,
                 quietForAWeek: quiet,
                 failures: source.failureCount,
-                inDropWindow: try await isInDropWindow(brandID: brandID)
+                // Only asked when a hint hasn't already answered it: both produce sixty
+                // seconds, and the rhythm read costs an indexed query over 400 rows.
+                inDropWindow: isHinted ? false : try await isInDropWindow(brandID: brandID),
+                hinted: isHinted
             )
         )
         try await source.save(on: db)
@@ -363,15 +517,29 @@ actor Poller {
 
         for info in item.variants {
             if let existing = previous[info.id] {
-                if !existing.available && info.available {
+                let returned = !existing.available && info.available
+                if returned {
                     returnedSizes.append(info.size ?? info.title)
-                    existing.availableChangedAt = Date()
                 }
-                existing.available = info.available
-                existing.price = info.price
-                existing.size = info.size
-                existing.color = info.color
-                try await existing.save(on: db)
+                // **Only written when something actually differs.** See the note on
+                // `product.save` below: an unconditional `save` here was the larger half of
+                // the same problem, because a product has ten to thirty variants and every
+                // one of them was being rewritten on every poll of every brand, forever.
+                let changed = returned
+                    || existing.available != info.available
+                    || existing.price != info.price
+                    || existing.size != info.size
+                    || existing.color != info.color
+                    || existing.imageIndex != info.imageIndex
+                if changed {
+                    if returned { existing.availableChangedAt = Date() }
+                    existing.available = info.available
+                    existing.price = info.price
+                    existing.size = info.size
+                    existing.color = info.color
+                    existing.imageIndex = info.imageIndex
+                    try await existing.save(on: db)
+                }
             } else {
                 try await VariantModel(productID: productID, info: info).save(on: db)
             }
@@ -388,11 +556,43 @@ actor Poller {
         let wasText = product.priceText
         let wasAmount = product.priceAmount
 
+        // **A row is only written when something about it changed.**
+        //
+        // This was an unconditional `save` on every poll of every product, and it is what
+        // filled the volume. Postgres does not edit a row in place: every UPDATE writes a
+        // new tuple and leaves the old one dead until autovacuum reclaims it — and reclaimed
+        // space is returned to the *table* for reuse, not to the filesystem, so the volume's
+        // high-water mark only ever goes up. A Shopify source returns 250 products a poll
+        // and polls every twenty minutes, so one brand was writing eighteen thousand dead
+        // product tuples a day before a single thing about it had changed, plus one per
+        // variant on top.
+        //
+        // Nothing here is new behaviour: the same values are stored, just not restored
+        // identically several thousand times a day.
+        var changed = product.isAvailable != item.isAvailable
+            || product.priceText != item.priceText
+            || product.priceAmount != item.priceAmount
         product.isAvailable = item.isAvailable
         product.priceText = item.priceText
         product.priceAmount = item.priceAmount
-        product.lastSeenAt = Date()
-        if product.imageURLs.isEmpty { product.imageURLs = item.imageURLStrings }
+
+        // **`last_seen_at` is coarsened to a day, and that is the whole point of it.**
+        //
+        // Stamping it with `Date()` every poll guaranteed every row differed every time, so
+        // no dirty check above this line could ever have saved a write. Its one and only
+        // reader is `Reaper`, which compares it against a cutoff measured in *months*
+        // (`PRODUCT_RETENTION_DAYS`, 180 by default) — per-poll precision on a field read at
+        // 180-day granularity buys nothing and costs a rewrite of the entire catalogue every
+        // twenty minutes. A day is still three orders of magnitude finer than the question.
+        if Date().timeIntervalSince(product.lastSeenAt) > 86_400 {
+            product.lastSeenAt = Date()
+            changed = true
+        }
+
+        if product.imageURLs.isEmpty, !item.imageURLStrings.isEmpty {
+            product.imageURLs = item.imageURLStrings
+            changed = true
+        }
         // A name can arrive late. Rows stored before the sitemap adapter learned to read
         // the image extension hold a randomised handle where the product name should be,
         // and nothing else would ever revisit them — the merge above only touches a row
@@ -401,8 +601,9 @@ actor Poller {
         // title is never replaced, least of all by a hash.
         if SitemapSource.isProvisional(product.title), !SitemapSource.isProvisional(item.title) {
             product.title = item.title
+            changed = true
         }
-        try await product.save(on: db)
+        if changed { try await product.save(on: db) }
 
         guard !isBaseline else { return false }
 

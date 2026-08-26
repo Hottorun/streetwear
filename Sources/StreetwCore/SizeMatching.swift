@@ -6,6 +6,7 @@
 // decide who a restock notification should go to.
 
 import Foundation
+import Synchronization
 
 public enum SizeKind: String, Codable, Sendable, CaseIterable {
     case apparel
@@ -78,12 +79,49 @@ public enum SizeNormalizer {
         "os", "o/s", "one size", "onesize", "os fits all", "default title", "one size fits all"
     ]
 
+    /// Answers already worked out, keyed on the cleaned string.
+    ///
+    /// **This is the hot path of the whole app and it is regular expressions all the way
+    /// down.** Measured: an apparel size costs 0.3µs because the word table answers it
+    /// before any regex runs, while a shoe size costs 17µs and a multi-axis variant title
+    /// ("WHITE/OWHITE/CBROWN / 5", which is what `displaySize` returns whenever a source
+    /// publishes no size axis) costs 26µs — up to eight `NSRegularExpression`s compiled
+    /// from scratch per call, since `range(of:options:.regularExpression)` builds a new one
+    /// every time.
+    ///
+    /// Nothing would notice that once. It is called twice per variant by `SizeRun.entries`
+    /// and again per variant by `SizeProfile.matches`, on a sneaker that runs 48 variants,
+    /// for every card on screen, on **every evaluation of a view body** — and SwiftUI
+    /// evaluates bodies for reasons that have nothing to do with sizes. One 48-variant card
+    /// measured 3.2ms on a Mac, so a feed of seven spreads was spending a large fraction of
+    /// a second inside this function before it could draw a frame. That is the lag reported
+    /// when a brand is marked read.
+    ///
+    /// A cache is close to free here because the input space is tiny and repeats
+    /// relentlessly: a store holds thousands of variants and a few hundred distinct size
+    /// strings, and "M" appears on every product in the catalogue. Bounded so a pathological
+    /// storefront cannot grow it without limit — dropping the whole table is fine, since
+    /// every entry is derivable again.
+    private static let cache = Mutex<[String: NormalizedSize?]>([:])
+    private static let cacheLimit = 8_192
+
     public static func normalize(_ raw: String) -> NormalizedSize? {
         let cleaned = raw
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased()
         guard !cleaned.isEmpty else { return nil }
 
+        if let hit = cache.withLock({ $0[cleaned] }) { return hit }
+        let answer = derive(cleaned)
+        cache.withLock {
+            if $0.count >= cacheLimit { $0.removeAll(keepingCapacity: true) }
+            $0[cleaned] = answer
+        }
+        return answer
+    }
+
+    /// The rules themselves, over an already-cleaned string. Only ever reached on a miss.
+    private static func derive(_ cleaned: String) -> NormalizedSize? {
         if oneSizeWords.contains(cleaned) {
             return NormalizedSize(kind: .oneSize, token: "OS")
         }
@@ -109,13 +147,8 @@ public enum SizeNormalizer {
         // that matches, so with `eu` ahead of `eur` the string "eur 43" loses only the
         // "eu" and the leftover "r 43" parses as nothing — silently demoting a size we
         // can read perfectly well to `.other`.
-        let stripped = cleaned
-            .replacingOccurrences(
-                of: #"(^|\s)(eur|us|uk|eu|men'?s|women'?s|w)\s*"#,
-                with: "",
-                options: .regularExpression
-            )
-            .replacingOccurrences(of: #"\s*(eur|us|uk|eu)$"#, with: "", options: .regularExpression)
+        let stripped = trailingScale
+            .strippedFrom(leadingScale.strippedFrom(cleaned))
             .trimmingCharacters(in: .whitespaces)
 
         if let value = Double(stripped) {
@@ -194,12 +227,7 @@ public enum SizeNormalizer {
             text = text.replacingOccurrences(of: "waist", with: "")
         }
         // Drop the inseam half of "32x30", "32 x 30", "32/30".
-        text = text.replacingOccurrences(
-            of: #"\s*[x×/]\s*\d{2}(\.\d)?\s*$"#,
-            with: "",
-            options: .regularExpression
-        )
-        text = text.trimmingCharacters(in: .whitespaces)
+        text = inseam.strippedFrom(text).trimmingCharacters(in: .whitespaces)
 
         // A "w" on either end. Note this is also the women's-shoe marker: "w 9" arrives
         // here, is read as a declared 9, and is refused by the range — so it falls through
@@ -224,14 +252,58 @@ public enum SizeNormalizer {
 
     /// The scale a raw size string names, if it names one at all.
     private static func declaredScale(in cleaned: String) -> SizeScale {
+        // Every code this looks for — eu, eur, uk — contains a "u", so a string without
+        // one cannot name a scale and needs no regex at all. That is the common case: a
+        // plain "9.5" or "M" skips four pattern matches on this line alone.
+        guard cleaned.contains("u") else { return .us }
         // Anchored to a word boundary or the start so a stray "uk" inside a colourway
         // ("Ukiyo") can't be read as a region code.
-        func mentions(_ pattern: String) -> Bool {
-            cleaned.range(of: pattern, options: .regularExpression) != nil
-        }
-        if mentions(#"(^|\s)(eur?)\s*\d"#) || mentions(#"\d\s*(eur?)($|\s)"#) { return .eu }
-        if mentions(#"(^|\s)uk\s*\d"#) || mentions(#"\d\s*uk($|\s)"#) { return .uk }
+        if euLeading.matches(cleaned) || euTrailing.matches(cleaned) { return .eu }
+        if ukLeading.matches(cleaned) || ukTrailing.matches(cleaned) { return .uk }
         return .us
+    }
+
+    // MARK: - Patterns, compiled once
+    //
+    // `String.range(of:options:.regularExpression)` and the matching
+    // `replacingOccurrences` build a fresh `NSRegularExpression` on every call — which is
+    // most of what made a cache miss cost 26µs. These are the same patterns, compiled at
+    // first use and kept.
+
+    private static let inseam = Pattern(#"\s*[x×/]\s*\d{2}(\.\d)?\s*$"#)
+    private static let leadingScale = Pattern(#"(^|\s)(eur|us|uk|eu|men'?s|women'?s|w)\s*"#)
+    private static let trailingScale = Pattern(#"\s*(eur|us|uk|eu)$"#)
+    private static let euLeading = Pattern(#"(^|\s)(eur?)\s*\d"#)
+    private static let euTrailing = Pattern(#"\d\s*(eur?)($|\s)"#)
+    private static let ukLeading = Pattern(#"(^|\s)uk\s*\d"#)
+    private static let ukTrailing = Pattern(#"\d\s*uk($|\s)"#)
+}
+
+/// A regular expression compiled once and reused.
+///
+/// Deliberately not `Regex` literals: this file compiles on Linux against
+/// swift-corelibs-foundation for the server, and `NSRegularExpression` behaves identically
+/// there — which is the property that matters, since the patterns above decide what a size
+/// *is* and the two platforms must never disagree about that.
+private struct Pattern: Sendable {
+    private let expression: NSRegularExpression
+
+    init(_ pattern: String) {
+        // The patterns are literals in this file. A failure here is a typo, not a runtime
+        // condition, and there is no sensible way to carry on without the expression.
+        expression = try! NSRegularExpression(pattern: pattern)
+    }
+
+    func matches(_ text: String) -> Bool {
+        expression.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)) != nil
+    }
+
+    func strippedFrom(_ text: String) -> String {
+        expression.stringByReplacingMatches(
+            in: text,
+            range: NSRange(text.startIndex..., in: text),
+            withTemplate: ""
+        )
     }
 }
 

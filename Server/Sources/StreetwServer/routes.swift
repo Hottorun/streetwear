@@ -459,6 +459,16 @@ func routes(_ app: Application) throws {
             .filter(\.$user.$id == device.$user.id)
             .filter(\.$brand.$id == brandID)
             .delete()
+        // A poll hint requires a follow, so unfollowing must take it — enforced here rather
+        // than trusted to the client, because "follow, hint, unfollow" is otherwise a way to
+        // hold a window on a brand you have no relationship with, which is the exact thing
+        // the check on `PUT /v1/poll-hints` exists to refuse. The app re-sends its whole set
+        // on the next foreground anyway; this closes the gap in between and the case where
+        // it never comes back.
+        try await PollHintModel.query(on: req.db)
+            .filter(\.$user.$id == device.$user.id)
+            .filter(\.$brand.$id == brandID)
+            .delete()
         return .noContent
     }
 
@@ -632,6 +642,129 @@ func routes(_ app: Application) throws {
             .filter(\.$id == watchID)
             .delete()
         return .noContent
+    }
+
+    // MARK: Poll hints
+
+    /// Replace the caller's whole set of "this brand drops at this moment" hints.
+    ///
+    /// The one route where a client asks the server to *spend* something — requests against
+    /// a storefront — so it is the one route written from the refusals outwards. Five of
+    /// them, and the fifth is the one that actually matters:
+    ///
+    /// 1. **Device required**, like everything else under `/v1`. `RequireDevice` is in the
+    ///    group, so this cannot be public by forgetting a line here.
+    /// 2. **You must follow the brand.** Asking the server to fetch a storefront harder is
+    ///    a reasonable request about something you watch and a resource-exhaustion primitive
+    ///    about something you don't. Refused per brand rather than rejecting the request, so
+    ///    a stale row for a brand somebody unfollowed does not throw away the rest of their
+    ///    calendar.
+    /// 3. **`PollHintPolicy` bounds the date** — nothing already over, nothing past
+    ///    `maxLeadTime` — and **the count**, at `maxPerUser`. A longer list is refused whole
+    ///    rather than truncated: silently keeping the first twenty of somebody's thirty is
+    ///    the kind of quiet wrong answer this project keeps a list of.
+    /// 4. **The window is not on the wire.** The client sends an instant; how wide a window
+    ///    that buys is `PollHintPolicy`'s and is echoed back rather than accepted.
+    /// 5. **A hint buys attention, not requests.** `Poller` claims hinted sources against a
+    ///    separate fixed budget, so the extra load is the same whether one person hints one
+    ///    brand or a thousand people hint a thousand — they divide it. That is what makes
+    ///    the rest of this a tidiness exercise rather than the only thing standing between
+    ///    the queue and a stranger.
+    ///
+    /// Nothing here is readable by anybody else, and no hint produces an event, a product or
+    /// a notification. The most a hinted brand can do is get looked at sooner.
+    authed.put("poll-hints") { req async throws -> PollHintsResponse in
+        let device = try await req.authenticatedDevice()
+        let userID = device.$user.id
+        let body = try req.content.decode(PollHintSync.self)
+        let now = Date()
+
+        var rejected: [PollHintsResponse.Rejected] = []
+
+        // Refused whole. Note this is checked before anything is read from the database,
+        // so an oversized list costs one decode rather than a query per entry.
+        guard body.hints.count <= PollHintPolicy.maxPerUser else {
+            let seen = Set(body.hints.map(\.brandID))
+            return PollHintsResponse(
+                accepted: [],
+                rejected: seen.map { .init(brandID: $0, reason: .tooMany) }
+            )
+        }
+
+        // One per brand. A client sending two for the same brand has not been told which
+        // one wins, so neither is a safe pick and both are refused — the unique index would
+        // otherwise decide it by insertion order.
+        var counts: [UUID: Int] = [:]
+        for hint in body.hints { counts[hint.brandID, default: 0] += 1 }
+
+        var candidates: [PollHint] = []
+        for hint in body.hints {
+            if counts[hint.brandID, default: 0] > 1 {
+                if !rejected.contains(where: { $0.brandID == hint.brandID }) {
+                    rejected.append(.init(brandID: hint.brandID, reason: .tooMany))
+                }
+                continue
+            }
+            guard PollHintPolicy.isAcceptable(releaseAt: hint.releaseAt, now: now) else {
+                rejected.append(.init(brandID: hint.brandID, reason: .outOfRange))
+                continue
+            }
+            candidates.append(hint)
+        }
+
+        // The follow check, in one query rather than one per hint — this runs on every
+        // foreground of every install that keeps a calendar.
+        var followed: Set<UUID> = []
+        if !candidates.isEmpty {
+            followed = Set(
+                try await FollowModel.query(on: req.db)
+                    .filter(\.$user.$id == userID)
+                    .filter(\.$brand.$id ~~ candidates.map(\.brandID))
+                    .all()
+                    .map { $0.$brand.id }
+            )
+        }
+
+        var accepted: [PollHint] = []
+        for hint in candidates {
+            if followed.contains(hint.brandID) {
+                accepted.append(hint)
+            } else {
+                // A brand that exists but is not followed, and a brand id that is not in
+                // the catalogue at all, are told apart because the two have different fixes
+                // — and because "no such brand" is what a client holding a stale id needs
+                // to hear before it keeps sending it every foreground.
+                let exists = try await BrandModel.find(hint.brandID, on: req.db) != nil
+                rejected.append(.init(brandID: hint.brandID, reason: exists ? .notFollowing : .unknownBrand))
+            }
+        }
+
+        // Replace, not merge. Deleting the caller's rows first means an empty body is the
+        // honest way to withdraw everything — which is what the app sends when the last
+        // planned drop is deleted.
+        try await PollHintModel.query(on: req.db)
+            .filter(\.$user.$id == userID)
+            .delete()
+        for hint in accepted {
+            try await PollHintModel(
+                userID: userID,
+                brandID: hint.brandID,
+                releaseAt: hint.releaseAt
+            ).save(on: req.db)
+        }
+
+        return PollHintsResponse(accepted: accepted, rejected: rejected)
+    }
+
+    /// What this device currently has standing. Its own rows and no one else's — there is
+    /// deliberately no route that reads across users here, unlike `/v1/brands/popular`.
+    authed.get("poll-hints") { req async throws -> [PollHint] in
+        let device = try await req.authenticatedDevice()
+        return try await PollHintModel.query(on: req.db)
+            .filter(\.$user.$id == device.$user.id)
+            .sort(\.$releaseAt)
+            .all()
+            .map(\.asPollHint)
     }
 
     // MARK: Ops

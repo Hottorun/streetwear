@@ -79,6 +79,7 @@ devices           id, user_id, apns_token UNIQUE, environment, locale, updated_a
 follows           user_id, brand_id, created_at
 size_profiles     user_id, apparel text[], shoe text[], include_one_size
 saves             id, user_id, product_id, type, note, saved_at
+poll_hints        id, user_id, brand_id, release_at, created_at  UNIQUE(user_id, brand_id)
 ```
 
 `events` is the append-only spine: the poller writes them, the feed reads them, the notifier fans
@@ -103,10 +104,28 @@ One process, an async loop, no Redis:
 | Situation | Interval |
 |---|---|
 | Brand locked for drop | 60s |
+| Inside the brand's own historical drop window | 60s |
+| Inside a poll hint's window | 60s |
 | Recently active (event in last 24h) | 5 min |
 | Normal | 20 min |
 | Quiet for a week | 2 h |
 | Failing | exponential backoff, capped 6 h |
+
+**Poll hints, and the budget that makes them safe.** A `PlannedDrop` is a release time somebody
+typed off an Instagram story, for a brand that never locks and never publishes a date until the
+products are already up — the one case the historical window above cannot see. `PUT /v1/poll-hints`
+sends the caller's whole set of `{brand_id, release_at}` and buys sixty-second polling for a
+server-fixed hour around each (`PollHintPolicy`). Nothing else crosses, nothing is readable by
+anybody else, and no event or notification derives from one.
+
+It is the only route where a client asks the server to spend requests against a third party, so it
+is bounded twice over. What one account may *ask for*: a device token, a follow on the brand
+(revoked with the follow, so "follow, hint, unfollow" cannot hold a window), one hint per brand,
+`maxPerUser` in total, `maxLeadTime` ahead, and a window length that is not on the wire at all.
+What every account together may *get*: `Poller.hintBudget` sources per tick, claimed **separately**
+from the ordinary queue, which explicitly excludes hinted brands. So hinting more divides the same
+budget rather than enlarging it, the general queue cannot be starved, and the politeness budget
+below still applies per host regardless.
 
 **Politeness budget**, non-negotiable: one in-flight request per domain, conditional GETs
 everywhere, `robots.txt` respected, and a `User-Agent` naming the app with a contact URL. Being
@@ -139,6 +158,8 @@ POST   /v1/brands/discover      { url } → probes sources, returns preview
 POST   /v1/follows              { brand_id }
 DELETE /v1/follows/:brand_id
 POST   /v1/saves                { product_id, type }
+PUT    /v1/poll-hints           { hints: [{brand_id, release_at}] }  replaces the whole set
+GET    /v1/poll-hints           this device's own hints, and nobody else's
 ```
 
 Auth starts as an opaque device token — no login, no PII, and it matches how the app is used today.

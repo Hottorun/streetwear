@@ -12,8 +12,24 @@
 // a *bigger* favicon. Same documented mechanism, opposite need.
 
 import Foundation
+import Synchronization
 
 public enum ImageRendition {
+    /// URLs already rewritten, keyed on the request.
+    ///
+    /// `sized` builds a `URLComponents`, filters and rebuilds the query items and
+    /// re-serialises — one of Foundation's more expensive round trips. `CachedImage` calls
+    /// it from `body`, for every photograph on screen, on every render pass, and then makes
+    /// `.task(id:)` compare the result. The inputs repeat exactly: a grid draws the same
+    /// tiles at the same width, and the ladder exists precisely so nearby widths collapse
+    /// onto one answer.
+    private static let cache = Mutex<[Request: URL]>([:])
+    private static let cacheLimit = 4_096
+
+    private struct Request: Hashable {
+        var url: URL
+        var pixels: Int
+    }
     /// Widths we ever request, so the URLs stay cacheable across screens.
     ///
     /// A continuous width would mint a distinct URL for every layout — a grid tile at
@@ -28,7 +44,18 @@ public enum ImageRendition {
     /// the safe default: a resize parameter a CDN doesn't understand is at best ignored
     /// and at worst a 404, and a missing photograph is a worse outcome than a large one.
     public static func sized(_ url: URL, width: Int, scale: Int = 3) -> URL {
-        let pixels = snapped(width * scale)
+        let request = Request(url: url, pixels: snapped(width * scale))
+        if let hit = cache.withLock({ $0[request] }) { return hit }
+        let answer = rewrite(request)
+        cache.withLock {
+            if $0.count >= cacheLimit { $0.removeAll(keepingCapacity: true) }
+            $0[request] = answer
+        }
+        return answer
+    }
+
+    private static func rewrite(_ request: Request) -> URL {
+        let (url, pixels) = (request.url, request.pixels)
 
         guard isShopifyCDN(url),
               var components = URLComponents(url: url, resolvingAgainstBaseURL: false)
@@ -41,6 +68,17 @@ public enum ImageRendition {
         components.queryItems = items
 
         return components.url ?? url
+    }
+
+    /// How many pixels wide the drawn image should actually be.
+    ///
+    /// The same number `sized` puts in the query, exposed because the client needs it even
+    /// when the query was never added: `sized` returns the URL untouched for any host it
+    /// does not recognise, and those are exactly the ones that hurt — Palace ships 3200²
+    /// PNGs, which is a 41MB bitmap once rasterised. Downsampling on the way in is the only
+    /// defence there, and it needs a target.
+    public static func pixels(for width: Int, scale: Int = 3) -> Int {
+        snapped(width * scale)
     }
 
     /// The smallest ladder width that still covers the request, so an image is never
