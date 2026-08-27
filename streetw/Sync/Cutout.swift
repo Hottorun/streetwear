@@ -55,7 +55,16 @@ enum Cutout {
     /// that produced a "cutout" which is not one. Every item already carrying one of those
     /// is holding a bad sticker with a current version stamp, so nothing but a bump reaches
     /// them.
-    static let version = 3
+    ///
+    /// **4 is a repair again, and the largest one yet.** The analysis pass was cancelling
+    /// itself — `.task(id:)` keyed on the backlog, which the pass changes by resolving
+    /// items — so on device the Vision requests were being torn down mid-flight, one item
+    /// per restart, and the cancellation was then stamped here as a settled "there is
+    /// nothing to lift". Both faults are fixed (see `Lift.wasInterrupted` and
+    /// `ImageTagger.drain`), but every row written off in the meantime carries this version
+    /// and is invisible to the repair. On a collection that has been open on a real phone
+    /// that is most of it: the log showed twelve saves cycling and lifting nothing.
+    static let version = 4
 
     /// Where the PNGs live. Application Support rather than Caches: re-cutting is not free,
     /// and a canvas whose stickers vanish under storage pressure would be worse than one

@@ -51,7 +51,15 @@ enum VisualReading {
     /// answer here too. `ImageTagger` runs the lift when either is due and writes the
     /// silhouette only when the reading is, so bumping the cutout alone would re-cut every
     /// sticker and leave every shape measured against the mask that was just replaced.
-    static let version = 3
+    ///
+    /// **4 travels with `Cutout.version` 4 for that same reason**, and independently earns
+    /// it: the cancellations that wrote off the cutouts took the whole reading with them —
+    /// the log's "no text pass", "no feature print" and "no human detection available" are
+    /// all this file's requests being cancelled — and every one of those rows was stamped
+    /// at 3 holding none of it. A row with no colour is not merely missing a swatch: it is
+    /// unscoreable by `ColorHarmony`, so it can never be chosen into a fit and never
+    /// offered as a candidate.
+    static let version = 4
 
     /// What one photograph turned out to be. Every field is optional or zero-defaulted,
     /// because each measurement can decline independently and a partial reading is worth
