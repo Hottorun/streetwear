@@ -101,6 +101,19 @@ enum Cutout {
     struct Lift {
         var file: String?
         var mask: CGImage?
+        /// Whether the search was **interrupted** rather than finished.
+        ///
+        /// Every other outcome here is an answer: Vision found no subject, the subject
+        /// filled the frame, the backdrop was not flat enough. A cancellation is not an
+        /// answer — it is the question never having been put — and the two arrive at this
+        /// type looking identical, as a `Lift` with no file in it.
+        ///
+        /// That distinction is load-bearing because the caller *stamps a version* on the
+        /// way out. Writing off a cancelled pass is the same mistake `ImageTagger.load`
+        /// already avoids for a photograph that would not download, and it was reaching the
+        /// same rows by the other door: every version field current, nothing left to notice,
+        /// and a garment drawn on the canvas as its raw product shot forever.
+        var wasInterrupted = false
     }
 
     /// - Parameter writeFile: whether the sticker is wanted on disk. False when the caller
@@ -122,6 +135,13 @@ enum Cutout {
            let raster = render(lifted),
            isSticker(raster, from: "vision", named: name) {
             return Lift(file: writeFile ? write(raster, named: name) : nil, mask: raster)
+        }
+        // Interrupted, not declined. `Seamless` must not get its turn: it would be handed
+        // the untouched photograph, refuse it (correctly — it fills its own box), and the
+        // pair of refusals would read to the caller as a settled "there is nothing here".
+        if Task.isCancelled {
+            log.info("lift interrupted for \(name, privacy: .public), leaving it due")
+            return Lift(wasInterrupted: true)
         }
         if let trimmed = Seamless.lift(cgImage),
            let raster = render(trimmed),

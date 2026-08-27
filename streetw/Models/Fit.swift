@@ -271,9 +271,27 @@ enum FitSuggestions {
                 || !ColorHarmony.isClash(top.update?.visionColor, bottom.update?.visionColor)
             else { continue }
 
+            // **The shoes and the jacket are chosen, not counted to.**
+            //
+            // Everything above ranks the top against the bottom and then these two were
+            // appended by `index % count` — an arithmetic accident of position in a list
+            // sorted by date. So half of a four-piece proposal had been reasoned about and
+            // half had not, and a fit could pair a considered black-on-cream top and bottom
+            // with whatever shoe happened to sit at that index. That is precisely the
+            // "obviously wrong to anyone with eyes" failure the colour pass was added to
+            // stop, left in place for two of the four slots.
+            //
+            // Scored against the pair already chosen rather than against each other, since
+            // the top and bottom are what the fit *is* and the other two are answering to
+            // it. Same rule as above — a stated pairing can carry a clash, nothing else can
+            // — and the same tie-break on id, so the row stays deterministic.
             var items = [top, bottom]
-            if !footwear.isEmpty { items.append(footwear[index % footwear.count]) }
-            if !outerwear.isEmpty { items.append(outerwear[index % outerwear.count]) }
+            if let shoe = accompaniment(to: [topGarment, bottomGarment], from: footwear, statement: statement) {
+                items.append(shoe)
+            }
+            if let coat = accompaniment(to: [topGarment, bottomGarment], from: outerwear, statement: statement) {
+                items.append(coat)
+            }
 
             let fit = SuggestedFit(items: items, reason: verdict.reason)
             guard seen.insert(fit.id).inserted else { continue }
@@ -287,5 +305,48 @@ enum FitSuggestions {
             .sorted { $0.score == $1.score ? $0.fit.id < $1.fit.id : $0.score > $1.score }
             .prefix(limit)
             .map(\.fit)
+    }
+
+    /// The best of `options` to put with a fit already decided, or nil when the slot is
+    /// empty or nothing in it works.
+    ///
+    /// Scored against **every** piece already in the fit and taking the worst of those
+    /// scores, not the average: a jacket that goes with the trousers and fights the top is
+    /// not a good jacket for this outfit, and averaging lets one strong agreement hide one
+    /// real clash. An outright clash with any piece is refused outright, unless the wearer
+    /// has named that pairing themselves — the same override the top-and-bottom rule allows,
+    /// because an app that refuses the outfit its user described is arguing with them.
+    ///
+    /// Returning nil is a real answer and a common one. A three-piece fit that works beats a
+    /// four-piece fit with a wrong shoe in it, and the slot was optional to begin with.
+    private static func accompaniment(
+        to chosen: [Garment],
+        from options: [SavedItem],
+        statement: StyleStatement
+    ) -> SavedItem? {
+        var best: (item: SavedItem, score: Double)?
+        for option in options {
+            guard let garment = option.update?.garment else { continue }
+            var worst = Double.greatestFiniteMagnitude
+            var refused = false
+            for piece in chosen {
+                let stated = statement.statedPairing(between: piece, and: garment)
+                if !stated, ColorHarmony.isClash(piece.color, option.update?.visionColor) {
+                    refused = true
+                    break
+                }
+                worst = min(worst, Pairing.score(piece, with: garment, statement: statement).score)
+            }
+            guard !refused, worst < .greatestFiniteMagnitude else { continue }
+            // Ties broken on the id so the row does not reshuffle between renders — the
+            // property the whole of `build` is written around, and the common case on a
+            // wardrobe nothing has been measured in yet.
+            if let current = best,
+               current.score > worst || (current.score == worst && current.item.id <= option.id) {
+                continue
+            }
+            best = (option, worst)
+        }
+        return best?.item
     }
 }

@@ -18,6 +18,8 @@ struct BrandFeedView: View {
     @Environment(\.modelContext) private var context
     @Environment(\.dismiss) private var dismiss
     @Environment(SizeProfileStore.self) private var sizes: SizeProfileStore
+    /// Drives the haptic on "Mark all seen" — see the button. A counter, not a flag.
+    @State private var clearedAll = 0
 
     let brand: Brand
     /// Show only what hasn't been seen, matching the feed the user arrived from.
@@ -108,6 +110,7 @@ struct BrandFeedView: View {
         }
         .scrollIndicators(.hidden)
         .background(Color.paper)
+        .sensoryFeedback(.success, trigger: clearedAll)
         .navigationTitle(brand.name)
         .toolbarTitleDisplayMode(.inline)
         // **Emptying this page leaves it, whichever way it was emptied.**
@@ -145,6 +148,9 @@ struct BrandFeedView: View {
                         brand.lastOpenedAt = Date()
                     }
                     try? context.save()
+                    // The same confirmation the swipe gives, for the same act done to the
+                    // whole page at once. See `FeedView.markSeen`.
+                    clearedAll += 1
                 }
                 .labelStyle(.iconOnly)
             }

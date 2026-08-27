@@ -223,6 +223,16 @@ struct StyleView: View {
             .task(id: ImageTagger.backlog(in: saves)) {
                 await ImageTagger.analyzePending(in: context)
             }
+            // The reading on this page is built from exactly what the pass is producing —
+            // register, colours, silhouettes, the suggestion row's stickers — so a wardrobe
+            // still being measured describes itself thinly and then changes its mind. Better
+            // to say why.
+            .safeAreaInset(edge: .top) {
+                if let remaining = ImageTagger.progress.remaining {
+                    AnalysisLine(remaining: remaining)
+                }
+            }
+            .animation(.easeOut(duration: 0.2), value: ImageTagger.progress.remaining)
         }
         // Ink, not the system blue. Every other tab does this; without it the controls on
         // this page are the only chroma in the app outside a photograph, which is exactly
@@ -479,7 +489,19 @@ struct SuggestedFitCard: View {
             }
             .frame(width: width, height: width)
             .clipped()
-            .background(Color.wash.opacity(0.4))
+            // **`sweep`, not `wash` — a garment cannot be drawn on a ground that inverts.**
+            //
+            // This card is made of *cutouts*: `FitPieceImage` draws a lifted garment with
+            // its background erased, so whatever is behind it shows through the silhouette.
+            // `wash` is adaptive and goes to 0x1C1C19 at night, which is the exact problem
+            // the collection wall already solved — most of this catalogue is black, and a
+            // black jacket lifted onto near-black is a card with nothing visible on it.
+            // Worse than the raw product shot it replaced, which at least carried its own
+            // white sweep in the pixels.
+            //
+            // Same fixed cream the archive uses, and for the reason written there:
+            // photographs do not invert. Any type set over this has to be `sweepInk`.
+            .background(Color.sweep)
 
             Text(title)
                 .font(.editorial(12))

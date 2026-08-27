@@ -195,6 +195,15 @@ struct SavedView: View {
             .task(id: ImageTagger.backlog(in: saves)) {
                 await ImageTagger.analyzePending(in: context)
             }
+            // Said on this screen in particular because the wall is what it changes: until
+            // a photograph has been measured its tile is drawn to a hash of the item id,
+            // so the layout visibly resettles as the pass lands.
+            .safeAreaInset(edge: .top) {
+                if let remaining = ImageTagger.progress.remaining {
+                    AnalysisLine(remaining: remaining)
+                }
+            }
+            .animation(.easeOut(duration: 0.2), value: ImageTagger.progress.remaining)
             .alert(renaming == nil ? "New board" : "Rename board", isPresented: $isNamingBoard) {
                 TextField("Name", text: $newBoardName)
                 Button("Cancel", role: .cancel) { renaming = nil }

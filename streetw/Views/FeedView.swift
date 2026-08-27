@@ -77,6 +77,9 @@ struct FeedView: View {
     @State private var isShowingCalendar = false
     @State private var isShowingWatches = false
     @State private var isShowingMarkdowns = false
+    /// Bumped whenever a brand's spread is cleared, purely to drive the haptic. A counter
+    /// rather than a flag because two brands cleared in a row are two events.
+    @State private var clearedBrands = 0
 
     /// Only active watches count — a bell that stays filled forever after one has fired
     /// stops meaning anything.
@@ -202,6 +205,7 @@ struct FeedView: View {
             // find a brand themselves.
             stream(feed)
                 .background(Color.paper)
+                .sensoryFeedback(.success, trigger: clearedBrands)
             .navigationTitle("Feed")
             .toolbarTitleDisplayMode(.inlineLarge)
             // Registered once, here, for every card in this stack — including the ones on
@@ -397,6 +401,13 @@ struct FeedView: View {
             group.brand.lastOpenedAt = Date()
         }
         try? context.save()
+        // Clearing a brand is the same act as swiping one card away, done to forty of them
+        // at once — and only the swipe confirmed itself in the hand (`QuickSave`). So the
+        // small, deliberate gesture had a response and the large, irreversible-feeling one
+        // was silent, which is the wrong way round: this is the tap most likely to be
+        // followed by "did that work?". Same `.success` as the swipe, because it is the
+        // same event.
+        clearedBrands += 1
     }
 }
 

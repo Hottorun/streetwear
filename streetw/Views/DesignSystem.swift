@@ -130,6 +130,47 @@ struct DataLabel: View {
     }
 }
 
+// MARK: - Saying that the photographs are being read
+
+/// A thin line stating that `ImageTagger` is still working, and on how much.
+///
+/// The analysis is the slowest visible thing the app does and it used to be silent, so a
+/// collection whose tiles were sized from a guessed aspect and a canvas with no stickers on
+/// it looked like a broken screen rather than an unfinished one — the same "working and
+/// invisible is indistinguishable from broken" failure this project keeps writing down.
+///
+/// A count rather than a bar, because the denominator genuinely moves: a share whose real
+/// photographs arrive on a later foreground makes those rows due again, and a progress bar
+/// that slides backwards is a worse lie than no bar. The spinner carries the fact that
+/// something is happening; the number carries how much is left.
+///
+/// Drawn as a `safeAreaInset` rather than over the content: it must not cover a tile on the
+/// one screen whose whole subject is tiles, and it appears and disappears on its own, which
+/// over content would be a thing jumping about under your thumb.
+struct AnalysisLine: View {
+    let remaining: Int
+
+    var body: some View {
+        HStack(spacing: 8) {
+            ProgressView()
+                .controlSize(.mini)
+                .tint(.muted)
+            DataLabel(
+                text: remaining == 1
+                    ? "READING 1 PHOTOGRAPH"
+                    : "READING \(remaining) PHOTOGRAPHS",
+                size: 10
+            )
+            Spacer()
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 8)
+        .background(Color.paper)
+        .overlay(alignment: .bottom) { Rule() }
+        .transition(.opacity)
+    }
+}
+
 // MARK: - The size run
 
 /// The app's signature element, and the one place the data model shows through as

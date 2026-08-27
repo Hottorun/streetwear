@@ -41,6 +41,37 @@ import Vision
 enum ImageTagger {
     private static let log = Logger(subsystem: "com.kern.functional.streetw", category: "tagging")
 
+    /// The drain in flight, if there is one.
+    ///
+    /// **The pass used to cancel itself, and this is what stopped it.** It is started from
+    /// `.task(id: ImageTagger.backlog(in: saves))` — a key that is deliberately the amount
+    /// of outstanding work, so that a photograph arriving later is itself the trigger. But
+    /// the pass *resolves* items and saves, which invalidates the `@Query` behind `saves`,
+    /// which recomputes the key, which makes SwiftUI cancel the running task and start a
+    /// new one. Every batch tore down its own successor.
+    ///
+    /// On device that is not a slow loop, it is a broken feature: the four Vision requests
+    /// are the thing in flight when the cancellation lands, so the log fills with
+    /// `GenerateForegroundInstanceMaskRequest was cancelled`, no subject is ever lifted,
+    /// `Seamless` is handed a photograph it correctly refuses, and — before the change
+    /// below — the row was stamped at the current version on the way out. One item per
+    /// restart, written off permanently, on the pass whose entire job is the cutout.
+    ///
+    /// Holding the task here does two things. A re-fired `.task` returns immediately
+    /// instead of starting a second drain over the same rows, and the work itself lives in
+    /// an unstructured task, so it is not a child of the view's and view churn cannot
+    /// cancel it. The same reasoning `ImageGallery` already applies to its prefetch.
+    private static var drain: Task<Void, Never>?
+
+    /// How many photographs the pass still has to get through, for anything that wants to
+    /// say so on screen. Nil when nothing is running.
+    ///
+    /// The analysis is the slowest visible thing the app does — four Vision requests and a
+    /// decode per garment — and it was entirely silent, so a collection whose tiles were
+    /// drawn to a guessed aspect and whose canvas had no stickers looked broken rather than
+    /// busy. See `AnalysisProgress`.
+    static let progress = AnalysisProgress()
+
     /// Analyses saved items with work outstanding — never analysed, or holding a cutout or
     /// a reading from an older revision.
     ///
@@ -51,6 +82,20 @@ enum ImageTagger {
     /// changes. That is now visible rather than academic: the wall sizes each tile from
     /// the measured aspect, so an unmeasured item is drawn to a guess.
     static func analyzePending(in context: ModelContext, limit: Int = 12) async {
+        // Already draining: the caller's key changed underneath a pass that is handling
+        // exactly these rows. Awaiting it rather than returning outright keeps the calling
+        // `.task` alive for as long as there is work, which is what the progress line reads.
+        if let drain {
+            await drain.value
+            return
+        }
+        let task = Task { @MainActor in await drainBacklog(in: context, limit: limit) }
+        drain = task
+        await task.value
+        drain = nil
+    }
+
+    private static func drainBacklog(in context: ModelContext, limit: Int) async {
         // **The queue is worked out once, not once per batch.**
         //
         // `analyzeBatch` used to fetch the entire `SavedItem` table itself, fault every
@@ -63,6 +108,8 @@ enum ImageTagger {
         // by satisfying them, and a save made while it runs is picked up by the `.task(id:)`
         // key that started it in the first place.
         var queue = pending(in: context)
+        progress.begin(queue.count)
+        defer { progress.finish() }
         while !Task.isCancelled, !queue.isEmpty {
             let batch = Array(queue.prefix(limit))
             // **Counts items *resolved*, not items looked at.** An item whose photograph
@@ -71,6 +118,7 @@ enum ImageTagger {
             // re-requesting the same twelve URLs as fast as they can fail.
             _ = await analyzeBatch(batch, in: context)
             queue.removeFirst(batch.count)
+            progress.advance(to: queue.count)
         }
     }
 
@@ -219,6 +267,11 @@ enum ImageTagger {
                 // full-resolution RGBA PNG to overwrite a current file with its own contents
                 // is the most expensive no-op in the pass.
                 let lift = await Cutout.make(from: image, named: name, writeFile: needsCutout)
+                // Interrupted rather than answered: leave every stamp alone and leave the
+                // row due. Stamping here is what turned one cancelled pass into a garment
+                // with no cutout for as long as it exists — see `Cutout.Lift.wasInterrupted`.
+                // Not counted as resolved either, or the drain loop would step over it.
+                if lift.wasInterrupted { continue }
                 if needsCutout {
                     update.cutoutFile = lift.file
                     update.cutoutVersion = Cutout.version
