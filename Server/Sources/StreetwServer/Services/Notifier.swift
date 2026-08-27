@@ -561,6 +561,38 @@ actor Notifier {
     ///
     /// Everything else goes to every follower: a new product has no size axis worth
     /// filtering on yet, and a drop lock is about the storefront, not an item.
+    /// **Whether this kind of event is worth interrupting somebody for at all.**
+    ///
+    /// Every kind used to push, and the result was a stream nobody could take seriously —
+    /// which is worse than too few notifications, because it teaches people to swipe the
+    /// whole app away and takes the one that mattered with it.
+    ///
+    /// The line is *the unexpected*. A drop, a collection and a storefront locking are things
+    /// that happen suddenly, are worth acting on within minutes, and cannot be found any
+    /// other way. Everything else is either not urgent or not news:
+    ///
+    /// - **`restock`** — the single largest source of volume, and almost all of it is about a
+    ///   garment the reader has never seen. A restock is only interesting when it is *your*
+    ///   size of *your* thing, and that is precisely what a `StockWatch` says. Watches are
+    ///   handled by `notifyWatches`, which runs first, claims its (user, brand) pairs and is
+    ///   exempt from the cooldown — so a restock somebody asked about still arrives instantly
+    ///   while a restock nobody asked about no longer wakes them at seven.
+    /// - **`priceDrop`** — real news and not urgent. A markdown is worth as much a week later
+    ///   as on the day, which is exactly why `MarkdownsView` exists and carries a badge.
+    /// - **`pageChange`** — "something on this page is different", from a hashed page watch.
+    ///   The weakest signal in the app: it fires on brands where nothing happened.
+    /// - **`post`** — a brand's own RSS. Marketing, published by people who already have a
+    ///   newsletter.
+    ///
+    /// None of these are *hidden*: every one still lands in the feed, still counts as unread,
+    /// still reaches the markdowns list. This decides only what is worth a buzz.
+    static func isWorthWaking(_ kind: UpdateKind) -> Bool {
+        switch kind {
+        case .product, .collection, .dropLock: true
+        case .restock, .priceDrop, .pageChange, .post: false
+        }
+    }
+
     static func isRelevant(_ event: EventModel, to profile: SizeProfile) -> Bool {
         // Gender applies to every kind, not just restocks. Being woken at 7am for a
         // women's hoodie is worse than merely seeing one in the feed, so if the filter
@@ -570,7 +602,10 @@ actor Notifier {
         // the storefront rather than an item.
         if let product = event.product, !profile.allows(product.gender) { return false }
 
-        guard UpdateKind(rawValue: event.kind) == .restock else { return true }
+        let kind = UpdateKind(rawValue: event.kind) ?? .product
+        guard Self.isWorthWaking(kind) else { return false }
+
+        guard kind == .restock else { return true }
         guard !profile.isEmpty, !event.sizes.isEmpty else { return true }
         return event.sizes.contains { profile.matches($0) }
     }

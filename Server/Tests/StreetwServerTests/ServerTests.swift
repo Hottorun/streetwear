@@ -1321,7 +1321,12 @@ struct NotifierTests {
 
             #expect(await notifier.dispatch().sent == 1)
             #expect(sender.sent.count == 2)
-            #expect(sender.sent.last?.body == "1 new item and 1 restock")
+            // The restock published in between is *not* in the summary: it is held back by
+            // `isWorthWaking`, not by the cooldown. It still reaches the feed.
+            //
+            // And with only one event left to say, the summary names it rather than counting
+            // it — "1 new item" is what a batch of one used to read as.
+            #expect(sender.sent.last?.body == "New: Chore Pant")
         }
     }
 
@@ -1363,8 +1368,17 @@ struct NotifierTests {
         }
     }
 
-    @Test("A restock only reaches people who wear the size that came back")
-    func restockIsSizeTargeted() async throws {
+    /// **This used to assert that a restock reached the follower wearing the size that came
+    /// back.** It no longer reaches anybody by that route: a restock is the largest single
+    /// source of push volume and almost all of it is about a garment the reader has never
+    /// seen, so it is refused by `Notifier.isWorthWaking` before size targeting is consulted.
+    /// The restock somebody actually cares about arrives through `notifyWatches`, which is
+    /// what a `StockWatch` is for and which is exempt from the cooldown.
+    ///
+    /// The test is kept, pointed at the new behaviour, because the old expectation is exactly
+    /// what a future change might reinstate by accident.
+    @Test("A restock alone wakes nobody, whatever size came back")
+    func restockDoesNotPush() async throws {
         try await withServer { app in
             var wearsM = SizeProfile()
             wearsM.apparel = ["M"]
@@ -1387,10 +1401,15 @@ struct NotifierTests {
             let sender = RecordingSender()
             let result = await Notifier(app: app, sender: sender).dispatch()
 
-            #expect(result.sent == 1)
-            #expect(sender.sent.map(\.deviceToken) == ["wears-m"])
-            #expect(sender.sent.first?.title == "Kith")
-            #expect(sender.sent.first?.body == "Back in M — Box Logo Hoodie")
+            // Nobody is woken — not the follower who wears M, and not the one who doesn't.
+            #expect(result.sent == 0)
+            #expect(sender.sent.isEmpty)
+
+            // And it is marked handled rather than left pending, so it cannot fire later.
+            let pending = try await EventModel.query(on: app.db)
+                .filter(\.$notifiedAt == nil)
+                .count()
+            #expect(pending == 0)
         }
     }
 
@@ -1476,7 +1495,9 @@ struct NotifierTests {
 
             #expect(result.events == 41)
             #expect(result.sent == 1)
-            #expect(sender.sent.first?.body == "40 new items and 1 restock")
+            // Forty-one events, forty of them worth waking somebody for. The restock is
+            // marked as handled — so it can never fire later — and left out of the copy.
+            #expect(sender.sent.first?.body == "40 new items")
         }
     }
 
@@ -2956,6 +2977,295 @@ struct HintedPollingTests {
             #expect(result.pollHints == 1)
             let remaining = try await PollHintModel.query(on: app.db).all()
             #expect(remaining.map { $0.$brand.id } == [liveBrand])
+        }
+    }
+}
+
+@Suite("Discover feed")
+struct DiscoverRouteTests {
+    /// A brand with `count` garments, newest first, all photographed.
+    @discardableResult
+    private func shop(
+        _ app: Application,
+        name: String,
+        garments: Int,
+        extras: [String] = []
+    ) async throws -> UUID {
+        let brand = BrandModel(
+            name: name, slug: "\(name.lowercased()).com", website: "https://\(name.lowercased()).com",
+            instagramHandle: nil, usesGeneratedName: false
+        )
+        try await brand.save(on: app.db)
+        let brandID = try brand.requireID()
+
+        for index in 0..<garments {
+            try await ProductModel(
+                brandID: brandID,
+                sourceID: nil,
+                item: FetchedItem(
+                    externalID: "shopify:\(name)-\(index)",
+                    title: "\(name) Hoodie \(index)",
+                    imageURLStrings: ["https://cdn.example.com/\(name)-\(index).jpg"],
+                    // Descending, so "newest first" is checkable.
+                    publishedAt: Date().addingTimeInterval(-Double(index) * 60),
+                    kind: .product,
+                    tags: ["mens"],
+                    productType: "Hoodies"
+                )
+            ).save(on: app.db)
+        }
+
+        for (index, title) in extras.enumerated() {
+            try await ProductModel(
+                brandID: brandID,
+                sourceID: nil,
+                item: FetchedItem(
+                    externalID: "shopify:\(name)-extra-\(index)",
+                    title: title,
+                    imageURLStrings: ["https://cdn.example.com/\(name)-extra-\(index).jpg"],
+                    // Newer than every garment, so an unfiltered query would lead with these.
+                    publishedAt: Date().addingTimeInterval(3600),
+                    kind: .product
+                )
+            ).save(on: app.db)
+        }
+        return brandID
+    }
+
+    /// The whole reason this route exists rather than reusing `/v1/brands/popular`, whose
+    /// candidate list is built from the follows table — so a brand nobody follows is
+    /// invisible to it, which is precisely the brand a discovery feed is for.
+    @Test("A brand nobody follows is still discoverable")
+    func unfollowedBrandsAreTheSupply() async throws {
+        try await withServer { app in
+            try await shop(app, name: "Nobody", garments: 3)
+            let auth = try await deviceAuth(app)
+
+            try await app.testing().test(.GET, "v1/discover", headers: auth) { res async throws in
+                #expect(res.status == .ok)
+                let body = try res.content.decode(DiscoverResponse.self)
+                #expect(!body.cards.isEmpty)
+                #expect(body.cards.allSatisfy { $0.brand.name == "Nobody" })
+            }
+        }
+    }
+
+    /// The bug `/v1/brands/popular` shipped with, in its new home: a single date-sorted
+    /// query with a global limit is not a per-brand budget, and a storefront that publishes
+    /// its whole catalogue in one sweep takes the entire window.
+    @Test("One storefront's sweep cannot take the page")
+    func aSweepCannotOwnThePage() async throws {
+        try await withServer { app in
+            try await shop(app, name: "Prolific", garments: 200)
+            try await shop(app, name: "Quiet", garments: 2)
+            let auth = try await deviceAuth(app)
+
+            try await app.testing().test(.GET, "v1/discover", headers: auth) { res async throws in
+                let cards = try res.content.decode(DiscoverResponse.self).cards
+                let prolific = cards.filter { $0.brand.name == "Prolific" }.count
+                #expect(prolific == 2, "Prolific contributed \(prolific) of \(cards.count)")
+                #expect(cards.contains { $0.brand.name == "Quiet" }, "the quiet shop must reach the page")
+            }
+        }
+    }
+
+    /// Depth paging, not date paging. Storefronts stamp a whole drop with one second, so a
+    /// date cursor over a catalogue would either re-serve a page or skip one.
+    @Test("The cursor walks deeper into each catalogue without repeating")
+    func cursorPagesByDepth() async throws {
+        try await withServer { app in
+            try await shop(app, name: "Deep", garments: 10)
+            let auth = try await deviceAuth(app)
+
+            var seen: [String] = []
+            var cursor: String? = nil
+            for _ in 0..<4 {
+                let path = cursor.map { "v1/discover?cursor=\($0)" } ?? "v1/discover"
+                try await app.testing().test(.GET, path, headers: auth) { res async throws in
+                    let body = try res.content.decode(DiscoverResponse.self)
+                    seen += body.cards.map(\.productExternalID)
+                    cursor = body.nextCursor
+                }
+            }
+
+            #expect(seen.count == Set(seen).count, "a product was served twice: \(seen)")
+            #expect(seen.count == 8, "four pages of two")
+            // Newest first, and the depth genuinely advances.
+            #expect(seen.first == "shopify:Deep-0")
+            #expect(seen.last == "shopify:Deep-7")
+        }
+    }
+
+    /// A gift card is not somebody's first impression of a label. These sit in the same
+    /// product feed as the clothes and are *newer* here, so an unfiltered query leads with
+    /// them — which is how a delivery graphic became the whole of Represent's card.
+    /// Note what this does *not* assert: that the first page is non-empty. The two extras
+    /// here are the newest rows, so they occupy the whole of the first depth window and are
+    /// both refused — that page is legitimately thin. Reaching past them for replacements
+    /// would double-serve those replacements at the next depth, and the enumeration being a
+    /// partition is worth more than a full first page. The garments are still all reached.
+    @Test("Promotional rows never reach a card, and no garment is lost to them")
+    func promotionalRowsAreRefused() async throws {
+        try await withServer { app in
+            try await shop(app, name: "Shoppy", garments: 4, extras: ["Gift Card", "Size Guide"])
+            let auth = try await deviceAuth(app)
+
+            var seen: [String] = []
+            var cursor: String? = nil
+            for _ in 0..<4 {
+                let path = cursor.map { "v1/discover?cursor=\($0)" } ?? "v1/discover"
+                try await app.testing().test(.GET, path, headers: auth) { res async throws in
+                    let body = try res.content.decode(DiscoverResponse.self)
+                    seen += body.cards.map(\.title)
+                    cursor = body.nextCursor
+                }
+            }
+
+            #expect(!seen.contains("Gift Card"))
+            #expect(!seen.contains("Size Guide"))
+            #expect(Set(seen) == Set((0..<4).map { "Shoppy Hoodie \($0)" }), "got \(seen)")
+        }
+    }
+
+    /// Following is the verb this feed exists for, so a card that has been acted on must
+    /// not come back around.
+    @Test("Following a brand takes it out of the supply")
+    func followingRemovesABrand() async throws {
+        try await withServer { app in
+            let kept = try await shop(app, name: "Kept", garments: 4)
+            try await shop(app, name: "Other", garments: 4)
+            let auth = try await deviceAuth(app)
+
+            try await app.testing().test(.POST, "v1/follows", headers: auth, beforeRequest: { req in
+                try req.content.encode(FollowBrand(brandID: kept))
+            }, afterResponse: { _ in })
+
+            try await app.testing().test(.GET, "v1/discover", headers: auth) { res async throws in
+                let cards = try res.content.decode(DiscoverResponse.self).cards
+                #expect(!cards.isEmpty)
+                #expect(!cards.contains { $0.brand.id == kept })
+            }
+        }
+    }
+
+    /// The card is an argument for following the brand, and the client stores one `Brand`
+    /// row whichever route it arrived on — so a discovery card that is then followed must
+    /// not overwrite a populated source list with an empty one.
+    @Test("A card carries the brand's sources and the classifier's inputs")
+    func cardsCarryWhatTheClientClassifiesOn() async throws {
+        try await withServer { app in
+            let brandID = try await shop(app, name: "Sourced", garments: 2)
+            try await SourceModel(
+                brandID: brandID, kind: .shopify, url: "https://sourced.com/products.json"
+            ).save(on: app.db)
+            let auth = try await deviceAuth(app)
+
+            try await app.testing().test(.GET, "v1/discover", headers: auth) { res async throws in
+                let card = try #require(try res.content.decode(DiscoverResponse.self).cards.first)
+
+                #expect(card.brand.sources.count == 1)
+                #expect(card.brand.sources.first?.kind == "shopify")
+                // Without these the card arrives as a bare title and every judgement the
+                // feed exists to make resolves to "unknown".
+                #expect(card.productType == "Hoodies")
+                #expect(card.tags == ["mens"])
+                #expect(card.itemGender == .mens)
+                #expect(!card.imageURLs.isEmpty)
+                #expect(!card.spread.isEmpty)
+            }
+        }
+    }
+
+    /// An exhausted catalogue has to say so. A feed that loops is lying about having more.
+    @Test("A spent catalogue ends rather than looping")
+    func anExhaustedCatalogueEnds() async throws {
+        try await withServer { app in
+            try await shop(app, name: "Tiny", garments: 1)
+            let auth = try await deviceAuth(app)
+
+            try await app.testing().test(.GET, "v1/discover?cursor=9", headers: auth) { res async throws in
+                let body = try res.content.decode(DiscoverResponse.self)
+                #expect(body.cards.isEmpty)
+                #expect(body.nextCursor == nil)
+            }
+        }
+    }
+
+    @Test("Discovery is behind device auth")
+    func discoveryRequiresADevice() async throws {
+        try await withServer { app in
+            try await shop(app, name: "Private", garments: 2)
+            try await app.testing().test(.GET, "v1/discover") { res async throws in
+                #expect(res.status == .unauthorized)
+            }
+        }
+    }
+}
+
+@Suite("Notification frequency")
+struct NotificationPolicyTests {
+    /// The unexpected, and only the unexpected. Each of these happens suddenly, is worth
+    /// acting on within minutes, and cannot be found any other way.
+    @Test("A drop, a collection and a storefront lock are worth waking somebody for")
+    func theUnexpectedWakesYou() {
+        #expect(Notifier.isWorthWaking(.product))
+        #expect(Notifier.isWorthWaking(.collection))
+        #expect(Notifier.isWorthWaking(.dropLock))
+    }
+
+    /// The volume. Every one of these still reaches the feed, the unread counts and the
+    /// markdowns list — this decides only what is worth a buzz.
+    @Test("Restocks, markdowns, page changes and posts do not")
+    func theRestIsNotABuzz() {
+        // Almost all restock volume is about a garment the reader has never seen. The ones
+        // that matter are the ones somebody asked about, which is a StockWatch.
+        #expect(!Notifier.isWorthWaking(.restock))
+        // Real news, not urgent: a markdown is worth as much a week later, which is what
+        // the markdowns list is for.
+        #expect(!Notifier.isWorthWaking(.priceDrop))
+        // "Something on this page is different" — the weakest signal in the app.
+        #expect(!Notifier.isWorthWaking(.pageChange))
+        // A brand's own marketing RSS.
+        #expect(!Notifier.isWorthWaking(.post))
+    }
+
+    /// The rule has to survive the layer above it, or filtering by kind would be undone by
+    /// an event that happens to carry a matching size.
+    @Test("A restock is refused by relevance even when the sizes match")
+    func relevanceRefusesRestocks() async throws {
+        try await withServer { app in
+            let brand = BrandModel(
+                name: "Kith", slug: "kith.com", website: "https://kith.com",
+                instagramHandle: nil, usesGeneratedName: false
+            )
+            try await brand.save(on: app.db)
+            let brandID = try brand.requireID()
+
+            let product = ProductModel(
+                brandID: brandID, sourceID: nil,
+                item: FetchedItem(
+                    externalID: "shopify:1", title: "Hoodie",
+                    publishedAt: Date(), kind: .product, tags: ["mens"]
+                )
+            )
+            try await product.save(on: app.db)
+
+            var profile = SizeProfile()
+            profile.apparel = ["M"]
+
+            let restock = EventModel(
+                brandID: brandID, productID: try product.requireID(), kind: .restock
+            )
+            restock.sizes = ["M"]
+            restock.$product.value = product
+            #expect(!Notifier.isRelevant(restock, to: profile), "a restock in your size is still not a buzz")
+
+            // And the kinds that are worth waking for still pass the same gate.
+            let drop = EventModel(
+                brandID: brandID, productID: try product.requireID(), kind: .product
+            )
+            drop.$product.value = product
+            #expect(Notifier.isRelevant(drop, to: profile))
         }
     }
 }

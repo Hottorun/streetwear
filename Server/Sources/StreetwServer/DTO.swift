@@ -26,6 +26,8 @@ extension DeliveryStatus: @retroactive Content {}
 extension PollHint: @retroactive Content {}
 extension PollHintSync: @retroactive Content {}
 extension PollHintsResponse: @retroactive Content {}
+extension DiscoverCard: @retroactive Content {}
+extension DiscoverResponse: @retroactive Content {}
 
 extension BrandSourceDTO {
     init(_ source: SourceModel) {
@@ -109,6 +111,61 @@ extension FeedItem {
             // event, and one product produces several — so nothing downstream could tell
             // that a shared link and a feed card were the same thing.
             productExternalID: product?.externalID
+        )
+    }
+}
+
+extension DiscoverCard {
+    /// A garment from a brand the caller does not follow.
+    ///
+    /// Takes no `SizeProfile`, unlike `FeedItem`. That is not an omission: the app's rule is
+    /// that a size **reorders and never hides** — a sold-out size today is the restock the
+    /// whole product exists to catch — so there is nothing here for a profile to narrow. The
+    /// variants travel in full and the phone decides what to rule in vermilion.
+    /// - Parameter variants: passed in rather than read off `product.$variants`, for exactly
+    ///   the reason `BrandDTO` takes its sources that way. Fluent's `@Children` accessor
+    ///   **traps at runtime** when the relation was not eager loaded, and this initialiser
+    ///   now has callers with two different query shapes: the product query eager loads
+    ///   variants, and the release query deliberately does not — a collection row has none,
+    ///   and loading them would be a join for nothing. Reading the accessor took the whole
+    ///   server down with `Children relation not eager loaded` the first time the second
+    ///   caller existed. An explicit parameter turns that into a compile error at the call
+    ///   site instead.
+    init(
+        _ product: ProductModel,
+        brand: BrandDTO,
+        variants: [VariantModel],
+        spread: [String],
+        vector: BrandVector?,
+        members: [String] = [],
+        memberCount: Int = 0
+    ) {
+        self.init(
+            productExternalID: product.externalID,
+            brand: brand,
+            title: product.title,
+            summary: product.summary,
+            kind: product.kind,
+            members: members,
+            memberCount: memberCount,
+            imageURLs: product.imageURLs,
+            linkURL: product.linkURL,
+            priceText: product.priceText,
+            priceAmount: product.priceAmount,
+            isAvailable: product.isAvailable,
+            // The classifier's inputs travel with its verdict, for the same reason they do
+            // on a feed row: `GarmentSlot`, `Gender` and every judgement `Pairing` makes are
+            // read off these, and a card that arrives as a bare title can only answer
+            // "unknown" — which on this screen means no pairing, no reason and no argument
+            // for the brand at all.
+            productType: product.productType,
+            tags: product.tags,
+            gender: product.gender.rawValue,
+            genderVersion: GenderClassifier.version,
+            variants: variants.map(\.asVariantInfo),
+            publishedAt: product.publishedAt,
+            spread: spread,
+            vector: vector
         )
     }
 }

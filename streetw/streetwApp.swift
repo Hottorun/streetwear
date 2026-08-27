@@ -29,6 +29,14 @@ struct streetwApp: App {
     @State private var remote: RemoteSync
     @State private var engine: SyncEngine
     @State private var suggestions: BrandSuggestions
+    /// The Discover tab's supply. Built here rather than by the view for the reason every
+    /// other shared object is: a `.task` that creates it races the child views' own tasks,
+    /// and a deck that is nil when the tab first appears looks exactly like a broken feed.
+    /// Holding it here also means the pages survive switching tabs.
+    @State private var deck: DiscoverDeck
+    /// Cutouts and colour for the cards on screen. Held beside the deck so the measurements
+    /// survive a tab switch — they are a fetch and two Vision requests each.
+    @State private var analysis: DiscoveryAnalysis
     @State private var route: PushRoute
     /// Owned here rather than by a card: the card that triggered a save lives in a
     /// `LazyVStack` and is routinely recycled or scrolled off before the confirmation has
@@ -82,6 +90,8 @@ struct streetwApp: App {
         _remote = State(initialValue: remote)
         _engine = State(initialValue: SyncEngine(context: container.mainContext))
         _suggestions = State(initialValue: BrandSuggestions(remote: remote, settings: settings))
+        _deck = State(initialValue: MainActor.assumeIsolated { DiscoverDeck() })
+        _analysis = State(initialValue: MainActor.assumeIsolated { DiscoveryAnalysis() })
         _route = State(initialValue: route)
         _confirmation = State(initialValue: MainActor.assumeIsolated { SaveConfirmation() })
         _collection = State(initialValue: MainActor.assumeIsolated { CollectionRoute() })
@@ -109,6 +119,8 @@ struct streetwApp: App {
                 .environment(remote)
                 .environment(engine)
                 .environment(suggestions)
+                .environment(deck)
+                .environment(analysis)
                 .environment(route)
                 .environment(confirmation)
                 .environment(collection)
@@ -214,6 +226,55 @@ enum DevSeed {
         await engine.sync(brands: brands)
         for brand in brands {
             for update in brand.recentUpdates(limit: 6) { update.isSeen = false }
+        }
+        try? context.save()
+
+        seedSavesIfRequested(in: context, brands: brands)
+    }
+
+    /// Third dev flag: `-seedSaves 8` files a few garments into the wardrobe.
+    ///
+    /// This exists because the Discover tab's whole argument — *this goes with clothes you
+    /// already own* — is invisible without a wardrobe, and building one by hand means
+    /// tapping save eight times through a scrolling feed on every fresh install. Worse, the
+    /// interesting case is not "eight saves" but "eight saves **across complementary
+    /// slots**": `Pairing` gates on slot before it scores anything, so eight t-shirts
+    /// produce exactly no pairings and the screen looks broken in a way that is entirely the
+    /// seeding's fault.
+    ///
+    /// So it fills slots round-robin rather than taking the newest N, and it takes only
+    /// garments with a photograph — the same rule every surface that draws a save applies.
+    private static func seedSavesIfRequested(in context: ModelContext, brands: [Brand]) {
+        let raw = UserDefaults.standard.string(forKey: "seedSaves") ?? ""
+        guard let wanted = Int(raw), wanted > 0 else { return }
+
+        let existing = (try? context.fetch(FetchDescriptor<SavedItem>()))?.count ?? 0
+        guard existing == 0 else { return }
+
+        // Grouped by where it goes on the body, so the wardrobe spans slots that can
+        // actually be worn together.
+        var bySlot: [GarmentSlot: [BrandUpdate]] = [:]
+        for brand in brands {
+            for update in brand.updates where !update.imageURLStrings.isEmpty {
+                let slot = update.garmentSlot
+                guard GarmentSlot.essential.contains(slot) else { continue }
+                bySlot[slot, default: []].append(update)
+            }
+        }
+
+        var picked: [BrandUpdate] = []
+        var round = 0
+        while picked.count < wanted {
+            let available = GarmentSlot.essential.filter { (bySlot[$0]?.count ?? 0) > round }
+            guard !available.isEmpty else { break }
+            for slot in available where picked.count < wanted {
+                picked.append(bySlot[slot]![round])
+            }
+            round += 1
+        }
+
+        for update in picked {
+            context.insert(SavedItem(update: update, type: .wardrobe))
         }
         try? context.save()
     }

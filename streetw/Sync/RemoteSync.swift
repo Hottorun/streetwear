@@ -126,6 +126,13 @@ final class RemoteSync {
         return try await api.popularBrands(limit: limit)
     }
 
+    /// A page of the discovery feed. Standalone has no supply for this — the phone only
+    /// holds brands somebody already followed, which is the opposite of the question.
+    func discover(cursor: String?) async throws -> DiscoverResponse {
+        guard let api else { throw APIError.notConfigured }
+        return try await api.discover(cursor: cursor)
+    }
+
     /// Follows a brand the catalog already has, and pulls it straight into the local
     /// store so the UI reflects it without waiting for a full sync.
     func followExisting(_ dto: BrandDTO, sizes: SizeProfile) async throws {

@@ -55,6 +55,11 @@ struct ContentView: View {
             Tab("Brands", systemImage: "tag", value: "brands") {
                 BrandsView()
             }
+            // Between the brands you chose and the things you kept, which is where it
+            // belongs: it is the way *in* to the first and the way *out* of the second.
+            Tab("Discover", systemImage: "safari", value: "discover") {
+                DiscoverFeedView()
+            }
             Tab("Saved", systemImage: "bookmark", value: "saved") {
                 SavedView()
             }

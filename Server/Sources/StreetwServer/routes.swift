@@ -486,6 +486,290 @@ func routes(_ app: Application) throws {
         return follows.map { BrandDTO($0.brand, sources: $0.brand.sources) }
     }
 
+    // MARK: Discover
+
+    /// How many brands one page samples, and how deep it reaches into each.
+    ///
+    /// `discoverPerBrand` is the number of *cards* a brand contributes per page;
+    /// `discoverFetchPerBrand` is how many rows are read to find them, because the garment
+    /// filter and the has-a-photograph rule both reject rows and a brand whose two newest
+    /// products are a gift card and a size guide would otherwise contribute nothing.
+    let discoverPerBrand = 2
+    let discoverFetchPerBrand = 12
+    let discoverBrandsPerPage = 20
+    let discoverSpread = 8
+    /// A backstop on how far a single request will walk looking for a non-empty page. Never
+    /// the reason a page ends in practice — the barren-cycle test below is — but a loop that
+    /// queries the database has to have a bound that does not depend on the data being sane.
+    let discoverMaxWalk = 200
+
+    /// How many of a brand's recent products are scanned to find a release's contents, and
+    /// how many of their photographs a release card carries.
+    ///
+    /// Scanned in Swift rather than narrowed in SQL because the match is on the product's
+    /// *tags* as well as its title, and a portable `LIKE` across an array column is not
+    /// something Fluent expresses the same way on Postgres and SQLite — which is exactly the
+    /// class of difference that passes locally and fails on the deployment. One bounded query
+    /// per brand, only at depth zero.
+    let releaseScan = 120
+    let releaseMembers = 12
+
+    /// The newest collection row for a brand that is actually a release.
+    ///
+    /// Recency is checked in the query and the judgement in Swift, because `Release.isRelease`
+    /// is a vocabulary rather than anything SQL can express.
+    @Sendable func newestRelease(_ brandID: UUID, on db: any Database) async throws -> ProductModel? {
+        let collections = try await ProductModel.query(on: db)
+            .filter(\.$brand.$id == brandID)
+            .filter(\.$kind == UpdateKind.collection.rawValue)
+            .sort(\.$publishedAt, .descending)
+            .limit(40)
+            .all()
+        return collections.first { Release.isRelease(title: $0.title) }
+    }
+
+    /// The garments in a release, found by the distinctive words in its name.
+    ///
+    /// `/collections.json` announces a release and does not list it, so there is no link
+    /// between the two rows — brands tag their seasons, and that tag is the only thread.
+    /// Deliberately a heuristic, exactly as `Brand.members(of:)` is on the client: the
+    /// alternative is a network call per card in a scrolling feed, and being wrong costs a
+    /// card with a few extra garments on it rather than a missed drop.
+    ///
+    /// **Products only.** A release lands in the middle of ordinary trading, so admitting
+    /// every kind would sweep up restocks of last season's stock and price drops off the sale
+    /// rail and print them as the contents of something only just announced.
+    @Sendable func members(
+        of release: ProductModel,
+        brandID: UUID,
+        on db: any Database
+    ) async throws -> (images: [String], count: Int) {
+        let words = Release.distinctiveWords(in: release.title)
+        guard !words.isEmpty else { return ([], 0) }
+
+        let recent = try await ProductModel.query(on: db)
+            .filter(\.$brand.$id == brandID)
+            .filter(\.$kind == UpdateKind.product.rawValue)
+            .sort(\.$publishedAt, .descending)
+            .limit(releaseScan)
+            .all()
+
+        let matched = recent.filter { product in
+            guard !product.imageURLs.isEmpty else { return false }
+            let haystack = ([product.title, product.productType ?? ""] + product.tags)
+                .joined(separator: " ")
+                .lowercased()
+            return words.contains { haystack.contains($0) }
+        }
+
+        // **Spread across the body, not taken in catalogue order.**
+        //
+        // A mosaic is the only thing standing in for a whole collection, so it has to look
+        // like one. Catalogue order does not: Icecream's Fall 2026 lists its socks together,
+        // so the first nine matches were six pairs of socks, a banana pouch and a jacket —
+        // a card whose job is "here is a season" showing an accessories drawer. The same
+        // round-robin the route uses to stop one brand owning a page, keyed on the garment
+        // slot instead of the brand.
+        let spread = Discovery.interleave(matched) {
+            GarmentClassifier.classify(
+                title: $0.title,
+                productType: $0.productType,
+                tags: $0.tags
+            )
+        }
+        let images = PreviewImages.pick(
+            from: spread.map { (title: $0.title, imageURL: $0.imageURLs.first) },
+            limit: releaseMembers
+        )
+        return (images, matched.count)
+    }
+
+    /// Garments from brands the caller does not follow — the discovery feed's supply.
+    ///
+    /// **The shape of the query is the diversity, and that is deliberate.** The obvious
+    /// implementation is one date-sorted query over every unfollowed brand with a `LIMIT`,
+    /// and it does not work: a storefront that publishes 250 products in one re-merchandising
+    /// sweep owns the entire window, so the first several pages are one shop. That is not a
+    /// hypothetical — it is the bug `/v1/brands/popular` shipped with, where a global cut
+    /// dressed as a per-brand budget left fourteen of thirty-five recommendations with no
+    /// photographs at all. A cut made in SQL across all brands at once can never be a
+    /// per-brand budget.
+    ///
+    /// So the page is assembled the other way round: every eligible brand is asked for its
+    /// own newest few, and the cursor walks *depth* rather than time. Page zero is each
+    /// brand's two newest; page one is their next two. Diversity is then a property of the
+    /// query rather than of a filter applied afterwards, and it cannot be lost by tuning.
+    ///
+    /// The client does the real ordering — it holds the taste profile, the wardrobe and the
+    /// saturation history, none of which are or should be here. This only has to hand over a
+    /// page that isn't one storefront.
+    authed.get("discover") { req async throws -> DiscoverResponse in
+        let device = try await req.authenticatedDevice()
+
+        let mine = Set(
+            try await FollowModel.query(on: req.db)
+                .filter(\.$user.$id == device.$user.id)
+                .all()
+                .map(\.$brand.id)
+        )
+
+        // Sorted by id rather than by name or date: the enumeration a cursor walks has to be
+        // stable between two requests, and a brand renaming itself must not shuffle the
+        // pages under somebody mid-scroll.
+        let allBrands: [BrandModel] = try await BrandModel.query(on: req.db)
+            .with(\.$sources)
+            .all()
+        let unfollowed: [BrandModel] = allBrands.filter { brand in
+            guard let id = brand.id else { return false }
+            return !mine.contains(id)
+        }
+        let brands: [BrandModel] = unfollowed.sorted { first, second in
+            (first.id?.uuidString ?? "") < (second.id?.uuidString ?? "")
+        }
+        guard !brands.isEmpty else { return DiscoverResponse(cards: [], nextCursor: nil) }
+
+        // The cursor is a page index and nothing else. It is opaque on the wire so no client
+        // is tempted to do arithmetic on it, but there is deliberately no timestamp in it:
+        // this pages a *catalogue* by depth, not a timeline by date, and a date cursor over
+        // ties — storefronts stamp a whole drop with one second — would either re-serve a
+        // page or skip one.
+        let page = max(0, (try? req.query.get(Int.self, at: "cursor")) ?? 0)
+
+        // Brands are covered in groups when there are more of them than a page samples, so
+        // every brand is reached rather than only the first twenty forever.
+        let groups = max(1, (brands.count + discoverBrandsPerPage - 1) / discoverBrandsPerPage)
+        let vectors = await req.application.similarity?.all() ?? [:]
+
+        /// One page's worth, or nil when this group is exhausted at this depth.
+        func build(page: Int) async throws -> (cards: [DiscoverCard], sawRows: Bool) {
+            let group = page % groups
+            let depth = page / groups
+            let slice = brands
+                .dropFirst(group * discoverBrandsPerPage)
+                .prefix(discoverBrandsPerPage)
+
+            var cards: [DiscoverCard] = []
+            /// Whether any brand had *rows* at this depth, regardless of whether any
+            /// survived filtering. This is the exhaustion test, and it has to be this rather
+            /// than "were there cards": a brand whose newest two products are a gift card and
+            /// a size guide yields a page with nothing on it while its whole catalogue sits
+            /// one depth further down, and reading that as "the catalogue is spent" ended the
+            /// feed permanently at the first promotional window.
+            var sawRows = false
+            for brand in slice {
+                guard let brandID = brand.id else { continue }
+                // **The offset advances by `discoverPerBrand`, not by the size of the
+                // window.** The window is wider only so the spread has something to draw
+                // from; the *cards* come from exactly the rows `[offset, offset + perBrand)`,
+                // because that is what makes the enumeration a partition. Written the other
+                // way round — offset by the fetch size while consuming two — every page
+                // silently skipped ten of each brand's products, and nothing anywhere would
+                // ever have reported them missing.
+                let offset = depth * discoverPerBrand
+                let rows = try await ProductModel.query(on: req.db)
+                    .filter(\.$brand.$id == brandID)
+                    .sort(\.$publishedAt, .descending)
+                    .offset(offset)
+                    .limit(discoverFetchPerBrand)
+                    .with(\.$variants)
+                    .all()
+                guard !rows.isEmpty else { continue }
+                sawRows = true
+
+                // Both filters matter and neither is optional. A photograph *is* the feature
+                // on this screen — the same rule the fit tray and `FitSuggestions` apply —
+                // and `PreviewImages` is the shared vocabulary that keeps a delivery banner
+                // or a gift card from being somebody's first impression of a label. A brand
+                // whose turn falls on two gift cards contributes nothing this page rather
+                // than reaching forward for replacements, which would double-serve them at
+                // the next depth.
+                let garments = rows.prefix(discoverPerBrand).filter {
+                    !$0.imageURLs.isEmpty
+                        && PreviewImages.isGarment(title: $0.title, imageURL: $0.imageURLs.first)
+                }
+                guard !garments.isEmpty else { continue }
+
+                let dto = BrandDTO(brand, sources: brand.sources)
+                let spread = PreviewImages.pick(
+                    from: rows.map { (title: $0.title, imageURL: $0.imageURLs.first) },
+                    limit: discoverSpread
+                )
+
+                // **A release, once, the first time a brand comes round.**
+                //
+                // It is the strongest card the feed has — a named season is more interesting
+                // than any single garment inside it — and also the rarest: of 759 collection
+                // rows in a real six-brand poll, `Release.isRelease` admits 55, because
+                // `/collections.json` is mostly shop furniture (shoe sizes, sale rails, the
+                // designers a multi-brand shop stocks). So it gets its own path rather than
+                // competing in the product enumeration, and only at depth zero: a brand has
+                // one current season, not one per page.
+                if depth == 0, let release = try await newestRelease(brandID, on: req.db) {
+                    let contents = try await members(of: release, brandID: brandID, on: req.db)
+                    // A release with nothing found in it is not shown. The card is drawn out
+                    // of its members' photographs — the release row itself carries none — so
+                    // without them there is literally nothing to put on screen.
+                    if !contents.images.isEmpty {
+                        cards.append(
+                            DiscoverCard(
+                                release,
+                                brand: dto,
+                                // A release has none, and the query deliberately does not
+                                // load them.
+                                variants: [],
+                                spread: spread,
+                                vector: vectors[brandID],
+                                members: contents.images,
+                                memberCount: contents.count
+                            )
+                        )
+                    }
+                }
+
+                for product in garments {
+                    cards.append(
+                        DiscoverCard(
+                            product,
+                            brand: dto,
+                            variants: product.variants,
+                            spread: spread,
+                            vector: vectors[brandID]
+                        )
+                    )
+                }
+            }
+            return (cards, sawRows)
+        }
+
+        // An empty page walks forward rather than ending the feed, because empty has two
+        // very different causes. A group can be exhausted while another still has rows — a
+        // brand with three products runs out at depth two while its neighbour has two
+        // hundred and fifty — and a depth window can be entirely promotional. Neither means
+        // the catalogue is spent, and treating them as if they did is how a feed ends at the
+        // first gift card.
+        //
+        // The stopping condition is therefore a full cycle of groups in which **no brand had
+        // a row at all**. `discoverMaxWalk` is a backstop and nothing more: it should never
+        // be the thing that ends a page, and if it ever is, something above is wrong.
+        var current = page
+        var cards: [DiscoverCard] = []
+        var barrenCycle = 0
+        for _ in 0..<discoverMaxWalk {
+            let (built, sawRows) = try await build(page: current)
+            cards = built
+            if !cards.isEmpty { break }
+            barrenCycle = sawRows ? 0 : barrenCycle + 1
+            if barrenCycle >= groups { break }
+            current += 1
+        }
+        guard !cards.isEmpty else { return DiscoverResponse(cards: [], nextCursor: nil) }
+
+        return DiscoverResponse(
+            cards: Discovery.interleave(cards, by: { $0.brand.id ?? UUID() }),
+            nextCursor: String(current + 1)
+        )
+    }
+
     // MARK: Feed
 
     /// Events since a cursor, hydrated with their product. Cursor is the timestamp of

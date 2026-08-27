@@ -149,6 +149,20 @@ struct StreetwAPI: Sendable {
         )
     }
 
+    /// A page of garments from brands this device does not follow.
+    ///
+    /// The cursor is opaque and is echoed back exactly as it arrived — it encodes a depth
+    /// through every unfollowed catalogue, not a date, and nothing on this side should be
+    /// doing arithmetic on it.
+    func discover(cursor: String?) async throws -> DiscoverResponse {
+        try await send(
+            path: "v1/discover",
+            method: "GET",
+            body: Optional<Never>.none,
+            query: cursor.map { [URLQueryItem(name: "cursor", value: $0)] } ?? []
+        )
+    }
+
     func createWatch(_ body: CreateWatch) async throws -> WatchDTO {
         try await send(path: "v1/watches", method: "POST", body: body)
     }

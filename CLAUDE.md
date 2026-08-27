@@ -97,6 +97,7 @@ Dev-only launch flags (all read via `UserDefaults`, all no-ops when absent):
 | `-seedSizes "M,L,9,9.5"` | Fills the size profile |
 | `-startTab style` | Opens straight to a tab, so screenshots need no UI automation |
 | `-standalone YES` | Runs with no server, so `SyncEngine` polls from the phone |
+| `-seedSaves 8` | Files garments into the wardrobe, spread across `GarmentSlot.essential` |
 
 **`-standalone YES` is the only way to get standalone mode.** `-serverBaseURL ""` used to do it
 and no longer does — see *The server address is not a setting* below.
@@ -882,6 +883,144 @@ swallows the photograph's paging; attaching it nowhere loses the actions.
   demoted for stocking one thing somebody avoids, and `BrandDismissal` is where a negative signal
   about a brand belongs.
 
+### Discover
+
+The Discover tab is a full-bleed vertical scroll of garments from brands you **don't** follow,
+and the argument each card makes is the one only an archive can make: *this goes with clothes
+you already own*. `GoesWith` had been writing that sentence on product pages for a while — its
+own header says it is "an argument for keeping it" — and it had never been pointed at a brand
+nobody here follows, which is where it is worth the most.
+
+- **`/v1/brands/popular` could not have been the supply, structurally.** Its candidate list is
+  built from the **follows table**, so a brand nobody follows is invisible to it — precisely the
+  brand a discovery feed exists for. `GET /v1/discover` pages by *depth* through every
+  unfollowed catalogue instead.
+- **The shape of the query is the diversity.** One date-sorted query with a global `LIMIT` does
+  not work: a storefront publishing 250 products in one sweep owns the window, which is the bug
+  `/v1/brands/popular` shipped with. Every eligible brand is asked for its own newest few and the
+  cursor walks depth, so diversity is a property of the query and cannot be lost by tuning.
+  Measured against six real catalogues (9,227 products): 469 cards, **zero duplicates, zero
+  adjacent repeats**, and Kith at 17.1% against Allbirds at 16.4% despite holding five times the
+  catalogue.
+- **The offset advances by `discoverPerBrand`, never by the fetch window.** The window is wider
+  only so the spread has something to draw from; the cards come from exactly
+  `[offset, offset + perBrand)`, which is what makes the enumeration a partition. Written the
+  other way round it silently skipped ten products per brand per page, and nothing anywhere would
+  have reported them missing.
+- **Exhaustion is "no brand had a row", not "no cards survived".** A depth window that is entirely
+  promotional yields an empty page while the catalogue sits one depth below, and reading that as
+  spent ended the feed permanently at the first gift card.
+- **`Discovery.swift` holds four mechanisms and they are separate because each fixes something
+  the others cannot see.** A per-brand cap **applied in rounds** (a single allowance front-loads,
+  spends itself in the first eight cards and then imposes no cap at all — the collapse arriving
+  eight cards late); `Saturation`, damped smoothly like `Popularity.confidence`; one position in
+  four that **ignores the ranking outright**; and `WardrobeGap`. The third will look like a bug to
+  whoever reads the ordering next — a taste engine left alone is a mirror, and a feed that only
+  returns what you already own cannot introduce you to anything.
+- **Deterministic, with no RNG.** Variety between two people comes from their wardrobes differing
+  and between two sessions from the seen-ledger; a random number would cost the property that
+  scrolling back shows the same card, which is `FeedView`'s lesson about a list that reorders
+  under a thumb.
+- **Analysis sharpens what a card *says*, never where it *sits*.** `DiscoveryAnalysis` measures
+  the photograph for the cards at and adjacent to the viewport — `ImageTagger` only runs over
+  saves, so a discovery garment has no cutout and no colour. `DiscoverDeck.rank` reads none of it,
+  because photographs decode while somebody is scrolling and a deck that re-ordered as they landed
+  would reorder mid-read.
+- **The composite is measured on the packshot; the card shows the lead shot.** `ProductShot`
+  already answers "which frame has nobody in it" for the fit canvas. Lifting the subject of a
+  lookbook frame returns a person, and the card would offer a whole model as the thing that goes
+  with your jeans. On a model is still how the brand wants the garment *seen*.
+- **Three voices, and which one a card speaks in is decided by what the app can back up.**
+  `DeckPresentation` is `.release` ("look at this brand's new collection", drawn as a mosaic of
+  its contents), `.pairing` ("this would go with your olive cargos") or `.brand` ("look at this
+  label", its range underneath). Not a rotation and not random — a release is a release, a
+  pairing needs a wardrobe to pair against, and a brand card is what is left. One voice for
+  everything made a feed of forty cards forty copies of the same sentence, and left the
+  cold-start case with no voice at all.
+- **`/collections.json` is mostly shop furniture, so `Release.isRelease` refuses far more than
+  it admits.** A real six-brand poll returned 826 collection rows: shoe sizes ("10.5", "12C"),
+  discount rails ("30% OFF GYMSHARK SALE"), the designers a multi-brand shop stocks ("1017 ALYX
+  9SM"), navigation ("All Products", "Back in Stock"). The bar is the one thing every genuine
+  release had and no piece of navigation did — **it names a season or a year** — and navigation
+  words are checked *first*, because "Fall 2025 Sale" names a season and is still a sale rail.
+  55 of 759 admitted. The asymmetry is the whole design: a false negative costs a card nobody
+  misses, a false positive puts a full-screen announcement of **"36.5"** in front of somebody.
+  Undated capsules ("ALWAYS DO WHAT YOU SHOULD DO") are refused on purpose.
+- **A release has no photograph of its own and is drawn out of its members.** `/collections.json`
+  publishes a name and nothing else, so the card is a mosaic of the garments in it — found by
+  `Release.distinctiveWords`, since a release names itself and does not list itself. The members
+  are **spread across garment slots** via `Discovery.interleave`, keyed on slot rather than
+  brand: catalogue order gave Icecream Fall 2026 as six pairs of socks and a banana pouch, which
+  is an accessories drawer rather than a season.
+- **A release cannot win on merit and needs `Discovery.releaseFloor`.** It has no garment slot,
+  so `Pairing`'s gate refuses it before scoring and it falls back to a bare vector similarity
+  that any single jacket beats — the card the feed most wants to show came last *by
+  construction*. A floor rather than a fixed score, so a release from a brand that matches
+  somebody's taste still outranks one that doesn't; the per-brand cap and `Saturation` still
+  apply on top.
+- **`DiscoverCard.init` takes `variants` as a parameter**, exactly as `BrandDTO` takes its
+  sources. Fluent's `@Children` accessor **traps at runtime** when the relation was not eager
+  loaded, and this initialiser has two callers with different query shapes — the product query
+  loads variants, the release query deliberately does not. Reading the accessor took the whole
+  server down with `Children relation not eager loaded` the first time the second caller
+  existed.
+- **Two rows under the caption, and the spread is not optional.** `WEAR IT WITH` is the pairing;
+  `ALSO FROM <BRAND>` is six more of the brand's garments. They were briefly one row on the theory
+  that the pairing is the stronger statement — it is, but only one of them is about the *brand*,
+  and "what else does this label make" is how somebody decides whether to follow a shop they have
+  never heard of, which is the entire job of the tab. Collapsing them meant the cards with the best
+  argument were also the ones that said least about the company. Both rows are labelled: two
+  unlabelled strips of garments under one caption is a puzzle.
+- **The card is a column; the reading is not laid over the photograph.** The overlay version
+  cost three separate faults at once. `.fill` was forced (a full-bleed photograph has to cover
+  its frame) and cropping destroys a packshot — Allbirds shoots wide and side-on, so both ends
+  of the shoe were cut off under a band of empty sweep. The gradient behind the text was a
+  permanent scrim over the bottom third of every garment. And the `ZStack` had no width of its
+  own: a `ScrollView(.horizontal)` reports its *content* width as its ideal, so the spread row
+  made the card six hundred points wide and Palace's card rendered with its wordmark, title and
+  Follow button all off the left edge — "one over-wide row sets the width of the whole page",
+  reached by a new door. Pin **both** axes on the card.
+- **The scroll ignores safe areas so that a card and a page are the same height.** Four things
+  were tried first and every one looked right: `containerRelativeFrame` inside a
+  `NavigationStack` sizes against a container a navigation bar taller than the region a page
+  travels, so every card settled exactly that much short with the previous card's Follow row
+  still on screen; `.inline` left the bar there; `.viewAligned` aligned to edges that were still
+  the wrong height; hiding the bar traded it for content under the status bar; and a
+  `GeometryReader` measured a frame the scroll view then inset *inside*. With safe areas ignored
+  the container is the screen and the card is the container, so there is nothing left to
+  disagree — at the cost that every overlay insets itself by hand (`reading`'s bottom padding is
+  what keeps Follow clear of the tab bar). **The tell was that the error was the same every
+  time**: physics varies, an off-by-a-bar does not.
+- **There is no navigation bar.** It is the one page in the app that is a photograph first, and
+  a serif title eating the top seventh of the screen to say "Discover" — on the tab already
+  labelled Discover — was paying for the layout bug twice.
+- **An exploration card prints `NEW TO YOU` and never a pairing.** It was not placed for one, and
+  a composite with somebody's clothes in it under a card chosen at random would be the card
+  telling a story the ranking never told. Same rule as `sharedTraits`.
+- **A discovery card is never persisted with `isSeen == false`, and mostly never persisted at
+  all.** `FeedView` queries `#Predicate<BrandUpdate> { !$0.isSeen }`, so a stored page would empty
+  several thousand products from unfollowed brands into somebody's unread feed. Only a *save*
+  writes a row (`DiscoverSave`), keyed `shopify:<id>` with `productExternalID` beside it so a
+  later follow merges rather than minting a second card. Verified by driving the app: saving from
+  the deck took updates 800→801 and saves 8→9 while **unseen stayed at 12**.
+- **Saving does not remove the card; Follow and "not for me" do.** Keeping something is not a
+  verdict on the brand, and a card vanishing under the thumb that saved it would make the two
+  gestures indistinguishable in effect while meaning opposite things.
+- **No swipe-to-dismiss.** The obvious gesture is Tinder's and it is wrong here: `BrandDismissal`
+  is permanent *and* demotes brands that merely resemble the refused one, so a stray flick poisons
+  the recommender with no undo and nothing on screen to say so. Horizontal belongs to the
+  photographs. The double-tap save needs **its own layer above the pager** — attached to the card
+  the paging `TabView` takes the touch first.
+- **There is no generative try-on and there should not be.** It bills per image in a feed built to
+  be scrolled, puts a synthesised picture of a real buyable product in front of someone in an app
+  whose thesis is that it never asserts what it hasn't observed, and a user photo is a likeness
+  leaving the device. The cut-out composite answers the same want with one on-device Vision call.
+- **The catalogue is finite and the feed says so.** A deck that starts again at the top is
+  claiming to have more.
+- **`-seedSaves 8`** fills the wardrobe **across complementary slots**, because `Pairing` gates on
+  slot before it scores anything and eight t-shirts produce no pairings at all — a screen that
+  looks broken entirely because of the seeding.
+
 ### Saying it in words
 
 `StyleStatement` is the one place the app asks instead of inferring, and it is small on purpose.
@@ -1140,6 +1279,7 @@ the local path in the `else`. Adding a new one means adding both halves:
 | stock watches | `POST` / `GET` / `DELETE /v1/watches` |
 | poll hints from the drop calendar | `PUT /v1/poll-hints` (whole set; no-op standalone) |
 | recommendations | `GET /v1/brands/popular` |
+| the Discover feed | `GET /v1/discover` (no standalone equivalent — the phone only holds brands somebody already followed, which is the opposite of the question) |
 
 **The catalog is searched before anything is created.** It is global, so the second person to add
 Kith should be following the existing row, not filling in a form about Kith — `AddBrandView` only
@@ -1243,6 +1383,23 @@ builds the executable. Omitting them yields a confusing "overlapping sources" er
   saving was never real either; a product carries tens of variants, not thousands.
 - **`/status` counts every table**, `users` included. It was the one table it didn't touch,
   which is exactly why a completely broken registration path still reported green.
+- **Only the *unexpected* is worth a buzz** (`Notifier.isWorthWaking`). A drop, a collection and
+  a storefront lock happen suddenly, are worth acting on within minutes, and cannot be found any
+  other way. A **restock**, a **price drop**, a **page change** and a **post** are not: the first
+  is the largest single source of volume and almost all of it is about a garment the reader has
+  never seen; a markdown is worth as much a week later, which is what `MarkdownsView` and its
+  badge are for; a page change is "something on this page is different", which fires on brands
+  where nothing happened; and a post is a brand's own marketing RSS. Every one of them still
+  reaches the feed, the unread counts and the markdowns list — this decides only what interrupts.
+  Sending everything taught people to swipe the whole app away, which takes the one that mattered
+  with it.
+  **The restock somebody actually cares about still arrives instantly**, through `notifyWatches`
+  — that is what a `StockWatch` is for, it runs first, claims its (user, brand) pairs, and is
+  exempt from the cooldown. Note the server *cannot* do this for a merely **saved** item: saves
+  never leave the phone, by design. "Notify" in `SaveConfirmation` is the path that turns a save
+  into something the server can act on.
+  Three existing tests encoded the old behaviour and were re-pointed rather than deleted, because
+  the old expectations are exactly what a later change might reinstate by accident.
 - **One push per brand per pass, never one per event.** A brand publishing a collection
   writes hundreds of events in a single poll; fanning those out one-to-one is both a
   terrible experience and a fast route to being muted. `Notifier` groups by brand and

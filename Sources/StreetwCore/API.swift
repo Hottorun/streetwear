@@ -545,6 +545,168 @@ public struct FeedResponse: Codable, Sendable {
     }
 }
 
+/// One garment in the discovery feed, from a brand the caller does not follow.
+///
+/// **Not a `FeedItem`, and the difference is the point.** A feed item is an *event* — a drop,
+/// a markdown, a restock — keyed `event:<uuid>`, and it exists because something happened to
+/// a product belonging to a brand somebody follows. A discovery card is the product itself,
+/// from a brand nobody here has an opinion about, and nothing has happened to it: it is being
+/// shown because it might go with clothes the person already owns. Reusing `FeedItem` would
+/// mean inventing an event id for a non-event and a `kind` for a non-change, and the first
+/// thing the client would do with either is throw it away.
+///
+/// It carries the brand rather than just a name and an id, because the card is an argument
+/// for *following the brand* — the wordmark, the mark, the site and the sources are all on
+/// screen, and a second round trip per card in a scrolling feed is not available.
+public struct DiscoverCard: Codable, Sendable, Hashable, Identifiable {
+    /// The garment, keyed the way the local poller keys it — `shopify:<id>`. This is what
+    /// makes a save from the deck land on the row the app may already hold rather than
+    /// minting a second card for the same jacket.
+    public var productExternalID: String
+    /// What this card is *about* — a garment, or a whole release.
+    ///
+    /// A release is the one thing a brand publishes that is about other things it publishes,
+    /// and it is the strongest card the feed has: "DENIM TEARS FW26" is more interesting than
+    /// any single garment in it. It arrives as its own row in `/collections.json` with **no
+    /// photograph of its own**, which is why `members` exists — a release card is drawn out
+    /// of its contents' pictures.
+    ///
+    /// A string rather than an enum on the wire, so a server that learns a third kind does
+    /// not fail to decode on an older client and take the whole page down with it. Optional
+    /// for the same reason: a server predating this sends nothing and everything is a
+    /// product, which is what it was.
+    public var kind: String?
+    /// For a release, photographs of the garments in it. Empty for a product card.
+    public var members: [String]
+    /// How many garments the release was found to contain, which is usually more than
+    /// `members` has room for.
+    public var memberCount: Int
+    /// Who makes it, with its sources.
+    ///
+    /// Sources travel because **every route that hands over a brand hands over its
+    /// sources**: the client stores one `Brand` row whichever route it arrived on, and a
+    /// discovery card that is then followed must not overwrite a populated list with an
+    /// empty one — which is what put "NOT WATCHED" against every row of the brands list the
+    /// last time a route forgot.
+    public var brand: BrandDTO
+    public var title: String
+    /// The storefront's own description, where it publishes one.
+    ///
+    /// Worth carrying for releases above all: a season's page usually says what the season
+    /// *is* ("boiled-wool knits and raw-edge overshirts"), which is the only sentence about a
+    /// brand in this whole system that a human actually wrote. Everything else the card says
+    /// is derived. Nil is ordinary — most product rows have none — and a card with no blurb
+    /// simply prints one less line rather than inventing one.
+    public var summary: String?
+    /// **Every** photograph, not the lead one.
+    ///
+    /// The feed sends what a card draws; this sends what a card *chooses from*. Two things
+    /// downstream need the rest: the gallery, and the pick of which frame to measure — a
+    /// storefront's ordering is a merchandising decision, not a convention, and Stüssy
+    /// publishes its packshot fifth. See `ProductShot`.
+    public var imageURLs: [String]
+    public var linkURL: String?
+    public var priceText: String?
+    public var priceAmount: Double?
+    public var isAvailable: Bool?
+    /// The classifier's inputs, for the same reason `FeedItem` carries them: the client does
+    /// not merely display these. `GarmentSlot`, `Gender` and the whole of `Pairing` are read
+    /// off `productType` and `tags`, and without them a card arrives as a bare title and
+    /// every judgement this feed exists to make resolves to "unknown".
+    public var productType: String?
+    public var tags: [String]
+    public var gender: String?
+    public var genderVersion: Int?
+    public var variants: [VariantInfo]?
+    public var publishedAt: Date
+    /// A few more of this brand's garments, so one product is not the whole basis for
+    /// judging a shop. Already filtered through `PreviewImages.pick`, so no gift cards,
+    /// size guides or delivery banners.
+    public var spread: [String]
+    /// What the brand is like, so the phone can rank against a taste profile built from its
+    /// own saves — which never leave the device. Optional: a brand too new to have been
+    /// vectorised is still worth showing.
+    public var vector: BrandVector?
+
+    /// The product key, not the brand's. Two cards from one brand are two rows.
+    public var id: String { productExternalID }
+
+    /// Whether this card announces a release rather than a garment. Never nil: an absent or
+    /// unrecognised kind means a product, which is what every card was before releases
+    /// existed.
+    public var isRelease: Bool { kind == UpdateKind.collection.rawValue }
+
+    /// Never nil: an absent or unrecognised value means we don't know, which is a real
+    /// answer and one that is never filtered out.
+    public var itemGender: Gender {
+        gender.flatMap(Gender.init(rawValue:)) ?? .unknown
+    }
+
+    public init(
+        productExternalID: String,
+        brand: BrandDTO,
+        title: String,
+        summary: String? = nil,
+        kind: String? = nil,
+        members: [String] = [],
+        memberCount: Int = 0,
+        imageURLs: [String] = [],
+        linkURL: String? = nil,
+        priceText: String? = nil,
+        priceAmount: Double? = nil,
+        isAvailable: Bool? = nil,
+        productType: String? = nil,
+        tags: [String] = [],
+        gender: String? = nil,
+        genderVersion: Int? = nil,
+        variants: [VariantInfo]? = nil,
+        publishedAt: Date,
+        spread: [String] = [],
+        vector: BrandVector? = nil
+    ) {
+        self.productExternalID = productExternalID
+        self.brand = brand
+        self.title = title
+        self.summary = summary
+        self.kind = kind
+        self.members = members
+        self.memberCount = memberCount
+        self.imageURLs = imageURLs
+        self.linkURL = linkURL
+        self.priceText = priceText
+        self.priceAmount = priceAmount
+        self.isAvailable = isAvailable
+        self.productType = productType
+        self.tags = tags
+        self.gender = gender
+        self.genderVersion = genderVersion
+        self.variants = variants
+        self.publishedAt = publishedAt
+        self.spread = spread
+        self.vector = vector
+    }
+}
+
+public struct DiscoverResponse: Codable, Sendable {
+    public var cards: [DiscoverCard]
+    /// Pass back as `cursor` to page forward.
+    ///
+    /// Opaque, and deliberately not a bare date the way `FeedResponse.nextCursor` is. That
+    /// one pages a *timeline*, where a timestamp is the whole state; this pages a catalogue
+    /// ordered by publication with ties everywhere — storefronts stamp a whole drop with one
+    /// second, and Represent's 250 newest products carry 154 distinct timestamps. A date
+    /// alone would either re-serve a tie or skip past it, so the position is a date **and**
+    /// an id, encoded here so no client is tempted to do arithmetic on it.
+    ///
+    /// Nil means the catalogue is exhausted — and the deck must say so rather than looping.
+    public var nextCursor: String?
+
+    public init(cards: [DiscoverCard], nextCursor: String? = nil) {
+        self.cards = cards
+        self.nextCursor = nextCursor
+    }
+}
+
 /// Whether a push could reach **this** device.
 ///
 /// Replaces the app reading `/status`, which answered a global question — "does anybody
