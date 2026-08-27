@@ -767,7 +767,18 @@ private struct Handle: View {
 /// decodes lazily. The fallback matters as much as the cutout — plenty of items have no
 /// single subject to lift, and a canvas that silently omits them would look broken.
 struct FitPieceImage: View {
-    let item: SavedItem
+    /// The product to draw. Everything this view reads has always come off the
+    /// `BrandUpdate` rather than off the save, so taking it directly is what lets a
+    /// suggestion draw a garment nobody has kept — see `FitPiece`.
+    let update: BrandUpdate?
+
+    init(update: BrandUpdate?) {
+        self.update = update
+    }
+
+    init(item: SavedItem) {
+        self.update = item.update
+    }
 
     /// How wide the photograph is asked for when there is no cutout. Also what
     /// `FitRender.warm` preloads at, and the two must agree or the renderer finds an empty
@@ -777,7 +788,7 @@ struct FitPieceImage: View {
     /// Cached, because this is read from a body that re-evaluates on every frame of a drag.
     /// See `LocalImage`.
     private var cutout: UIImage? {
-        LocalImage.load(item.update?.cutoutURL)
+        LocalImage.load(update?.cutoutURL)
     }
 
     /// The photograph to fall back to when there is no cutout — the **packshot**, not the
@@ -792,7 +803,11 @@ struct FitPieceImage: View {
     /// **`FitRender.warm` must ask for the same URL at the same width**, or the renderer
     /// finds an empty cache and writes a fit with a hole in it.
     static func source(for item: SavedItem) -> URL? {
-        item.update?.packshotURL ?? item.update?.primaryImageURL
+        source(for: item.update)
+    }
+
+    static func source(for update: BrandUpdate?) -> URL? {
+        update?.packshotURL ?? update?.primaryImageURL
     }
 
     /// The photograph, but only if it is already decoded.
@@ -803,7 +818,7 @@ struct FitPieceImage: View {
     /// saved fit produced. Reading the decoded cache directly gives the renderer a real
     /// image; `FitRender.warm` is what guarantees it is there.
     private var warmed: UIImage? {
-        Self.source(for: item)
+        Self.source(for: update)
             .map { ImageRendition.sized($0, width: Self.drawnWidth) }
             .flatMap { ImageLoader.shared.cached($0) }
     }
@@ -817,7 +832,7 @@ struct FitPieceImage: View {
             // Not yet decoded: on screen this fills in a moment later. A renderer never
             // reaches here, because it warms the cache first.
             UpdateImage(
-                url: Self.source(for: item),
+                url: Self.source(for: update),
                 aspect: 1,
                 contentMode: .fit,
                 drawnWidth: Self.drawnWidth

@@ -122,6 +122,21 @@ enum ImageTagger {
         }
     }
 
+    /// Measures a specific, caller-chosen set of products.
+    ///
+    /// The one way into this pass that is not driven by the saved backlog, and it exists for
+    /// `FitCandidates`: a catalogue product has never been looked at, so it has no colour,
+    /// so it cannot be scored into a fit. The caller is responsible for the bound — running
+    /// this over a poll's 250 products is exactly what the file header forbids, and nothing
+    /// here will stop you.
+    ///
+    /// Deliberately *not* routed through `drain`. That guards the backlog, which is a
+    /// self-refreshing queue this is not part of, and blocking on a long drain to measure
+    /// six products would leave the suggestion row empty for the length of it.
+    static func analyze(_ updates: [BrandUpdate], in context: ModelContext) async {
+        _ = await analyzeBatch(updates, in: context)
+    }
+
     /// Everything saved that has work outstanding, newest first.
     private static func pending(in context: ModelContext) -> [BrandUpdate] {
         let saves = (try? context.fetch(

@@ -55,7 +55,7 @@ final class Fit {
     /// The items in the order a fit is read — head down — rather than the order they
     /// happened to be added in.
     var ordered: [SavedItem] {
-        items.sorted(by: wornOver)
+        items.sorted { wornOver($0.update, $1.update, tieBreak: $0.id.uuidString < $1.id.uuidString) }
     }
 
     var renderURL: URL? {
@@ -172,8 +172,40 @@ extension SavedItem {
 /// Not stored — recomputed from the wardrobe each time, because it is a *suggestion*
 /// rather than a record. The moment someone keeps one it becomes a real `Fit` and stops
 /// being regenerated.
+/// One garment in a proposal, which may or may not be yours.
+///
+/// A suggestion used to be `[SavedItem]` — strictly things already kept — and that made the
+/// row useless in the case it should have been best at: a wardrobe with four tops and no
+/// trousers got nothing at all, when "here is a bottom that would work with these" is the
+/// most useful sentence the app could say. So a piece is now a `BrandUpdate` plus an
+/// *optional* save, and `isOwned` is the difference.
+///
+/// The save is what carries the personal side — the note, the board, the size you own — so
+/// keeping it rather than reaching through `update.saves` matters: a proposal built from a
+/// catalogue row must not silently adopt somebody's note by matching on the product.
+struct FitPiece: Identifiable, Hashable {
+    var update: BrandUpdate
+    /// The save this stands for, when it is something already kept. Nil means the app is
+    /// suggesting a garment you do not have.
+    var save: SavedItem?
+
+    var isOwned: Bool { save != nil }
+    var slot: GarmentSlot { save?.slot ?? update.garmentSlot }
+
+    /// Identity is the save where there is one and the product otherwise, so a proposal
+    /// does not change id the moment the same garment is kept.
+    var id: String { save?.id.uuidString ?? update.id.uuidString }
+
+    static func == (lhs: FitPiece, rhs: FitPiece) -> Bool { lhs.id == rhs.id }
+    func hash(into hasher: inout Hasher) { hasher.combine(id) }
+}
+
 struct SuggestedFit: Identifiable, Hashable {
-    var items: [SavedItem]
+    var items: [FitPiece]
+
+    /// The pieces this proposal is asking you to acquire. Empty for a fit made entirely of
+    /// things you already own, which stays the common case.
+    var unowned: [FitPiece] { items.filter { !$0.isOwned } }
 
     /// Why this pairing, in the four words that fit under a card.
     ///
@@ -184,10 +216,10 @@ struct SuggestedFit: Identifiable, Hashable {
     var reason: String?
 
     /// Stable across recomputation so SwiftUI doesn't animate a reshuffle on every render.
-    var id: String { items.map(\.id.uuidString).sorted().joined() }
+    var id: String { items.map(\.id).sorted().joined() }
 
-    var ordered: [SavedItem] {
-        items.sorted(by: wornOver)
+    var ordered: [FitPiece] {
+        items.sorted { wornOver($0.update, $1.update, tieBreak: $0.id < $1.id) }
     }
 }
 
@@ -197,17 +229,21 @@ struct SuggestedFit: Identifiable, Hashable {
 /// now brings a tee with it, and the two tie on that key. A tie is resolved in whatever
 /// order the array happened to be in, so the base layer could be drawn on top of the thing
 /// meant to cover it — which on a collage is not a subtle mistake.
-private func wornOver(_ first: SavedItem, _ second: SavedItem) -> Bool {
-    if first.slot.stackOrder != second.slot.stackOrder {
-        return first.slot.stackOrder < second.slot.stackOrder
+/// - Parameter tieBreak: what to fall back on when the two are indistinguishable by
+///   position and layer. Passed in rather than read here because a `SuggestedFit` is keyed
+///   on its pieces and a stored `Fit` on its saves, and the arrangement has to be stable
+///   across relaunches either way.
+private func wornOver(_ first: BrandUpdate?, _ second: BrandUpdate?, tieBreak: @autoclosure () -> Bool) -> Bool {
+    let firstSlot = first?.garmentSlot ?? .unknown
+    let secondSlot = second?.garmentSlot ?? .unknown
+    if firstSlot.stackOrder != secondSlot.stackOrder {
+        return firstSlot.stackOrder < secondSlot.stackOrder
     }
     // Mid layers first, so they are drawn over the base layer they cover.
-    let firstIsMid = first.update?.garment.layer == .mid
-    let secondIsMid = second.update?.garment.layer == .mid
+    let firstIsMid = first?.garment.layer == .mid
+    let secondIsMid = second?.garment.layer == .mid
     if firstIsMid != secondIsMid { return firstIsMid }
-    // Still tied: the id, so the arrangement is stable across relaunches rather than
-    // following the relationship's unspecified array order.
-    return first.id.uuidString < second.id.uuidString
+    return tieBreak()
 }
 
 enum FitSuggestions {
@@ -234,26 +270,37 @@ enum FitSuggestions {
     /// - Parameter statement: what the wearer has written about how they dress, where they
     ///   have written anything. It reorders and can rescue a pair the colour rules would
     ///   have refused; it never proposes a fit the structural rules rejected.
+    /// - Parameter candidates: catalogue products, from brands already followed, offered
+    ///   **only for slots the wardrobe cannot fill at all**. See `gapPieces`.
     static func build(
         from saves: [SavedItem],
+        candidates: [BrandUpdate] = [],
         limit: Int = 6,
         statement: StyleStatement = StyleStatement()
     ) -> [SuggestedFit] {
-        var bySlot: [GarmentSlot: [SavedItem]] = [:]
+        var bySlot: [GarmentSlot: [FitPiece]] = [:]
         // A suggestion is looked at before it is read, and a piece with no photograph
         // renders as a blank rectangle — so a proposal containing one looks broken however
         // good the pairing is. `ColorHarmony` can't speak for it either: the dominant
         // colour comes from the photograph.
         for save in saves where save.update?.imageURLStrings.isEmpty == false {
             let slot = save.slot
-            guard slot != .unknown, GarmentSlot.essential.contains(slot) else { continue }
-            bySlot[slot, default: []].append(save)
+            guard slot != .unknown, GarmentSlot.essential.contains(slot),
+                  let update = save.update
+            else { continue }
+            bySlot[slot, default: []].append(FitPiece(update: update, save: save))
         }
 
         // Newest first within each slot, so a fit is built from what someone is currently
         // into rather than from whatever they saved a year ago.
         for slot in bySlot.keys {
-            bySlot[slot]?.sort { $0.savedAt > $1.savedAt }
+            bySlot[slot]?.sort { ($0.save?.savedAt ?? .distantPast) > ($1.save?.savedAt ?? .distantPast) }
+        }
+
+        // **Only where the wardrobe is genuinely empty.** See `gapPieces` for why this is a
+        // gap-filler rather than a general source of pieces.
+        for (slot, pieces) in gapPieces(from: candidates, missing: bySlot) {
+            bySlot[slot] = pieces
         }
 
         guard let tops = bySlot[.top], let bottoms = bySlot[.bottom],
@@ -282,12 +329,12 @@ enum FitSuggestions {
             // at all; applying it here would empty the row on a thin wardrobe, which is
             // exactly the wardrobe most in need of a suggestion. What a statement *can* do
             // is rescue a clash it explicitly named.
-            guard let topGarment = top.update?.garment, let bottomGarment = bottom.update?.garment
-            else { continue }
+            let topGarment = top.update.garment
+            let bottomGarment = bottom.update.garment
             let verdict = Pairing.score(topGarment, with: bottomGarment, statement: statement)
             let stated = statement.statedPairing(between: topGarment, and: bottomGarment)
             guard stated
-                || !ColorHarmony.isClash(top.update?.visionColor, bottom.update?.visionColor)
+                || !ColorHarmony.isClash(top.update.visionColor, bottom.update.visionColor)
             else { continue }
 
             // **The shoes and the jacket are chosen, not counted to.**
@@ -309,10 +356,9 @@ enum FitSuggestions {
             if let shoe = accompaniment(to: chosen, from: footwear, statement: statement) {
                 items.append(shoe)
             }
-            if let coat = accompaniment(to: chosen, from: outerwear, statement: statement),
-               let coatGarment = coat.update?.garment {
+            if let coat = accompaniment(to: chosen, from: outerwear, statement: statement) {
                 items.append(coat)
-                chosen.append(coatGarment)
+                chosen.append(coat.update.garment)
             }
 
             // **Nothing that needs something under it goes out without one.**
@@ -332,7 +378,7 @@ enum FitSuggestions {
                 // Only from tops that are genuinely base layers, and never the top already
                 // in the fit.
                 let bases = tops.filter {
-                    $0.id != top.id && $0.update?.garment.layer == .base
+                    $0.id != top.id && $0.update.garment.layer == .base
                 }
                 // **A wardrobe with no base layer in it still gets suggestions.** The rule
                 // completes a fit; it must not delete one. Somebody who has kept three
@@ -361,6 +407,58 @@ enum FitSuggestions {
             .map(\.fit)
     }
 
+    /// Catalogue products for the slots the wardrobe cannot fill at all.
+    ///
+    /// **A gap-filler, deliberately, and not a general source of pieces.** The row is
+    /// called "From your wardrobe" and its value is that it is *yours*; a version that
+    /// mixed shop stock into every proposal would turn the one screen about what you own
+    /// into a storefront, which is the criticism the Style tab already answered once by
+    /// moving Discover below the reading of your own collection.
+    ///
+    /// What it fixes is the opposite case, where the row was worst exactly when it should
+    /// have been best: four tops and no trousers produced *nothing at all*, when "here is a
+    /// bottom that would work with these" is the most useful sentence the app can say. The
+    /// wardrobe gaps are already computed and printed one section further down.
+    ///
+    /// Only ever from brands already followed — these are rows the poller has synced, so
+    /// nothing here is fetched to build a suggestion — and only ones carrying a photograph
+    /// and a colour. **The colour requirement is the point**: `visionColor` is written by
+    /// `ImageTagger`, which by design runs over saves alone, so an unmeasured product
+    /// scores neutral against everything and would be picked on recency. That is precisely
+    /// the "randomly thrown together" failure the scoring exists to prevent, so a candidate
+    /// that has not been looked at is not offered. `FitCandidates` is what arranges for a
+    /// bounded few to have been.
+    private static func gapPieces(
+        from candidates: [BrandUpdate],
+        missing bySlot: [GarmentSlot: [FitPiece]]
+    ) -> [GarmentSlot: [FitPiece]] {
+        guard !candidates.isEmpty else { return [:] }
+        var filled: [GarmentSlot: [FitPiece]] = [:]
+        for candidate in candidates {
+            let slot = candidate.garmentSlot
+            guard slot != .unknown, GarmentSlot.essential.contains(slot),
+                  bySlot[slot]?.isEmpty != false,
+                  !candidate.imageURLStrings.isEmpty,
+                  candidate.visionColor != nil
+            else { continue }
+            filled[slot, default: []].append(FitPiece(update: candidate, save: nil))
+        }
+        // Newest first, matching how the wardrobe's own pieces are ordered, and capped so a
+        // brand that published two hundred products in one sweep cannot own the whole slot.
+        for slot in filled.keys {
+            filled[slot] = Array(
+                (filled[slot] ?? [])
+                    .sorted { ($0.update.publishedAt ?? .distantPast) > ($1.update.publishedAt ?? .distantPast) }
+                    .prefix(perSlotCandidates)
+            )
+        }
+        return filled
+    }
+
+    /// How many unowned products may stand for one empty slot. Small on purpose: this is a
+    /// suggestion about clothes you own, with a hole filled in, not a shop.
+    private static let perSlotCandidates = 6
+
     /// The best of `options` to put with a fit already decided, or nil when the slot is
     /// empty or nothing in it works.
     ///
@@ -375,17 +473,17 @@ enum FitSuggestions {
     /// four-piece fit with a wrong shoe in it, and the slot was optional to begin with.
     private static func accompaniment(
         to chosen: [Garment],
-        from options: [SavedItem],
+        from options: [FitPiece],
         statement: StyleStatement
-    ) -> SavedItem? {
-        var best: (item: SavedItem, score: Double)?
+    ) -> FitPiece? {
+        var best: (item: FitPiece, score: Double)?
         for option in options {
-            guard let garment = option.update?.garment else { continue }
+            let garment = option.update.garment
             var worst = Double.greatestFiniteMagnitude
             var refused = false
             for piece in chosen {
                 let stated = statement.statedPairing(between: piece, and: garment)
-                if !stated, ColorHarmony.isClash(piece.color, option.update?.visionColor) {
+                if !stated, ColorHarmony.isClash(piece.color, option.update.visionColor) {
                     refused = true
                     break
                 }

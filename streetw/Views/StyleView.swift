@@ -55,6 +55,13 @@ struct StyleView: View {
         var suggested: [SuggestedFit] = []
         var owned: [SavedItem] = []
         var missing: [(slot: GarmentSlot, note: String)] = []
+        /// Essential slots the wardrobe cannot fill at all, for `FitCandidates`.
+        ///
+        /// Derived here rather than at the `.task(id:)` that consumes it, because
+        /// `SavedItem.slot` runs the classifier — asking it per save from `body` is the
+        /// cost this whole memo exists to avoid, and is what `FitCanvas.traySlots` had to
+        /// be rescued from.
+        var gaps: Set<GarmentSlot> = []
     }
 
     /// Once per *change*, not once per `body` — which are very different numbers.
@@ -86,6 +93,13 @@ struct StyleView: View {
     /// already `@Query`.
     @State private var memo = ReadingMemo()
 
+    /// Catalogue products standing in for slots the wardrobe cannot fill.
+    ///
+    /// Held in `@State` from a bounded fetch rather than as a `@Query`, which over
+    /// `BrandUpdate` would subscribe this view to every product ever synced and rebuild it
+    /// on every poll. See `FitCandidates`.
+    @State private var fitCandidates: [BrandUpdate] = []
+
     @MainActor
     private final class ReadingMemo {
         private var key: Fingerprint?
@@ -95,22 +109,32 @@ struct StyleView: View {
             var count: Int
             var digest: Int
             var statement: StyleStatement
+            /// The gap-filling candidates, by identity. They arrive from a `.task` after
+            /// the first build, so without them in the key the row would keep the version
+            /// computed before they landed.
+            var candidates: [PersistentIdentifier]
         }
 
-        func reading(for saves: [SavedItem], statement: StyleStatement) -> Reading {
+        func reading(
+            for saves: [SavedItem],
+            candidates: [BrandUpdate],
+            statement: StyleStatement
+        ) -> Reading {
             let fingerprint = Fingerprint(
                 count: saves.count,
                 digest: Self.digest(of: saves),
-                statement: statement
+                statement: statement,
+                candidates: candidates.map(\.persistentModelID)
             )
             if fingerprint == key { return value }
 
             let owned = saves.filter { $0.type == .wardrobe && $0.update != nil }
             value = Reading(
                 profile: StyleProfile.build(from: saves),
-                suggested: FitSuggestions.build(from: saves, statement: statement),
+                suggested: FitSuggestions.build(from: saves, candidates: candidates, statement: statement),
                 owned: owned,
-                missing: Self.missingSlots(owned: owned, saves: saves)
+                missing: Self.missingSlots(owned: owned, saves: saves),
+                gaps: FitCandidates.gaps(in: saves)
             )
             key = fingerprint
             return value
@@ -174,7 +198,11 @@ struct StyleView: View {
     }
 
     var body: some View {
-        let reading = memo.reading(for: saves, statement: statement.statement)
+        let reading = memo.reading(
+            for: saves,
+            candidates: fitCandidates,
+            statement: statement.statement
+        )
 
         return NavigationStack {
             ScrollView {
@@ -222,6 +250,13 @@ struct StyleView: View {
             // person who was about to need them.
             .task(id: ImageTagger.backlog(in: saves)) {
                 await ImageTagger.analyzePending(in: context)
+            }
+            // Filling the wardrobe's empty slots from the catalogue. Keyed on the gaps
+            // themselves, so it runs once for a given shape of wardrobe and not at all for
+            // the common one where nothing is missing — and after the pass above, because a
+            // save measured in the meantime can close a gap.
+            .task(id: reading.gaps) {
+                fitCandidates = await FitCandidates.pool(for: reading.gaps, in: context)
             }
             // The reading on this page is built from exactly what the pass is producing —
             // register, colours, silhouettes, the suggestion row's stickers — so a wardrobe
@@ -420,7 +455,22 @@ struct StyleView: View {
     /// regenerated — the suggestion list is derived from the wardrobe, and this one is now
     /// a record.
     private func keep(_ suggestion: SuggestedFit) {
-        let fit = Fit(items: suggestion.items)
+        // **Anything borrowed from the catalogue is kept first.** A `Fit` is made of
+        // `SavedItem`s — it has to be, because that is what makes an outfit a list of things
+        // you own and what lets "one of these came back in stock" mean anything — so a
+        // proposal containing a garment nobody kept cannot be stored as it stands.
+        //
+        // Saving it is the honest reading of the tap rather than a workaround: the row says
+        // "tap to keep one", the card says which pieces are not yours, and keeping the fit
+        // is exactly the moment you have decided you want them. Filed as inspiration, not
+        // wardrobe, because you have not bought it — see `SaveType`.
+        let items = suggestion.ordered.map { piece -> SavedItem in
+            if let save = piece.save { return save }
+            let save = SavedItem(update: piece.update, type: .inspiration)
+            context.insert(save)
+            return save
+        }
+        let fit = Fit(items: items)
         context.insert(fit)
         try? context.save()
         editing = fit
@@ -471,15 +521,24 @@ struct FitCard: View {
 /// order a fit is read. Deliberately looser than a real fit's card: this is something the
 /// app is offering, and it should not pretend to be an arrangement somebody made.
 struct SuggestedFitCard: View {
-    let items: [SavedItem]
+    let items: [FitPiece]
     let title: String
     var width: CGFloat = 168
+
+    /// What the proposal is asking you to acquire, if anything.
+    ///
+    /// **Said out loud, because the alternative is the app quietly pretending you own
+    /// something you don't.** A fit drawn from the catalogue looks identical to one drawn
+    /// from the wardrobe — same cutouts, same card — and on the one tab that is about your
+    /// own collection that is a small lie with a real cost: you would tap it, get a fit,
+    /// and only later find a garment in it you have never seen.
+    private var borrowed: [FitPiece] { items.filter { !$0.isOwned } }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             ZStack {
                 ForEach(Array(items.prefix(4).enumerated()), id: \.offset) { index, item in
-                    FitPieceImage(item: item)
+                    FitPieceImage(update: item.update)
                         .frame(width: width * 0.55, height: width * 0.55)
                         .offset(
                             x: CGFloat(index % 2 == 0 ? -1 : 1) * width * 0.14,
@@ -509,6 +568,18 @@ struct SuggestedFitCard: View {
                 .lineLimit(2)
                 .multilineTextAlignment(.leading)
                 .fixedSize(horizontal: false, vertical: true)
+
+            // Plain `muted`, not the accent. Vermilion means "this is happening now" and is
+            // rationed to a restock, a size you wear, a storefront locking; a garment you
+            // have not bought is a fact about the proposal, not an event.
+            if !borrowed.isEmpty {
+                DataLabel(
+                    text: borrowed.count == 1
+                        ? "WITH 1 YOU DON'T OWN"
+                        : "WITH \(borrowed.count) YOU DON'T OWN",
+                    size: 9
+                )
+            }
         }
         .frame(width: width)
     }
