@@ -71,3 +71,51 @@ struct GarmentSlotTests {
         #expect(GarmentSlot.essential == [.outerwear, .top, .bottom, .footwear])
     }
 }
+
+/// Which tops need something under them.
+///
+/// `GarmentSlot` cannot answer this — it files a t-shirt and a hoodie in the same box —
+/// and without it a suggestion could be a hoodie over bare skin, or a jacket over a hoodie
+/// over nothing. See `GarmentLayer`.
+@Suite("Layering")
+struct GarmentLayerTests {
+    @Test("A mid layer is recognised by name", arguments: [
+        "Box Logo Hoodie", "P3 HOOD", "Nocturne Crewneck", "Cable Knit Jumper",
+        "Half Zip Fleece", "Merino Cardigan", "Turtleneck"
+    ])
+    func midLayers(_ title: String) {
+        #expect(LayerClassifier.layer(title: title) == .mid)
+    }
+
+    @Test("Anything worn against the skin is a base layer", arguments: [
+        "Small Box Tee", "Oxford Shirt", "Pique Polo", "Ribbed Tank", "Long Sleeve Henley"
+    ])
+    func baseLayers(_ title: String) {
+        #expect(LayerClassifier.layer(title: title) == .base)
+    }
+
+    /// A football shirt sits beside "sweater" in the slot table and is worn on its own. It
+    /// is one of the most common things these brands make, so reading it as a mid layer
+    /// would drag an unnecessary t-shirt into a large share of all suggestions.
+    @Test("A jersey is worn on its own")
+    func jerseyIsBase() {
+        #expect(LayerClassifier.layer(title: "Velour Soccer Jersey") == .base)
+    }
+
+    /// Whole tokens, never substrings — the rule the rest of the codebase runs on. A
+    /// sweatband is not a sweater and a hooded jacket's slot is decided before this is
+    /// ever asked.
+    @Test("A sweatband is not a sweater")
+    func wholeTokensOnly() {
+        #expect(LayerClassifier.layer(title: "Terry Sweatband") == .base)
+    }
+
+    @Test("Outerwear and mid layers ask for something underneath")
+    func whatNeedsABase() {
+        #expect(Garment(id: "1", title: "Box Logo Hoodie").needsBaseLayer)
+        #expect(Garment(id: "2", title: "Puffer Jacket").needsBaseLayer)
+        #expect(!Garment(id: "3", title: "Small Box Tee").needsBaseLayer)
+        // A bottom is never asked this, and must not claim it.
+        #expect(!Garment(id: "4", title: "Cargo Pant").needsBaseLayer)
+    }
+}

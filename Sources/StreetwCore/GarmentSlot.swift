@@ -55,6 +55,71 @@ public enum GarmentSlot: String, Codable, Sendable, CaseIterable, Identifiable {
     public static let essential: [GarmentSlot] = [.outerwear, .top, .bottom, .footwear]
 }
 
+/// Where a top sits in a stack of clothes.
+///
+/// `GarmentSlot` puts a t-shirt and a hoodie in the same box, which is right for "what kind
+/// of thing is this" and wrong for "can these be worn together". One top per slot meant a
+/// proposal could be a hoodie and trousers with nothing underneath, or — worse, because it
+/// looks deliberate — a jacket over a hoodie over bare skin. Nobody dresses like that, so a
+/// suggestion that does reads as the app not knowing what clothes are.
+///
+/// Deliberately only about tops. Layering trousers is not a thing anybody needs the app to
+/// reason about, and `outerwear` is already its own slot.
+public enum GarmentLayer: String, Codable, Sendable, CaseIterable {
+    /// Worn against the skin, and the thing a mid layer or a coat needs under it.
+    case base
+    /// Worn over a base layer: a hoodie, a crewneck, a knit.
+    case mid
+
+    public var label: String {
+        switch self {
+        case .base: "Base"
+        case .mid: "Mid"
+        }
+    }
+}
+
+public enum LayerClassifier {
+    /// Words that name a mid layer. Everything else that reached `.top` is treated as a
+    /// base layer, which is the safe default in both directions: a garment wrongly called a
+    /// base layer is merely allowed to be worn alone, where one wrongly called a mid layer
+    /// would drag an unnecessary t-shirt into every fit containing it.
+    ///
+    /// "jersey" is deliberately absent. A football jersey is worn on its own and is one of
+    /// the most common things these brands make; it is a base layer despite sitting beside
+    /// "sweater" in the slot table.
+    private static let midWords: Set<String> = [
+        "hoodie", "hoodies", "hoody", "hood", "sweatshirt", "sweater", "sweaters",
+        "crewneck", "knit", "knitwear", "jumper", "cardigan", "fleece", "fleeces",
+        "turtleneck", "pullover", "quarterzip", "halfzip"
+    ]
+
+    /// Which layer a top is, read off the same fields the slot is.
+    ///
+    /// Callers should only ask this of something already placed in `.top` — it answers for
+    /// anything, and the answer is meaningless for a pair of trousers.
+    public static func layer(
+        title: String,
+        productType: String? = nil,
+        tags: [String] = []
+    ) -> GarmentLayer {
+        for field in [title, productType ?? ""] + tags {
+            for token in field.lowercased().split(where: { !$0.isLetter && !$0.isNumber }) {
+                if midWords.contains(String(token)) { return .mid }
+            }
+        }
+        return .base
+    }
+}
+
+private extension StringProtocol {
+    /// Whole-token split, matching how every other classifier here reads text — a
+    /// substring match would call "shorts" a "short" and "sweatband" a sweater.
+    func split(where isSeparator: (Character) -> Bool) -> [SubSequence] {
+        split(omittingEmptySubsequences: true, whereSeparator: isSeparator)
+    }
+}
+
 /// Turning two measurements of a garment's outline into a word.
 ///
 /// The measuring is done on the device, off the cutout mask, and cannot live here —

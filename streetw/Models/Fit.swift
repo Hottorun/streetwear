@@ -55,7 +55,7 @@ final class Fit {
     /// The items in the order a fit is read — head down — rather than the order they
     /// happened to be added in.
     var ordered: [SavedItem] {
-        items.sorted { $0.slot.stackOrder < $1.slot.stackOrder }
+        items.sorted(by: wornOver)
     }
 
     var renderURL: URL? {
@@ -187,8 +187,27 @@ struct SuggestedFit: Identifiable, Hashable {
     var id: String { items.map(\.id.uuidString).sorted().joined() }
 
     var ordered: [SavedItem] {
-        items.sorted { $0.slot.stackOrder < $1.slot.stackOrder }
+        items.sorted(by: wornOver)
     }
+}
+
+/// Whether `first` is worn over `second` — the order a fit is read and drawn in.
+///
+/// `GarmentSlot.stackOrder` alone was enough until a fit could hold **two tops**: a hoodie
+/// now brings a tee with it, and the two tie on that key. A tie is resolved in whatever
+/// order the array happened to be in, so the base layer could be drawn on top of the thing
+/// meant to cover it — which on a collage is not a subtle mistake.
+private func wornOver(_ first: SavedItem, _ second: SavedItem) -> Bool {
+    if first.slot.stackOrder != second.slot.stackOrder {
+        return first.slot.stackOrder < second.slot.stackOrder
+    }
+    // Mid layers first, so they are drawn over the base layer they cover.
+    let firstIsMid = first.update?.garment.layer == .mid
+    let secondIsMid = second.update?.garment.layer == .mid
+    if firstIsMid != secondIsMid { return firstIsMid }
+    // Still tied: the id, so the arrangement is stable across relaunches rather than
+    // following the relationship's unspecified array order.
+    return first.id.uuidString < second.id.uuidString
 }
 
 enum FitSuggestions {
@@ -286,11 +305,46 @@ enum FitSuggestions {
             // it. Same rule as above — a stated pairing can carry a clash, nothing else can
             // — and the same tie-break on id, so the row stays deterministic.
             var items = [top, bottom]
-            if let shoe = accompaniment(to: [topGarment, bottomGarment], from: footwear, statement: statement) {
+            var chosen = [topGarment, bottomGarment]
+            if let shoe = accompaniment(to: chosen, from: footwear, statement: statement) {
                 items.append(shoe)
             }
-            if let coat = accompaniment(to: [topGarment, bottomGarment], from: outerwear, statement: statement) {
+            if let coat = accompaniment(to: chosen, from: outerwear, statement: statement),
+               let coatGarment = coat.update?.garment {
                 items.append(coat)
+                chosen.append(coatGarment)
+            }
+
+            // **Nothing that needs something under it goes out without one.**
+            //
+            // `GarmentSlot` files a t-shirt and a hoodie in the same box, which is right for
+            // "what kind of thing is this" and wrong here — so one-top-per-slot happily
+            // proposed a hoodie and trousers with nothing underneath, or a jacket over a
+            // hoodie over bare skin. Nobody dresses like that, and a suggestion that does
+            // reads as the app not knowing what clothes are, which is precisely the
+            // gimmicky-recommender failure this whole function is written against.
+            //
+            // The base layer is scored against everything already chosen, exactly as the
+            // shoes and the coat are, so it is a tee that goes with the fit rather than
+            // whichever tee was saved most recently.
+            if chosen.contains(where: \.needsBaseLayer),
+               !chosen.contains(where: { $0.slot == .top && $0.layer == .base }) {
+                // Only from tops that are genuinely base layers, and never the top already
+                // in the fit.
+                let bases = tops.filter {
+                    $0.id != top.id && $0.update?.garment.layer == .base
+                }
+                // **A wardrobe with no base layer in it still gets suggestions.** The rule
+                // completes a fit; it must not delete one. Somebody who has kept three
+                // hoodies and no t-shirt would otherwise open this row to nothing at all,
+                // and an empty row explains itself as a bug — the same reason
+                // `Pairing.isRefused` is deliberately not applied here. So the requirement
+                // bites only when it can be satisfied.
+                if !bases.isEmpty {
+                    guard let base = accompaniment(to: chosen, from: bases, statement: statement)
+                    else { continue }
+                    items.append(base)
+                }
             }
 
             let fit = SuggestedFit(items: items, reason: verdict.reason)

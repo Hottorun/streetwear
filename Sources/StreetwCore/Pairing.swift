@@ -79,6 +79,7 @@ public struct Garment: Sendable, Hashable {
         self.secondaryColor = secondaryColor
         self.busyness = busyness
         self.textCoverage = textCoverage
+        self.layer = LayerClassifier.layer(title: title, productType: productType, tags: tags)
         self.slot = GarmentClassifier.classify(
             title: title,
             productType: productType,
@@ -121,6 +122,15 @@ public struct Garment: Sendable, Hashable {
     /// `Garment` that is constructed is constructed in order to be scored, and the gate is
     /// the first thing `score` reads.
     public let slot: GarmentSlot
+
+    /// Which layer this is, when it is a top. Meaningless for anything else, and callers
+    /// are expected to have checked the slot first — see `GarmentLayer`.
+    public let layer: GarmentLayer
+
+    /// Whether this needs something worn under it: a hoodie, a knit, a coat.
+    public var needsBaseLayer: Bool {
+        slot == .outerwear || (slot == .top && layer == .mid)
+    }
 
     /// Whole tokens, never substrings — the rule the whole codebase runs on. "shorts"
     /// contains "short" and "sweatshirt" contains "sweat", and a `contains` check here
