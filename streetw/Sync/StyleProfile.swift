@@ -230,6 +230,41 @@ struct StyleProfile {
         return profile
     }
 
+    /// The part of an axis that is actually a *reading*, rather than a list of its options.
+    ///
+    /// **A facet that lists every value of an axis says nothing.** With eight saves the
+    /// register line printed `Muted Light Dark Vivid` — all four possible answers, two of
+    /// which contradict each other — and the colour line was four of the palette. Read as a
+    /// statement about somebody's taste, that is not a weak reading; it is the absence of
+    /// one, printed in the same type as a real one.
+    ///
+    /// Three rules, and the first is the one that matters:
+    ///
+    /// - **Nothing at all when the distribution is flat.** If the leader is not meaningfully
+    ///   ahead of an even split across however many values turned up, there is no dominant
+    ///   anything and the honest output is silence. The line disappears rather than shrinking
+    ///   to one arbitrary word.
+    /// - Then a floor relative to the leader, so a clear second and third are kept and a long
+    ///   tail is not.
+    /// - Then the existing cap, because four words is what fits under a heading.
+    ///
+    /// A single value is always a reading: an axis where everything somebody keeps gives the
+    /// same answer is the strongest statement this block can make.
+    static func dominant(_ facets: [StyleFacet], limit: Int = 4) -> [StyleFacet] {
+        guard let leader = facets.first else { return [] }
+        guard facets.count > 1 else { return [leader] }
+
+        // Half again as much as an even split. Below that the axis is noise, and printing
+        // its top four is printing the axis rather than the person.
+        let even = 1.0 / Double(facets.count)
+        guard leader.share >= even * 1.5 else { return [] }
+
+        // Half the leader's share, never below a fifteenth of the collection — the first
+        // keeps a clear runner-up, the second stops a two-item tail from reading as taste.
+        let floor = max(0.15, leader.share * 0.5)
+        return Array(facets.filter { $0.share >= floor }.prefix(limit))
+    }
+
     private static func facets(from counts: [String: Int]) -> [StyleFacet] {
         let total = counts.values.reduce(0, +)
         guard total > 0 else { return [] }

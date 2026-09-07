@@ -322,3 +322,134 @@ struct DiscoveryTests {
         #expect(paged.prefix(2).map(\.brand) == [a, b])
     }
 }
+
+/// The three sharp edges in `Discovery` that were never reachable through the app and were
+/// one caller away from being reachable through anything else.
+@Suite("Discovery edges")
+struct DiscoveryEdgeTests {
+    private func candidate(_ id: String, _ brand: UUID, affinity: Double = 0.5) -> DiscoveryCandidate {
+        DiscoveryCandidate(id: id, brandID: brand, slot: .top, affinity: affinity)
+    }
+
+    /// `while !remaining.contains(where: underCap) { round += 1 }` never terminates when the
+    /// cap is zero, because `perBrand * (round + 1)` stays zero for every round. `Saturation`
+    /// guards its own tuning parameter; this one had nothing.
+    @Test("A cap of zero is clamped rather than looping forever", .timeLimit(.minutes(1)))
+    func zeroCapTerminates() {
+        let brand = UUID()
+        var saturation = Saturation()
+        let out = Discovery.order(
+            [candidate("a", brand), candidate("b", brand)],
+            saturation: &saturation,
+            perBrand: 0
+        )
+        #expect(out.count == 2)
+    }
+
+    /// `best` compares with `>` and `==`, both of which are false against a NaN — so a NaN
+    /// candidate could never be selected, and a page of them selected nothing at all, which
+    /// the emit loop reads as "no candidate" and truncates the deck.
+    @Test("A page whose values are all NaN is still emitted in full")
+    func nanDoesNotTruncate() {
+        var saturation = Saturation()
+        let out = Discovery.order(
+            [
+                candidate("a", UUID(), affinity: .nan),
+                candidate("b", UUID(), affinity: .nan),
+                candidate("c", UUID(), affinity: .nan)
+            ],
+            saturation: &saturation
+        )
+        #expect(out.count == 3)
+    }
+
+    /// …and a NaN ranks last rather than first, so one bad row cannot lead the deck.
+    @Test("A NaN scores worse than a real value")
+    func nanRanksLast() {
+        var saturation = Saturation()
+        let out = Discovery.order(
+            [candidate("bad", UUID(), affinity: .nan), candidate("good", UUID(), affinity: 0.2)],
+            saturation: &saturation
+        )
+        #expect(out.first?.id == "good")
+    }
+
+    /// `similarity > 0` was the old test, and `BrandVector.similarity` is a weighted mean
+    /// that essentially never reaches zero — so every card was familiar and the exploration
+    /// slots had an empty pool to draw from.
+    @Test("The familiarity cutoff is the middle of the page, not zero")
+    func cutoffIsRelative() {
+        #expect(Discovery.familiarityCutoff([]) == nil)
+        #expect(Discovery.familiarityCutoff([0.4]) == 0.4)
+        #expect(Discovery.familiarityCutoff([0.2, 0.4, 0.6]) == 0.4)
+        // Four values that would all have passed `> 0` handsomely.
+        let cutoff = Discovery.familiarityCutoff([0.41, 0.43, 0.45, 0.47])
+        #expect(cutoff == 0.44)
+    }
+
+    /// A card with no brand must not be a *different* brand every time it is ranked.
+    @Test("The unattributed brand id is stable")
+    func unattributedIsFixed() {
+        #expect(Discovery.unattributed == Discovery.unattributed)
+    }
+}
+
+/// What a page of `/v1/discover` actually looks like, and the property the reader notices.
+///
+/// The route hands over exactly two garments per brand per page, so a page is a set of
+/// pairs. With a per-round cap of two, both of a brand's cards were eligible in the same
+/// round and — a catalogue being internally consistent, so its two cards scoring within a
+/// hair of each other — they landed within a card or two of one another. `Saturation` damps
+/// the second by a quarter, which does not move it past a whole round of strangers. The
+/// scroll read as *the same brands over and over* while the ordering was doing exactly what
+/// it was told.
+@Suite("A page of pairs")
+struct DiscoveryPageTests {
+    private func page(brands: Int, each: Int) -> [DiscoveryCandidate] {
+        let ids = (0..<brands).map { _ in UUID() }
+        return ids.enumerated().flatMap { index, brand in
+            (0..<each).map {
+                // Every brand slightly better than the next, and a brand's own cards
+                // near-identical — which is what a real catalogue looks like.
+                DiscoveryCandidate(
+                    id: "\(index)-\($0)",
+                    brandID: brand,
+                    // A real spread of verdicts across brands — `Pairing` scores range
+                    // widely — and a brand's own two cards near-identical.
+                    affinity: 0.95 - Double(index) * 0.045 - Double($0) * 0.001
+                )
+            }
+        }
+    }
+
+    /// The contract: a brand's second card waits for every other brand's first.
+    @Test("No brand comes round twice before every brand has been seen once")
+    func everyBrandOnceFirst() {
+        let pool = page(brands: 15, each: 2)
+        var saturation = Saturation()
+        let ordered = Discovery.order(pool, saturation: &saturation)
+
+        var seen: Set<UUID> = []
+        for (position, candidate) in ordered.enumerated() {
+            if !seen.insert(candidate.brandID).inserted {
+                #expect(
+                    position >= 15,
+                    "a brand repeated at position \(position), before all 15 had appeared"
+                )
+                return
+            }
+        }
+    }
+
+    /// The whole page is still delivered — spacing a brand's cards apart must not drop one.
+    /// A card that never appears is a garment no page will ever show, which is the failure
+    /// `Discovery.interleave` refuses for the same reason.
+    @Test("Spacing a brand's cards apart loses none of them")
+    func nothingIsDropped() {
+        let pool = page(brands: 15, each: 2)
+        var saturation = Saturation()
+        let ordered = Discovery.order(pool, saturation: &saturation)
+        #expect(ordered.count == pool.count)
+        #expect(Set(ordered.map(\.id)) == Set(pool.map(\.id)))
+    }
+}

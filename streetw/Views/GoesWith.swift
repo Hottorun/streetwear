@@ -30,6 +30,8 @@ struct GoesWith: View {
     /// made of the pairings the ranking liked least.
     private static let limit = 4
 
+    @State private var isBuilding = false
+
     /// The wardrobe, or everything kept if nothing has been filed as owned.
     ///
     /// Same fallback `StyleView` uses and for the same reason: the honest question is "what
@@ -71,12 +73,33 @@ struct GoesWith: View {
             VStack(alignment: .leading, spacing: 14) {
                 Rule().padding(.horizontal, 20)
 
-                VStack(alignment: .leading, spacing: 5) {
-                    Text("Wear it with")
-                        .font(.editorial(19))
-                        .foregroundStyle(Color.ink)
-                    DataLabel(text: "FROM WHAT YOU'VE KEPT")
+                // **The header opens out into the whole fit**, and that is the answer to the
+                // question this row raises and cannot itself answer. Four tiles side by side
+                // are four separate suggestions — two of them are often tops, and only one of
+                // those can be worn — so the row says what goes with the garment and leaves
+                // *what the outfit is* to be assembled in somebody's head. `FitStudio` fills
+                // every position on the body, ranks the alternatives for each one, and lets
+                // the result be kept.
+                //
+                // A whole-row button rather than a small control beside the title: the title
+                // is the affordance people reach for, and a section that expands has to look
+                // like one from across the page.
+                Button { isBuilding = true } label: {
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        VStack(alignment: .leading, spacing: 5) {
+                            Text("Wear it with")
+                                .font(.editorial(19))
+                                .foregroundStyle(Color.ink)
+                            DataLabel(text: "TAP TO BUILD THE WHOLE FIT")
+                        }
+                        Spacer(minLength: 0)
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(Color.muted)
+                    }
+                    .contentShape(.rect)
                 }
+                .buttonStyle(.borderless)
                 .padding(.horizontal, 20)
 
                 ScrollView(.horizontal) {
@@ -91,6 +114,7 @@ struct GoesWith: View {
             }
             .padding(.top, 6)
             .padding(.bottom, 28)
+            .sheet(isPresented: $isBuilding) { FitStudio(subject: .product(subject)) }
         }
     }
 }
@@ -165,7 +189,8 @@ extension BrandUpdate {
             color: visionColor,
             secondaryColor: visionSecondaryColor,
             busyness: visionBusyness,
-            textCoverage: visionTextCoverage
+            textCoverage: visionTextCoverage,
+            silhouette: visionSilhouette
         )
     }
 }

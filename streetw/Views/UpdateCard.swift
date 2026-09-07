@@ -40,10 +40,18 @@ struct BrandRoute: Hashable {
     let brand: Brand
 }
 
-/// Everything one brand has posted — where "+36 more" goes.
+/// Everything one brand has posted — where "ALL 36 FROM KITH" goes.
+///
+/// `kind` narrows it to one story: nil is the whole of what a brand posted, and a kind is
+/// the page behind a headline like "7 new products". That second form is the answer to a
+/// question the feed could state and not open — a spread said *7 new products* and *8 things
+/// are back*, printed three tiles of each, and the only link out of it went to all fifteen
+/// mixed together. Those are two different pieces of news and somebody wanting one of them
+/// had nowhere to press.
 struct BrandFeedRoute: Hashable {
     let brand: Brand
     var unseenOnly: Bool = true
+    var kind: UpdateKind?
 }
 
 /// A collection announcement, and the garments that landed with it.
@@ -59,7 +67,7 @@ extension View {
         navigationDestination(for: ProductRoute.self) { ProductDetailView(update: $0.update) }
             .navigationDestination(for: BrandRoute.self) { BrandDetailView(brand: $0.brand) }
             .navigationDestination(for: BrandFeedRoute.self) {
-                BrandFeedView(brand: $0.brand, unseenOnly: $0.unseenOnly)
+                BrandFeedView(brand: $0.brand, unseenOnly: $0.unseenOnly, kind: $0.kind)
             }
             .navigationDestination(for: ReleaseRoute.self) { CollectionReleaseView(update: $0.update) }
     }
@@ -191,6 +199,20 @@ struct FeedTile: View {
 
     let update: BrandUpdate
 
+    /// **"Buyable right now in a size you wear"** — not decoration, and the one place the
+    /// app spends its accent colour on a fact about the reader.
+    ///
+    /// Three consequences worth knowing, because between them they explain every tile: with
+    /// an empty profile it never draws at all; with no variants on the row it falls back to
+    /// the server's verdict; and an *unparseable* size counts as a match, which is the
+    /// deliberate one-size rule that makes hats and bags work.
+    ///
+    /// That last one is why an ALD gift card was underlined while the hoodie beside it was
+    /// not — the hoodie had no M in stock, and the card's "sizes" are denominations that
+    /// normalise to nothing. The repair is upstream and not here: a gift card is not a
+    /// garment and no longer reaches a feed list at all (`BrandUpdate.isMerchandise`).
+    /// Requiring a parseable size instead would have taken the one-size rule down with it,
+    /// which is the larger and more useful of the two behaviours.
     private var isMine: Bool { update.isInMySize(sizes.profile) }
 
     var body: some View {

@@ -170,7 +170,15 @@ public struct ShopifySource: SourceAdapter {
         // Upcoming entry, where a leading space is a visible indent against its neighbours.
         // Cleaning it where the field is produced is what stops a fourth caller repeating
         // it, and `pick` applying the same rules again is harmless: they are idempotent.
-        return ShopInfo(name: meta.name.flatMap(BrandNaming.withoutTail), currency: meta.currency)
+        //
+        // A **handle** is refused outright rather than tidied — `norseprojects-webshop` is
+        // what a merchant's own slug looks like in this field, and it reached the global
+        // catalogue as a brand's name. Nil here means the callers fall through to
+        // `og:site_name` and the `<title>`, which is exactly what `BrandNaming.pick` is for.
+        let name = meta.name
+            .flatMap(BrandNaming.withoutTail)
+            .flatMap { BrandNaming.looksLikeHandle($0) ? nil : $0 }
+        return ShopInfo(name: name, currency: meta.currency)
     }
 
     // MARK: - One product, by its page
@@ -380,14 +388,33 @@ public struct ShopifySource: SourceAdapter {
     /// becomes a middot, which is the same separator the rest of the app uses for a run of
     /// short facts, and which survives being shown on one line.
     ///
-    /// `<br>` and the block tags stay spaces: they are used inside prose as often as
-    /// between items, and a middot in the middle of a sentence is worse than a run-on.
+    /// **A `<br>` before a capital is a bullet; a `<br>` inside a sentence is a space.**
+    /// This started as "block tags stay spaces, because they are used inside prose as often
+    /// as between items" — true of `</p>`, and wrong about `<br>` on the storefronts that
+    /// actually matter. Half of them write their spec as `<br>`-separated lines rather than
+    /// as a list, and Stüssy's read back as *"Oversized, boxy fit crewneck fleece sweatshirt
+    /// Sun faded effect Heavyweight 14.75oz cotton blend"* — one run-on with no boundary
+    /// anywhere in it, printed on the most designed surface in the app.
+    ///
+    /// The test is what follows the break: a new line starting with a capital or a digit is a
+    /// new item, and prose wrapped mid-sentence carries on in lower case. That is exactly the
+    /// case the original note was protecting, and it still is.
     ///
     /// `&amp;` is decoded **last**, or `&amp;lt;` would arrive as `<` and a description
     /// could inject markup into anything that later treats this as rich text.
     public nonisolated static func plainText(from html: String) -> String {
         html
             .replacingOccurrences(of: "</li>", with: " · ", options: .caseInsensitive)
+            // **No `.caseInsensitive` here, and it is load-bearing.** The option applies to
+            // the whole pattern including the lookahead, so `\p{Lu}` would match a lower-case
+            // letter too and every wrapped sentence would be broken into bullets — the exact
+            // case this rule exists to leave alone. The tag is spelled out in both cases
+            // instead.
+            .replacingOccurrences(
+                of: "<[Bb][Rr]\\s*/?>\\s*(?=[\\p{Lu}\\p{Nd}])",
+                with: " · ",
+                options: .regularExpression
+            )
             .replacingOccurrences(of: "<br\\s*/?>", with: " ", options: [.regularExpression, .caseInsensitive])
             .replacingOccurrences(
                 of: "</(p|div|h[1-6]|tr|blockquote)>",

@@ -58,6 +58,10 @@ public struct Garment: Sendable, Hashable {
     public var busyness: Double
     /// How much of the garment is lettering, 0…1.
     public var textCoverage: Double
+    /// The word `Silhouette` measured off the cutout — "Boxy", "Longline", "Wide",
+    /// "Tapered", "Slim" — or nil, which is the common answer and means "unremarkable, or
+    /// never measured". See `SilhouetteBands`, which refuses far more often than it answers.
+    public var silhouette: String?
 
     public init(
         id: String,
@@ -68,7 +72,8 @@ public struct Garment: Sendable, Hashable {
         color: String? = nil,
         secondaryColor: String? = nil,
         busyness: Double = 0,
-        textCoverage: Double = 0
+        textCoverage: Double = 0,
+        silhouette: String? = nil
     ) {
         self.id = id
         self.title = title
@@ -79,7 +84,9 @@ public struct Garment: Sendable, Hashable {
         self.secondaryColor = secondaryColor
         self.busyness = busyness
         self.textCoverage = textCoverage
+        self.silhouette = silhouette
         self.layer = LayerClassifier.layer(title: title, productType: productType, tags: tags)
+        self.isSet = GarmentClassifier.isSet(title: title, productType: productType, tags: tags)
         self.slot = GarmentClassifier.classify(
             title: title,
             productType: productType,
@@ -132,6 +139,20 @@ public struct Garment: Sendable, Hashable {
         slot == .outerwear || (slot == .top && layer == .mid)
     }
 
+    /// A tracksuit, a two-piece, a co-ord: **one row occupying two positions on the body.**
+    /// See `GarmentClassifier.isSet`.
+    public let isSet: Bool
+
+    /// The positions this garment actually fills.
+    ///
+    /// One for everything except a set, which fills the top and the bottom — so nothing else
+    /// may be put in either. The slot it was *filed* under is included whatever it is, since
+    /// a set named "…Tracksuit Bottoms" is a bottom that also covers the top.
+    public var occupied: Set<GarmentSlot> {
+        guard isSet else { return [slot] }
+        return [slot, .top, .bottom]
+    }
+
     /// Whole tokens, never substrings — the rule the whole codebase runs on. "shorts"
     /// contains "short" and "sweatshirt" contains "sweat", and a `contains` check here
     /// would read a sweatshirt as gym kit and a pair of shorts as summer-only.
@@ -175,6 +196,14 @@ public enum Pairing {
         // share of most catalogues — putting a garment we could not place next to one we
         // could is a guess wearing the clothes of a suggestion.
         guard mine != .unknown, theirs != .unknown, mine != theirs else {
+            return Verdict(score: 0, reason: nil, isRefused: true)
+        }
+        // **A set is already an outfit in those two positions.** A tracksuit with another
+        // hoodie is not a proposal anybody would recognise, and it is the one this produced:
+        // the set is filed under whichever half its title names and the other half then looks
+        // vacant. Refused rather than scored down, like the slot gate above it — no colour
+        // agreement rescues a second top.
+        guard one.occupied.isDisjoint(with: other.occupied) else {
             return Verdict(score: 0, reason: nil, isRefused: true)
         }
         // An accessory sits with anything by construction, so pairing two of them says
@@ -226,6 +255,33 @@ public enum Pairing {
         if isLayering(mine, theirs) {
             score += 0.05
             reason = reason ?? "Layers over it"
+        }
+
+        // **Volume**, and it only ever *rewards*. A wide top over a narrower leg — or a close
+        // top over a wide one — is the proportion almost every worn outfit has, and it is
+        // something the app can genuinely measure off the cutout rather than infer from a
+        // title, so it is worth both a nudge and the line it prints.
+        //
+        // **What it deliberately does not do is mark down volume on volume**, which is the
+        // rule every styling guide states next and which is wrong here for exactly the reason
+        // the formality rule is absent from this file: an oversized hoodie over an oversized
+        // leg is not a mistake in streetwear, it is the house style. Measured against a real
+        // collection, the penalty version marked down a boxy Bape zip hoodie with wide
+        // pleated sweatpants — which is not a bad suggestion, it is the outfit the wardrobe
+        // was assembled to produce. A rule that spends its time refusing the best answers the
+        // app has is worse than no rule.
+        //
+        // `Silhouette` also refuses to answer far more often than it answers — it needs a
+        // cutout, a plausible outline and a shape a garment can physically be — so this fires
+        // on a minority of pairs and says nothing at all on the rest. A measurement that is
+        // usually absent must never become a penalty for being absent.
+        if case .balanced(let line) = volume(one, other) {
+            score += 0.08
+            // **It takes the line.** The colour reason is usually a restatement of what the
+            // two pictures already show ("All black"); a measured proportion is something
+            // nobody could see from the tiles, and it only ever fires when both outlines were
+            // successfully read — which is rare enough to be worth printing when it happens.
+            reason = line
         }
 
         // Last, and loudest. A statement is the only input here that was not inferred from
@@ -326,5 +382,52 @@ public enum Pairing {
     private static func isLayering(_ one: GarmentSlot, _ other: GarmentSlot) -> Bool {
         let pair = Set([one, other])
         return pair == Set([.outerwear, .top])
+    }
+
+    // MARK: - Volume
+
+    /// What the two measured outlines say about the proportions of the pair.
+    enum Volume {
+        /// One piece is wide and the other is not, which is the shape almost every worn
+        /// outfit has. Carries the line the card prints.
+        case balanced(String)
+        /// Both the same — and deliberately not a verdict. See the note at the call site:
+        /// volume on volume is the house style here, and slim on slim is a different decade
+        /// rather than a mistake.
+        case matched
+        /// One of the two was never measured, or the measurement declined to say.
+        case unknown
+    }
+
+    /// The words `SilhouetteBands` produces for a top that takes up room, and for a leg
+    /// that does. Anything else it can say — "Longline", "Tapered", "Slim" — is the closer
+    /// end, and nil is silence.
+    private static let wideWords: Set<String> = ["boxy", "wide"]
+    private static let closeWords: Set<String> = ["longline", "tapered", "slim"]
+
+    static func volume(_ one: Garment, _ other: Garment) -> Volume {
+        // Only a top-and-bottom pair has proportions in the sense meant here. A cap has an
+        // outline and it says nothing about how an outfit sits, which is also why
+        // `SilhouetteBands.speaks(for:)` refuses to measure one.
+        let slots = Set([one.slot, other.slot])
+        guard slots.contains(.bottom),
+              slots.contains(.top) || slots.contains(.outerwear)
+        else { return .unknown }
+
+        guard let mine = width(of: one), let theirs = width(of: other) else { return .unknown }
+        guard mine != theirs else { return .matched }
+        // Named for the piece carrying the volume, which is the half of the outfit somebody
+        // is actually deciding about.
+        let wide = mine == .wide ? one : other
+        return .balanced(wide.slot == .bottom ? "Volume on the leg" : "Volume up top")
+    }
+
+    private enum Width { case wide, close }
+
+    private static func width(of garment: Garment) -> Width? {
+        guard let word = garment.silhouette?.lowercased() else { return nil }
+        if wideWords.contains(word) { return .wide }
+        if closeWords.contains(word) { return .close }
+        return nil
     }
 }

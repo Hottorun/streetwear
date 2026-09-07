@@ -19,6 +19,19 @@
 import Foundation
 
 public enum PreviewImages {
+    /// Which revision of the vocabulary below produced a stored verdict.
+    ///
+    /// The `GenderClassifier.version` pattern, for the same reason: this is text
+    /// classification over copy nobody wrote to answer the question, so it will keep
+    /// improving, and a stored answer from an older revision is worse than none because
+    /// nothing would ever revisit it. Bump it whenever `phrases`, `tokens` or `isGarment`
+    /// changes. See `BrandUpdate.merchandiseVersion`.
+    ///
+    /// **2** because the verdict changed rather than the words did: a row is only asked this
+    /// question at all when it stands for a product, so the announcements and releases that
+    /// revision 1 stamped need one more look.
+    public static let version = 2
+
     /// Words that mark a "product" which is not a garment.
     ///
     /// Whole-token matching, not `contains`: "gift" would otherwise take a gift-wrap

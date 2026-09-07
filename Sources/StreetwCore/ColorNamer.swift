@@ -30,11 +30,27 @@ public enum ColorNamer {
     /// Names an RGB colour, each component 0–1.
     public static func name(red: Double, green: Double, blue: Double) -> NamedColor {
         let (hue, saturation, brightness) = hsb(red: red, green: green, blue: blue)
+        // How far apart the channels actually are, in absolute terms.
+        //
+        // **Saturation cannot be trusted in the dark, and this is the whole reason it is
+        // measured twice.** HSB saturation is `(max - min) / max`, so it *divides by the
+        // brightness* — and near black that denominator is tiny. A black hoodie shot under
+        // cool studio light comes back around (0.09, 0.10, 0.12): the channels are three
+        // hundredths apart, which no eye would call a colour, and the arithmetic reports a
+        // saturation of 0.25 with a blue hue. So the achromatic branch declined it and the
+        // dark branch named it **Navy**.
+        //
+        // Measured on a real collection: of twenty-eight saved garments, sixteen came back
+        // Navy — including one titled "washed black", one called "Onyx" and a pair of black
+        // shorts. The style profile then reported the wardrobe as navy, every fit it
+        // proposed read "All navy", and the one thing the colour rules exist to do — notice
+        // that a garment has a colour — was being done wrong on most of the collection.
+        let chroma = max(red, green, blue) - min(red, green, blue)
 
         // Achromatic first. Almost all product photography is shot on white, and most
         // streetwear is black, grey or off-white — so these are the common cases, not
         // the edge cases, and hue is meaningless once saturation is this low.
-        if saturation < 0.12 {
+        if saturation < 0.12 || chroma < Self.faintestChroma {
             switch brightness {
             // True black is darker than people think: #1C1C1E, the colour of most
             // "black" garments in a photograph, is charcoal to the eye.
@@ -51,13 +67,33 @@ public enum ColorNamer {
             }
         }
 
-        // Very dark colours read as their dark name regardless of how saturated they are.
+        // Very dark colours read as their dark name regardless of how saturated they are —
+        // but only once the channels are far enough apart to be a colour at all. A real navy
+        // (#1B1F3B) separates by 0.13; a black garment with a cool cast separates by 0.03,
+        // and calling that navy is how a wardrobe of black clothes described itself as blue.
         if brightness < 0.22 {
+            guard chroma >= Self.darkColourChroma else {
+                return NamedColor(name: brightness < 0.09 ? "Black" : "Charcoal", confidence: 0.8)
+            }
+            // **The circle is covered, and it was not.** Three arcs were named and the rest
+            // fell through to "Black" — so a chocolate brown (0.20, 0.12, 0.06), a dark teal,
+            // a dark purple and a dark orange were all filed as black, with a cliff at
+            // `brightness == 0.22`: one notch brighter and the same chocolate came back
+            // "Brown". A dark colour is still that colour, and a wardrobe that describes
+            // itself as entirely black is the failure this whole band exists to avoid — the
+            // chroma guard above is what keeps a black garment with a cool cast out of here.
+            //
+            // Every name is one `ColorHarmony.Swatch.wheel` knows. A name it does not hold
+            // scores 0.5 against everything, which is a silent way of saying nothing.
             switch hue {
-            case 0.55..<0.75: return NamedColor(name: "Navy", confidence: 0.85)
-            case 0.0..<0.05, 0.92...1.0: return NamedColor(name: "Burgundy", confidence: 0.8)
-            case 0.2..<0.45: return NamedColor(name: "Forest", confidence: 0.75)
-            default: return NamedColor(name: "Black", confidence: 0.7)
+            case ..<0.05: return NamedColor(name: "Burgundy", confidence: 0.8)
+            case ..<0.11: return NamedColor(name: "Brown", confidence: 0.75)
+            case ..<0.2: return NamedColor(name: "Olive", confidence: 0.7)
+            case ..<0.45: return NamedColor(name: "Forest", confidence: 0.75)
+            case ..<0.55: return NamedColor(name: "Teal", confidence: 0.7)
+            case ..<0.76: return NamedColor(name: "Navy", confidence: 0.85)
+            case ..<0.92: return NamedColor(name: "Purple", confidence: 0.7)
+            default: return NamedColor(name: "Burgundy", confidence: 0.8)
             }
         }
 
@@ -113,6 +149,18 @@ public enum ColorNamer {
             return NamedColor(name: "Pink", confidence: confidence)
         }
     }
+
+    /// Below this the channels are close enough together that there is no colour to name,
+    /// whatever the ratio between them says. Deliberately small — this only has to catch the
+    /// cast a camera puts on a grey card, not to arbitrate between muted colours.
+    private static let faintestChroma = 0.055
+
+    /// And a *dark* colour has to separate further still before it is named.
+    ///
+    /// Higher than `faintestChroma` because the dark band assigns a hue with no saturation
+    /// floor at all — it is the one place a two-hundredths difference between channels could
+    /// become the word "Forest". A real navy clears this comfortably.
+    private static let darkColourChroma = 0.09
 
     /// Hue 0–1, saturation 0–1, brightness 0–1.
     public static func hsb(red: Double, green: Double, blue: Double) -> (Double, Double, Double) {

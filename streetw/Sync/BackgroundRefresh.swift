@@ -110,12 +110,7 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         // Only re-register a token we are already allowed to have. Calling this
         // unconditionally would be harmless but pointless; asking for authorization at
         // launch would be worse, so the prompt lives behind an explicit action.
-        Task { @MainActor in
-            let settings = await UNUserNotificationCenter.current().notificationSettings()
-            if settings.authorizationStatus == .authorized {
-                application.registerForRemoteNotifications()
-            }
-        }
+        Task { @MainActor in await PushAuthorization.registerIfAuthorized() }
         return true
     }
 
@@ -142,7 +137,13 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
 
     /// A push arrived. The payload deliberately carries no content — it is a nudge to
     /// pull the feed, so the phone and the server can never disagree about what happened.
-    func application(
+    ///
+    /// `nonisolated` because the payload is `[AnyHashable: Any]`, which is not `Sendable` and
+    /// cannot be handed to a main-actor implementation — an error in Swift 6 language mode.
+    /// Nothing here reads it, which is the point of a content-free push, so there is nothing
+    /// to hop onto the main actor with: both calls below are already `await`s onto actors of
+    /// their own.
+    nonisolated func application(
         _ application: UIApplication,
         didReceiveRemoteNotification userInfo: [AnyHashable: Any]
     ) async -> UIBackgroundFetchResult {
@@ -294,6 +295,25 @@ final class PushRoute {
 enum PushAuthorization {
     static func current() async -> UNAuthorizationStatus {
         await UNUserNotificationCenter.current().notificationSettings().authorizationStatus
+    }
+
+    /// Asks APNs for a token, but only if iOS says we are allowed one.
+    ///
+    /// **Called on every foreground, not only at launch.** Permission granted in iOS
+    /// Settings — which is the only route left to somebody who tapped "Not now" — produces
+    /// no callback of any kind, so the app used to notice on the *next cold launch* and not
+    /// before. Until then the server holds a device row with a null token: `Notifier` finds
+    /// the follower, has nobody to send to, and stamps `notified_at` anyway, so every layer
+    /// reports healthy and not one notification exists. That is the failure `devicesWithToken`
+    /// was added to make visible; this is the one that stops producing it.
+    ///
+    /// Idempotent and cheap. `registerForRemoteNotifications` is documented as safe to call
+    /// on every launch, and a token that has not changed re-delivers the same string, which
+    /// `pushDeviceToken` writes over the identical value.
+    static func registerIfAuthorized() async {
+        let status = await current()
+        guard status == .authorized || status == .provisional else { return }
+        UIApplication.shared.registerForRemoteNotifications()
     }
 
     /// Prompts if it hasn't been asked yet, and registers for a token on success.

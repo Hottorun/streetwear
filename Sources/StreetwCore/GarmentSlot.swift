@@ -270,9 +270,27 @@ public enum GarmentClassifier {
         tags: [String] = [],
         visionCategories: [String] = []
     ) -> GarmentSlot {
+        // **"Accessories" is a shelf, not a garment**, and it must not outrank a name.
+        //
+        // The rule below — category first, title second — is right for every other slot: a
+        // storefront filing something under "Sweatshirts" knows what it is, and the title is
+        // where marketing language lives. `.accessory` is the exception because it is the
+        // catch-all rail: measured against a real collection, a cap named "ACW* x Rally Cap
+        // Optic" and a "TEES 3 PACK" were both filed under Accessories, so both were placed
+        // there — the cap could never be proposed as headwear, and on the fit canvas it was
+        // drawn down at the shoes, which is where an accessory sits.
+        //
+        // So an accessory read off the *category* is held as provisional and only used when
+        // nothing more specific answers. A genuine bag or belt is unaffected: nothing in its
+        // title names another slot, so the fallback is what it lands on.
+        var provisional: GarmentSlot = .unknown
         if let productType {
             let slot = match(productType)
-            if slot != .unknown { return slot }
+            if slot == .accessory {
+                provisional = slot
+            } else if slot != .unknown {
+                return slot
+            }
         }
         // Vision's own labels next: they describe the photograph rather than the copy.
         for category in visionCategories {
@@ -285,8 +303,56 @@ public enum GarmentClassifier {
             let slot = match(tag)
             if slot != .unknown { return slot }
         }
-        return .unknown
+        // A set that names neither half — a bare "Tracksuit" — is filed as a top, and its
+        // *other* half is `Garment.occupied`'s business. Without this it is `.unknown`, and
+        // `.unknown` is refused by every gate in the fit engine: the one garment that is a
+        // whole outfit on its own could never appear in one.
+        if provisional == .unknown, isSet(title: title, productType: productType, tags: tags) {
+            return .top
+        }
+        return provisional
     }
+
+    /// Whether this garment is a **set** — a tracksuit, a two-piece, a co-ord.
+    ///
+    /// One row, two positions on the body, and that is the whole difference. Every rule in
+    /// the fit engine assumes a garment occupies one slot: a set is filed on whichever of the
+    /// two its title happens to name, and then an outfit is built by putting *another* top or
+    /// bottom with it — so a Corteiz tracksuit came back proposed alongside a second hoodie,
+    /// which is not an outfit anybody would wear or even recognise as one.
+    ///
+    /// Read off the words alone and deliberately narrow. A photograph of a set is
+    /// indistinguishable from a photograph of a hoodie to everything the app measures, so a
+    /// storefront that does not say so cannot be caught — and the cost of a false positive is
+    /// higher than a miss, because it removes a garment from every fit that needs its slot.
+    public static func isSet(
+        title: String = "",
+        productType: String? = nil,
+        tags: [String] = []
+    ) -> Bool {
+        let fields = [title, productType ?? ""] + tags
+        for field in fields {
+            let lowered = field.lowercased()
+            for phrase in setPhrases where lowered.contains(phrase) { return true }
+            for token in lowered.split(where: { !$0.isLetter && !$0.isNumber }) {
+                if setWords.contains(String(token)) { return true }
+            }
+        }
+        return false
+    }
+
+    /// A set names itself, and only these name it unambiguously.
+    ///
+    /// A bare "set" is deliberately absent: brands sell a "Pin Set" and a "Tees 3 Pack Set",
+    /// and reading either as a two-piece outfit would take a whole slot out of the wardrobe.
+    private static let setWords: Set<String> = [
+        "tracksuit", "tracksuits", "coord", "coords", "loungeset", "sweatsuit"
+    ]
+
+    private static let setPhrases: [String] = [
+        "co-ord", "two piece", "two-piece", "2 piece", "2-piece", "matching set",
+        "track suit", "sweat suit"
+    ]
 
     /// Phrases that name a slot and would be mis-slotted token by token. Checked across
     /// *every* slot before any single-token matching, because "short sleeve" contains a

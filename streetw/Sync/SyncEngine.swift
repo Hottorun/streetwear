@@ -185,6 +185,10 @@ final class SyncEngine {
         // fields that never change after insert, and the feed re-evaluates its filter on
         // every render pass.
         update.refreshGender()
+        // Same argument, for whether the row is clothing at all — a gift card and a size
+        // chart arrive through this function like everything else. See
+        // `BrandUpdate.isMerchandise`.
+        update.refreshMerchandise()
         update.isSeen = markSeen
         context.insert(update)
         // See `Brand.lastActivityAt`: the feed's sort order, stored so it never has to be

@@ -59,7 +59,21 @@ enum VisualReading {
     /// at 3 holding none of it. A row with no colour is not merely missing a swatch: it is
     /// unscoreable by `ColorHarmony`, so it can never be chosen into a fit and never
     /// offered as a candidate.
-    static let version = 4
+    /// **5 is a re-naming, not a re-measurement.** `ColorNamer` was reading a black garment
+    /// under cool light as **Navy** — HSB saturation divides by brightness, so three
+    /// hundredths between the channels is a quarter of a "saturation" once the pixel is dark.
+    /// Measured on a real collection it named sixteen of twenty-eight garments navy,
+    /// including one titled "washed black". The pixels stored are fine; the word derived from
+    /// them was wrong, and nothing re-derives a word — so every row needs one more look.
+    ///
+    /// **6 is the same kind of thing, on the other side of the same band.** The dark branch
+    /// named three arcs of the hue circle and let everything else fall through to "Black", so
+    /// a chocolate brown, a dark teal, a dark purple and a dark orange were all filed as
+    /// black — with a cliff at `brightness == 0.22` where one notch brighter answered
+    /// "Brown". A stored verdict from the older rules is worse than none, because nothing
+    /// would ever revisit it: the swatch on the card, the facet counts in `StyleProfile` and
+    /// every pairing `ColorHarmony` scores are all read off that one word.
+    static let version = 6
 
     /// What one photograph turned out to be. Every field is optional or zero-defaulted,
     /// because each measurement can decline independently and a partial reading is worth

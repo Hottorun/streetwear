@@ -8,6 +8,15 @@ import StreetwCore
 enum APIError: LocalizedError {
     case notConfigured
     case unauthorized
+    /// Refused, but **not** because the credential is stale.
+    ///
+    /// Kept apart from `.unauthorized` because the two have opposite repairs and only one
+    /// of them is safe. A 401 means "I don't know this token" and re-registering is the
+    /// cure; a 403 means "I know who you are and the answer is no" — a WAF rule, an edge
+    /// blocking the request before it reaches Vapor, a route that has been locked down.
+    /// Spending the token on that throws away a working identity and, because
+    /// `POST /v1/devices` mints a device with no follows, the follow list with it.
+    case forbidden(String?)
     case server(Int, String?)
     case transport(String)
 
@@ -15,6 +24,7 @@ enum APIError: LocalizedError {
         switch self {
         case .notConfigured: "No server URL set"
         case .unauthorized: "This device isn't registered with the server"
+        case .forbidden(let reason): reason.map { "\($0) (403)" } ?? "streetw refused the request (403)"
         case .server(let code, let reason): reason.map { "\($0) (\(code))" } ?? "Server error \(code)"
         case .transport(let message): message
         }
@@ -264,16 +274,21 @@ struct StreetwAPI: Sendable {
             throw APIError.transport(error.localizedDescription)
         }
 
+        // Vapor reports failures as {"error": true, "reason": "..."}.
+        func reason() -> String? {
+            (try? JSONDecoder().decode([String: JSONValue].self, from: data))?["reason"]?.stringValue
+        }
+
         let code = (response as? HTTPURLResponse)?.statusCode ?? 0
         switch code {
         case 200...299:
             return data
-        case 401, 403:
+        case 401:
             throw APIError.unauthorized
+        case 403:
+            throw APIError.forbidden(reason())
         default:
-            // Vapor reports failures as {"error": true, "reason": "..."}.
-            let reason = (try? JSONDecoder().decode([String: JSONValue].self, from: data))?["reason"]?.stringValue
-            throw APIError.server(code, reason)
+            throw APIError.server(code, reason())
         }
     }
 }

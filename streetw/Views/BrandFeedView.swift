@@ -24,6 +24,13 @@ struct BrandFeedView: View {
     let brand: Brand
     /// Show only what hasn't been seen, matching the feed the user arrived from.
     var unseenOnly: Bool = true
+    /// One story rather than the whole spread, when that is what was tapped.
+    ///
+    /// Nil is everything this brand posted, which is where "ALL 15 FROM …" goes. A kind is
+    /// the page behind one headline — "7 new products" — and the whole of what that page has
+    /// to get right is that it holds **exactly** what the sentence claimed, so the heading is
+    /// built from `UpdateKind.headline` too rather than written again here.
+    var kind: UpdateKind?
 
     /// The same filter the feed applies, from the same place. Arriving here from
     /// "+36 more" and being shown the womenswear a Menswear setting had just hidden reads
@@ -56,11 +63,34 @@ struct BrandFeedView: View {
         // One card per garment. This page is the longest list in the app — a brand's whole
         // output — so it is also where the same jacket appearing as a drop, a markdown and a
         // restock is most obvious and least useful. See `BrandUpdate.oncePerProduct`.
-        return BrandUpdate.oncePerProduct(
+        //
+        // **Deduplicated before the kind filter, never after, because the feed does it in
+        // that order and this page is what the feed's count opens.** `FeedView.feed` folds a
+        // brand's whole unread queue down to one row per garment and *then* buckets by kind,
+        // so a jacket with an unread `.product` and an unread `.restock` is counted once, in
+        // whichever bucket the surviving row belongs to. Filtering first here kept both rows
+        // — one on each page — so the feed said "6 new products" and the page it opened
+        // printed seven. A tap has to land on the thing it was pointed at, which is the same
+        // reason `heading` prints `UpdateKind.headline` rather than a sentence of its own.
+        // Reachable in server mode, where every event is a row of its own.
+        let deduplicated = BrandUpdate.oncePerProduct(
             brand.updates
                 .filter { unseenOnly ? !$0.isSeen : true }
                 .filter { $0.passes(profile) }
         )
+        guard let kind else { return deduplicated }
+        return deduplicated.filter { $0.kind == kind }
+    }
+
+    /// What this page is, in the words the feed used for it.
+    ///
+    /// Printed only when narrowed to a story: unfiltered, the navigation title already says
+    /// the brand and a second line under it repeating "everything" is furniture. Counted off
+    /// the deduplicated list rather than off the raw rows, because that is what is drawn —
+    /// the rule every other count in this app follows, and the one that stops a heading
+    /// saying eight above a page of five.
+    private func heading(_ updates: [BrandUpdate]) -> String? {
+        kind.map { $0.headline(count: updates.count) }
     }
 
     /// The lead photographs of the next couple of items, for the card at `position` to
@@ -94,15 +124,30 @@ struct BrandFeedView: View {
         let updates = self.updates
 
         return ScrollView {
-            LazyVStack(alignment: .leading, spacing: 40) {
-                ForEach(Array(updates.enumerated()), id: \.element.id) { position, update in
-                    // A release is not a garment and must not be drawn as one here either
-                    // — this page is reached from "+36 more", so it holds exactly the same
-                    // mix the feed does.
-                    if update.kind == .collection {
-                        CollectionCard(update: update)
-                    } else {
-                        GalleryCard(update: update, warm: Self.leadImages(of: updates, after: position))
+            // The heading is a sibling of the list rather than its first row, so it can sit
+            // at its own distance from the first card — inside the `LazyVStack` it inherited
+            // the 40pt that separates two full-width photographs from each other, which is
+            // the gap that says "different garment" and the wrong one for a line that
+            // belongs to the picture under it. Two children, so nothing here is un-lazied:
+            // the `ForEach` is still inside the lazy stack.
+            VStack(alignment: .leading, spacing: 22) {
+                if let heading = heading(updates) {
+                    Text(heading)
+                        .font(.editorial(19))
+                        .foregroundStyle(kind == .dropLock ? Color.signal : Color.ink)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.horizontal, 20)
+                }
+
+                LazyVStack(alignment: .leading, spacing: 40) {
+                    ForEach(Array(updates.enumerated()), id: \.element.id) { position, update in
+                        // A release is not a garment and must not be drawn as one here either
+                        // — this page holds exactly the same mix the feed does.
+                        if update.kind == .collection {
+                            CollectionCard(update: update)
+                        } else {
+                            GalleryCard(update: update, warm: Self.leadImages(of: updates, after: position))
+                        }
                     }
                 }
             }
@@ -139,9 +184,16 @@ struct BrandFeedView: View {
                     // Every row this page stood for, not only the cards it drew. The list is
                     // one card per garment now, so clearing `updates` alone would leave the
                     // folded-away siblings unread and the page would refuse to empty.
+                    //
+                    // **And no row it did not stand for.** Narrowed to one story, this button
+                    // clears that story — a checkmark on a page headed "7 new products" must
+                    // not also mark eight restocks read, which is a page's worth of news
+                    // disappearing from the feed on a tap that named something else.
                     let profile = sizes.profile
+                    let kind = self.kind
                     withAnimation(.easeOut(duration: 0.22)) {
                         for update in brand.updates where !update.isSeen {
+                            guard kind == nil || update.kind == kind else { continue }
                             guard update.passes(profile) else { continue }
                             update.isSeen = true
                         }

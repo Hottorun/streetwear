@@ -39,7 +39,12 @@ enum Classification {
     /// Large enough that a normal store converges in one go, small enough that a store built
     /// up over months does not stall a foreground. Each row is pure string work over fields
     /// already faulted in — there is no network and no image decoding here.
-    private static let batch = 500
+    ///
+    /// `nonisolated`, because it is used as a **default argument** and those are evaluated at
+    /// the call site rather than inside the function — so a `@MainActor` constant here is a
+    /// main-actor read from wherever the caller happens to be, which is an error in Swift 6
+    /// language mode and a warning today.
+    nonisolated private static let batch = 500
 
     /// Rewrites the gender of rows classified by an older revision. Returns how many.
     @discardableResult
@@ -56,6 +61,31 @@ enum Classification {
         for update in stale { update.refreshGender() }
         try? context.save()
         log.info("settled gender on \(stale.count) rows at revision \(current)")
+        return stale.count
+    }
+
+    /// Marks the rows that are not clothing — gift cards, size charts, shipping upsells —
+    /// so `BrandUpdate.passes` can hide them without running a classifier per render.
+    /// Returns how many were looked at.
+    ///
+    /// Same shape as the gender pass and for the same reasons: bounded per foreground, off
+    /// the render path, and stamped even when the answer is "this is a garment" so a row is
+    /// not re-examined on every launch. `PreviewImages.version` is what makes a change to the
+    /// vocabulary reach rows already stored.
+    @discardableResult
+    static func settleMerchandise(in context: ModelContext, limit: Int = batch) -> Int {
+        let current = PreviewImages.version
+        var descriptor = FetchDescriptor<BrandUpdate>(
+            predicate: #Predicate { $0.merchandiseVersion != current }
+        )
+        descriptor.fetchLimit = limit
+
+        let stale = (try? context.fetch(descriptor)) ?? []
+        guard !stale.isEmpty else { return 0 }
+
+        for update in stale { update.refreshMerchandise() }
+        try? context.save()
+        log.info("settled merchandise on \(stale.count) rows at revision \(current)")
         return stale.count
     }
 

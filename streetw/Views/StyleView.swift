@@ -23,8 +23,6 @@ import SwiftUI
 
 struct StyleView: View {
     @Environment(\.modelContext) private var context
-    @Environment(BrandSuggestions.self) private var suggestions: BrandSuggestions
-    @Environment(ServerSettings.self) private var settings: ServerSettings
     @Environment(StyleStatementStore.self) private var statement: StyleStatementStore
 
     @Query(sort: \SavedItem.savedAt, order: .reverse) private var saves: [SavedItem]
@@ -109,6 +107,10 @@ struct StyleView: View {
             var count: Int
             var digest: Int
             var statement: StyleStatement
+            /// The fits that already exist, so keeping one recomputes the row it came off.
+            /// Without it the proposal stayed on screen until something else changed, which
+            /// is the state in which tapping it again writes a duplicate.
+            var kept: [String]
             /// The gap-filling candidates, by identity. They arrive from a `.task` after
             /// the first build, so without them in the key the row would keep the version
             /// computed before they landed.
@@ -118,12 +120,15 @@ struct StyleView: View {
         func reading(
             for saves: [SavedItem],
             candidates: [BrandUpdate],
-            statement: StyleStatement
+            statement: StyleStatement,
+            kept: [Fit]
         ) -> Reading {
+            let keptKeys = kept.compactMap(\.wardrobeKey)
             let fingerprint = Fingerprint(
                 count: saves.count,
                 digest: Self.digest(of: saves),
                 statement: statement,
+                kept: keptKeys,
                 candidates: candidates.map(\.persistentModelID)
             )
             if fingerprint == key { return value }
@@ -131,7 +136,12 @@ struct StyleView: View {
             let owned = saves.filter { $0.type == .wardrobe && $0.update != nil }
             value = Reading(
                 profile: StyleProfile.build(from: saves),
-                suggested: FitSuggestions.build(from: saves, candidates: candidates, statement: statement),
+                suggested: FitSuggestions.build(
+                    from: saves,
+                    candidates: candidates,
+                    statement: statement,
+                    kept: kept
+                ),
                 owned: owned,
                 missing: Self.missingSlots(owned: owned, saves: saves),
                 gaps: FitCandidates.gaps(in: saves)
@@ -201,7 +211,8 @@ struct StyleView: View {
         let reading = memo.reading(
             for: saves,
             candidates: fitCandidates,
-            statement: statement.statement
+            statement: statement.statement,
+            kept: fits
         )
 
         return NavigationStack {
@@ -215,14 +226,20 @@ struct StyleView: View {
                         gaps(reading)
                     }
 
-                    // Below the reading of your own wardrobe, not above it. This is the
-                    // tab about you; a shop at the top of it made the page read as one.
+                    // **The tab about you ends with you.**
+                    //
+                    // There used to be a "Discover" block here — the same
+                    // `BrandRecommendations` the feed carries — and it made sense while
+                    // Discover was not a tab of its own. It is one now, so this was the same
+                    // offer twice, and the weaker copy of it: a strip of six brand cards
+                    // under a reading of somebody's wardrobe, against a full-bleed tab whose
+                    // every card argues from the clothes they already own.
+                    //
+                    // It also cost this page its ending. The block was below the taste
+                    // reading precisely so the tab did not open as a shop — the right
+                    // instinct, applied to something that should not have been on the page
+                    // at all.
                     if !reading.profile.isEmpty { taste(reading.profile) }
-
-                    BrandRecommendations(
-                        title: "Discover",
-                        blurb: "BRANDS OTHER PEOPLE ON STREETW FOLLOW"
-                    )
                 }
                 .padding(.vertical, 10)
                 .padding(.bottom, 28)
@@ -243,7 +260,6 @@ struct StyleView: View {
             .sheet(isPresented: $isShowingSettings) { SettingsSheet() }
             .sheet(isPresented: $isComposing) { FitCanvas(fit: nil) }
             .sheet(item: $editing) { FitCanvas(fit: $0) }
-            .task(id: settings.token) { await suggestions.loadIfNeeded() }
             // The other half of the pass that runs on the Saved tab. Cutouts are what the
             // canvas is built out of, and a fit can be composed from here without that tab
             // ever having been opened — which left the stickers un-lifted for exactly the
@@ -454,6 +470,14 @@ struct StyleView: View {
     /// Keeping a suggestion turns it into a real fit, at which point it stops being
     /// regenerated — the suggestion list is derived from the wardrobe, and this one is now
     /// a record.
+    ///
+    /// **It is arranged, and it does not open the editor.** Two faults, and they compounded
+    /// into one bad minute: the fit was written with an *empty* `placements` array, so it
+    /// drew as a blank square on the wall above and rendered as one; and the editor was
+    /// pushed straight after, so closing it without saving left that blank square behind
+    /// anyway — a fit somebody had explicitly not kept, sitting in the collection, with
+    /// nothing in it. The row says "TAP TO KEEP ONE" and now that is exactly what a tap does.
+    /// Arranging it by hand is what tapping the card in "Your fits" is for.
     private func keep(_ suggestion: SuggestedFit) {
         // **Anything borrowed from the catalogue is kept first.** A `Fit` is made of
         // `SavedItem`s — it has to be, because that is what makes an outfit a list of things
@@ -464,16 +488,51 @@ struct StyleView: View {
         // "tap to keep one", the card says which pieces are not yours, and keeping the fit
         // is exactly the moment you have decided you want them. Filed as inspiration, not
         // wardrobe, because you have not bought it — see `SaveType`.
-        let items = suggestion.ordered.map { piece -> SavedItem in
-            if let save = piece.save { return save }
-            let save = SavedItem(update: piece.update, type: .inspiration)
-            context.insert(save)
-            return save
+        let ordered = suggestion.ordered
+        // Split tops only when the proposal actually holds two, so a fit of one tee and one
+        // pair of trousers is laid out exactly as it always was.
+        let splitting = ordered.filter { $0.update.garment.slot == .top }.count > 1
+
+        var arranged: [(position: FitPosition, itemID: UUID)] = []
+        var items: [SavedItem] = []
+        for piece in ordered {
+            // **Anything borrowed from the catalogue is kept first.** A `Fit` is made of
+            // `SavedItem`s — it has to be, because that is what makes an outfit a list of
+            // things you own and what lets "one of these came back in stock" mean anything —
+            // so a proposal containing a garment nobody kept cannot be stored as it stands.
+            //
+            // Saving it is the honest reading of the tap rather than a workaround: the row
+            // says "tap to keep one", the card says which pieces are not yours, and keeping
+            // the fit is exactly the moment you have decided you want them. Filed as
+            // inspiration, not wardrobe, because you have not bought it — see `SaveType`.
+            let save = piece.save ?? {
+                let created = SavedItem(update: piece.update, type: .inspiration)
+                context.insert(created)
+                return created
+            }()
+            items.append(save)
+            arranged.append((
+                FitArrangement.position(for: piece.update.garment, splittingTops: splitting),
+                save.id
+            ))
         }
-        let fit = Fit(items: items)
+
+        // The proposal's own line goes with it — it is what the card said when it offered
+        // this outfit, and it is what the card will say now that it is one. See
+        // `Fit.verdict`.
+        let fit = Fit(items: items, verdict: suggestion.reason)
+        fit.placements = FitArrangement.placements(for: arranged)
         context.insert(fit)
         try? context.save()
-        editing = fit
+
+        // The render, once every piece has actually decoded — the same contract `FitCanvas`
+        // and `FitStudio` hold. Without it a kept fit shows the live canvas until the next
+        // time it is edited, which is slower and can disagree with what was on the card.
+        Task {
+            guard await FitRender.warm(fit) else { return }
+            fit.renderFile = await FitRender.write(fit)
+            try? context.save()
+        }
     }
 }
 
@@ -490,6 +549,17 @@ struct FitCard: View {
     var width: CGFloat = 168
 
     var body: some View {
+        // **Nothing is drawn for a fit that has just been deleted.** The delete is on this
+        // card's own context menu, so the row is invalidated while the card is still in the
+        // view tree — and every property below traps on a deleted model. See `Fit.isGone`.
+        if fit.isGone {
+            Color.clear.frame(width: 0, height: 0)
+        } else {
+            card
+        }
+    }
+
+    private var card: some View {
         // Read once. This was a computed property read twice per body — here and again by
         // the `ShareLink` in the context menu, whose content builder runs when the card is
         // built rather than when the menu is opened.
@@ -599,7 +669,10 @@ struct FacetLine: View {
     let axis: CollectionFacet.Axis
 
     var body: some View {
-        if !facets.isEmpty {
+        // Only what dominates — see `StyleProfile.dominant`. An axis with no shape prints
+        // nothing rather than listing its own vocabulary back at the reader.
+        let shown = StyleProfile.dominant(facets)
+        if !shown.isEmpty {
             VStack(alignment: .leading, spacing: 6) {
                 DataLabel(text: title.uppercased(), size: 9)
                 // Each word is its own control, because each is its own query. Printed as
@@ -609,7 +682,7 @@ struct FacetLine: View {
                 // it. `FlowRow` rather than a scroller: these are four short words and
                 // they should all be visible at once.
                 FlowRow(spacing: 8) {
-                    ForEach(facets.prefix(4)) { facet in
+                    ForEach(shown) { facet in
                         Button {
                             collection.open(CollectionFacet(axis: axis, value: facet.label))
                         } label: {
@@ -619,9 +692,18 @@ struct FacetLine: View {
                                 // Underlined rather than boxed: the block is meant to read
                                 // as a sentence about you, and four rows of chips would
                                 // turn a reading into a control panel.
+                                //
+                                // **`hairline` was too quiet to be an affordance.** It is
+                                // the colour of a *divider* — something the eye is meant to
+                                // skip over — and under a word that is the only way into
+                                // the collection from this page it made the control
+                                // invisible: reported as "really difficult to see", which
+                                // for a control means it may as well not be there. `muted`
+                                // is the app's own secondary ink, so the line still reads
+                                // as typography rather than as a border.
                                 .overlay(alignment: .bottom) {
                                     Rectangle()
-                                        .fill(Color.hairline)
+                                        .fill(Color.muted)
                                         .frame(height: 1)
                                         .offset(y: 3)
                                 }

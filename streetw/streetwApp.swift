@@ -146,6 +146,24 @@ struct streetwApp: App {
             // then only if that `.task` won the race against this.
             if phase == .active {
                 let context = sharedModelContainer.mainContext
+                // Permission can be granted in iOS Settings, which tells the app nothing.
+                // Without this the token is only ever asked for at launch, so somebody who
+                // turned alerts on by hand went on receiving none until they next killed the
+                // app. See `PushAuthorization.registerIfAuthorized`.
+                Task { await PushAuthorization.registerIfAuthorized() }
+                // **The feed checks for news because you came back, not because you asked.**
+                // This is what replaced the refresh button in the feed's toolbar; see
+                // `FeedRefresh` for the throttle and why the two modes get very different
+                // ones. Its own `Task`, so a slow storefront cannot hold up the inbox drain
+                // below — a share somebody is waiting on outranks a poll nobody asked for.
+                Task {
+                    await FeedRefresh.runIfStale(
+                        remote: remote,
+                        engine: engine,
+                        settings: settings,
+                        sizes: sizes
+                    )
+                }
                 Task {
                     await SharedSaveImporter.drain(
                         into: context,
@@ -164,6 +182,10 @@ struct streetwApp: App {
                     // Costs no network and is why the feed does not re-classify its whole
                     // store on every render — see `Classification`.
                     Classification.settleGenders(in: context)
+                    // And whether each row is clothing at all, which is what keeps gift
+                    // cards and size charts out of the feed without a classifier running
+                    // per row per render. See `BrandUpdate.isMerchandise`.
+                    Classification.settleMerchandise(in: context)
                     // Same reason, for the date the feed orders brands by: without it,
                     // every brand followed before the field existed makes the feed walk
                     // its whole catalogue to work out where the spread goes.
@@ -198,6 +220,17 @@ struct streetwApp: App {
 enum DevSeed {
     static func runIfRequested(in context: ModelContext) async {
         seedSizesIfRequested()
+        await seedBrandsIfRequested(in: context)
+        // **Not only inside `-seedBrands`.** It was called at the tail of the brand seed and
+        // nowhere else, so in server mode — where brands arrive from the sync rather than
+        // from the flag — the flag was documented in CLAUDE.md as independent and silently
+        // did nothing. It reads the store now, so it works whichever way the catalogue got
+        // there; `ContentView` calls it again after the launch sync, because on a fresh
+        // server-mode install the store is still empty at this point.
+        seedSavesIfRequested(in: context)
+    }
+
+    private static func seedBrandsIfRequested(in context: ModelContext) async {
         guard let list = UserDefaults.standard.string(forKey: "seedBrands"), !list.isEmpty else { return }
 
         let existing = (try? context.fetch(FetchDescriptor<Brand>()))?.count ?? 0
@@ -228,8 +261,6 @@ enum DevSeed {
             for update in brand.recentUpdates(limit: 6) { update.isSeen = false }
         }
         try? context.save()
-
-        seedSavesIfRequested(in: context, brands: brands)
     }
 
     /// Third dev flag: `-seedSaves 8` files a few garments into the wardrobe.
@@ -244,12 +275,19 @@ enum DevSeed {
     ///
     /// So it fills slots round-robin rather than taking the newest N, and it takes only
     /// garments with a photograph — the same rule every surface that draws a save applies.
-    private static func seedSavesIfRequested(in context: ModelContext, brands: [Brand]) {
+    /// Idempotent and cheap to call twice: it does nothing once anything has been saved, so
+    /// `ContentView` can call it again after the launch sync without checking anything.
+    static func seedSavesIfRequested(in context: ModelContext) {
         let raw = UserDefaults.standard.string(forKey: "seedSaves") ?? ""
         guard let wanted = Int(raw), wanted > 0 else { return }
 
         let existing = (try? context.fetch(FetchDescriptor<SavedItem>()))?.count ?? 0
         guard existing == 0 else { return }
+
+        // Whatever is in the store, however it got there — seeded by `-seedBrands`, or
+        // synced from the server.
+        let brands = (try? context.fetch(FetchDescriptor<Brand>())) ?? []
+        guard !brands.isEmpty else { return }
 
         // Grouped by where it goes on the body, so the wardrobe spans slots that can
         // actually be worn together.

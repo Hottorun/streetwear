@@ -40,6 +40,16 @@ final class DiscoveryAnalysis {
         /// Colour, busyness, text coverage. The histogram half works everywhere; the Vision
         /// half is device-only.
         var reading: VisualReading.Reading?
+        /// Which frame `ProductShot` picked — the one with nobody in it.
+        ///
+        /// Kept because the *sticker* is the thing that can be missing. When subject lifting
+        /// declines, anything drawing this garment on a canvas has to fall back to a
+        /// photograph, and falling back to `imageURLs.first` puts a whole model in trousers
+        /// and boots into somebody's outfit — the exact failure `ProductShot` exists to stop,
+        /// reached by the back door. The question has already been answered here; this is
+        /// only carrying the answer out. The *card* still shows the lead shot: on a model is
+        /// how the brand wants the garment seen.
+        var packshotURL: URL?
     }
 
     private var results: [String: Result] = [:]
@@ -109,7 +119,8 @@ final class DiscoveryAnalysis {
         let reading = await VisualReading.read(choice.image)
         results[id] = Result(
             sticker: lift.mask.map { UIImage(cgImage: $0) },
-            reading: reading
+            reading: reading,
+            packshotURL: choice.url
         )
     }
 
@@ -137,7 +148,12 @@ final class DiscoveryAnalysis {
             // Rasterised off the main thread. `UIImage(data:)` produces no pixels — it wraps a
             // data provider and the real decode happens inside the CoreAnimation commit, on
             // the main thread, at first draw.
-            return ImageLoader.decoded(data, maxPixel: Self.measuredWidth)
+            //
+            // And `decodedOffActor`, not `decoded`: this type is `@MainActor`, so the
+            // continuation after `URLSession.data` is on main and a synchronous `nonisolated`
+            // call from it stays there. Half the fix was in place and the other half was the
+            // one that mattered.
+            return await ImageLoader.decodedOffActor(data, maxPixel: Self.measuredWidth)
         } catch {
             Self.log.info("discovery image failed: \(error.localizedDescription)")
             return nil

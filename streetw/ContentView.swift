@@ -8,6 +8,19 @@
 import SwiftData
 import SwiftUI
 
+/// The tabs, and what an unrecognised name resolves to.
+enum Tabs {
+    static let all = ["feed", "discover", "saved", "style"]
+
+    /// `-startTab brands` still exists in muscle memory and in screenshot scripts, and
+    /// Brands is no longer a tab. It resolves to the feed, which is where the brand rail
+    /// and the add-a-brand control live — the closest honest answer, and never a blank page.
+    static func resolve(_ name: String?) -> String {
+        guard let name, all.contains(name) else { return "feed" }
+        return name
+    }
+}
+
 struct ContentView: View {
     @Environment(\.modelContext) private var context
     @Environment(RemoteSync.self) private var remote: RemoteSync
@@ -20,7 +33,12 @@ struct ContentView: View {
 
     /// Dev affordance, matching `-seedBrands` / `-seedSizes`: `-startTab style`
     /// opens straight to a tab so screenshots don't need UI automation.
-    @State private var selection = UserDefaults.standard.string(forKey: "startTab") ?? "feed"
+    ///
+    /// Resolved through `Tabs.resolve` because the set has changed: `-startTab brands` names
+    /// a tab that no longer exists, and a `TabView` whose selection matches nothing draws an
+    /// empty page — a launch flag that silently opens the app on nothing is worse than one
+    /// that is ignored.
+    @State private var selection = Tabs.resolve(UserDefaults.standard.string(forKey: "startTab"))
 
     /// Sticky, so skipping the starter pack doesn't offer it again on every launch —
     /// someone who intends to add one brand by hand shouldn't be asked twice.
@@ -52,13 +70,29 @@ struct ContentView: View {
             Tab("Feed", systemImage: "square.stack", value: "feed") {
                 FeedView()
             }
-            Tab("Brands", systemImage: "tag", value: "brands") {
-                BrandsView()
-            }
+            // **Brands is not a tab, and that is the point of four.**
+            //
+            // It was a directory — a list of names, with no news in it and nothing that
+            // changes — sitting beside three tabs that are all about change. Every wordmark
+            // in the feed already opens the brand page, and the feed itself is grouped by
+            // brand, so the tab's only exclusive jobs were reaching a brand with nothing
+            // unread and adding one. Both are on `FeedView`'s brand rail now, and the full
+            // index (which sources, and whether any is failing) is a sheet behind it.
+            //
+            // What is left is an honest set: what happened · what is new to you · what is
+            // yours · what that says about you.
+            //
             // Between the brands you chose and the things you kept, which is where it
             // belongs: it is the way *in* to the first and the way *out* of the second.
             Tab("Discover", systemImage: "safari", value: "discover") {
                 DiscoverFeedView()
+                    // **The one tab whose foot is deliberately near-black.** A card there is
+                    // a poster with its own fixed ground (see `DiscoverCardView`), and the
+                    // floating tab bar takes its material from what is behind it — so in the
+                    // light appearance it came out dark with a *light-appearance* selection,
+                    // which is dark type on a dark pill. Telling the bar which scheme it is
+                    // dressing for is the whole fix; every other tab is unaffected.
+                    .toolbarColorScheme(.dark, for: .tabBar)
             }
             Tab("Saved", systemImage: "bookmark", value: "saved") {
                 SavedView()
@@ -106,7 +140,10 @@ struct ContentView: View {
             // decision and the call after the sync becomes a no-op.
             if !settings.isRegistered { decideOnboarding() }
 
-            if settings.isConfigured, remote.lastSyncedAt == nil {
+            // `lastAttemptedAt`, not `lastSyncedAt`: the question here is "has a sync run
+            // yet this launch", and a failed one has. Retrying it is `FeedRefresh`'s job,
+            // on a throttle — a `.task` that fires once per appearance is not a retry.
+            if settings.isConfigured, remote.lastAttemptedAt == nil {
                 await remote.sync(sizes: sizes.profile)
             }
             // Only after that sync has had its chance to populate `brands`, so a
@@ -114,6 +151,10 @@ struct ContentView: View {
             // flight. In standalone mode there is nothing to wait for and this is
             // immediate.
             decideOnboarding()
+            // Dev-only and a no-op without the flag. Here as well as in `DevSeed` because
+            // in server mode the store is empty until this sync lands, and the flag is
+            // documented as working on its own.
+            DevSeed.seedSavesIfRequested(in: context)
         }
         // Also here, not only on `scenePhase`: `onChange` fires on *changes*, and a cold
         // launch has no previous phase to change from — so anything shared while the app
@@ -124,8 +165,13 @@ struct ContentView: View {
         // all their brands is a deliberate act, which is what `didOfferStarterPack`
         // remembers.
         .fullScreenCover(isPresented: $isOnboarding) {
-            OnboardingView {
-                didOfferStarterPack = true
+            // **Only latch when the offer was actually made.** `didOfferStarterPack` is
+            // permanent, and it was being set on the way out of onboarding whatever had
+            // happened inside it — so a first run against a server that was down ended with
+            // an empty feed and the starter pack out of reach for the life of the install.
+            // `OnboardingView` says which of the two it was.
+            OnboardingView { mayLatch in
+                if mayLatch { didOfferStarterPack = true }
                 isOnboarding = false
             }
         }

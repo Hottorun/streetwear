@@ -411,8 +411,14 @@ enum ImageTagger {
             // deferred to whoever first asks for `cgImage`. Here that is `Histogram`, called
             // from a `@MainActor` type: the whole multi-megapixel decode landed on the main
             // thread, twelve times a batch, in a loop that drains the entire backlog.
-            return ImageLoader
-                .decoded(data, maxPixel: ImageRendition.pixels(for: measuredWidth))
+            //
+            // `decodedOffActor`, not `decoded`. `nonisolated` is not "off the main thread" —
+            // a synchronous `nonisolated` function runs on whichever actor called it, and
+            // this enum is `@MainActor`, so `await URLSession.data` resumed on main and took
+            // the whole rasterisation with it. Exactly the fault the paragraph above says was
+            // corrected, arriving again one layer down.
+            return await ImageLoader
+                .decodedOffActor(data, maxPixel: ImageRendition.pixels(for: measuredWidth))
                 .map(Load.image) ?? .gone
         } catch {
             return .unavailable

@@ -323,7 +323,15 @@ public enum BrandVectorBuilder {
             return (term, (count / total) * idf)
         }
 
-        return normalise(Array(scored.sorted { $0.1 > $1.1 }.prefix(vocabularyLimit)))
+        // **The tie-break is not optional.** `frequencies` is a `Dictionary`, so `compactMap`
+        // walks it in an order decided by the per-process hash seed — and with ties broken by
+        // nothing, which terms survive `prefix(vocabularyLimit)` changed between launches. So
+        // did the vector, so did every similarity computed from it, so did the order of the
+        // recommendations, for no reason the reader did anything to cause. Determinism is the
+        // property the whole of the ranking is built on (see `Discovery`); a dictionary walk
+        // is the easiest way to lose it and the hardest to notice.
+        let ordered = scored.sorted { $0.1 == $1.1 ? $0.0 < $1.0 : $0.1 > $1.1 }
+        return normalise(Array(ordered.prefix(vocabularyLimit)))
     }
 
     /// L2 normalisation, so a brand with a big catalog isn't automatically "more" of
@@ -350,7 +358,12 @@ public enum BrandVectorBuilder {
             return medians.mapValues { $0 == nil ? nil : 0.5 }
         }
 
-        let sorted = priced.sorted { $0.1 < $1.1 }
+        // Ties on the brand id, for the reason above: two brands with the same median price
+        // would otherwise be ranked in whichever order the dictionary happened to be walked
+        // in, and a percentile is an input to every similarity this file produces.
+        let sorted = priced.sorted {
+            $0.1 == $1.1 ? $0.0.uuidString < $1.0.uuidString : $0.1 < $1.1
+        }
         var ranks: [UUID: Double?] = [:]
         for (index, entry) in sorted.enumerated() {
             ranks[entry.0] = Double(index) / Double(sorted.count - 1)

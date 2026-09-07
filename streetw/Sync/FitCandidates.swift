@@ -46,11 +46,20 @@ enum FitCandidates {
     static func pool(for gaps: Set<GarmentSlot>, in context: ModelContext) async -> [BrandUpdate] {
         guard !gaps.isEmpty else { return [] }
 
-        // Narrowed in the store as far as the store can express it. `garmentSlot` is
-        // computed from the title and tags, so it cannot be a predicate — but "has a
-        // photograph" can be, and it removes the rows that could never be drawn anyway.
+        // **No predicate on the photographs, and that is not a style preference.**
+        //
+        // This read `#Predicate { !$0.imageURLStrings.isEmpty }`, which looks like every
+        // other narrowing in the app and is not one: `imageURLStrings` is a `[String]`
+        // *attribute*, stored as a blob, and CoreData has no SQL for `isEmpty` over one — so
+        // the fetch threw `NSInvalidArgumentException` out of `NSSQLGenerator` and took the
+        // app down. (A relationship is different: `!$0.saves.isEmpty` compiles to a count and
+        // is what `SharedSaveImporter` uses.) The crash was invisible for as long as it was,
+        // because this whole function returns early unless an essential slot is *completely*
+        // empty — so it fired the day somebody's wardrobe lost a slot, on the Style tab, with
+        // nothing on screen to connect the two.
+        //
+        // The window is the bound instead, and the photograph is checked in Swift below.
         var descriptor = FetchDescriptor<BrandUpdate>(
-            predicate: #Predicate { !$0.imageURLStrings.isEmpty },
             sortBy: [SortDescriptor(\.publishedAt, order: .reverse)]
         )
         descriptor.fetchLimit = window
@@ -60,6 +69,7 @@ enum FitCandidates {
         // by `considered` here — so the measuring below can never run away.
         var bySlot: [GarmentSlot: [BrandUpdate]] = [:]
         for update in recent {
+            guard !update.imageURLStrings.isEmpty else { continue }
             let slot = update.garmentSlot
             guard gaps.contains(slot), (bySlot[slot]?.count ?? 0) < considered else { continue }
             bySlot[slot, default: []].append(update)

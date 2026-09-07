@@ -119,3 +119,79 @@ struct GarmentLayerTests {
         #expect(!Garment(id: "4", title: "Cargo Pant").needsBaseLayer)
     }
 }
+
+/// "Accessories" is a shelf, not a garment — and it used to outrank the product's own name.
+@Suite("Filed under accessories")
+struct AccessoryShelfTests {
+    /// Measured on a real collection: a cap named "ACW* x Rally Cap Optic" was filed by its
+    /// storefront under Accessories, so it was placed there — never proposed as headwear, and
+    /// drawn down at shoe level on the fit canvas, where an accessory sits.
+    @Test("A cap filed under accessories is still headwear")
+    func capBeatsTheShelf() {
+        let slot = GarmentClassifier.classify(
+            title: "ACW* x Rally Cap Optic",
+            productType: "Accessories"
+        )
+        #expect(slot == .headwear)
+    }
+
+    @Test("A three-pack of tees filed under accessories is still a top")
+    func teesBeatTheShelf() {
+        #expect(GarmentClassifier.classify(title: "TEES 3 PACK", productType: "ACCESSORIES") == .top)
+    }
+
+    /// The provisional reading is still the answer when nothing more specific speaks, which
+    /// is the ordinary case: a bag's title names no other slot.
+    @Test("A genuine accessory is unaffected")
+    func realAccessoryStands() {
+        #expect(GarmentClassifier.classify(title: "Kith Monday Program", productType: "Accessories") == .accessory)
+    }
+
+    /// The rule it is carved out of: a category that names a garment still outranks a title,
+    /// which is what makes "Nocturne Crewneck" a top because the shop filed it that way.
+    @Test("A category that names a garment still leads")
+    func namedCategoryStillLeads() {
+        #expect(GarmentClassifier.classify(title: "Nocturne", productType: "Sweatshirts") == .top)
+    }
+}
+
+/// One row, two positions on the body — see `GarmentClassifier.isSet`.
+@Suite("Sets")
+struct SetTests {
+    @Test("A tracksuit is a set", arguments: [
+        "Corteiz Superior Royale Tracksuit",
+        "Nike Two-Piece Set",
+        "Velour Co-Ord"
+    ])
+    func namesASet(_ title: String) {
+        #expect(GarmentClassifier.isSet(title: title))
+    }
+
+    /// The cost of a false positive is higher than a miss: it takes a whole position out of
+    /// the wardrobe. So a bare "set" is deliberately not a word this reads.
+    @Test("A pin set and a three-pack are not outfits", arguments: [
+        "Kith for BMW Set of 5 Pin Set",
+        "TEES 3 PACK",
+        "Sunset Wash Hoodie"
+    ])
+    func doesNotOverreach(_ title: String) {
+        #expect(!GarmentClassifier.isSet(title: title))
+    }
+
+    /// A set naming neither half would otherwise be `.unknown`, which every gate in the fit
+    /// engine refuses — so the one garment that is a whole outfit could never be in one.
+    @Test("A bare tracksuit is placed rather than left unplaceable")
+    func bareSetIsPlaced() {
+        let garment = Garment(id: "1", title: "Corteiz Superior Royale Tracksuit")
+        #expect(garment.slot != .unknown)
+        #expect(garment.occupied.contains(.top))
+        #expect(garment.occupied.contains(.bottom))
+    }
+
+    @Test("Tracksuit bottoms are bottoms, and still a set")
+    func namedHalfIsPlacedThere() {
+        let garment = Garment(id: "1", title: "Tracksuit Bottoms")
+        #expect(garment.slot == .bottom)
+        #expect(garment.isSet)
+    }
+}

@@ -105,14 +105,21 @@ struct BrandsView: View {
 
     private func delete(at offsets: IndexSet) {
         let doomed = offsets.map { brands[$0] }
-        // Unfollow first. Deleting only locally looks like it worked, then the next
-        // sync re-creates the brand from the server's follow list.
-        if settings.isConfigured {
-            let remote = self.remote
-            Task { for brand in doomed { await remote.unfollow(brand) } }
-        }
+        // **The ids are taken before anything is deleted, and they are what the unfollow
+        // travels on.** Deleting only locally looks like it worked and then the next sync
+        // re-creates the brand from the server's follow list — so the unfollow has to
+        // happen; and it cannot happen by handing a `Brand` to a `Task` that outlives the
+        // delete, because reading a property of a deleted `@Model` traps. `RemoteSync`
+        // writes each id to a ledger before it sends, so a pass killed halfway is retried
+        // on the next sync rather than silently lost.
+        let remoteIDs = doomed.compactMap(\.remoteID)
         for brand in doomed { context.delete(brand) }
         try? context.save()
+
+        if settings.isConfigured, !remoteIDs.isEmpty {
+            let remote = self.remote
+            Task { for id in remoteIDs { await remote.unfollow(brandID: id) } }
+        }
     }
 }
 

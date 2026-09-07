@@ -348,6 +348,50 @@ final class BrandUpdate {
         genderVersion = GenderClassifier.version
     }
 
+    // MARK: - Whether it is clothing at all
+
+    /// True when this row is a gift card, a size chart, a shipping upsell or another
+    /// non-garment a storefront publishes into the same product feed as its clothes.
+    ///
+    /// **Discover has filtered these since `PreviewImages` existed and the feed never did.**
+    /// So "3 things are back" for Aimé Leon Dore printed a hoodie, a sweater and *"Aimé Leon
+    /// Dore Gift Card"* — and the gift card carried the vermilion in-your-size rule, because
+    /// its "sizes" are denominations that normalise to nothing and `SizeMatching` treats an
+    /// unparseable size as a match (which is the correct one-size rule for hats and bags).
+    /// The app spent its one accent colour claiming a gift card was in somebody's size.
+    ///
+    /// Stored rather than computed, and that is not a micro-optimisation: `passes` is called
+    /// per row on every list in the app and is deliberately classifier-free when the gender
+    /// filter is off — see the comment there and `docs/performance.md`. A default of false
+    /// means an unclassified row is treated as clothing, which is the safe direction: this
+    /// filter *hides*, and a filter you did not know you had set is indistinguishable from a
+    /// broken feed.
+    var isMerchandise: Bool = false
+
+    /// Which revision of `PreviewImages` produced `isMerchandise`. A row written before this
+    /// existed decodes as 0, is therefore stale, and gets one more look.
+    var merchandiseVersion: Int = 0
+
+    /// Pure string work over fields this row already holds.
+    ///
+    /// **Only a row that stands for a product can be a non-garment product.** `PreviewImages`
+    /// was written to sift a `/products.json` feed, and its vocabulary reads a *title* — so
+    /// pointed at a brand's own announcement it refused "Fall '26 Delivery 1", which is what
+    /// Kith calls a drop and is not a shipping upsell. Caught on a real seeded store: one of
+    /// exactly two rows the pass flagged, and the wrong one. A collection, a post, a page
+    /// change and a lock are events about a brand rather than things on a shelf, and this
+    /// question does not apply to them.
+    func classifyMerchandise() -> Bool {
+        guard kind == .product || kind == .restock || kind == .priceDrop else { return false }
+        return !PreviewImages.isGarment(title: title, imageURL: imageURLStrings.first)
+    }
+
+    /// Writes the current vocabulary's answer, so nothing has to recompute it.
+    func refreshMerchandise() {
+        isMerchandise = classifyMerchandise()
+        merchandiseVersion = PreviewImages.version
+    }
+
     /// Colourways this comes in, or empty when there is only one — which is most
     /// products, and why a single colour deliberately isn't a colourway.
     var colorways: [Colorway] { Colorways.from(variants) }
@@ -459,6 +503,13 @@ final class BrandUpdate {
         // switched off. Making the short-circuit structural is what stops six copies of that
         // guard drifting apart. It does not replace `Classification`'s background settling;
         // it stops the render depending on it having happened.
+        //
+        // The one thing checked before it is whether this is clothing at all. A gift card is
+        // not a garment, is not news about a brand's output, and — because its denominations
+        // do not parse as sizes — draws the "in your size" rule under itself. Read off a
+        // stored flag rather than classified here, precisely so this stays free: see
+        // `isMerchandise`.
+        guard !isMerchandise else { return false }
         guard profile.gender != .everything else { return true }
         return profile.allows(gender)
     }

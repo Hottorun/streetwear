@@ -68,10 +68,38 @@ public enum BrandNaming {
         // Only the pipe-and-dash family splits — a plain hyphen deliberately does not, so
         // "SNS - Sneakersnstuff" and "A-COLD-WALL*" survive intact. Splitting those would
         // trade one wrong name for another.
+        //
+        // A **handle** is refused at every tier, the way a generic title is. The catalogue
+        // is global, so one shop whose `/meta.json` holds its own slug becomes that slug for
+        // everybody: `norseprojects-webshop` shipped as the brand name on a Discover release
+        // card, on the tab whose entire job is introducing labels. It got past every rule
+        // here because nothing was wrong with it as a *string* — it is lower case, has no
+        // marketing tail and is not the word "Home".
         for candidate in [shopName, siteName] {
-            if let cleaned = candidate.flatMap(withoutTail) { return cleaned }
+            if let cleaned = candidate.flatMap(withoutTail), !looksLikeHandle(cleaned) {
+                return cleaned
+            }
         }
         return host.flatMap(fromHost)
+    }
+
+    /// Whether a candidate is a platform **handle** rather than a name somebody wrote.
+    ///
+    /// The test is the shape of the string, because that is the only evidence there is: a
+    /// display name is written for people and gets capitals and spaces, while a handle is
+    /// written for a URL and gets neither. So: entirely lower case, no spaces, and either
+    /// hyphen- or underscore-joined, or naming the platform outright.
+    ///
+    /// Deliberately narrow. A single lower-case word — "bbcicecream", "noah" — is left alone,
+    /// because plenty of brands really are written that way and there is nothing else to go
+    /// on. What it costs when it is wrong is one tier: the next claim down (`og:site_name`,
+    /// the `<title>`, the host) answers instead, and all three are also the brand describing
+    /// itself.
+    static func looksLikeHandle(_ name: String) -> Bool {
+        let lowered = name.lowercased()
+        guard name == lowered, !name.contains(" "), name.count > 3 else { return false }
+        if lowered.contains("myshopify") { return true }
+        return lowered.contains("-") || lowered.contains("_")
     }
 
     /// A name with everything after the first strong separator removed, where what is left

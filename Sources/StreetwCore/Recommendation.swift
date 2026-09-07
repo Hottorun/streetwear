@@ -191,8 +191,11 @@ public extension BrandVector {
             scored.append((term, weight * mine))
         }
 
+        // Ties on the term itself. `vocabulary` is a `Dictionary`, so without it the words
+        // that survive `prefix(limit)` are decided by the per-process hash seed and the same
+        // card gives a different reason on the next launch. See `BrandVector.weighted`.
         var out = scored
-            .sorted { $0.weight > $1.weight }
+            .sorted { $0.weight == $1.weight ? $0.term < $1.term : $0.weight > $1.weight }
             .prefix(limit)
             .map(\.term)
 
@@ -207,7 +210,7 @@ public extension BrandVector {
         if out.isEmpty {
             let shared = categories
                 .filter { $0.key != GarmentSlot.unknown.rawValue && other.categories[$0.key] != nil }
-                .sorted { $0.value > $1.value }
+                .sorted { $0.value == $1.value ? $0.key < $1.key : $0.value > $1.value }
             if let best = shared.first, best.value > 0.15 {
                 out = [best.key]
             }

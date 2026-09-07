@@ -53,6 +53,9 @@ struct FitCanvas: View {
     @State private var selected: UUID?
     @State private var trayFilter: GarmentSlot?
     @State private var board: Board?
+    /// The ground, held here so a change is live on the canvas and written on save. See
+    /// `FitBackground`.
+    @State private var background: FitBackground = .base
     @State private var isNaming = false
     @State private var isDropTarget = false
     @State private var isNamingBoard = false
@@ -185,7 +188,7 @@ struct FitCanvas: View {
     private func canvas(_ tray: Tray) -> some View {
         GeometryReader { geometry in
             ZStack {
-                Color.paper
+                background.color
                     // Tapping the backdrop deselects. Without it the last piece touched
                     // keeps its outline for the rest of the session and reads as stuck.
                     .contentShape(.rect)
@@ -231,10 +234,12 @@ struct FitCanvas: View {
         VStack(spacing: 10) {
             Text("Build a fit")
                 .font(.editorial(22))
-                .foregroundStyle(Color.ink)
+                // The ground's own ink, not the app's: `Color.ink` inverts and this ground
+                // does not, so on a dark phone the invitation was white on bone.
+                .foregroundStyle(background.ink)
             Text("Drag anything below onto the canvas, or tap to drop it in. Move it with a finger, size it with the corner handle or a pinch.")
                 .font(.editorial(14))
-                .foregroundStyle(Color.muted)
+                .foregroundStyle(background.ink.opacity(0.55))
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -246,6 +251,9 @@ struct FitCanvas: View {
 
     private func trayRow(_ tray: Tray) -> some View {
         VStack(alignment: .leading, spacing: 10) {
+            FitGroundPicker(selection: $background)
+                .padding(.horizontal, 20)
+
             if !tray.slots.isEmpty {
                 ScrollView(.horizontal) {
                     HStack(spacing: 16) {
@@ -292,7 +300,7 @@ struct FitCanvas: View {
         }
         .padding(.top, 12)
         .padding(.bottom, 8)
-        .frame(height: 168)
+        .frame(height: 204)
         .background(Color.wash.opacity(0.5))
     }
 
@@ -480,6 +488,7 @@ struct FitCanvas: View {
         placements = fit.placements
         chosen = Dictionary(fit.items.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         board = fit.board
+        background = fit.ground
         topZ = placements.map(\.z).max() ?? 0
 
         // The placements and the items are two lists describing the same outfit, and they
@@ -509,6 +518,7 @@ struct FitCanvas: View {
         target.items = items
         target.placements = placements
         target.board = board
+        target.backgroundName = background.rawValue
         if fit == nil { context.insert(target) }
 
         // Written before the render, so the canvas it draws is the one being saved.
@@ -841,6 +851,99 @@ struct FitPieceImage: View {
     }
 }
 
+/// The row of grounds a fit can be arranged on.
+///
+/// **Swatches, not a menu.** A colour named "Clay" in a list is a word; the whole question here
+/// is what the garments look like against it, so the choice has to be visible and one tap away
+/// — the same argument that moved the Discover filter out of a funnel glyph and into a row of
+/// words. It is deliberately a short row of fixed grounds rather than a colour picker: see
+/// `FitBackground`.
+struct FitGroundPicker: View {
+    @Binding var selection: FitBackground
+
+    /// What the wheel is currently showing. Held separately from `selection` because a
+    /// `ColorPicker` binding is written continuously while somebody drags — every frame of it
+    /// would otherwise mint a new `.custom` ground and rewrite the fit's stored token.
+    @State private var chosen: Color = .white
+
+    /// Whether the selection is a colour somebody mixed rather than one of the seven.
+    private var isCustom: Bool {
+        !FitBackground.presets.contains(selection)
+    }
+
+    var body: some View {
+        HStack(spacing: 10) {
+            DataLabel(text: "GROUND", size: 9)
+
+            ForEach(FitBackground.presets) { ground in
+                Button {
+                    selection = ground
+                } label: {
+                    swatch(ground.color, isOn: selection == ground)
+                }
+                .buttonStyle(.borderless)
+                .accessibilityLabel(ground.label)
+            }
+
+            // **The way past the seven.** A wheel rather than an eighth swatch, and it sits
+            // at the end rather than replacing anything: the short list is still the argument
+            // — see `FitBackground` — and this is the answer to the one case it cannot cover,
+            // a ground picked to sit against one particular garment.
+            //
+            // The label is the swatch itself, so the control reads as one more ground in the
+            // row rather than as a system component parachuted into it, and it carries the
+            // same selection ring as its neighbours. The `+` shows only while none of them is
+            // selected; once it is, the swatch *is* the colour and a glyph over it would be
+            // covering the only thing worth seeing.
+            ColorPicker(selection: $chosen, supportsOpacity: false) {
+                EmptyView()
+            }
+            .labelsHidden()
+            .opacity(0.02)
+            .frame(width: 26, height: 26)
+            .background {
+                swatch(isCustom ? selection.color : Color.wash, isOn: isCustom)
+                    .overlay {
+                        if !isCustom {
+                            Image(systemName: "plus")
+                                .font(.system(size: 10, weight: .semibold))
+                                .foregroundStyle(Color.muted)
+                        }
+                    }
+            }
+            .accessibilityLabel("Custom ground")
+
+            Spacer(minLength: 0)
+        }
+        .frame(height: 28)
+        // Written back only when the wheel actually lands somewhere new, and through
+        // `chosen(_:)` so picking a colour that *is* one of the seven selects that swatch
+        // rather than minting an identical-looking eighth beside it.
+        .onChange(of: chosen) { _, colour in
+            selection = FitBackground.chosen(colour)
+        }
+        // Seeding the wheel from the fit's own ground, so reopening a fit that already has a
+        // custom colour opens the picker on that colour rather than on white.
+        .onAppear { chosen = selection.color }
+    }
+
+    /// One ground in the row. The mark is a ring rather than a tick: a tick has to be drawn
+    /// *on* the swatch, which means picking a colour to draw it in that reads on all of them
+    /// — and on chalk and on slate it cannot be the same one.
+    private func swatch(_ color: Color, isOn: Bool) -> some View {
+        Circle()
+            .fill(color)
+            .frame(width: 22, height: 22)
+            .overlay { Circle().stroke(Color.hairline, lineWidth: 0.5) }
+            .overlay {
+                if isOn {
+                    Circle().stroke(Color.ink, lineWidth: 1.5).padding(-3)
+                }
+            }
+            .contentShape(.circle)
+    }
+}
+
 /// One garment in the tray, with a mark when it is already on the canvas.
 private struct TrayTile: View {
     let item: SavedItem
@@ -880,6 +983,15 @@ struct FitCanvasSurface: View {
     var body: some View {
         GeometryReader { geometry in
             ZStack {
+                // The ground is read from the fit, and a fit deleted while this was on
+                // screen answers with the default rather than trapping — see `Fit.isGone`.
+                // **The fit's own ground, drawn here rather than by each caller.** The
+                // renderer used to lay the canvas over an adaptive `Color.paper`, so a fit
+                // saved after dark had a near-black backdrop written into its PNG for good —
+                // and the card, the share sheet and the editor could all disagree about what
+                // the same outfit was arranged on. One place, fixed colours: see
+                // `FitBackground`.
+                fit.ground.color
                 ForEach(fit.placed, id: \.placement.itemID) { entry in
                     // Framed at the drawn size rather than scaled, matching the editor —
                     // and a scale effect would enlarge the *rendered* tile, so a piece

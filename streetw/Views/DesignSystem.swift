@@ -410,17 +410,21 @@ struct Rule: View {
 struct EditorialEmptyState: View {
     let title: String
     let action: String
+    /// Overridden only where the ground itself is fixed rather than adaptive — the Discover
+    /// tab is a poster surface, so `ink` there would be near-white on sweep at night.
+    var ink: Color = .ink
+    var detail: Color = .muted
 
     var body: some View {
         VStack(spacing: 10) {
             Text(title)
                 .font(.editorial(24))
-                .foregroundStyle(Color.ink)
+                .foregroundStyle(ink)
                 .multilineTextAlignment(.center)
             Text(action)
                 .font(.data(12))
                 .tracking(0.4)
-                .foregroundStyle(Color.muted)
+                .foregroundStyle(detail)
                 .multilineTextAlignment(.center)
         }
         .padding(.horizontal, 40)

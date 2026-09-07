@@ -74,9 +74,12 @@ enum FitRender {
     @discardableResult
     static func write(_ fit: Fit, side: CGFloat = 900) async -> String? {
         let renderer = ImageRenderer(
+            // No `.background` here: the ground belongs to the fit and `FitCanvasSurface`
+            // draws it. It used to be an adaptive `Color.paper`, which baked whichever
+            // appearance the phone happened to be in into the PNG **permanently** — a fit
+            // saved at night was a black picture in the share sheet at noon.
             content: FitCanvasSurface(fit: fit, isEditing: false)
                 .frame(width: side, height: side)
-                .background(Color.paper)
         )
         // Rendered at 1×, not the screen's scale: `side` is already the pixel count wanted,
         // and multiplying by 3 on a Pro would write a 2700px PNG for a 168pt card.

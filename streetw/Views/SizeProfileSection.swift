@@ -186,32 +186,36 @@ struct SizeChipRow: View {
                 if let accessory { accessory() }
             }
 
-            ScrollView(.horizontal) {
-                HStack(spacing: 7) {
-                    ForEach(options, id: \.stored) { option in
-                        let selected = isSelected(option.stored)
-                        Button {
-                            toggle(option.stored)
-                        } label: {
-                            Text(option.display)
-                                .font(.data(13, selected ? .semibold : .regular))
-                                .monospacedDigit()
-                                .foregroundStyle(selected ? Color.paper : Color.ink)
-                                .frame(minWidth: 34)
-                                .padding(.horizontal, 10)
-                                .padding(.vertical, 9)
-                                .background(selected ? Color.ink : Color.wash)
-                                .contentShape(.rect)
-                        }
-                        // .borderless, not .plain: inside a row that is itself tappable,
-                        // `.plain` lets the row take the tap as a single target and the
-                        // chips never fire.
-                        .buttonStyle(.borderless)
+            // **It wraps; it does not scroll.** Every ladder used to be a horizontal
+            // `ScrollView` that ended flush with the right margin — no peeking chip, no
+            // indicator — so the visible window was `XXS…XL`, `26…31`, `US 6…8.5` and
+            // somebody who wears XXL or a 34 waist was looking at a control that appeared
+            // not to contain their size. On the first screen of the app, for the feature
+            // the whole product turns on. It was also ~500pt of empty space below, which
+            // is exactly what wrapping spends: the ladder is now entirely visible, there
+            // is no gesture to discover, and the step stops being top-heavy.
+            FlowRow(spacing: 7) {
+                ForEach(options, id: \.stored) { option in
+                    let selected = isSelected(option.stored)
+                    Button {
+                        toggle(option.stored)
+                    } label: {
+                        Text(option.display)
+                            .font(.data(13, selected ? .semibold : .regular))
+                            .monospacedDigit()
+                            .foregroundStyle(selected ? Color.paper : Color.ink)
+                            .frame(minWidth: 34)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 9)
+                            .background(selected ? Color.ink : Color.wash)
+                            .contentShape(.rect)
                     }
+                    // .borderless, not .plain: inside a row that is itself tappable,
+                    // `.plain` lets the row take the tap as a single target and the
+                    // chips never fire.
+                    .buttonStyle(.borderless)
                 }
-                .padding(.vertical, 1)
             }
-            .scrollIndicators(.hidden)
         }
     }
 }

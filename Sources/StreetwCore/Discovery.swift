@@ -156,17 +156,29 @@ public enum WardrobeGap {
 }
 
 public enum Discovery {
-    /// How many cards one brand may contribute to a single page.
+    /// How many cards one brand may contribute **per round**.
     ///
-    /// Two, not one: a brand gets to show that it makes more than one thing, and the spread
-    /// under each card covers the rest. The cap is applied while the order is **built**, and
-    /// that distinction is the whole of it — `/v1/brands/popular` shipped a "per-brand
-    /// budget" that was a global `LIMIT` with the grouping done afterwards, and the result
-    /// was fourteen of thirty-five recommendations arriving with no photographs at all
-    /// because one storefront's 250-item sweep had taken the entire window. A cut made in
-    /// SQL across every brand at once is not a per-brand budget, and the tell is that the
-    /// per-brand count changes when the global limit does.
-    public static let defaultPerBrand = 2
+    /// The cap is applied while the order is *built*, and that distinction is the whole of
+    /// it — `/v1/brands/popular` shipped a "per-brand budget" that was a global `LIMIT` with
+    /// the grouping done afterwards, and the result was fourteen of thirty-five
+    /// recommendations arriving with no photographs at all because one storefront's 250-item
+    /// sweep had taken the entire window. A cut made in SQL across every brand at once is not
+    /// a per-brand budget, and the tell is that the per-brand count changes when the global
+    /// limit does.
+    ///
+    /// **One, and it used to be two.** The argument for two was that a brand should get to
+    /// show it makes more than one thing — which is true, and is not what the number decides:
+    /// the cap is per *round*, so a brand still contributes its second card, it simply cannot
+    /// do so until every other brand has had a first. At two, it could and did. `/v1/discover`
+    /// hands over exactly two garments per brand per page, so a page was fifteen brands'
+    /// worth of pairs, and with a brand's catalogue being internally consistent — if one of
+    /// its shells suits you, so do the other thirty-nine — both of a brand's cards score
+    /// within a hair of each other and land within a card or two. `Saturation` damps the
+    /// second one by a quarter, which is not enough to move it past a whole round of
+    /// strangers. Scrolling read as *the same brands over and over* even though the feed was
+    /// working through them correctly, and the card already carries eighteen more of the
+    /// brand's photographs under it, so the second card was buying very little.
+    public static let defaultPerBrand = 1
 
     /// The least a release card may score, whatever the arithmetic makes of it.
     ///
@@ -193,6 +205,48 @@ public enum Discovery {
     /// wardrobe cannot introduce you to anything, and the whole product is the introduction.
     /// A quarter is the smallest share that reliably survives a page.
     public static let explorationEvery = 4
+
+    /// The brand id for a card whose brand has none.
+    ///
+    /// Fixed, and that is the whole point. `DiscoverDeck` used to write
+    /// `card.brand.id ?? UUID()`, which mints a *new* random id per card per `rank()`: the
+    /// per-brand cap then sees every such card as a different label and stops bounding them,
+    /// `Saturation` records a brand that will never be seen again, and there is a random
+    /// number in the one file whose header says it has none — so scrolling back could show a
+    /// different order. Sharing one id caps them together, which is the safe reading of "we
+    /// do not know who made these". Harmless today, because the server always sets a brand
+    /// id; it stops being harmless the first time anything else supplies a card.
+    public static let unattributed = UUID(uuidString: "00000000-0000-0000-0000-000000000000")!
+
+    /// Where "familiar" stops and "the profile has no strong opinion" starts, for one page.
+    ///
+    /// **Relative, because an absolute threshold cannot be written here.**
+    /// `BrandVector.similarity` is a weighted mean over vocabulary, categories, genders,
+    /// price and cadence — any two streetwear catalogues share `top`, `unknown` and `mens`,
+    /// and the price and cadence terms are `1 - |a - b|`, which is high far more often than
+    /// it is low. So the obvious test, `similarity > 0`, is true of essentially every card
+    /// once somebody has eight saves: the unfamiliar pool was **empty**, one card in four was
+    /// stripped of its pairing and downgraded to `.brand` for it, and no exploration was
+    /// bought in return. The inverse of the intent.
+    ///
+    /// The median of the page is the honest reading of "least like what you keep" when the
+    /// scale has no meaningful zero, and it is self-calibrating: a page of near-identical
+    /// brands still has a less-similar half, and a page spanning the range still has one. It
+    /// stays deterministic, which is the property the whole of `order` is built on.
+    ///
+    /// Strictly above the cutoff is familiar, so a page whose similarities are all equal
+    /// leaves everything eligible rather than nothing. The exploration slot then picks the
+    /// *best* card in that pool by the ordinary ranking, so a wide pool costs nothing.
+    ///
+    /// Nil when nobody had a vector to compare, in which case there is no opinion to have.
+    public static func familiarityCutoff(_ similarities: [Double]) -> Double? {
+        guard !similarities.isEmpty else { return nil }
+        let sorted = similarities.sorted()
+        let middle = sorted.count / 2
+        return sorted.count.isMultiple(of: 2)
+            ? (sorted[middle - 1] + sorted[middle]) / 2
+            : sorted[middle]
+    }
 
     /// Whether the card at this position is an exploration slot.
     ///
@@ -224,6 +278,14 @@ public enum Discovery {
     ) -> [DiscoveryCandidate] {
         guard !candidates.isEmpty else { return [] }
 
+        // **A cap of zero is an infinite loop, not an empty page.** The round-opening loop
+        // below advances until somebody is under the cap, and `perBrand * (round + 1)` is
+        // zero for every round when `perBrand` is zero — so it spins forever with the whole
+        // deck sitting in `remaining`. `Saturation` already guards its own tuning parameter
+        // (`max(0.5, halfLife)`); this one had nothing. One is the smallest cap that means
+        // anything, and a caller asking for less is asking for a page it cannot have.
+        let perBrand = max(1, perBrand)
+
         var remaining = candidates
         var used: [UUID: Int] = [:]
         var out: [DiscoveryCandidate] = []
@@ -253,7 +315,14 @@ public enum Discovery {
             var bestIndex: Int?
             var bestValue = -Double.infinity
             for (index, candidate) in remaining.enumerated() where isEligible(candidate) {
-                let score = value(candidate)
+                // **A NaN is worse than a bad score: it is no score at all.** Both `>` and
+                // `==` answer false against one, so a NaN candidate could never be selected —
+                // and a page where every value came out NaN selected nothing, which reads at
+                // the loop below as "no candidate" and silently **truncates the deck** rather
+                // than emitting the remainder. Treated as the worst possible score instead,
+                // so such a card ranks last and is still shown.
+                let raw = value(candidate)
+                let score = raw.isNaN ? -Double.greatestFiniteMagnitude : raw
                 if score > bestValue
                     || (score == bestValue && bestIndex.map({ candidate.id < remaining[$0].id }) == true) {
                     bestValue = score

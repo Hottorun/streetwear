@@ -56,7 +56,12 @@ struct OnboardingView: View {
     @Environment(ServerSettings.self) private var settings: ServerSettings
     @Environment(SizeProfileStore.self) private var sizes: SizeProfileStore
 
-    let onFinish: () -> Void
+    /// - Parameter mayLatch: whether the caller should record that the starter pack has
+    ///   been offered. False when the brand step *failed* rather than being declined —
+    ///   `didOfferStarterPack` is permanent, so latching on a server outage put the pack
+    ///   out of reach for the life of the install and left typing brand names by hand as
+    ///   the only route back in.
+    let onFinish: (_ mayLatch: Bool) -> Void
 
     private enum Step: Int, CaseIterable {
         case sizes
@@ -85,6 +90,23 @@ struct OnboardingView: View {
     @State private var isAdding = false
     @State private var progress: String?
 
+    /// What went wrong the last time the brand step was run, printed under the action bar.
+    /// Cleared on the next attempt, so a retry that works takes the line away.
+    @State private var addFailure: String?
+
+    /// Sticky for the run: whether adding brands has failed at any point. It decides
+    /// `mayLatch`, so somebody who gives up on a broken server is offered the pack again on
+    /// the next launch rather than being locked out of it.
+    @State private var didFailToAdd = false
+
+    /// Whether the alerts prompt came back a no.
+    ///
+    /// iOS asks once and never again, so a denial here is the end of the road as far as the
+    /// app is concerned — and the step used to swallow it silently and dismiss, leaving
+    /// somebody who tapped the wrong button with no alerts and no idea that is what had
+    /// happened. Saying so, once, and naming the one route back is the whole of the fix.
+    @State private var alertsDenied = false
+
     private var chosen: [StarterBrand] {
         StarterPack.brands.filter { selected.contains($0.domain) }
     }
@@ -99,7 +121,12 @@ struct OnboardingView: View {
                             currentStep
                         }
                         .padding(.top, 8)
-                        .padding(.bottom, 32)
+                        // Ten, not thirty-two: the fade above the action bar is inside the
+                        // `safeAreaInset` and so already insets this content by its own
+                        // height. Left at 32 the sizes step gained 22pt and pushed its
+                        // closing line — "A LADDER YOU LEAVE EMPTY SIMPLY DOESN'T FILTER" —
+                        // off the bottom of a step that had just been made to fit exactly.
+                        .padding(.bottom, 10)
                     }
                     .scrollIndicators(.hidden)
                 } else {
@@ -331,6 +358,16 @@ struct OnboardingView: View {
                 }
             }
 
+            if alertsDenied {
+                VStack(alignment: .leading, spacing: 6) {
+                    DataLabel(text: "ALERTS ARE OFF", color: .signal)
+                    Text("iOS only asks once. You can turn them on in Settings › streetw › Notifications — streetw will pick it up the next time you open it.")
+                        .font(.editorial(14))
+                        .foregroundStyle(Color.muted)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(.top, 4)
+            }
         }
         .padding(.horizontal, 20)
     }
@@ -392,9 +429,45 @@ struct OnboardingView: View {
     }
 
     private var actions: some View {
+        VStack(spacing: 0) {
+            // **A short paper fade, so the list visibly passes under the bar rather than
+            // being sliced by nothing.** The bar's background is `Color.paper` and so is the
+            // page, so there was no edge anywhere: on the brand step the eighth row —
+            // "REPRESENT / SCHEDULED SEASONAL DROPS" — was cut mid-descender by an invisible
+            // boundary, which reads as a clipped layout rather than as content that scrolls.
+            // Inside the `safeAreaInset` on purpose: its height insets the scroll content
+            // too, so at the foot of the list the last row sits *above* the fade and only
+            // rows actually moving past it are faded.
+            LinearGradient(
+                colors: [Color.paper.opacity(0), Color.paper],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+            .frame(height: 22)
+            .allowsHitTesting(false)
+
+            actionControls
+        }
+        .background(Color.paper)
+    }
+
+    private var actionControls: some View {
         VStack(spacing: 10) {
             if let progress {
                 DataLabel(text: progress.uppercased())
+            }
+            // Above the button that caused it, and only ever visible on the step it belongs
+            // to. The first run is the one place where a silent failure is indistinguishable
+            // from the app simply having nothing.
+            if let addFailure, step == .brands, progress == nil {
+                Text(addFailure)
+                    .font(.editorial(14))
+                    .foregroundStyle(Color.ink)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .overlay(alignment: .leading) {
+                        Rectangle().fill(Color.signal).frame(width: 2).offset(x: -10)
+                    }
             }
             Button {
                 advance(skipping: false)
@@ -420,10 +493,14 @@ struct OnboardingView: View {
         switch step {
         case .sizes, .gender, .howItWorks: "Continue"
         case .brands:
-            selected.isEmpty
-                ? "Choose at least one"
-                : "Watch \(selected.count) \(selected.count == 1 ? "brand" : "brands")"
-        case .alerts: "Turn on alerts"
+            if selected.isEmpty {
+                "Choose at least one"
+            } else if addFailure != nil {
+                "Try again"
+            } else {
+                "Watch \(selected.count) \(selected.count == 1 ? "brand" : "brands")"
+            }
+        case .alerts: alertsDenied ? "Done" : "Turn on alerts"
         }
     }
 
@@ -439,6 +516,18 @@ struct OnboardingView: View {
             step = .gender
         case .gender:
             step = .brands
+            // **The profile is finished here, so it goes to the server here.**
+            //
+            // It used to travel only as a side effect of `addBrand`, which meant skipping
+            // the brand step left the server holding the empty profile it was registered
+            // with — for as long as it took the next sync to clear its throttle. Restock
+            // targeting is what that profile is *for*, so it was off in exactly that window.
+            // `ensureRegistered` rather than `pushSizes`: on a first run the launch sync may
+            // not have issued a token yet, and `pushSizes` is a silent no-op without one.
+            if settings.isConfigured {
+                let profile = sizes.profile
+                Task { try? await remote.ensureRegistered(sizes: profile) }
+            }
         case .brands:
             if skipping {
                 step = .howItWorks
@@ -448,15 +537,20 @@ struct OnboardingView: View {
         case .howItWorks:
             step = .alerts
         case .alerts:
-            if skipping {
-                onFinish()
+            if skipping || alertsDenied {
+                onFinish(!didFailToAdd)
             } else {
                 Task {
                     // Prompts, and registers for a token on success. A denial here is
                     // final as far as iOS is concerned, which is why this is the last
-                    // thing asked rather than the first.
-                    await PushAuthorization.request()
-                    onFinish()
+                    // thing asked rather than the first — and why it is said out loud
+                    // rather than dismissed over. The button becomes "Done" and the next
+                    // press finishes.
+                    if await PushAuthorization.request() {
+                        onFinish(!didFailToAdd)
+                    } else {
+                        alertsDenied = true
+                    }
                 }
             }
         }
@@ -465,8 +559,17 @@ struct OnboardingView: View {
     /// Runs the same path the add-brand flow runs — server-side when one is configured,
     /// on-device otherwise — one brand at a time so each site is probed politely and the
     /// user can see it happening.
+    ///
+    /// **It reports, and it does not advance on nothing.** Every add used to be wrapped in a
+    /// `try?` and the step moved on regardless, so with the server down the whole first run
+    /// was five "Checking…" labels, how-it-works, the permission prompt, and a feed reading
+    /// "Nothing on watch yet" — no error at any point, and the pack unreachable forever
+    /// after because `didOfferStarterPack` had latched on the way out.
     private func add() async {
         isAdding = true
+        addFailure = nil
+        var added = 0
+        var failure: String?
         defer { isAdding = false }
 
         for brand in chosen {
@@ -475,11 +578,16 @@ struct OnboardingView: View {
                 // The starter pack's own label is not sent: the catalogue is global and the
                 // server takes a brand's name from its storefront. Ours would be one more
                 // client's opinion, and the shop's own is better.
-                _ = try? await remote.addBrand(
-                    url: brand.domain,
-                    instagram: nil,
-                    sizes: sizes.profile
-                )
+                do {
+                    _ = try await remote.addBrand(
+                        url: brand.domain,
+                        instagram: nil,
+                        sizes: sizes.profile
+                    )
+                    added += 1
+                } catch {
+                    failure = failure ?? error.localizedDescription
+                }
             } else {
                 let found = await BrandDiscovery.discover(website: brand.domain, instagramHandle: nil)
                 let model = Brand(name: brand.name, websiteURL: BrandDiscovery.normalizedURL(brand.domain))
@@ -491,7 +599,26 @@ struct OnboardingView: View {
                 context.insert(model)
                 try? context.save()
                 await engine.sync(brands: [model])
+                added += 1
             }
+        }
+
+        progress = nil
+
+        // Nothing was added, so there is nothing to move on to. Stay on the step, say what
+        // happened, and let the same button be pressed again — the brand list is still
+        // selected, so a retry is one tap. Skip is still in the toolbar for somebody who
+        // would rather get on with it.
+        guard added > 0 else {
+            didFailToAdd = true
+            addFailure = failure ?? "streetw couldn't reach those sites. Check your connection and try again."
+            return
+        }
+
+        // Some worked and some didn't: worth saying, but not worth blocking on.
+        if let failure, added < chosen.count {
+            didFailToAdd = true
+            addFailure = "Added \(added) of \(chosen.count). \(failure)"
         }
 
         progress = "Fetching first updates"

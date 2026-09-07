@@ -546,7 +546,7 @@ struct BrandDetailView: View {
             if following {
                 try? await remote.follow(brandID: id)
             } else {
-                await remote.unfollow(brand)
+                await remote.unfollow(brandID: id)
             }
         }
     }

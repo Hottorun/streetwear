@@ -494,10 +494,24 @@ func routes(_ app: Application) throws {
     /// `discoverFetchPerBrand` is how many rows are read to find them, because the garment
     /// filter and the has-a-photograph rule both reject rows and a brand whose two newest
     /// products are a gift card and a size guide would otherwise contribute nothing.
+    ///
+    /// The fetch window is also where the spread comes from, which is why it is wider than
+    /// the filtering alone needs. **It is still not what the offset advances by** — the cards
+    /// are exactly the rows `[offset, offset + discoverPerBrand)`, and reading the window as
+    /// the stride would silently skip most of every catalogue.
     let discoverPerBrand = 2
-    let discoverFetchPerBrand = 12
+    let discoverFetchPerBrand = 24
     let discoverBrandsPerPage = 20
-    let discoverSpread = 8
+    /// How many of a brand's garments travel as the spread.
+    ///
+    /// **Eighteen, not eight, and the difference is what the card is able to claim.** A brand
+    /// card is headlined with a wordmark and its whole job is *what does this label make* —
+    /// and eight photographs, drawn as a grid insisting on whole rows of three, arrived on
+    /// screen as six. Six garments is a shelf, not a catalogue, on a card standing in for a
+    /// shop holding hundreds. It is the one number here where the payload buys something the
+    /// reader can see: a second round trip per card is not available in a scrolling feed, so
+    /// what the card can say is exactly what was sent with it.
+    let discoverSpread = 18
     /// A backstop on how far a single request will walk looking for a non-empty page. Never
     /// the reason a page ends in practice — the barren-cycle test below is — but a loop that
     /// queries the database has to have a bound that does not depend on the data being sane.
@@ -666,12 +680,18 @@ func routes(_ app: Application) throws {
                 // silently skipped ten of each brand's products, and nothing anywhere would
                 // ever have reported them missing.
                 let offset = depth * discoverPerBrand
+                // **No `.with(\.$variants)` here, and that is most of the payload.** The
+                // window is 24 rows wide only so the spread has photographs to draw from,
+                // and a spread entry is a *URL* — but eager loading joined every variant of
+                // all 24, at eight or so apiece, to send two cards' worth. Measured at
+                // 133,937 bytes for one screenful. The two rows that actually become cards
+                // ask for their variants below, in one query, once the filters have decided
+                // which they are.
                 let rows = try await ProductModel.query(on: req.db)
                     .filter(\.$brand.$id == brandID)
                     .sort(\.$publishedAt, .descending)
                     .offset(offset)
                     .limit(discoverFetchPerBrand)
-                    .with(\.$variants)
                     .all()
                 guard !rows.isEmpty else { continue }
                 sawRows = true
@@ -688,6 +708,19 @@ func routes(_ app: Application) throws {
                         && PreviewImages.isGarment(title: $0.title, imageURL: $0.imageURLs.first)
                 }
                 guard !garments.isEmpty else { continue }
+
+                // The size run, the colourways and the "in your size" rule are the whole
+                // reason a card is worth tapping, so these do travel — for the cards, and
+                // only for the cards. One query for both rather than one each: the loop is
+                // already `discoverBrandsPerPage` round trips deep and this is the cheap
+                // shape of the same information.
+                let garmentIDs = garments.compactMap(\.id)
+                let variantsByProduct = Dictionary(
+                    grouping: try await VariantModel.query(on: req.db)
+                        .filter(\.$product.$id ~~ garmentIDs)
+                        .all(),
+                    by: { $0.$product.id }
+                )
 
                 let dto = BrandDTO(brand, sources: brand.sources)
                 let spread = PreviewImages.pick(
@@ -731,7 +764,10 @@ func routes(_ app: Application) throws {
                         DiscoverCard(
                             product,
                             brand: dto,
-                            variants: product.variants,
+                            // Never `product.variants`: the query above deliberately does
+                            // not eager load them, and Fluent's `@Children` accessor traps
+                            // rather than returning empty when it was not asked to.
+                            variants: product.id.flatMap { variantsByProduct[$0] } ?? [],
                             spread: spread,
                             vector: vectors[brandID]
                         )
@@ -1176,6 +1212,13 @@ func routes(_ app: Application) throws {
             let never = brand.sources.allSatisfy { $0.lastCheckedAt == nil } ? " (not checked yet)" : ""
             let dupe = (byDomain[BrandDiscovery.registrableDomain(of: host)] ?? 0) > 1 ? " ‼ DUPLICATE" : ""
             let cells = [
+                // **The id, because every route that acts on a brand needs one and this is
+                // the only listing there is.** `POST /admin/brands/:id/name`,
+                // `…/repoint`, `…/source` and `…/delete` all take a `:brandID`, and an
+                // operator reading this report had no way to get one — the report named the
+                // brand it was telling them to fix and withheld the one field required to
+                // fix it. First, so the line can be cut at a space.
+                id.uuidString + "  ",
                 String(products).padding(toLength: 7, withPad: " ", startingAt: 0),
                 String(followers[id] ?? 0).padding(toLength: 5, withPad: " ", startingAt: 0),
                 brand.name.padding(toLength: 26, withPad: " ", startingAt: 0),
@@ -1184,8 +1227,9 @@ func routes(_ app: Application) throws {
             return (products, cells + kinds + never + dupe + note)
         }
 
-        return (["products followers brand                 host                          sources"]
-            + lines.sorted { $0.0 < $1.0 }.map(\.1)).joined(separator: "\n")
+        return ([
+            "id                                    products followers brand                 host                          sources"
+        ] + lines.sorted { $0.0 < $1.0 }.map(\.1)).joined(separator: "\n")
     }
 
     /// Remove a brand — **refusing by default if anybody follows it.**

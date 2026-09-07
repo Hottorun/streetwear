@@ -586,12 +586,13 @@ actor Notifier {
     ///
     /// None of these are *hidden*: every one still lands in the feed, still counts as unread,
     /// still reaches the markdowns list. This decides only what is worth a buzz.
-    static func isWorthWaking(_ kind: UpdateKind) -> Bool {
-        switch kind {
-        case .product, .collection, .dropLock: true
-        case .restock, .priceDrop, .pageChange, .post: false
-        }
-    }
+    /// The switch itself lives on `UpdateKind.isSudden`, in `StreetwCore`, because the app's
+    /// feed asks the same question when it decides which of a brand's events gets the
+    /// headline and the large photograph. Two copies of a seven-case judgement in two
+    /// modules is how the feed ends up leading with the thing this deliberately stayed
+    /// silent about. The name stays, and the reasoning stays here, because "is this worth
+    /// waking somebody" is what the question means on this side.
+    static func isWorthWaking(_ kind: UpdateKind) -> Bool { kind.isSudden }
 
     static func isRelevant(_ event: EventModel, to profile: SizeProfile) -> Bool {
         // Gender applies to every kind, not just restocks. Being woken at 7am for a

@@ -295,6 +295,25 @@ actor ImageLoader {
         try? decode(data, maxPixel: maxPixel)
     }
 
+    /// The same decode, **guaranteed** not to run on the caller's actor.
+    ///
+    /// `decoded` is `nonisolated`, which is often read as "runs off the main thread" and does
+    /// not mean that: a `nonisolated` synchronous function runs wherever it is called from.
+    /// `ImageLoader`'s own callers are fine because it is an `actor` — but `ImageTagger` and
+    /// `DiscoveryAnalysis` are `@MainActor` types that do their own fetching, so
+    /// `await URLSession.data` resumed on the main actor and the full rasterisation happened
+    /// there, in a loop that drains a whole backlog. Which is precisely the fault the comment
+    /// on `decode` says was fixed for everything else.
+    ///
+    /// Detached rather than a structured child so it cannot be cancelled by whatever scroll
+    /// or `.task(id:)` the caller happens to be inside, and at utility priority because this
+    /// is background measurement and the frame being drawn outranks it.
+    nonisolated static func decodedOffActor(_ data: Data, maxPixel: Int) async -> UIImage? {
+        await Task.detached(priority: .utility) {
+            decoded(data, maxPixel: maxPixel)
+        }.value
+    }
+
     nonisolated private static func decode(_ data: Data, maxPixel: Int) throws -> UIImage {
         guard let source = CGImageSourceCreateWithData(data as CFData, nil) else {
             throw ImageError.notAnImage

@@ -7,15 +7,29 @@
 
 import CryptoKit
 import Foundation
+import OSLog
 import StreetwCore
 import SwiftData
 
 @MainActor
 @Observable
 final class RemoteSync {
+    private static let log = Logger(subsystem: "com.kern.functional.streetw", category: "sync")
+
     private(set) var isSyncing = false
     private(set) var lastError: String?
     private(set) var lastSyncedAt: Date?
+
+    /// When a sync last *ran*, successful or not — as against `lastSyncedAt`, which only a
+    /// sync that reached the server may stamp.
+    ///
+    /// The two are separate because the throttle and the "have we ever succeeded" question
+    /// are different questions and were being answered by one field. Folding a failure into
+    /// `lastSyncedAt` said the app was up to date when it was not; leaving *only*
+    /// `lastSyncedAt` would mean `FeedRefresh.runIfStale` (which returns early on nil) never
+    /// retried a failed launch sync for the rest of the session. Throttle on the attempt,
+    /// report on the success.
+    private(set) var lastAttemptedAt: Date?
     private(set) var newItemCount = 0
 
     private let context: ModelContext
@@ -42,21 +56,67 @@ final class RemoteSync {
 
     /// Registers this device if it hasn't been already, and pushes the current sizes so
     /// the server can target restock alerts.
+    ///
+    /// **A token the server no longer recognises is worse than no token**, and until this it
+    /// was permanent. `token == nil` was the only thing that triggered registration, so an
+    /// install holding a credential the server had forgotten — a device row pruned, a
+    /// database restored, a deployment moved — sent it on every request, was refused by every
+    /// authenticated route, and never asked for another one. Every server-backed feature then
+    /// reads as empty rather than broken: the feed stops arriving, recommendations never
+    /// load, Discover says "you've seen everything", watches silently never reach the server.
+    /// Reproduced exactly that way on a fresh install, which is what made it findable at all.
+    ///
+    /// So a 401 on the sizes push — the first authenticated call every launch makes — spends
+    /// the token and registers again. Once, not in a loop: if the second attempt is refused
+    /// too, the problem is not the credential and pretending otherwise would mint a device
+    /// row per launch.
+    ///
+    /// A 403 is deliberately **not** caught. It is not a statement about the credential —
+    /// a WAF rule, an edge refusing the request before Vapor sees it, a locked-down route —
+    /// and spending the token on one throws away a working identity for a reason that has
+    /// nothing to do with identity. `POST /v1/devices` then mints a device with no follows,
+    /// the next `follows()` answers `[]`, and the merge below used to read that as "you
+    /// unfollowed everything". One refused request emptied the app.
     func ensureRegistered(sizes: SizeProfile) async throws {
         guard let baseURL = settings.baseURL else { throw APIError.notConfigured }
 
-        if settings.token == nil {
-            let anonymous = StreetwAPI(baseURL: baseURL, token: nil)
-            let response = try await anonymous.register(
-                RegisterDevice(
-                    environment: BackgroundServices.apnsEnvironment,
-                    locale: Locale.current.identifier,
-                    sizes: SizePayload(sizes)
-                )
+        if settings.token != nil {
+            do {
+                try await api?.updateDevice(UpdateDevice(sizes: SizePayload(sizes)))
+                return
+            } catch APIError.unauthorized {
+                Self.log.info("server rejected the stored device token; registering again")
+                settings.token = nil
+            }
+        }
+
+        let anonymous = StreetwAPI(baseURL: baseURL, token: nil)
+        let response = try await anonymous.register(
+            RegisterDevice(
+                environment: BackgroundServices.apnsEnvironment,
+                locale: Locale.current.identifier,
+                sizes: SizePayload(sizes)
             )
-            settings.token = response.token
-        } else {
-            try await api?.updateDevice(UpdateDevice(sizes: SizePayload(sizes)))
+        )
+        settings.token = response.token
+        // The identity is new, so the follow list behind it is empty — and the brands on
+        // this phone are the only record of what was being watched. Re-follow them rather
+        // than letting the app look populated while the server sends nothing.
+        didRegisterAfresh = true
+    }
+
+    /// Set by `ensureRegistered` when it had to mint a new device. Read once by `sync`.
+    private var didRegisterAfresh = false
+
+    /// Puts this device's follows back after a re-registration.
+    ///
+    /// Best effort per brand: one shop the catalogue has since dropped must not stop the
+    /// other nine being restored.
+    private func refollowLocalBrands() async {
+        guard let api else { return }
+        let local = (try? context.fetch(FetchDescriptor<Brand>())) ?? []
+        for id in local.compactMap(\.remoteID) {
+            try? await api.follow(brandID: id)
         }
     }
 
@@ -98,6 +158,13 @@ final class RemoteSync {
         let brand = try await api.discover(DiscoverBrand(url: url, instagram: instagram))
         if let id = brand.id {
             try await api.follow(brandID: id)
+            // **The brand's own history, as history.** `RemoteSync.follow` has always done
+            // this and `addBrand` — the path onboarding and the add-brand screen both take —
+            // did not, so what a shop published before you had ever heard of it arrived as
+            // news. Per brand rather than per device, which is the durable form of the rule:
+            // the feed cursor is one timestamp across everything this device follows, so it
+            // cannot answer "is this brand new to me".
+            await catchUp(brandID: id)
         }
         return brand
     }
@@ -179,12 +246,66 @@ final class RemoteSync {
         try? context.save()
     }
 
-    func unfollow(_ brand: Brand) async {
-        guard let remoteID = brand.remoteID, let api else { return }
+    /// Stops following a brand on the server, by **id** rather than by model.
+    ///
+    /// Two reasons it cannot take a `Brand`. The caller deletes the local row on the same
+    /// tap, and reading any property of a deleted `@Model` traps — so `brand.remoteID` read
+    /// inside a `Task` that outlives the delete is a crash waiting for a slow network. And
+    /// the id has to be captured before the delete anyway for the ledger below.
+    ///
+    /// **The request is remembered before it is made.** Deleting locally without unfollowing
+    /// is the documented trap — the next sync restores the brand from the server's follow
+    /// list — and a fire-and-forget `Task` is exactly that trap with extra steps: killed mid
+    /// loop, the deletes are persisted and the unfollows are not. So the id goes into a small
+    /// ledger in `UserDefaults` first and comes out only on a confirmed success, and `sync`
+    /// drains whatever is left at the start of every pass.
+    func unfollow(brandID: UUID) async {
+        rememberUnfollow(brandID)
+        guard let api else { return }
         do {
-            try await api.unfollow(brandID: remoteID)
+            try await api.unfollow(brandID: brandID)
+            forgetUnfollow(brandID)
         } catch {
             lastError = error.localizedDescription
+        }
+    }
+
+    /// Unfollows this device asked for and has not had confirmed.
+    ///
+    /// `UserDefaults` rather than the store, for the reason `cursor` lives there: it belongs
+    /// to the *connection*, not to the data — and the data it refers to has just been
+    /// deleted, which is the whole problem.
+    private var pendingUnfollows: [UUID] {
+        get {
+            (UserDefaults.standard.array(forKey: "pendingUnfollows") as? [String] ?? [])
+                .compactMap(UUID.init(uuidString:))
+        }
+        set {
+            UserDefaults.standard.set(newValue.map(\.uuidString), forKey: "pendingUnfollows")
+        }
+    }
+
+    private func rememberUnfollow(_ id: UUID) {
+        guard !pendingUnfollows.contains(id) else { return }
+        pendingUnfollows.append(id)
+    }
+
+    private func forgetUnfollow(_ id: UUID) {
+        pendingUnfollows.removeAll { $0 == id }
+    }
+
+    /// Retries anything the ledger still holds. Best effort per id, and silent: this is a
+    /// repair, not news.
+    private func drainUnfollows() async {
+        guard let api else { return }
+        for id in pendingUnfollows {
+            do {
+                try await api.unfollow(brandID: id)
+                forgetUnfollow(id)
+            } catch {
+                // Leave it in the ledger; the next sync tries again.
+                return
+            }
         }
     }
 
@@ -286,6 +407,13 @@ final class RemoteSync {
 
     // MARK: - Sync
 
+    /// - Note: `lastSyncedAt` is stamped **only** on the success path, and deliberately not
+    ///   in the `defer`. It is the same rule `SyncEngine.sync` follows for
+    ///   `Brand.lastSyncedAt` — only a sync that reached something may spend it. Stamping it
+    ///   regardless meant one failed launch sync was recorded as a success: `ContentView`
+    ///   gates the launch sync on `lastSyncedAt == nil`, `FeedRefresh` treats the stamp as
+    ///   fresh for 60s, and the feed printed "PULL TO REFRESH" rather than the first-run
+    ///   line. One dropped request and the app did not try again until it was relaunched.
     func sync(sizes: SizeProfile) async {
         guard !isSyncing, settings.isConfigured else { return }
         isSyncing = true
@@ -293,24 +421,61 @@ final class RemoteSync {
         newItemCount = 0
         defer {
             isSyncing = false
-            lastSyncedAt = Date()
+            lastAttemptedAt = Date()
         }
 
         do {
             try await ensureRegistered(sizes: sizes)
             guard let api else { return }
 
+            if didRegisterAfresh {
+                didRegisterAfresh = false
+                await refollowLocalBrands()
+            }
+
+            // **Before `follows()`, always.** An unfollow this device asked for and could
+            // not confirm is a brand the server still thinks is followed, so asking for the
+            // follow list first would merge it straight back in — the "next sync restores
+            // it" trap, arriving through the repair meant to prevent it.
+            await drainUnfollows()
+
             let brands = try await api.follows()
             mergeBrands(brands, isCompleteList: true)
 
             // First sync pulls a week; afterwards only what's new since the cursor.
+            //
+            // **And that first window is history, not news.** With no cursor there is
+            // nothing this install has ever been told, so everything the feed hands back
+            // predates it — a fresh install with the starter pack landed on 200 stored rows,
+            // all 200 unread, headed "82 new from 3 brands". That is the back catalogue
+            // presented as things that just happened, on somebody's first screen. Same rule
+            // as `SyncEngine.merge`'s first sync and `catchUp`: a catalogue you have just met
+            // is context. The next genuine drop is then the first unread thing in the app.
+            let isFirstSync = cursor == nil
+            let startedAt = Date()
             let response = try await api.feed(since: cursor)
-            merge(response.items)
+            merge(response.items, asBaseline: isFirstSync)
 
             // Only advance once the merge succeeded, so a failure re-fetches rather
             // than silently skipping a window of events.
             if let next = response.nextCursor {
                 cursor = next
+            } else if isFirstSync, !brands.isEmpty {
+                // The server had nothing to hand over for brands this device *does* follow —
+                // a shop the poller has not reached yet. The baseline is spent anyway,
+                // because the request succeeded and reached something: leaving the cursor nil
+                // would baseline the next pass too, and that one would be a real drop filed
+                // as history.
+                //
+                // **`!brands.isEmpty` is the whole of the rule, and leaving it out undid the
+                // fix above.** `ContentView` runs a sync at launch, which on a fresh install
+                // happens *before* onboarding has followed anything: no follows, an empty
+                // feed, and — without this — a cursor. The sync after the starter pack was
+                // then not a first sync, so two hundred rows of back catalogue arrived as
+                // unread and the first screen of the app read "82 new from 3 brands".
+                // Measured exactly that way. Same rule `SyncEngine.sync` states for
+                // `Brand.lastSyncedAt`: only a sync that reached something may spend it.
+                cursor = startedAt
             }
             await mergeWatches()
             try? context.save()
@@ -320,6 +485,10 @@ final class RemoteSync {
             // one of those rows re-derives its gender on every render for the rest of its
             // life. See `Classification`.
             Classification.settleGenders(in: context)
+            // And whether each row is clothing at all, which is what keeps gift
+            // cards and size charts out of the feed without a classifier running
+            // per row per render. See `BrandUpdate.isMerchandise`.
+            Classification.settleMerchandise(in: context)
             // And the date the feed sorts brands by, for brands followed before the field
             // existed — `Brand.activityKey` walks the whole catalogue until it is written.
             Classification.settleActivityDates(in: context)
@@ -328,6 +497,8 @@ final class RemoteSync {
             // variant data in hand and a push can be missed, denied or throttled. Firing
             // is edge-triggered, so the two paths can't produce two alerts.
             await WatchNotifier.run(in: context)
+
+            lastSyncedAt = Date()
         } catch {
             lastError = error.localizedDescription
         }
@@ -407,7 +578,12 @@ final class RemoteSync {
         // brands (no remoteID) are left alone so standalone mode still works — and this
         // runs *only* for the complete follow list, or absence would mean nothing more
         // than "wasn't in the batch I was handed".
-        guard isCompleteList else { return }
+        //
+        // …and an *empty* complete list is refused outright (`FollowMerge`): a follow list
+        // with nothing in it is indistinguishable from a request that failed, and the safe
+        // reading of an ambiguous answer is "don't delete".
+        guard FollowMerge.mayPruneAbsent(remoteCount: remote.count, isCompleteList: isCompleteList)
+        else { return }
         let remoteIDs = Set(remote.compactMap(\.id))
         for brand in existing {
             if let id = brand.remoteID, !remoteIDs.contains(id) {
@@ -522,6 +698,10 @@ final class RemoteSync {
             // sends nil, and the app degrades exactly as it did before rather than
             // storing an empty list that reads as "no sizes".
             update.variants = item.variants ?? []
+            // Whether this is clothing at all, classified at write time rather than per
+            // render — the same argument `refreshGender` makes one line further down every
+            // other insert path. See `BrandUpdate.isMerchandise`.
+            update.refreshMerchandise()
             update.isSeen = asBaseline
             context.insert(update)
             // What the feed orders brands by, kept as a stored fact so the feed never has

@@ -327,6 +327,16 @@ struct NewBrandView: View {
     @State private var isSaving = false
     @State private var failure: String?
 
+    /// Why the probe did not come back, when it did not.
+    ///
+    /// **A failed lookup has to say which failure it was.** `probed = try? await …` collapsed
+    /// a 401, a timeout and a server mid-deploy into the same nil the server returns for a
+    /// site that genuinely publishes nothing — and the screen then printed "streetw couldn't
+    /// read anything from this site… It may be down, or blocking us" with START WATCHING
+    /// disabled. Three sentences about a shop, none of them about the shop. `search()` two
+    /// screens back already gets this right, which is where the shape came from.
+    @State private var probeError: String?
+
     private var watchable: [(label: String, url: String, isAutomatic: Bool)] {
         if let probed {
             return probed.sources.map { ($0.label, $0.url, $0.isAutomatic) }
@@ -383,6 +393,8 @@ struct NewBrandView: View {
                         ProgressView()
                         DataLabel(text: "CHECKING WHAT THIS SITE PUBLISHES")
                     }
+                } else if let probeError {
+                    couldNotCheck(probeError)
                 } else if canMonitor {
                     watchableSection
                 } else {
@@ -493,14 +505,48 @@ struct NewBrandView: View {
         }
     }
 
+    /// The other refusal, and the one that is about us rather than about the shop.
+    ///
+    /// It offers a retry and leaves the site's own verdict unstated, because we do not have
+    /// one — claiming a storefront publishes nothing on the strength of a request that never
+    /// arrived is the app blaming a brand for its own outage.
+    private func couldNotCheck(_ reason: String) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Couldn't check this site")
+                .font(.editorial(19))
+                .foregroundStyle(Color.ink)
+            Text("streetw couldn't reach its own servers to look, so this says nothing about the site itself.")
+                .font(.editorial(14))
+                .foregroundStyle(Color.muted)
+                .fixedSize(horizontal: false, vertical: true)
+            Text(reason)
+                .font(.data(11))
+                .foregroundStyle(Color.signal)
+                .fixedSize(horizontal: false, vertical: true)
+            Button { Task { await probe() } } label: {
+                DataLabel(text: "TRY AGAIN", color: .ink)
+                    .overlay(alignment: .bottom) {
+                        Rectangle().fill(Color.ink).frame(height: 1).offset(y: 3)
+                    }
+            }
+            .buttonStyle(.borderless)
+            .padding(.top, 2)
+        }
+    }
+
     private func probe() async {
         isProbing = true
+        probeError = nil
         defer { isProbing = false }
 
         if settings.isConfigured {
             // The server does the fetching, so the phone never sidesteps the shared
             // politeness budget.
-            probed = try? await remote.probe(url: draft.url)
+            do {
+                probed = try await remote.probe(url: draft.url)
+            } catch {
+                probeError = error.localizedDescription
+            }
         } else {
             discovered = await BrandDiscovery.discover(website: draft.url, instagramHandle: nil)
         }

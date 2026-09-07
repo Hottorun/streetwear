@@ -466,6 +466,13 @@ struct FollowButton: View {
     @Binding var isWorking: Bool
     let action: () async -> Void
     var width: CGFloat = 78
+    /// Drawn for a dark ground: a light capsule rather than a filled ink rectangle.
+    ///
+    /// The Discover card's ground turns to near-black under its reading, where the ordinary
+    /// button is invisible. A parameter rather than a second control, so the *behaviour* —
+    /// the in-flight guard, the spinner, what a tap does — stays in one place; that is the
+    /// whole reason this type exists.
+    var onDark = false
 
     var body: some View {
         Button {
@@ -478,16 +485,22 @@ struct FollowButton: View {
         } label: {
             Group {
                 if isWorking {
-                    ProgressView().tint(.paper)
+                    ProgressView().tint(onDark ? .ink : .paper)
                 } else {
                     Text("FOLLOW")
                         .font(.data(11, .semibold))
                         .tracking(0.8)
                 }
             }
-            .foregroundStyle(Color.paper)
-            .frame(width: width, height: 32)
-            .background(Color.ink)
+            .foregroundStyle(onDark ? Color(uiColor: UIColor(red: 0.055, green: 0.055, blue: 0.047, alpha: 1)) : Color.paper)
+            .frame(width: width, height: onDark ? 34 : 32)
+            .background {
+                if onDark {
+                    Capsule().fill(Color(uiColor: UIColor(red: 0.961, green: 0.961, blue: 0.941, alpha: 1)))
+                } else {
+                    Rectangle().fill(Color.ink)
+                }
+            }
         }
         // .borderless, not .plain: this sits inside a row that is itself a button, and
         // `.plain` lets the outer target swallow the tap.

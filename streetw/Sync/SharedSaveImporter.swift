@@ -9,6 +9,20 @@
 // memory the extension doesn't. If the fetch fails the save still lands — with the URL
 // and whatever title the share sheet gave us — because losing someone's save to a flaky
 // network would be far worse than an ugly card.
+//
+// **It fetches from the phone in both modes, and that is a deliberate exception to "go over
+// the server when one is configured".** Written down here because it was not written down
+// anywhere, which is the actual fault: `StockRefresh` names the same exception in its own
+// header and is the only one CLAUDE.md's routing table knew about. The reason is that there
+// is no route to call. A share is an arbitrary URL from any storefront, any blog, any resale
+// listing — the server's catalogue is brands somebody added, so it has nothing to look this
+// up in, and a route that made the server fetch a URL a client chose is the shape of request
+// `RequireDevice` was added to stop being anonymous. The two calls are bounded rather than
+// open-ended: `ShopifySource.product(at:)` is one request per newly shared link, and
+// `identifySites` is one homepage per *host* per `siteIdentityVersion`, stamped whatever the
+// answer was, capped at `identifyBatch` hosts a pass. Both go through the same adapters and
+// the same politeness as everything else the phone fetches. A route would be the better
+// answer the day this needs to happen in bulk — the same conclusion `StockRefresh` reaches.
 
 import Foundation
 import OSLog

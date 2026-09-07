@@ -165,6 +165,29 @@ struct ShopifyHelperTests {
         )
     }
 
+    /// **Half the storefronts that matter write their spec as `<br>`-separated lines rather
+    /// than as a list**, and this used to turn every one of them into a run-on with no
+    /// boundary anywhere in it — printed on the Discover card, the most designed surface in
+    /// the app. The test is what follows the break.
+    @Test("A line break before a capital is a boundary")
+    func separatesBreakSeparatedLines() {
+        let html = "Oversized, boxy fit crewneck<br>Sun faded effect<br>Heavyweight 14.75oz cotton"
+        #expect(
+            ShopifySource.plainText(from: html)
+                == "Oversized, boxy fit crewneck · Sun faded effect · Heavyweight 14.75oz cotton"
+        )
+    }
+
+    /// …and the case the rule was written to protect: prose wrapped mid-sentence carries on
+    /// in lower case, and a middot in the middle of a sentence is worse than a run-on.
+    @Test("A line break inside a sentence stays a space")
+    func keepsWrappedProseIntact() {
+        #expect(
+            ShopifySource.plainText(from: "Cut from a heavyweight<br>cotton jersey")
+                == "Cut from a heavyweight cotton jersey"
+        )
+    }
+
     /// A trailing or empty item must not leave a separator pointing at nothing.
     @Test("Empty list items leave no dangling separator")
     func collapsesEmptyListItems() {

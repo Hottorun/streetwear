@@ -431,6 +431,35 @@ struct BrandNamingTests {
         #expect(BrandNaming.pick(shopName: "A-COLD-WALL*", host: "a-cold-wall.com") == "A-COLD-WALL*")
     }
 
+    /// **A slug is not a name.** `norseprojects-webshop` reached the global catalogue and
+    /// was printed as the brand on a Discover release card — on the tab whose whole job is
+    /// introducing labels. Nothing was wrong with it as a *string*: lower case, no marketing
+    /// tail, not the word "Home". The shape is the only evidence there is.
+    @Test("A platform handle is refused so the next claim answers instead")
+    func refusesAHandle() {
+        #expect(
+            BrandNaming.pick(
+                shopName: "norseprojects-webshop",
+                siteName: "Norse Projects",
+                host: "norseprojects.com"
+            ) == "Norse Projects"
+        )
+        // With nothing better to offer, the host still answers — a row has to say something.
+        #expect(
+            BrandNaming.pick(shopName: "norseprojects-webshop", host: "norseprojects.com")
+                == "Norseprojects"
+        )
+    }
+
+    /// Deliberately narrow, because the cost of being wrong is dropping a real name.
+    @Test("A single lower-case word is a name, not a handle")
+    func doesNotRefuseAPlainLowercaseName() {
+        #expect(!BrandNaming.looksLikeHandle("bbcicecream"))
+        #expect(!BrandNaming.looksLikeHandle("Aime-Leon-Dore"))
+        #expect(BrandNaming.looksLikeHandle("kith-store"))
+        #expect(BrandNaming.looksLikeHandle("palace.myshopify.com"))
+    }
+
     /// Falling back to the whole thing rather than to nothing: a name that is *only* a
     /// generic head still has to produce something to put on a row.
     @Test("A generic head falls back rather than vanishing")
@@ -1039,6 +1068,32 @@ struct ColorNamerTests {
         #expect(name(0xEF4444) == "Red")
     }
 
+    /// **A dark colour is still that colour.** The dark branch named three arcs of the hue
+    /// circle and let the rest fall through to "Black", so whole families were filed as black
+    /// — with a cliff at `brightness == 0.22` where one notch brighter answered correctly.
+    /// Every value here is inside that branch.
+    @Test("A dark colour keeps its family rather than becoming black")
+    func darkBandCoversTheCircle() {
+        #expect(name(0x331E0F) == "Brown")   // chocolate, the reported case
+        #expect(name(0x0F3330) == "Teal")
+        #expect(name(0x2A0F33) == "Purple")
+        #expect(name(0x33280F) == "Olive")
+    }
+
+    /// …and the cliff is gone: a shade either side of the band's edge gives the same family.
+    @Test("There is no cliff at the edge of the dark band")
+    func noCliffAtTheBandEdge() {
+        #expect(name(0x331E0F) == name(0x3B2312))
+    }
+
+    /// The guard that makes the branch safe in the first place, and it must survive all of
+    /// the above: a black garment under cool light separates by hundredths, and calling that
+    /// navy is how a wardrobe of black clothes described itself as blue.
+    @Test("A near-neutral dark is still black")
+    func nearNeutralDarkStaysBlack() {
+        #expect(name(0x0D0D10) == "Black")
+    }
+
     /// Product shots are overwhelmingly on white or black sweeps; counting those pixels
     /// would make every single profile say "White".
     @Test("Recognises the seamless backdrop so it can be excluded")
@@ -1056,6 +1111,35 @@ struct ColorNamerTests {
         let vivid = ColorNamer.name(red: 0.94, green: 0.27, blue: 0.27)
         let washed = ColorNamer.name(red: 0.7, green: 0.55, blue: 0.55)
         #expect(vivid.confidence > washed.confidence)
+    }
+
+    /// **The one that made a whole wardrobe describe itself wrongly.**
+    ///
+    /// HSB saturation is `(max - min) / max`, so it divides by the brightness — and near
+    /// black that denominator is tiny. A black hoodie shot under cool studio light comes back
+    /// with its channels three hundredths apart, which no eye would call a colour, and the
+    /// arithmetic reported a quarter of a "saturation" with a blue hue. Measured against a
+    /// real collection it named sixteen of twenty-eight garments Navy, including one titled
+    /// "washed black" and a pair of shorts called "Onyx".
+    @Test("A black garment under cool light is not navy", arguments: [
+        0x17181C, 0x1A1B1F, 0x121316, 0x0E0F12
+    ])
+    func coolBlackIsNotNavy(_ hex: Int) {
+        #expect(name(hex) == "Black" || name(hex) == "Charcoal")
+    }
+
+    /// The other half of it: a real navy separates its channels four times as far and has to
+    /// survive untouched, or the fix would simply be the same error pointed the other way.
+    @Test("A real navy is still navy", arguments: [0x1B1F3B, 0x101828, 0x1F2A5C])
+    func navyStands(_ hex: Int) {
+        #expect(name(hex) == "Navy")
+    }
+
+    /// And a dark colour that genuinely is one must not be swept into the achromatic branch
+    /// with the cool blacks.
+    @Test("A dark forest green keeps its name")
+    func darkGreenSurvives() {
+        #expect(name(0x0F2A16) == "Forest")
     }
 }
 
@@ -1447,5 +1531,39 @@ struct DropDateTests {
         <time datetime="2026-08-10T11:00:00+00:00">sooner</time>
         """
         #expect(DropDateParser.find(in: html, now: now) == DateParsing.iso8601("2026-08-10T11:00:00+00:00"))
+    }
+}
+
+/// The sentence a spread's story prints, and the heading of the page that story opens onto.
+///
+/// One function because they are one promise: the feed says "7 new products", and a tap on
+/// that line has to land on seven new products under the same words. Two copies of it a
+/// module apart is how a tap starts appearing to go somewhere else.
+@Suite("Story headlines")
+struct StoryHeadlineTests {
+    @Test("Counts are spelled out in words, and one of a thing is not '1'")
+    func countsRead() {
+        #expect(UpdateKind.product.headline(count: 7) == "7 new products")
+        #expect(UpdateKind.product.headline(count: 1) == "A new product")
+        #expect(UpdateKind.restock.headline(count: 8) == "8 things are back")
+        #expect(UpdateKind.restock.headline(count: 1) == "One thing is back")
+        #expect(UpdateKind.priceDrop.headline(count: 4) == "4 price cuts")
+    }
+
+    /// A hash moving twice is not two pieces of news, and a storefront is locked or it is
+    /// not — so these two say the same thing whatever they are counted at.
+    @Test("The kinds that are a state, not a tally, ignore the count")
+    func statesIgnoreCounts() {
+        #expect(UpdateKind.pageChange.headline(count: 1) == UpdateKind.pageChange.headline(count: 6))
+        #expect(UpdateKind.dropLock.headline(count: 1) == UpdateKind.dropLock.headline(count: 3))
+    }
+
+    /// Every kind answers, because the feed builds a story out of whichever ones landed and
+    /// a missing case would be an empty headline over a full row of garments.
+    @Test("Every kind has a sentence")
+    func everyKindSpeaks() {
+        for kind in UpdateKind.allCases {
+            #expect(!kind.headline(count: 2).isEmpty)
+        }
     }
 }
