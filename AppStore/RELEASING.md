@@ -57,6 +57,16 @@ Done once for the account, not per release. Skip to *Every release* once these a
 - [ ] **`APNS_TOPIC` is exactly the bundle ID** in the server's environment. `apnsConfigured: true`
       only says the four variables are *set*, not that the topic is right — and a wrong topic is
       not a startup error, it is every push rejected by Apple long after the deploy reads healthy.
+- [x] **The support page is hosted** — <https://www.hottorun.com/dropwall/support>. App Store
+      Connect requires a Support URL for every version, and it is easy to miss because it sits on
+      a *different page* from the privacy policy: Support and Marketing URLs are on the version
+      page under the description, while the Privacy Policy URL is app-level, in the sidebar under
+      **App Privacy**. Same arrangement as the policy — source is `AppStore/support-page.html`
+      here, served from `public/dropwall/support/` in the site repository.
+
+      Everything on it is a claim about how the app behaves — what the Alerts section reports,
+      that an unreadable size is never hidden, that deleting the app deletes everything local. A
+      support page that lies is worse than no support page, so it moves when the app does.
 - [x] **The privacy policy is hosted** — <https://www.hottorun.com/dropwall/privacy>. That URL is
       in App Store Connect and must not change. It is served out of `public/dropwall/privacy/` in
       the hottorun.com site repository (`Hottorun/MyBlog`), which deploys from GitHub; the source
