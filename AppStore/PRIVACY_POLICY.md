@@ -30,10 +30,10 @@ upload as-is.
 
 # streetw — Privacy Policy
 
-**Last updated: [DATE]**
+**Last updated: 8 September 2026**
 
-streetw is made by [YOUR NAME OR COMPANY], [YOUR ADDRESS OR COUNTRY]. Questions about this
-policy go to [CONTACT EMAIL].
+streetw is made by KERN AG, Germany. Questions about this
+policy go to hottorun@pm.me.
 
 ## The short version
 
@@ -118,7 +118,7 @@ is why you are never shown the tracking permission prompt.
 
 Deleting the app removes everything held on the device immediately.
 
-To have the server-side record deleted as well, write to [CONTACT EMAIL] from any address and
+To have the server-side record deleted as well, write to hottorun@pm.me from any address and
 say so — because there is no account, please include the device you are asking about so we can
 identify the right record. We will delete it and confirm.
 
@@ -130,7 +130,7 @@ under 13.
 ## Your rights
 
 Depending on where you live, you may have the right to ask what we hold about you, to have it
-corrected or deleted, or to object to our use of it. Write to [CONTACT EMAIL] and we will
+corrected or deleted, or to object to our use of it. Write to hottorun@pm.me and we will
 answer. Given that we hold no name or email address, the practical answer to "what do you hold
 about me" is the list in *What our server receives* above.
 
@@ -141,4 +141,4 @@ also be described in the app's release notes.
 
 ## Contact
 
-[CONTACT EMAIL]
+hottorun@pm.me
