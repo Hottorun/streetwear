@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-`streetw` is an iOS app (SwiftUI + SwiftData, iOS 26.5 deployment target) that watches streetwear
+`streetw` is an iOS app (SwiftUI + SwiftData, iOS 18.0 deployment target) that watches streetwear
 brands for new drops, restocks and collections, and builds a style profile from what you save.
 Bundle ID `com.kern.functional.streetw`, signed by team `JD6NETLE45` (KERN AG).
 
@@ -65,12 +65,15 @@ SwiftData macro plugin, so the language server floods every model and view file 
 cascading `Cannot find type 'Brand' in scope`. **Only `xcodebuild` output is authoritative** — do not
 chase these, and do not "fix" code in response to them.
 
-**The deployment target is 26.5, so most installed simulators cannot run it.** The iPhone 16 family
-here is on iOS 18.3/18.5 and `xcodebuild` rejects them as "no device matching destination". Pick a
-26.5 device:
+**The deployment target is 18.0, and the whole installed simulator set can run it.** It was 26.5
+— every device on the current point release and nothing else — until `d476131` lowered it, because
+nothing asked for the higher floor: there is not one `#available` or `@available` in the project and
+it compiles clean at 18.0. Verified by running on iOS 18.5 as well as 26.5. Don't raise it back
+without an API that needs it, and if you do, add the availability guards rather than moving the
+floor for everyone. List what's installed with:
 
 ```bash
-xcrun simctl list devices available | sed -n '/-- iOS 26.5 --/,/^--/p'
+xcrun simctl list devices available | grep -E '^--|iPhone'
 ```
 
 **Xcode holds a lock on the shared DerivedData build.db.** If Xcode is open, a CLI build dies with
@@ -97,7 +100,7 @@ plutil -p /tmp/streetw-dd/Build/Products/Debug-iphonesimulator/streetw.app/Info.
 
 ```bash
 export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
-DEVICE=<udid-of-an-iOS-26.5-device>
+DEVICE=<udid-of-any-iOS-18.0-or-newer-simulator>
 
 xcodebuild -project streetw.xcodeproj -scheme streetw \
   -destination "platform=iOS Simulator,id=$DEVICE" \
