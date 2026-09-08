@@ -32,6 +32,7 @@
 
 import Foundation
 import OSLog
+import StreetwCore
 import SwiftData
 import UserNotifications
 
@@ -138,8 +139,8 @@ enum DropReminders {
         content.sound = .default
         // One thread for the whole app, matching the rule the server's pushes follow: iOS
         // groups by thread *within* an app, so a per-brand id gives every storefront its own
-        // pile on the lock screen instead of one stack that says streetw.
-        content.threadIdentifier = "streetw"
+        // pile on the lock screen instead of one stack that says Dropwall.
+        content.threadIdentifier = PushGrouping.threadID
         // So tapping it lands on the brand rather than on the feed. Read by
         // `PushDestination`, which is the same reader the server's payloads go through —
         // there is no second routing path to keep in step.

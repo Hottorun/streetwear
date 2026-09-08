@@ -81,9 +81,13 @@ enum WatchNotifier {
             ? "\(update.title) is back in stock"
             : "\(update.title) is back in \(list(sizes))"
         content.sound = .default
-        // Grouped by brand, matching how the server threads its pushes, so a brand
-        // restocking several watched items reads as one conversation.
-        content.threadIdentifier = update.brand?.id.uuidString ?? "streetw"
+        // **One thread for the app, not one per brand** — `PushGrouping.threadID`, the same
+        // value the server sends. This threaded by `brand.id` and said it was matching the
+        // server, which it never did: the server has always sent a single constant. So a
+        // restock announced by push stacked under the app while the *same* restock announced
+        // locally started a pile of that brand's own, which is the split the single-thread
+        // rule exists to prevent. Throttling one loud brand is `collapseID`, a different knob.
+        content.threadIdentifier = PushGrouping.threadID
 
         // Immediate: `nil` trigger delivers as soon as it is scheduled.
         try? await centre.add(

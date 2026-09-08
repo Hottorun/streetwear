@@ -29,9 +29,9 @@ struct APNSPushSender: PushSending {
     /// The app's bundle ID. Wrong topic is a hard APNs rejection, not a silent drop.
     let topic: String
 
-    /// Every streetw alert shares one notification thread, so the system stacks them
-    /// under the app rather than splitting them per brand.
-    static let threadID = "streetw"
+    /// Every Dropwall alert shares one notification thread — see `PushGrouping`, which is
+    /// where the value lives so this end and the app's two local paths cannot drift apart.
+    static let threadID = PushGrouping.threadID
 
     func send(_ message: PushMessage) async throws {
         var notification = APNSAlertNotification(
