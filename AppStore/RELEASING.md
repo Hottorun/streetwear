@@ -99,10 +99,19 @@ xcodebuild -project streetw.xcodeproj -scheme streetw -configuration Release \
   -derivedDataPath /tmp/streetw-rel CODE_SIGNING_ALLOWED=NO build
 ```
 
-**Run the tests on a quiet machine.** `honoursCrawlDelay` measures `0.4s` minus whatever
-scheduling delay falls between the first request returning and the second reaching its timer —
-`PoliteFetcher` reserves a host's slot *before* it sleeps. Alongside an Xcode build that delay
-reaches 0.13s and the assertion wants ≥ 0.3s. It is a tight tolerance, not a regression.
+**Run the tests on a quiet machine — the whole `Politeness budget` suite is load-sensitive.**
+It is the only suite that asserts on wall-clock spacing, and two of its tests have been seen to
+fail beside an Xcode build or a booted simulator:
+
+- `honoursCrawlDelay` measures `0.4s` minus whatever scheduling delay falls between the first
+  request returning and the second reaching its timer, because `PoliteFetcher` reserves a
+  host's slot *before* it sleeps. Under load that delay reaches 0.13s against a 0.3s bar.
+- `Concurrent requests to one host are spaced out` wants each gap ≥ `interval * 0.8`, and has
+  been measured at 0.193 against 0.2 — a 3.5% miss.
+
+Both pass every time on an idle machine. They are tight tolerances on a real guarantee, not
+regressions, and the guarantee is worth keeping — so shut the simulators down
+(`xcrun simctl shutdown all`) and re-run before believing a failure here.
 
 The one warning a clean Release build prints is `appintentsmetadataprocessor … No
 AppIntents.framework dependency found`. That is Apple's, and expected.

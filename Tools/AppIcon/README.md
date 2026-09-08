@@ -9,123 +9,108 @@ swiftc -O Tools/AppIcon/RenderIcon.swift -o /tmp/render-icon
 /tmp/render-icon streetw/Assets.xcassets/AppIcon.appiconset
 ```
 
-Kept as code for the same reason the palette is: the icon uses the app's own colours
-(`Color.wash` and `Color.ink`, each appearance taking its own pair) and its own typeface,
-and a hand-exported PNG
-drifts from those the first time one of them changes — silently, on the one surface nobody
-looks at twice. Editing the constants and re-running keeps the two in step.
+Kept as code for the same reason the palette is: the icon is built from the app's own
+colours — `Color.paper`, `wash`, `hairline` and `ink`, each appearance taking its own set —
+and a hand-exported PNG drifts from those the first time one of them changes, silently, on
+the one surface nobody looks at twice. Editing the constants and re-running keeps the two in
+step. It has already paid for itself twice: once when the mark changed letter, and once when
+it stopped having a letter at all.
 
-Pure CoreGraphics and CoreText, deliberately — importing AppKit needs an `NSApplication`
-and traps when run headless, which is how this is run.
+Pure CoreGraphics, deliberately — importing AppKit needs an `NSApplication` and traps when
+run headless, which is how this is run. (CoreText went with the letter; there is no type in
+the mark now.)
 
 ## What it is
 
-A **swing ticket** carrying a serif `s` with a rule under it, on the app's own `wash` grey.
+**Two swing tickets hanging from a sagging wire.** No letter, no monogram.
 
-The ticket says clothes without a word, which no arrangement of letters managed. The letter
-and the rule beneath it say what the app *does*: `SizeRun` prints a garment's sizes and
-draws exactly that rule under the one you wear, so this is not a monogram inside a shape —
-it is a tag with your size marked on it.
+It was one ticket with a serif `s` punched out of it, and then a `d` when the app was
+renamed from streetw to Dropwall — which is the argument against a letter, made twice: a
+monogram has to be re-cut every time the name moves, and in the meantime it says nothing
+that the name underneath it isn't already saying. Two tags on a line says *Dropwall*
+outright. It also says the thing one tag never could, which is that the app is about a
+**collection** rather than a product.
 
-**It carries no vermilion.** The rule is the app's device and in the app it is vermilion,
-but here it is drawn in the ground like the letter, so the mark stays two tones of ink and
-paper and survives the tinted appearance intact — iOS derives that hue from luminance, and a
-third colour would have nothing to say there. Spending the accent is one constant away
-(`palette.mark` → a vermilion in `draw`'s fill) and was drawn several ways before; see
-*What it replaced*.
+What was lost is worth naming, because it was the good half of the old mark: the rule under
+the letter meant *your size, marked*, and a tag pair has nowhere to put it. That was the
+price of the change, paid knowingly.
 
-Six things about the drawing are load-bearing.
+## The three rules that make it read
 
-**The letter sits inside the field, and that is a reversal.** It used to be 700 tall — far
-larger than the ticket, cropped on every side, the crop being the drawing. That is a strong
-mark and it costs the thing the mark is *of*: at 700 the `s` eats both chamfers and swallows
-the eyelet, so the silhouette stops reading as a swing tag. Contained, the tag is a tag
-again, the eyelet is an eyelet, and there is room in the clear for the rule.
+Each of these was arrived at by rendering the alternative and looking at it at sixty points,
+which is the only size that matters.
 
-**The letter and rule are painted in the ground colour and clipped to the ticket.** Painting
-them in the *ground* is what makes this a punched tag rather than a printed one. The clip
-stays even though nothing reaches the edge any more: it costs one call and it is the
-guarantee that turning `letterHeight` up can never quietly destroy the silhouette.
+**The tags lean toward each other.** Splayed — the front leaning left, the back leaning
+right — the front tag buries the back one, and the pair reads as a single notched blob with
+a wedge behind it. Converging, both silhouettes stay whole. It is the only arrangement that
+still reads as *two* tags at forty points, and it was not obvious in advance: splayed looks
+more natural in the head and worse on the screen.
 
-**The rule spans the letter's inked width and nothing more** — the same way the rule in
-`SizeRun` spans its token. It is measured from what the glyph actually inked rather than
-from the font's advance width, which is wider. A rule that overhung would read as an
-underscore rather than as a mark under a size.
+**The back tag is smaller as well as further right.** Offset alone reads as two tags side by
+side. The size difference is what makes the second one read as *behind* rather than
+*beside*. `0.84` is the ratio; much below that and it stops being a tag and becomes a bump,
+which is what killed an earlier cut at `0.70`.
 
-**The letter and the rule are set as one block, centred together.** Centring the letter
-alone and hanging a rule off it drifts the whole mark low the moment either measurement
-changes.
+**They rotate about their eyelets**, which is the pivot a hanging tag actually turns on. It
+has a useful consequence: a circle is invariant under rotation about its own centre, so the
+eyelet stays exactly where it was and the wire still threads through it with no extra
+arithmetic.
 
-**Cut corners over a flat top edge, not a gable.** The first cut ran a single apex across
-the full width, and at sixty points that shape is a *house* — the eyelet was doing all the
-work of saying otherwise. A real swing ticket has its two top corners taken off at 45° and
-keeps a flat edge between them, and that flat edge is what the eye actually recognises.
+## The wire
 
-**The block is centred in the field below the eyelet, not on the ticket.** Centred on the
-outline it sits visibly low: the eyelet takes a bite out of the top and the eye reads the
-field that is left.
+Quadratic, sagging, running off both edges. A straight rule across the icon reads as a
+**divider** — furniture — and the sag is what makes it a line something is *hung from*.
 
-**The dark appearance is a true inversion** — a paper ticket on a dark ground. Drawing the
-ink ticket on a dark ground would be ink on ink, with no contrast whatever. So the ticket is
-always the `ink` of its *own* appearance and the ground is always that appearance's `wash`.
+Its control point sits at mid-width, and that is load-bearing rather than tidy: with
+`P0.x = 0`, `P1.x = side/2` and `P2.x = side`, the quadratic's x reduces exactly to
+`side · t`. So the height under any x is closed-form and the tags can be placed on the curve
+without walking it.
 
-The tinted variant is the same drawing in greys: iOS derives the hue from luminance, so it
-must carry no colour of its own.
+The wire is also drawn **through** each eyelet — clipped to the hole and stroked again —
+which is the detail that says the tags are threaded on the line rather than stacked in front
+of it. Skip it and they read as two tags floating near a wire.
 
-## How big the letter can get
+## The halo, and why it cannot be a colour
 
-`letterHeight` is the dial, and it has a real ceiling that is worth knowing before turning
-it up.
+The front tag takes a bite of ground out around it, or the two silhouettes merge wherever
+they overlap and the whole point of a pair is lost at exactly the sizes where it matters.
 
-The letter is a lowercase **`d`** — it was an `s` until the app was renamed from streetw to
-Dropwall, and the proportions changed with it. `draw` scales on the *inked* box
-(`CTLineGetImageBounds`), so `letterHeight` is whatever the glyph actually marks: for an `s`
-that was the x-height, and for a `d` it is ascender-to-baseline. Measured on the current
-render: the letter inks **210 × 312** on the 1024 canvas, so New York's `d` is about **0.67
-as wide as it is tall**, against 0.77 for the `s`.
+**It has to be painted with the ground, not filled with a colour sampled from it.** The
+ground is a gradient. Filling the halo — or the eyelets — with the gradient's top colour
+leaves a pale outline anywhere the gradient has moved on, which on this composition is the
+entire bottom-right. `paintGround` clips and re-draws the same gradient instead, so a hole
+is an actual hole. This is the one thing in the file that looks like an optimisation and is
+a correctness fix.
 
-The ceiling argument survives the change and is worth restating with the new number: at 0.67,
-a letter wide enough to touch the ticket's 530pt sides would be 791 tall against a 660 ticket
-— so a letter wide enough to touch the sides is *still always* taller than the ticket too.
-There is no size that crops only left and right: either the letter fits inside the field, or the ticket crops it on every
-axis at once. That is the ceiling, and it is why the letter is clipped to the outline — past
-the field the ticket becomes the crop rather than the letter spilling onto the ground and
-destroying the silhouette.
+Only the front tag takes a halo: the bite is needed where one silhouette crosses another,
+which is one edge, not two.
 
-Measured on the 530 × 660 ticket, with the rule and its gap taking 76 of the field's 522:
+## The three appearances
 
-| `letterHeight` | What happens |
-|---|---|
-| 300 | **Shipped.** Letter whole and legible at sixty points, rule in the clear beneath it, both chamfers and the eyelet reading. |
-| ~420 | Letter fills most of the width, still whole, rule still in the clear. The boldest setting that changes nothing else. |
-| ~480 | No room left under the letter — the rule would have to lie across the ticket's foot and over the letter's terminal. |
-| ~540 | The eyelet merges into the letter's shoulder and the foot crops its terminal. |
-| 700 | The previous icon, drawn with no rule. Terminals amputated by the ticket's edges, eyelet inside the letter's bowl. A strong mark that stops reading as a ticket. |
+| | Ground | Mark |
+|---|---|---|
+| light | `paper` → below `hairline`, gradient | `ink` |
+| dark | `wash` → `paper`, both dark values, gradient | `ink` dark |
+| tinted | flat black | white |
 
-If a much bigger letter is wanted *and* the rule kept, make the **ticket taller** —
-468 × 772 is closer to a real swing ticket's proportion anyway, and the extra height is
-exactly what buys room for a letter that fills the width whole with the rule still in the
-clear. That variant is drawn; it is not shipped only because it changes the silhouette as
-well as the letter.
+**Dark is a true inversion** — pale tickets on a dark ground — rather than an ink ticket on
+an ink ground, which would have no contrast at all.
 
-## What it replaced
+**Tinted is flat, and it is the only one that is.** iOS derives the tinted icon's hue from
+luminance, so every tone in the image becomes a different strength of the user's chosen
+colour. A gradient ground therefore stops being a light falling across the mark and becomes
+a *band of tint* competing with it — the thing the tags sit on turns into a second subject.
+Black ground and a white mark hands the system the two-tone image it can actually tint.
 
-A serif `s` over a vermilion rule, then `S M L` — the size run — over the same rule. The
-first said nothing (a letter on off-white is what a hundred apps look like); the second said
-the right thing but as typography, which is a weaker read at icon size than a silhouette.
-The ticket keeps the letter and gets a shape around it.
+## Verifying a change
 
-Then the letter grew to 700 and the rule went with it — there was no clear space left to put
-one in. Bringing the letter back to 300 is what returned the rule, and the rule is the half
-of this mark that means something: a tag with a size marked on it, rather than a letter in a
-shape.
+Read the built bundle, never the asset catalogue — the same rule as every other Info.plist
+question:
 
-Several ways of spending the accent were drawn: the rule in vermilion (the app's own device,
-and the obvious candidate — one constant away if wanted), the eyelet in vermilion (clean,
-and the dot reads as an alert), a band across the ticket's foot (the most presence, but it
-cuts the silhouette), and the letter itself in vermilion (striking, and it breaks the rule
-that the accent means *this is happening* rather than *this is us*).
+```bash
+plutil -p /tmp/streetw-dd/Build/Products/Debug-iphonesimulator/streetw.app/Info.plist \
+  | grep -A4 CFBundleIcons
+```
 
-Grounds were swept too, at this letter size: vermilion, ink, `wash`, a vermilion ticket on
-paper, a vermilion ticket on ink, and a split where the letter is decoupled from the ground.
-`wash` is what shipped.
+And look at it small. `AppIcon60x60@2x.png` is written into the bundle root and is the
+honest test — every decision above was made there, not at 1024.
