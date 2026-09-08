@@ -204,7 +204,7 @@ func render(_ palette: Palette, to url: URL) {
     context.addPath(ticket.outline)
     context.clip()
     let letter = draw(
-        "s",
+        "d",
         color: palette.ground,
         height: letterHeight,
         center: CGPoint(

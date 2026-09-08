@@ -77,9 +77,17 @@ must carry no colour of its own.
 `letterHeight` is the dial, and it has a real ceiling that is worth knowing before turning
 it up.
 
-New York's `s` is about **0.77 as wide as it is tall**, so a letter wide enough to touch
-the ticket's sides is *always* taller than the ticket too. There is no size that crops only
-left and right: either the letter fits inside the field, or the ticket crops it on every
+The letter is a lowercase **`d`** — it was an `s` until the app was renamed from streetw to
+Dropwall, and the proportions changed with it. `draw` scales on the *inked* box
+(`CTLineGetImageBounds`), so `letterHeight` is whatever the glyph actually marks: for an `s`
+that was the x-height, and for a `d` it is ascender-to-baseline. Measured on the current
+render: the letter inks **210 × 312** on the 1024 canvas, so New York's `d` is about **0.67
+as wide as it is tall**, against 0.77 for the `s`.
+
+The ceiling argument survives the change and is worth restating with the new number: at 0.67,
+a letter wide enough to touch the ticket's 530pt sides would be 791 tall against a 660 ticket
+— so a letter wide enough to touch the sides is *still always* taller than the ticket too.
+There is no size that crops only left and right: either the letter fits inside the field, or the ticket crops it on every
 axis at once. That is the ceiling, and it is why the letter is clipped to the outline — past
 the field the ticket becomes the crop rather than the letter spilling onto the ground and
 destroying the silhouette.
