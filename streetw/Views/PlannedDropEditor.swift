@@ -214,8 +214,8 @@ struct PlannedDropEditor: View {
             if wantsAReminder && !canNotify {
                 VStack(alignment: .leading, spacing: 8) {
                     Text(authorization == .denied
-                        ? "Notifications are off for streetw, so these reminders can't reach you. Turn them on in iOS Settings."
-                        : "streetw needs permission to send you these.")
+                        ? "Notifications are off for Dropwall, so these reminders can't reach you. Turn them on in iOS Settings."
+                        : "Dropwall needs permission to send you these.")
                         .font(.editorial(13))
                         .foregroundStyle(Color.signal)
                         .fixedSize(horizontal: false, vertical: true)
@@ -245,7 +245,7 @@ struct PlannedDropEditor: View {
             if canHint {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
                     Rule().frame(width: 14)
-                    Text("streetw will also watch \(brand?.name ?? "the brand")'s storefront every minute around this time, so the drop is in your feed when the alert arrives.")
+                    Text("Dropwall will also watch \(brand?.name ?? "the brand")'s storefront every minute around this time, so the drop is in your feed when the alert arrives.")
                         .font(.editorial(12))
                         .foregroundStyle(Color.muted)
                         .fixedSize(horizontal: false, vertical: true)

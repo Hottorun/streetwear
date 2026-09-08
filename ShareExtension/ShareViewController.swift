@@ -1,5 +1,5 @@
 // ShareViewController.swift
-// "Share to streetw" from Safari, or anywhere else that offers a link.
+// "Share to Dropwall" from Safari, or anywhere else that offers a link.
 //
 // The extension does as little as possible: pull the URL out, write it to the App Group
 // inbox, confirm, dismiss. No network, no SwiftData, no image fetching — an extension
@@ -102,7 +102,7 @@ final class ShareViewController: UIViewController {
             switch self {
             case .saved: "Saved"
             case .noLink: "Nothing to save"
-            case .noContainer: "streetw can't reach its storage"
+            case .noContainer: "Dropwall can't reach its storage"
             case .failed: "Couldn't save that"
             }
         }

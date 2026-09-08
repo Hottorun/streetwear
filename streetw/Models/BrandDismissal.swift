@@ -1,7 +1,7 @@
 // BrandDismissal.swift
 // "Not this one" — the only negative signal in the app.
 //
-// Everything else streetw knows about taste is positive: what you followed, what you
+// Everything else Dropwall knows about taste is positive: what you followed, what you
 // saved. That is a real gap, and not only because the same wrong brand kept coming back
 // every time the list refreshed. A recommender with no way to be told it is wrong can only
 // ever be corrected by *not* acting, which is indistinguishable from not having looked.

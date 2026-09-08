@@ -221,7 +221,7 @@ struct AddBrandView: View {
                 .fixedSize(horizontal: false, vertical: true)
 
             if looksLikeSite {
-                Text("Add it and streetw will work out what its site publishes — the catalog, a feed, or the page itself.")
+                Text("Add it and Dropwall will work out what its site publishes — the catalog, a feed, or the page itself.")
                     .font(.editorial(14))
                     .foregroundStyle(Color.muted)
                     .fixedSize(horizontal: false, vertical: true)
@@ -239,7 +239,7 @@ struct AddBrandView: View {
                 }
                 .buttonStyle(.borderless)
             } else {
-                Text("Paste a link to the brand's website and streetw can add it.")
+                Text("Paste a link to the brand's website and Dropwall can add it.")
                     .font(.editorial(14))
                     .foregroundStyle(Color.muted)
                     .fixedSize(horizontal: false, vertical: true)
@@ -269,7 +269,7 @@ struct AddBrandView: View {
         // as a missing brand.
         guard settings.isConfigured else {
             results = []
-            searchError = "Not connected to the streetw catalog."
+            searchError = "Not connected to the Dropwall catalog."
             return
         }
 
@@ -331,7 +331,7 @@ struct NewBrandView: View {
     ///
     /// **A failed lookup has to say which failure it was.** `probed = try? await …` collapsed
     /// a 401, a timeout and a server mid-deploy into the same nil the server returns for a
-    /// site that genuinely publishes nothing — and the screen then printed "streetw couldn't
+    /// site that genuinely publishes nothing — and the screen then printed "Dropwall couldn't
     /// read anything from this site… It may be down, or blocking us" with START WATCHING
     /// disabled. Three sentences about a shop, none of them about the shop. `search()` two
     /// screens back already gets this right, which is where the shape came from.
@@ -497,7 +497,7 @@ struct NewBrandView: View {
             Text("Nothing to watch here")
                 .font(.editorial(19))
                 .foregroundStyle(Color.ink)
-            Text("streetw couldn't read anything from this site — no catalogue, no feed, no sitemap, not even the page itself. It may be down, or blocking us.")
+            Text("Dropwall couldn't read anything from this site — no catalogue, no feed, no sitemap, not even the page itself. It may be down, or blocking us.")
                 .font(.editorial(14))
                 .foregroundStyle(Color.muted)
                 .fixedSize(horizontal: false, vertical: true)
@@ -515,7 +515,7 @@ struct NewBrandView: View {
             Text("Couldn't check this site")
                 .font(.editorial(19))
                 .foregroundStyle(Color.ink)
-            Text("streetw couldn't reach its own servers to look, so this says nothing about the site itself.")
+            Text("Dropwall couldn't reach its own servers to look, so this says nothing about the site itself.")
                 .font(.editorial(14))
                 .foregroundStyle(Color.muted)
                 .fixedSize(horizontal: false, vertical: true)

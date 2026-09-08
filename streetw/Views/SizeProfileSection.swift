@@ -37,7 +37,7 @@ struct SizeProfileSection: View {
             SettingsHeader(
                 title: "My sizes",
                 note: store.profile.isEmpty
-                    ? "Set these and streetw can tell you when something is back in a size you actually wear."
+                    ? "Set these and Dropwall can tell you when something is back in a size you actually wear."
                     : "Restocks in \(store.profile.summary) are ruled in vermilion in your feed."
             )
 

@@ -315,7 +315,7 @@ public enum Net {
     /// Identifies the client honestly and says where to complain. Verified to receive
     /// 200s from the storefronts we actually poll, so there is nothing to gain from
     /// impersonating a browser — and being identifiable is what keeps access.
-    public static let userAgent = "streetw/1.0 (+https://github.com/Hottorun/streetwear)"
+    public static let userAgent = "Dropwall/1.0 (+https://github.com/Hottorun/streetwear)"
 
     public static let live = LiveHTTPFetcher()
 

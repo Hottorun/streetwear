@@ -15,7 +15,7 @@
 
 import Foundation
 
-/// A link the user sent to streetw from somewhere else.
+/// A link the user sent to Dropwall from somewhere else.
 struct SharedSave: Codable, Sendable, Hashable {
     var url: URL
     var title: String?

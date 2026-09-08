@@ -396,7 +396,7 @@ struct BrandDetailView: View {
             Text(
                 automatic.isEmpty
                     ? "Nothing on this site can be watched automatically — it's here as a link."
-                    : "streetw is watching \(automatic.map { $0.kind.label.lowercased() }.joined(separator: " and ")). New drops will appear here."
+                    : "Dropwall is watching \(automatic.map { $0.kind.label.lowercased() }.joined(separator: " and ")). New drops will appear here."
             )
             .font(.editorial(14))
             .foregroundStyle(Color.muted)

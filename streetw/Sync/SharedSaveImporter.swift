@@ -1,7 +1,7 @@
 // SharedSaveImporter.swift
 // Turns links shared from elsewhere into saved items.
 //
-// This is what makes streetw an archive rather than a feed reader: the collection stops
+// This is what makes Dropwall an archive rather than a feed reader: the collection stops
 // being limited to brands we happen to watch. A link from any storefront, any blog, any
 // resale listing becomes a card on the wall.
 //

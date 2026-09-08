@@ -212,15 +212,15 @@ struct OnboardingView: View {
     private var blurb: String {
         switch step {
         case .sizes:
-            "Tell streetw what you wear and it can say which drops are actually buyable in your size — and tell you when something comes back in it."
+            "Tell Dropwall what you wear and it can say which drops are actually buyable in your size — and tell you when something comes back in it."
         case .gender:
             "Narrow the feed to what you'd actually wear."
         case .brands:
-            "Pick a few brands and streetw watches their catalogs for drops, restocks and the moment a storefront locks down."
+            "Pick a few brands and Dropwall watches their catalogs for drops, restocks and the moment a storefront locks down."
         case .howItWorks:
             "Four things that are easy to miss."
         case .alerts:
-            "A drop resolves in minutes. streetw can tell you the moment one of your brands releases something or restocks in your size."
+            "A drop resolves in minutes. Dropwall can tell you the moment one of your brands releases something or restocks in your size."
         }
     }
 
@@ -361,7 +361,7 @@ struct OnboardingView: View {
             if alertsDenied {
                 VStack(alignment: .leading, spacing: 6) {
                     DataLabel(text: "ALERTS ARE OFF", color: .signal)
-                    Text("iOS only asks once. You can turn them on in Settings › streetw › Notifications — streetw will pick it up the next time you open it.")
+                    Text("iOS only asks once. You can turn them on in Settings › Dropwall › Notifications — Dropwall will pick it up the next time you open it.")
                         .font(.editorial(14))
                         .foregroundStyle(Color.muted)
                         .fixedSize(horizontal: false, vertical: true)
@@ -611,7 +611,7 @@ struct OnboardingView: View {
         // would rather get on with it.
         guard added > 0 else {
             didFailToAdd = true
-            addFailure = failure ?? "streetw couldn't reach those sites. Check your connection and try again."
+            addFailure = failure ?? "Dropwall couldn't reach those sites. Check your connection and try again."
             return
         }
 

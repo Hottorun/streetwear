@@ -34,7 +34,7 @@ struct StyleStatementSection: View {
         VStack(alignment: .leading, spacing: 18) {
             SettingsHeader(
                 title: "In your words",
-                note: "Say how you actually dress and streetw will lean that way when it suggests fits, pairings and brands. It never hides anything you'd otherwise see."
+                note: "Say how you actually dress and Dropwall will lean that way when it suggests fits, pairings and brands. It never hides anything you'd otherwise see."
             )
 
             VStack(alignment: .leading, spacing: 10) {

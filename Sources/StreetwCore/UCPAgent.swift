@@ -1,5 +1,5 @@
 // UCPAgent.swift
-// Who streetw says it is, to a storefront that asks.
+// Who Dropwall says it is, to a storefront that asks.
 //
 // The Universal Commerce Protocol is a negotiation: before a business will answer a
 // catalogue query it fetches the caller's **agent profile** — a small JSON document at an
@@ -10,12 +10,12 @@
 // Two things follow from that, and both shape this file.
 //
 // **The profile has to be somewhere public.** A phone cannot host one, so the URI is always
-// the streetw server's, in both modes — the merchant fetches it, not the client, and it says
+// the Dropwall server's, in both modes — the merchant fetches it, not the client, and it says
 // nothing about any particular device or person. It is a statement about the software.
 //
 // **The profile has to be honest.** Capability negotiation is not decoration: a business
 // reads this to decide what it is allowed to send back and what it may expect us to handle.
-// So it declares the two catalogue capabilities and **nothing else**. streetw does not have
+// So it declares the two catalogue capabilities and **nothing else**. Dropwall does not have
 // a cart, cannot check out and holds no payment instrument; declaring `checkout` or
 // `payment_handlers` to widen the response would be claiming to be a shop. Supreme's own
 // robots.txt is blunt about the line here — "Checkouts are for humans" — and the

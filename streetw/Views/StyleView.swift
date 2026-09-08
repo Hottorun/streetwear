@@ -298,7 +298,7 @@ struct StyleView: View {
             Text("Nothing saved yet")
                 .font(.editorial(24))
                 .foregroundStyle(Color.ink)
-            Text("Save things you like from the feed, or share a link into streetw from anywhere. Once there are a few, this is where they become outfits.")
+            Text("Save things you like from the feed, or share a link into Dropwall from anywhere. Once there are a few, this is where they become outfits.")
                 .font(.editorial(15))
                 .foregroundStyle(Color.muted)
                 .fixedSize(horizontal: false, vertical: true)

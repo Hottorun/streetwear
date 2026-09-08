@@ -4,9 +4,26 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-`streetw` is an iOS app (SwiftUI + SwiftData, iOS 18.0 deployment target) that watches streetwear
-brands for new drops, restocks and collections, and builds a style profile from what you save.
-Bundle ID `com.kern.functional.streetw`, signed by team `JD6NETLE45` (KERN AG).
+**Dropwall** is an iOS app (SwiftUI + SwiftData, iOS 18.0 deployment target) that watches
+streetwear brands for new drops, restocks and collections, and builds a style profile from what
+you save. Bundle ID `com.kern.functional.streetw`, signed by team `JD6NETLE45` (KERN AG).
+
+**The app is called Dropwall; everything underneath is still called `streetw`, and that is
+deliberate.** The name was chosen just before the first submission, by which point the identifiers
+were load-bearing: the bundle ID is permanent once a build reaches App Store Connect, the App Group
+is the only channel between the app and its share extension, `StreetwCore` is a SwiftPM package
+whose identity comes from the checkout directory name, and `APNS_TOPIC` on the server has to equal
+the bundle ID exactly. Renaming any of those buys nothing a user can see and costs a re-verification
+of the entire push chain. So:
+
+| Says Dropwall | Stays `streetw` |
+|---|---|
+| App Store name, `CFBundleDisplayName` (app + extension) | Bundle IDs, App Group, BGTask id, logger subsystem |
+| Every user-facing string, the privacy policy, review notes | `StreetwCore`, `StreetwAPI`, `streetwApp`, the scheme, the repo |
+| `PushGrouping.threadID` | `app.streetw.hottorun.com`, `streetw-Info.plist` |
+
+When renaming anything, remember **`streetwear` contains `streetw`** — match on a word boundary or
+you will rename the product category the app is about.
 
 The repo holds **three things** — a shared library, an iOS app, and a server:
 
@@ -334,9 +351,14 @@ bought it. The short form of the load-bearing ones:
   `sandbox` for DEBUG — so the token and the host the server sends it to agree.
 - **One `threadID` for the whole app, not one per brand.** iOS groups notifications by thread
   *within* an app, so a per-brand id — which is what this shipped with — gave every storefront its
-  own pile on the lock screen instead of one stack that says "streetw". Grouping is the thread id;
+  own pile on the lock screen instead of one stack that says "Dropwall". Grouping is the thread id;
   stopping a single brand from shouting is `collapseID`, which stays per brand. They are different
-  knobs and were being confused for each other.
+  knobs and were being confused for each other. **The value lives in `PushGrouping.threadID` in
+  `StreetwCore`**, because three targets raise alerts — the server's APNs sender, `DropReminders`
+  and `WatchNotifier` — and nothing makes it visible when they stop agreeing. `WatchNotifier`
+  threaded by brand id for a long time while its comment claimed it matched the server, which it
+  never had: a restock announced by push stacked under the app, and the *same* restock announced
+  locally started a pile of that brand's own.
 - **A notification carries the event it is about, and tapping it opens that item.** `PushPayload`
   ships `eventID` whenever the alert names one thing — a restock, one new drop, a fired watch — and
   nil for a counted summary, where no single product is the subject and the brand page is the honest
@@ -777,7 +799,7 @@ credential the server had forgotten — a device row pruned, a database restored
 moved — sent it forever, was refused by every authenticated route, and never asked for another.
 Every server-backed feature then reads as *empty rather than broken*: no feed, no
 recommendations, watches that silently never arrive, and a Discover tab saying "you've seen
-everything streetw knows about". Reproduced exactly that way on a fresh simulator install, which
+everything". Reproduced exactly that way on a fresh simulator install, which
 is the only reason it was findable. A 401 on the sizes push — the first authenticated call every
 launch makes — now spends the token and registers again, **once**: a second refusal is not a
 credential problem, and retrying would mint a device row per launch.

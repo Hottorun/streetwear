@@ -1,5 +1,5 @@
 // StreetwAPI.swift
-// Talks to the streetw server. Wire types come from StreetwCore, so this file only
+// Talks to the Dropwall server. Wire types come from StreetwCore, so this file only
 // deals with transport, auth and error reporting.
 
 import Foundation
@@ -24,7 +24,7 @@ enum APIError: LocalizedError {
         switch self {
         case .notConfigured: "No server URL set"
         case .unauthorized: "This device isn't registered with the server"
-        case .forbidden(let reason): reason.map { "\($0) (403)" } ?? "streetw refused the request (403)"
+        case .forbidden(let reason): reason.map { "\($0) (403)" } ?? "Dropwall refused the request (403)"
         case .server(let code, let reason): reason.map { "\($0) (\(code))" } ?? "Server error \(code)"
         case .transport(let message): message
         }

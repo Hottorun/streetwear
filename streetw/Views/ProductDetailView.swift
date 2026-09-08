@@ -543,7 +543,7 @@ struct WatchEditor: View {
                     }
 
                     Text(settings.isConfigured
-                         ? "streetw watches this on the server, so the alert arrives even when the app is closed."
+                         ? "Dropwall watches this on the server, so the alert arrives even when the app is closed."
                          : "Without a server this is checked when the app refreshes, so an alert can be late.")
                         .font(.data(11))
                         .foregroundStyle(Color.muted)
