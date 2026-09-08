@@ -19,7 +19,7 @@ a much worse problem than the change itself.
 
 ## The text to paste
 
-streetw watches streetwear brands for new releases, restocks and price drops, and lets you
+Dropwall watches streetwear brands for new releases, restocks and price drops, and lets you
 keep the pieces you care about in a private local archive.
 
 There is no account, no sign-in and no purchase. On first launch you are offered a short list

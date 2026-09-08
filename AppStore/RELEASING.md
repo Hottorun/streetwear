@@ -57,8 +57,8 @@ Done once for the account, not per release. Skip to *Every release* once these a
 - [ ] **`APNS_TOPIC` is exactly the bundle ID** in the server's environment. `apnsConfigured: true`
       only says the four variables are *set*, not that the topic is right — and a wrong topic is
       not a startup error, it is every push rejected by Apple long after the deploy reads healthy.
-- [x] **The privacy policy is hosted** — <https://www.hottorun.com/streetw/privacy>. That URL is
-      in App Store Connect and must not change. It is served out of `public/streetw/privacy/` in
+- [x] **The privacy policy is hosted** — <https://www.hottorun.com/dropwall/privacy>. That URL is
+      in App Store Connect and must not change. It is served out of `public/dropwall/privacy/` in
       the hottorun.com site repository (`Hottorun/MyBlog`), which deploys from GitHub; the source
       of truth is `AppStore/privacy-policy.html` here, so **edit here first and copy across** or
       the two drift and the published one wins.

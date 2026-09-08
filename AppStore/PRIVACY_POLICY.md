@@ -16,7 +16,7 @@ account behind it, a recommender that deliberately computes on the phone so save
 it) are exactly the parts a template will get wrong.
 
 A subdomain of your own site is the right answer. Anything stable works:
-`privacy.yourdomain.tld`, or a path like `yourdomain.tld/streetw/privacy`. Two things matter
+`privacy.yourdomain.tld`, or a path like `yourdomain.tld/Dropwall/privacy`. Two things matter
 more than where it lives — that the URL **does not change**, because it goes into App Store
 Connect and gets crawled, and that it is served over HTTPS.
 
@@ -28,16 +28,16 @@ upload as-is.
 
 ---
 
-# streetw — Privacy Policy
+# Dropwall — Privacy Policy
 
 **Last updated: 8 September 2026**
 
-streetw is made by KERN AG, Germany. Questions about this
+Dropwall is made by KERN AG, Germany. Questions about this
 policy go to hottorun@pm.me.
 
 ## The short version
 
-streetw has no accounts. You never give us a name, an email address or a password, and there is
+Dropwall has no accounts. You never give us a name, an email address or a password, and there is
 nothing to sign in to.
 
 Almost everything the app knows about you stays on your phone. The one exception is the small
@@ -124,7 +124,7 @@ identify the right record. We will delete it and confirm.
 
 ## Children
 
-streetw is not directed at children and we do not knowingly collect information from anyone
+Dropwall is not directed at children and we do not knowingly collect information from anyone
 under 13.
 
 ## Your rights
