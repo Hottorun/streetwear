@@ -129,6 +129,21 @@ struct DiscoverCardView: View {
     /// hundredths and a white packshot has nothing to pick up.
     private static let fadeHeight: CGFloat = 156
 
+    /// How far up the two sides the ground climbs ahead of the middle.
+    ///
+    /// **Taller than the band above, and it has to be.** A lift confined to `fadeHeight`
+    /// cannot be read as a curve — there is only 84pt of fall to bend, and bending it inside
+    /// its own band just makes the band's edge look thicker at the corners. Reaching higher
+    /// is what turns the turn into an arc instead of a line with soft ends.
+    private static let edgeFallHeight: CGFloat = 210
+
+    /// The most the sides may run ahead of the middle.
+    ///
+    /// Past roughly this the corners stop reading as the ground falling unevenly and start
+    /// reading as a vignette laid on top of the card — which is a second thing drawn over the
+    /// artwork, and the whole point of one continuous ground was that there isn't one.
+    private static let edgeFallDepth: Double = 0.60
+
     /// The card's ground, top and bottom. **Fixed in both appearances**, like the collection
     /// wall and for the same reason: what a photograph sits on cannot invert when the
     /// photograph does not. The top is the studio sweep every packshot is already shot on, so
@@ -327,18 +342,79 @@ struct DiscoverCardView: View {
     /// tint, and almost all of the darkening happens in the last third — which is where the
     /// reading is about to begin anyway. A straight ramp over the inset alone gave a visible
     /// grey wedge under every garment.
+    ///
+    /// **Two layers, and the second is what stops it being a ruled line.** The fall on its
+    /// own is the same height at every x, so the turn draws as the one perfectly straight
+    /// edge on a card that is otherwise all photograph and type. `edgeFall` runs the same
+    /// curve again weighted to the two vertical sides, so the ink reaches the corners before
+    /// the middle and the turn reads as a shallow arc with the garment sitting in the last of
+    /// the light. It is the card's own ground both times — never a vignette laid over the
+    /// artwork, which is the thing the single-ground rewrite exists to have stopped doing.
     private static var fade: some View {
-        LinearGradient(
-            stops: [
-                .init(color: groundBottom.opacity(0), location: 0),
-                .init(color: groundBottom.opacity(0.03), location: 0.45),
-                .init(color: groundBottom.opacity(0.45), location: 0.76),
-                .init(color: groundBottom, location: 1)
-            ],
-            startPoint: .top,
-            endPoint: .bottom
-        )
-        .frame(height: fadeHeight)
+        ZStack(alignment: .bottom) {
+            LinearGradient(stops: fallStops, startPoint: .top, endPoint: .bottom)
+                .frame(height: fadeHeight)
+
+            LinearGradient(stops: edgeStops, startPoint: .leading, endPoint: .trailing)
+                .frame(height: edgeFallHeight)
+                .mask(LinearGradient(stops: edgeMaskStops, startPoint: .top, endPoint: .bottom))
+        }
+    }
+
+    /// The vertical fall: nothing at all for the first 45% of the band, then one curve to
+    /// full ink.
+    ///
+    /// The distance the fall actually has is fixed by `chromeBottom` and cannot be bought
+    /// back by making the band taller — the artwork's bottom edge has to sit where the ground
+    /// is still imperceptible, so wherever that edge is, everything from there to the foot is
+    /// all the room there is. Lengthening the band only moves the curve's start down by the
+    /// same amount. So the smoothness has to come from the curve and the sampling instead.
+    private static var fallStops: [Gradient.Stop] {
+        stops(groundBottom) { smootherstep(($0 - 0.45) / 0.55) }
+    }
+
+    /// The same fall weighted to the sides: clear across the middle third, easing out to
+    /// `edgeFallDepth` at each edge. Symmetric about the centre, so a garment photographed
+    /// dead centre — which is what a packshot is — never sits in it.
+    private static var edgeStops: [Gradient.Stop] {
+        stops(groundBottom) { x in
+            let fromCentre = abs(x - 0.5) * 2
+            return edgeFallDepth * smootherstep((fromCentre - 0.20) / 0.80)
+        }
+    }
+
+    /// What holds the side weighting inside the ground. Nothing until halfway down its band,
+    /// so at the artwork's bottom edge the far corners are under three hundredths dark — the
+    /// same bar the vertical fall is held to there, and for the same reason.
+    private static var edgeMaskStops: [Gradient.Stop] {
+        stops(.white) { smootherstep(($0 - 0.5) / 0.5) }
+    }
+
+    /// Stops sampled off a curve, rather than the four corners of one.
+    ///
+    /// Four stops describe this fall's *shape* correctly and still draw it badly. A gradient
+    /// interpolates linearly between adjacent stops, so a curve given as four points arrives
+    /// as three straight segments with a crease at each joint — and the longest of them,
+    /// carrying most of the darkening, bands visibly against a ground this flat. Sampling
+    /// often enough that no segment holds a perceptible step costs nothing at draw time and
+    /// is the whole difference between a gradient and light leaving a room.
+    private static func stops(
+        _ color: Color,
+        count: Int = 32,
+        _ curve: (Double) -> Double
+    ) -> [Gradient.Stop] {
+        (0...count).map { step in
+            let t = Double(step) / Double(count)
+            return Gradient.Stop(color: color.opacity(curve(t)), location: CGFloat(t))
+        }
+    }
+
+    /// Zero slope **and** zero curvature at both ends — which is exactly what a hand-written
+    /// ramp cannot have. The fall leaves the sweep and arrives at the ink without a joint at
+    /// either end, so neither the departure nor the landing draws an edge of its own.
+    private static func smootherstep(_ t: Double) -> Double {
+        let t = min(max(t, 0), 1)
+        return t * t * t * (t * (t * 6 - 15) + 10)
     }
 
     // MARK: - Who

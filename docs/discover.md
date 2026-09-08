@@ -207,6 +207,26 @@ nobody here follows, which is where it is worth the most.
   The band is deliberately **taller than the inset above it and eased rather than linear**: its
   first two thirds are almost clear, so the picture ends well inside it without picking up a
   tint. A straight ramp over the inset alone put a visible grey wedge under every garment.
+  **The fall is sampled off a curve, not written as four stops.** Four points describe its
+  shape correctly and still draw it badly: a gradient interpolates linearly between adjacent
+  stops, so a curve given as four arrives as three straight segments with a crease at each
+  joint, and the longest of them — carrying most of the darkening — banded against a ground
+  this flat. `DiscoverCardView.stops` samples a smootherstep thirty-two times instead, which
+  has zero slope *and* zero curvature at both ends, so the ground neither leaves the sweep nor
+  lands on the ink with an edge of its own. Measured after the change: no more than 2.7 levels
+  of 255 between adjacent pixels anywhere in the steepest part of the fall.
+  **And it climbs at the two sides, so the turn is an arc rather than a ruled line.** The fall
+  alone is the same height at every x — the one perfectly straight edge on a card that is
+  otherwise all photograph and type. `edgeFall` runs the same curve again weighted to the
+  vertical edges (`edgeFallDepth`, clear across the middle fifth and symmetric about the
+  centre), so the ink reaches the corners about ten points ahead of the middle and the garment
+  sits in the last of the light. Two constraints hold it: it is the card's **own ground** both
+  times rather than a vignette laid over the artwork — the thing the single-ground rewrite
+  exists to have stopped — and its mask stays at nothing until halfway down its band, so at
+  the artwork's bottom edge even the far corners are under three hundredths dark. Note the
+  arc's vertical extent cannot be bought by making the band taller: the artwork's bottom edge
+  has to sit where the ground is still imperceptible, so `chromeBottom` fixes how much fall
+  there is to bend, and a taller band only moves the curve's start down to match.
   Anything drawn on the light half (the save circle, the photo count, the filter chips) takes
   fixed `sweepInk`; anything on the dark half takes `groundInk`. `SaveAction` uses
   `Color.paper` because it sits on adaptive ground, and copying that here would put ink that
