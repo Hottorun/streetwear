@@ -50,7 +50,28 @@ final class ServerSettings {
     }
 
     /// The deployed server. There is exactly one, and it is not user-configurable.
-    static let defaultBaseURLString = "selfless-exploration-production-86b2.up.railway.app"
+    ///
+    /// A domain we control, deliberately, rather than the platform-generated hostname this
+    /// shipped with in development. The address is compiled in and there is no UI to change
+    /// it, so a host that can be renamed out from under us — by a project rename, or by
+    /// moving off the platform — strands every installed copy with no recovery path and no
+    /// error a user could act on.
+    static let defaultBaseURLString = "app.streetw.hottorun.com"
+
+    /// Hosts this app has shipped pointing at before, and must move off.
+    ///
+    /// `init` prefers a stored address over the default. That is right for a value somebody
+    /// *chose* and wrong for one the app wrote itself on first launch — and since the field
+    /// that let anyone choose is gone, every stored value is now the latter. Without this
+    /// set, changing `defaultBaseURLString` moves new installs only: every phone that has
+    /// ever launched the app keeps talking to the old host for as long as it stays
+    /// installed, which is precisely the dependency the change exists to end.
+    ///
+    /// Compared against the stored string as written — a bare host, no scheme, which is
+    /// what `init` persists.
+    static let legacyBaseURLStrings: Set<String> = [
+        "selfless-exploration-production-86b2.up.railway.app"
+    ]
 
     init() {
         // An empty stored value used to mean "deliberately standalone", because Settings
@@ -65,7 +86,10 @@ final class ServerSettings {
         let stored = UserDefaults.standard.string(forKey: "serverBaseURL") ?? ""
         let isStandalone = UserDefaults.standard.bool(forKey: "standalone")
 
-        baseURLString = isStandalone ? "" : (stored.isEmpty ? Self.defaultBaseURLString : stored)
+        // An address the app wrote itself is not a preference to be preserved, so a stored
+        // value only wins while it is still one we ship — see `legacyBaseURLStrings`.
+        let isStale = stored.isEmpty || Self.legacyBaseURLStrings.contains(stored)
+        baseURLString = isStandalone ? "" : (isStale ? Self.defaultBaseURLString : stored)
         token = UserDefaults.standard.string(forKey: "serverToken")
 
         // Assigning the stored property in `init` bypasses `didSet`, so persist here.

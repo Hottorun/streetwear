@@ -53,7 +53,13 @@ public enum UCPAgent {
     /// The deployed server. Same host the app ships pointing at; kept as a literal rather
     /// than read from `ServerSettings`, which lives in the app target and does not exist on
     /// the server side.
-    public static let defaultBase = "selfless-exploration-production-86b2.up.railway.app"
+    ///
+    /// Keep it in step with `ServerSettings.defaultBaseURLString`. The two are separate
+    /// literals because the types live on opposite sides of the app/server line, and they
+    /// answer the same question — but only this one has to resolve **from a merchant's
+    /// network**, so a value that has stopped resolving does not fail here. It fails as a
+    /// 422 on every catalogue call, with nothing pointing back at this line.
+    public static let defaultBase = "app.streetw.hottorun.com"
 
     /// The document itself, as JSON.
     ///
