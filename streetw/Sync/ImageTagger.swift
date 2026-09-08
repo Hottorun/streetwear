@@ -147,7 +147,59 @@ enum ImageTagger {
         // and carries its own version, so everything saved before it existed is still due
         // even though it was analysed long ago. Filtering on `analyzedAt` alone is what
         // left the canvas with no stickers at all on an established collection.
-        return saves.compactMap(\.update).filter(\.needsAnalysis)
+        return saves.compactMap(\.update).filter(isDue)
+    }
+
+    /// Photographs that did not answer, and when they are worth asking about again.
+    ///
+    /// **An item whose photograph is unreachable stays due on purpose** — a dead network is
+    /// not a dead URL, and stamping it would cost that garment its cutout, its colours and
+    /// its silhouette for as long as it exists (see the write-off note in `analyzeBatch`).
+    /// The cost of that correctness is that the item never leaves the backlog, so every
+    /// arrival on Saved or Style starts a fresh drain and re-requests the same URL: a brand
+    /// whose domain is blocked by a DNS filter had its one save re-fetched on every visit,
+    /// each time through `URLSession`'s own timeouts.
+    ///
+    /// This is a cool-off, not a verdict. Nothing is written to the store, nothing is
+    /// stamped, and when the window runs out the item is due again exactly as before —
+    /// so a phone that comes back onto a network heals by itself.
+    private static var resting: [String: Date] = [:]
+
+    /// Long enough that a tab switched to and away from does not re-ask, short enough that
+    /// somebody who fixes their connection and comes back sees the analysis run.
+    private static let coolOff: TimeInterval = 5 * 60
+
+    /// Whether this row has work outstanding *and* is worth asking about now.
+    ///
+    /// The one test, read by both the queue builder and the `.task(id:)` key. They must
+    /// agree exactly — see `backlog` — so the cool-off has to live here rather than in
+    /// either of them: a key that says there is work and a selector that finds none re-runs
+    /// the pass for nothing.
+    static func isDue(_ update: BrandUpdate) -> Bool {
+        guard update.needsAnalysis else { return false }
+        guard let key = update.imageURLStrings.first, let until = resting[key] else { return true }
+        guard until > Date() else {
+            resting[key] = nil
+            return true
+        }
+        return false
+    }
+
+    /// Notes that this row's photograph did not answer.
+    private static func rest(_ update: BrandUpdate) {
+        guard let key = update.imageURLStrings.first else { return }
+        resting[key] = Date().addingTimeInterval(coolOff)
+        guard resting.count > 256 else { return }
+        // Bounded: a save that is deleted leaves its entry behind, and the table outlives
+        // both. Dropping an expired one costs a request that was about to happen anyway.
+        let now = Date()
+        resting = resting.filter { $0.value > now }
+    }
+
+    /// Forgets a cool-off, because the photograph came back.
+    private static func woke(_ update: BrandUpdate) {
+        guard let key = update.imageURLStrings.first else { return }
+        resting[key] = nil
     }
 
     /// How many saved items currently have work outstanding.
@@ -160,7 +212,7 @@ enum ImageTagger {
     /// save something else. Keying on the backlog instead means new work *is* the trigger,
     /// and the pass settling back to zero is what stops it.
     static func backlog(in saves: [SavedItem]) -> Int {
-        saves.count { $0.update?.needsAnalysis == true }
+        saves.count { $0.update.map(isDue) == true }
     }
 
     /// One batch. Returns how many were resolved.
@@ -170,7 +222,25 @@ enum ImageTagger {
         var cut = 0
         var resolved = 0
         for update in pending {
-            guard let url = update.primaryImageURL else { continue }
+            guard let url = update.primaryImageURL else {
+                // **A string that will not parse as a URL never will.** `needsAnalysis` only
+                // asks whether the list is non-empty, so a row holding an unparseable
+                // `og:image` — which a share from an arbitrary page can produce — stayed due
+                // forever and was skipped here without a stamp: a backlog that never reaches
+                // zero, rebuilt and re-walked on every arrival on Saved or Style. Written off
+                // on the same terms as a 404, and safe for the same reason — the stamp
+                // records the string, so `hasUnreadPhotograph` makes the row due again the
+                // moment `SharedSaveImporter.repair` puts real photographs on it.
+                if let stored = update.imageURLStrings.first {
+                    log.info("wrote off an unusable image address: \(stored, privacy: .public)")
+                    update.analyzedAt = Date()
+                    update.analyzedImageURL = stored
+                    update.cutoutVersion = Cutout.version
+                    update.visionVersion = VisualReading.version
+                    resolved += 1
+                }
+                continue
+            }
             // A photograph nobody has looked at makes all three due again, whatever the
             // stamps say. This is what rescues a link shared from Safari: it lands with an
             // Open Graph image or none, gets analysed (or written off) against that, and
@@ -205,9 +275,15 @@ enum ImageTagger {
                     update.cutoutVersion = Cutout.version
                     update.visionVersion = VisualReading.version
                     resolved += 1
+                } else {
+                    // Inconclusive: still due, but not worth asking again in a minute. In
+                    // memory only — see `resting`.
+                    rest(update)
                 }
                 continue
             }
+            // It answered. Anything remembered about it not answering is now wrong.
+            woke(update)
 
             // **Everything below measures the packshot, not necessarily the lead shot.**
             //
@@ -400,7 +476,14 @@ enum ImageTagger {
                 // 429 and 5xx are the CDN asking to be left alone for a moment, which is
                 // the opposite of a reason to give up on the item forever.
                 if http.statusCode == 429 || http.statusCode >= 500 { return .unavailable }
-                if http.statusCode >= 400 { return .gone }
+                if http.statusCode >= 400 {
+                    // **A write-off is worth a line.** This is the branch that stamps every
+                    // version field on the row and takes the item out of the pass forever,
+                    // and it was silent — so a garment drawn on the canvas as a raw product
+                    // shot had nothing anywhere connecting it to the photograph that 404'd.
+                    log.info("wrote off HTTP \(http.statusCode): \(url.absoluteString, privacy: .public)")
+                    return .gone
+                }
             }
             // A 200 carrying something that will not decode is a genuine dead end: an
             // error page served as HTML, or a format this OS has no decoder for.
@@ -417,9 +500,17 @@ enum ImageTagger {
             // this enum is `@MainActor`, so `await URLSession.data` resumed on main and took
             // the whole rasterisation with it. Exactly the fault the paragraph above says was
             // corrected, arriving again one layer down.
-            return await ImageLoader
+            guard let image = await ImageLoader
                 .decodedOffActor(data, maxPixel: ImageRendition.pixels(for: measuredWidth))
-                .map(Load.image) ?? .gone
+            else {
+                // The same write-off, and the more confusing one to meet in a log: ImageIO
+                // reports `Error -17102 decompressing image` without naming a URL. The byte
+                // count separates an error page served as a 200 from a real image in a
+                // format this OS has no decoder for.
+                log.info("wrote off \(data.count) undecodable bytes: \(url.absoluteString, privacy: .public)")
+                return .gone
+            }
+            return .image(image)
         } catch {
             return .unavailable
         }

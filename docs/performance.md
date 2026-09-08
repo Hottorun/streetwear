@@ -67,6 +67,20 @@ that `UIImage(contentsOfFile:)` should be re-read each time *because* it decodes
 is backwards — a fresh `UIImage` per call is a rasterisation CoreAnimation can never reuse, and
 `FitCanvas` reads one per piece per **frame** of a drag.
 
+**A failure is a result too, and it used to be the only one nobody cached.** `ImageLoader`
+retries a failed load twice with a backoff (300ms, then 900ms) and then throws the result
+away, so the next appearance of the same tile pays for the same three requests and the same
+1.2 seconds of sleeping — and `.task(id:)` fires on every appearance, so scrolling a grid back
+and forth re-ran it per row. Invisible while everything resolves; loud the moment one host does
+not, which is not exotic: a domain blocked by a DNS filter, or `BrandMark.fallback`'s guess at
+`/favicon.ico` on a Shopify store that 404s it. `ImageLoader.refusals` remembers a refusal and
+throws immediately inside the window instead of asking. Two windows, because the two classes
+are not alike: a 4xx or bytes that will not decode are settled answers and are believed for
+half an hour, while a timeout or a dropped connection is believed for a minute, doubling per
+consecutive failure up to the same half hour. **Cancellation is never recorded** — a fast
+scroll must not teach the loader that everything it passed is broken — and a success clears
+the entry outright.
+
 **Anything called per variant, per row, or per pixel earns a second look.** Three found by
 measurement, all invisible in a profile taken on a small store:
 - `SizeNormalizer.normalize` is regular expressions all the way down and

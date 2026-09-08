@@ -130,6 +130,29 @@ Part of the streetw guidance set; see `CLAUDE.md` for the index and the build ru
   network re-requesting the same twelve URLs; and repairing the rows already written off
   needs a **version bump**, which is why `Cutout.version` and `VisualReading.version` are
   both at 2 — nothing else would ever revisit them.
+- **…and an item that stays due must not be re-asked on every appearance.** The rule above is
+  right and it has a cost: the item never leaves the backlog, so every arrival on Saved or
+  Style builds a queue containing it and re-fetches the same URL. On a brand whose domain a
+  DNS filter blocks — which is indistinguishable from offline, from the phone's side — that
+  is one save re-requested through `URLSession`'s own timeouts on every visit, forever.
+  `ImageTagger.resting` is a five-minute cool-off keyed on the photograph's URL: **in memory,
+  never written to the store, nothing stamped**, so it is a pause and not a verdict and a
+  phone that comes back onto a network heals by itself. It lives inside `ImageTagger.isDue`
+  rather than in either caller, because the queue builder and the `.task(id:)` key must go on
+  agreeing exactly — a key that says there is work and a selector that finds none re-runs the
+  pass for nothing.
+- **…and a write-off says which photograph it wrote off.** Both `.gone` branches stamp every
+  version field the app has and take the row out of the pass permanently, and both were
+  silent, so a garment drawn on the canvas as a raw product shot had nothing anywhere
+  connecting it to the URL that 404'd — ImageIO's own `Error -17102 decompressing image`
+  names no URL either. They now log the address, and the undecodable branch logs the byte
+  count with it, because a few hundred bytes is an error page served as a 200 and a megabyte
+  is a real image in a format this OS cannot read. A third case joined them: an
+  `imageURLStrings.first` that will not parse as a `URL` at all — which an `og:image` from an
+  arbitrary shared page can be — was skipped without a stamp, so it sat in the backlog
+  forever and kept it non-zero. It is written off on the same terms, and safe for the same
+  reason: the stamp records the string, so a later `repair` that puts real photographs on the
+  row makes it due again through `hasUnreadPhotograph`.
 - **The first photograph is not necessarily a photograph of the product** (`ProductShot`).
   The app measured `imageURLStrings.first` for everything — cutout, dominant colour,
   silhouette — and the gallery's order is a merchandising decision, not a convention.

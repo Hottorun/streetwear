@@ -18,6 +18,7 @@
 // Everything still goes through `URLCache.shared`, which `Net.configureSharedCache` sets
 // up at launch, so a second sight of an image is free.
 
+import OSLog
 import StreetwCore
 import SwiftUI
 
@@ -153,11 +154,54 @@ struct CachedImage<Content: View, Placeholder: View, Failure: View>: View {
 actor ImageLoader {
     static let shared = ImageLoader()
 
+    nonisolated private static let log = Logger(
+        subsystem: "com.kern.functional.streetw",
+        category: "images"
+    )
+
     /// One attempt, then two retries. Beyond that it is not a blip, and a phone on a bad
     /// connection should not keep paying for the same photograph.
     private static let attempts = 3
 
     private var inFlight: [URL: Task<UIImage, any Error>] = [:]
+
+    /// **Only successes used to be remembered, and that is what made a dead URL expensive.**
+    ///
+    /// A load that fails is retried twice with a backoff between (see `fetch`), and then the
+    /// result is thrown away — so the *next* appearance of the same tile starts the same
+    /// three attempts and the same 1.2 seconds of sleeping, forever. That is invisible while
+    /// everything resolves and loud the moment one host does not: a brand whose domain is
+    /// blocked by a DNS filter, or a `BrandMark.fallback` guess at `/favicon.ico` that the
+    /// storefront 404s, burned a dozen requests in a single session and re-entered the
+    /// backoff on every scroll back to the same row.
+    ///
+    /// So a refusal is now remembered for a while. Not forever: the reason the retries exist
+    /// in the first place is that a phone in a tunnel is not a broken photograph, and an
+    /// entry that never expired would turn one bad minute into a permanently empty tile —
+    /// exactly the `AsyncImage` behaviour this whole type exists to avoid.
+    private var refusals: [URL: Refusal] = [:]
+
+    private struct Refusal {
+        var until: Date
+        /// Consecutive failures for this URL. Only the network-level class escalates on it;
+        /// a 404 is a 404 at any count.
+        var strikes: Int
+    }
+
+    /// How long a settled answer — a 4xx, or bytes that will not decode — is believed.
+    /// Re-checking one of those costs a request per URL per half hour, which is nothing,
+    /// and it is what lets a storefront that fixes its icon be picked up without a relaunch.
+    private static let refusalWindow: TimeInterval = 30 * 60
+
+    /// How long the *first* network-level failure is believed, doubling per consecutive
+    /// failure up to `refusalWindow`. Short at the start because this is the class a retry
+    /// genuinely fixes; longer each time because a host that has refused four times running
+    /// is not having a moment.
+    private static let wobbleWindow: TimeInterval = 60
+
+    /// Refusals held at once. A cap rather than none because the keys are arbitrary URLs and
+    /// this actor lives for the whole session; forgetting one costs a single request.
+    private static let refusalLimit = 512
 
     /// Decoded images, keyed by the exact URL requested. `URLCache` holds the bytes, but
     /// re-decoding a 400px JPEG on every cell reuse is the other half of scroll cost.
@@ -218,7 +262,11 @@ actor ImageLoader {
     private static let queueDepth = 12
 
     private func enqueue(_ urls: [URL], width: Int) async {
-        for url in urls where decoded.object(forKey: url as NSURL) == nil && inFlight[url] == nil {
+        // A refused URL is skipped rather than queued: the queue is twelve deep and holds
+        // guesses about where attention is going, and a guess that is known to fail would
+        // displace one that might not.
+        for url in urls
+        where decoded.object(forKey: url as NSURL) == nil && inFlight[url] == nil && !isResting(url) {
             queue.removeAll { $0.url == url }
             queue.append((url, width))
         }
@@ -245,6 +293,11 @@ actor ImageLoader {
     func load(_ url: URL, width: Int = 400) async throws -> UIImage {
         if let hit = decoded.object(forKey: url as NSURL) { return hit }
 
+        // Asked for recently and refused. Failing here rather than on the wire is the whole
+        // point: the caller gets the same answer it would have got, without three requests
+        // and the backoff between them.
+        if isResting(url) { throw ImageError.refused }
+
         // A grid can ask for the same URL from several cells at once — a product's
         // colourways often share a photograph. One request, many awaiters.
         if let existing = inFlight[url] { return try await existing.value }
@@ -256,9 +309,59 @@ actor ImageLoader {
         inFlight[url] = task
         defer { inFlight[url] = nil }
 
-        let image = try await task.value
+        let image: UIImage
+        do {
+            image = try await task.value
+        } catch is CancellationError {
+            // Scrolled away, not refused. Recording this would mean a fast scroll taught the
+            // loader that every photograph it passed is broken.
+            throw CancellationError()
+        } catch {
+            rest(url, after: error)
+            throw error
+        }
+        // It answered, so whatever it did before is history — a host that was unreachable
+        // for a minute must not stay on an escalating window once it is back.
+        refusals[url] = nil
         decoded.setObject(image, forKey: url as NSURL, cost: image.byteCost)
         return image
+    }
+
+    /// Whether this URL is inside the window of a refusal, clearing the entry when it is not.
+    private func isResting(_ url: URL) -> Bool {
+        guard let refusal = refusals[url] else { return false }
+        guard refusal.until > Date() else {
+            refusals[url] = nil
+            return false
+        }
+        return true
+    }
+
+    /// Records a refusal and works out how long to believe it.
+    private func rest(_ url: URL, after error: any Error) {
+        let strikes = (refusals[url]?.strikes ?? 0) + 1
+        refusals[url] = Refusal(
+            until: Date().addingTimeInterval(Self.window(after: error, strikes: strikes)),
+            strikes: strikes
+        )
+        guard refusals.count > Self.refusalLimit else { return }
+        let now = Date()
+        refusals = refusals.filter { $0.value.until > now }
+        // Still over: drop the lot rather than grow without bound. The cost of forgetting is
+        // one request per URL, which is precisely what this table is saving.
+        if refusals.count > Self.refusalLimit { refusals.removeAll() }
+    }
+
+    private static func window(after error: any Error, strikes: Int) -> TimeInterval {
+        if let known = error as? ImageError {
+            switch known {
+            // A 5xx after three attempts is the host under load, not the photograph being
+            // gone — it belongs with the timeouts below.
+            case .badStatus(let code) where code >= 500: break
+            case .badStatus, .notAnImage, .refused: return refusalWindow
+            }
+        }
+        return min(wobbleWindow * pow(2, Double(strikes - 1)), refusalWindow)
     }
 
     /// Turns downloaded bytes into a photograph that is **already rasterised**.
@@ -356,7 +459,22 @@ actor ImageLoader {
                     continue
                 }
 
-                return try decode(data, maxPixel: maxPixel)
+                do {
+                    return try decode(data, maxPixel: maxPixel)
+                } catch {
+                    // **ImageIO names no URL.** A 200 carrying something that is not a
+                    // picture — an error page served as HTML, a truncated body, a format with
+                    // no decoder — surfaces as a bare `Error -17102 decompressing image` in
+                    // the console with nothing to say which photograph it was, so it reads as
+                    // background noise rather than as one identifiable tile that will never
+                    // draw. The size is worth having with it: a few hundred bytes is a
+                    // redirect or an error page, a megabyte is a real image this OS cannot
+                    // read, and those have different fixes.
+                    log.info(
+                        "not an image (\(data.count, privacy: .public) bytes): \(url.absoluteString, privacy: .public)"
+                    )
+                    throw error
+                }
             } catch is CancellationError {
                 throw CancellationError()
             } catch let error as ImageError {
@@ -382,6 +500,9 @@ actor ImageLoader {
     private enum ImageError: Error {
         case badStatus(Int)
         case notAnImage
+        /// This URL failed recently and its window has not run out — thrown without asking
+        /// the network at all. A failure to the caller, which is what it would have got.
+        case refused
     }
 }
 
