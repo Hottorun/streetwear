@@ -13,10 +13,44 @@ because something failed silently, the entry says so, because that is the only p
 Done once for the account, not per release. Skip to *Every release* once these are true.
 
 - [ ] **Apple Developer Program** active for team `JD6NETLE45` (KERN AG).
-- [ ] **App IDs registered** — `com.kern.functional.streetw` with Push Notifications and App
+- [x] **App IDs registered** — `com.kern.functional.streetw` with Push Notifications and App
       Groups, `com.kern.functional.streetw.ShareExtension` with App Groups, and the group
       `group.com.kern.functional.streetw` itself. Background modes need no portal capability;
       they live in `streetw-Info.plist`.
+
+      **An App ID existing is not an App ID configured, and the difference is silent.** Xcode
+      creates identifiers by itself on a first build, carrying only the capabilities it knew
+      about at that moment — so a row named `com.kern.functional.streetw` sits on the portal
+      looking complete with Push switched off. The archive can still succeed. Push then simply
+      never works, which is the failure this repository has already had once.
+
+      So check the **profiles Apple issued**, not the list of identifiers. A profile can only
+      carry an entitlement the App ID is actually configured for — the provisioning service
+      strips the rest — which makes `aps-environment` appearing below positive proof that Push
+      is enabled, in a way that reading a checkbox is not:
+
+      ```bash
+      cd ~/Library/Developer/Xcode/UserData/Provisioning\ Profiles/
+      for f in *.mobileprovision; do
+        p=$(security cms -D -i "$f" 2>/dev/null)
+        id=$(echo "$p" | plutil -extract Entitlements.application-identifier raw - 2>/dev/null)
+        case "$id" in *com.kern.functional.streetw*) ;; *) continue ;; esac
+        echo "$id"
+        echo "   type      : $(echo "$p" | plutil -extract Entitlements.get-task-allow raw - 2>/dev/null \
+                                 | sed 's/true/development/;s/false/DISTRIBUTION/')"
+        echo "   aps-env   : $(echo "$p" | plutil -extract Entitlements.aps-environment raw - 2>/dev/null || echo none)"
+        echo "   app group : $(echo "$p" | plutil -extract Entitlements.com\\.apple\\.security\\.application-groups.0 raw - 2>/dev/null || echo none)"
+        echo "   expires   : $(echo "$p" | plutil -extract ExpirationDate raw - 2>/dev/null)"
+      done
+      ```
+
+      Note the path — Xcode moved this cache out of `~/Library/MobileDevice/Provisioning
+      Profiles/`, which still exists and is usually empty, and an empty directory there reads
+      exactly like "nothing has ever been provisioned".
+
+      What it should print: `aps-environment` on the app and none on the extension, the group on
+      both, and — until the first archive — `development` for the type. Distribution profiles
+      appear only once Xcode has been asked to make one.
 - [ ] **Distribution certificate exists.** Easiest via Xcode: *Signing & Capabilities*,
       *Automatically manage signing* on all three targets, then archive — Xcode requests the
       certificate and profiles as part of that.
