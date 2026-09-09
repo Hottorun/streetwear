@@ -216,8 +216,20 @@ private struct MemberTile: View {
                 .multilineTextAlignment(.leading)
                 .fixedSize(horizontal: false, vertical: true)
 
+            // **Wrapping, because a cap on the token count is not a cap on the width.**
+            // `[28] [30] [32] [34] [36]` is five tokens and measures wider than half a
+            // phone, so the unwrapped run overflowed its own grid cell and pushed the
+            // price out over the tile beside it — the bucket hat's column printing the
+            // shorts' price. `FlowRow` answers with the width it was proposed, which is
+            // the property that keeps a tile inside its column; `limit` still holds the
+            // wrapped run to one extra line. See `SizeRun(wraps:)`.
             HStack(alignment: .firstTextBaseline, spacing: 8) {
-                SizeRun(entries: SizeRun.entries(for: update, profile: sizes.profile), size: 11, limit: 5)
+                SizeRun(
+                    entries: SizeRun.entries(for: update, profile: sizes.profile),
+                    size: 11,
+                    limit: 5,
+                    wraps: true
+                )
                 Spacer(minLength: 4)
                 if let price = update.priceText {
                     Text(price)

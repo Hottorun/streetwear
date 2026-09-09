@@ -214,16 +214,78 @@ Changing these silently will break intended behavior:
   has one), an empty size run, no price, and a tap onto a product page with nothing on it — so
   "DENIM TEARS FW26", the most interesting thing a brand posts all season, rendered as the emptiest
   card in the feed. Releases are hoisted above the products in a brand's group, because they are the
-  headline and the garments are the contents. `Brand.members(of:)` reconstructs which garments
-  belong to one — `/collections.json` names a release and does not list it — from a distinctive word
-  in the title (brands tag their seasons) falling back to a publication window. Deliberately a
-  heuristic: the alternative is a network call per card in a scrolling feed, and being wrong costs a
-  page with a few extra garments rather than a missed drop. **`members(of:)` admits `.product`
-  only.** It filtered on `kind != .collection`, which lets in every other kind of event — and a
-  release lands in the middle of ordinary trading, so the window swept up restocks of last season's
-  stock and price drops off the sale rail and printed them as the contents of a new collection. A
-  restock is by definition not part of something only just announced, and the word match is no
-  protection because a re-shelved item from the same season carries the same season code.
+  headline and the garments are the contents. **A collection's contents are read, not guessed, and the
+  contents are what decide whether it is announced at all.** `/collections.json` names a release
+  and does not list it, so `Brand.members(of:)` used to match a distinctive word from the title and
+  fall back to anything published within 36 hours — defended as a heuristic whose alternative was a
+  network call per card in a scrolling feed, and whose cost was "a page with a few extra garments".
+  Both halves were wrong. The call belongs in the *poll*, once, which is where `CollectionsSource`
+  now makes it (`/collections/<handle>/products.json`), and the cost was not a few extra garments:
+  Corteiz announced ISLAND PUFF PRINT TRUCKER HAT — six colourways of that hat — and the page listed
+  five ALWEIZ board shorts, a ripstop bag and a bucket hat under "5 PIECES", not one of them in the
+  collection. A release page states what is in a release, so a loose match is not a worse answer, it
+  is a false one. `FetchedItem.memberExternalIDs` carries it, `FeedItem` puts it on the wire, and
+  `Brand.members(of:)` prints **nothing** when it has neither a real list nor a word match — an
+  empty strip beats a wrong one.
+  **And the same list answers "is this a release".** `Release.isRelease` demands a season or a year,
+  which is right for Discover and would refuse a real collab in a followed brand's feed; reading the
+  *title* was the mistake, since a collection list is mostly furniture named by a merchandiser.
+  `Release.isAnnouncement` asks the stock instead: **a release's contents were shelved when it was
+  announced, a navigation rail's were not.** A third of members within 30 days, measured — the real
+  ones sat at 43% and 100%, the rails at 0%, 0%, 0% and 11%. `publishedAt`, never `createdAt`
+  (brands build a product record a season ahead). Three guards around it: a baseline poll verifies
+  nothing (nothing is announced, and Amiri has 250 collections); past `membershipBudget` a poll
+  stops announcing, because seven collections between two polls is a theme re-stamp and not seven
+  seasons; and a storefront that fails to answer is announced unverified rather than losing a real
+  drop to one request. `withoutSubsets` then collapses a launch merchandised as overlapping rails —
+  Amiri's BISCOTTO BAG (8), BABY BISCOTTO BAG (4) and BISCOTTO SHOULDER BAG (4), where both fours
+  sit inside the eight. Verified live against five storefronts: one correct release each, or none.
+  **`members(of:)` admits `.product` only where it is *guessing*, and any garment row where it has
+  been told.** The word match filtered on `kind != .collection`, which lets in every other kind of
+  event — and a release lands in the middle of ordinary trading, so the window swept up restocks of
+  last season's stock and price drops off the sale rail and printed them as the contents of a new
+  collection. That argument is correct about a guess and simply false about a list the shop
+  published: applying the filter to a stated membership is refusing to believe the shop, and BBC is
+  the proof. Its Yankees collection is 29 garments, 14 shelved within the fortnight, and every one
+  of those 14 carries a product record 181 days older than its shelving — so `Reshelving` files all
+  fourteen as `.restock`, the filter excluded every one, and the card could never fill for a
+  collection sitting on the storefront in plain sight. A re-merchandised collection is most of what
+  a brand announces. Nothing that is not a garment can slip into the stated path, because the join
+  is on the id list and a page change carries no `shopify:<id>`.
+- **One release, stated once in a spread.** Billionaire Boys Club announced its Yankees edit three
+  times in one spread: `/collections.json` gave the release, `/products.json` gave two tees the
+  ±36h window had wrongly filed inside it, and the brand's own blog gave the announcement — three
+  sources, three kinds, three buckets, and nothing in `BrandSpread.layout` had ever been in a
+  position to notice any of them were related. (The tees were never in that collection at all,
+  whose 23 members are all Yankees pieces — which is the membership bug above, not this one.) It now drops `.product` rows the release card
+  above them is already drawing, and a `.post` whose title restates a `.collection` in the same
+  spread. **Both rules must ask the question the card asks, not a tidier one.** The first attempt
+  read `memberExternalIDs` alone — empty on every collection stored before the poller could read
+  one, so on the brands actually in front of somebody it folded nothing, and Represent went on
+  printing "9 pieces in this release" above "9 new products" showing the same nine garments. It
+  follows `Brand.members(of:)`'s order now (stored membership, else the word match, else nothing),
+  matched against the spread's own products rather than the brand's catalogue, so a card showing
+  nothing folds nothing. The post rule strikes out the brand's own name first — nearly every post a
+  brand writes names it — then wants two shared words with at most one the post added, because a
+  headline adds words to a page name and a strict subset test folds neither "… Is Here" nor
+  "Introducing the …". Neither hides anything the spread was not already showing, both still count
+  as unread, and the foot link's total is untouched.
+- **A collection is offered to the merge exactly once in its life, so the membership has to be
+  fetched again for the ones already stored.** `/collections.json` is filtered by `since`, which
+  means reading the real contents at poll time reaches only collections published from that deploy
+  onward — every release already on a feed keeps falling back to the word match. The first thing
+  that fix did in the wild was empty BBC's Yankees card, whose 23 real members share no word with
+  its title. `Poller.fillMemberships` and `SyncEngine.fillMemberships` go back for three per brand
+  per poll inside a 45-day window, filtered in Swift because "an empty array column" is not
+  something Fluent expresses the same way on Postgres and SQLite; `RemoteSync.backfill` carries the
+  result to the phone.
+- **A price cut states itself and does not spend a row.** `MarkdownsView` exists precisely because
+  the feed is the wrong home for markdowns — it is ordered by recency and a cut is worth as much a
+  week later — which is why that screen is not emptied by reading and keeps its own
+  `markdownDismissedAt`. It has its own badge and its own way in, so three tiles of the same thing
+  under every brand was one list said twice, at a third of the height of a spread whose subject is
+  what just dropped. The headline stays and stays a link, per the rule that every count opens the
+  list it counts; the evidence row goes, because a markdown is a claim about a *number*.
 - **One garment, one row, in every list** (`BrandUpdate.oncePerProduct`). The store holds *events*:
   a feed row is `event:<uuid>` and one jacket drops, is marked down and comes back in an L, so a
   brand page, a release and a brand's spread each printed it three times at three prices. Keyed on

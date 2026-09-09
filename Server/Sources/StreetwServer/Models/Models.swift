@@ -119,13 +119,17 @@ final class ProductModel: Model, @unchecked Sendable {
     @OptionalField(key: "is_available") var isAvailable: Bool?
     @Field(key: "tags") var tags: [String]
     @OptionalField(key: "product_type") var productType: String?
+    /// For a `kind == "collection"` row, the products the storefront says are in it, keyed
+    /// as `external_id` is. Empty for every other kind and for anything stored before
+    /// `CollectionsSource` learned to read the membership — see `AddProductMembers`.
+    @Field(key: "member_external_ids") var memberExternalIDs: [String]
     @Field(key: "published_at") var publishedAt: Date
     @Timestamp(key: "first_seen_at", on: .create) var firstSeenAt: Date?
     @Field(key: "last_seen_at") var lastSeenAt: Date
 
     @Children(for: \.$product) var variants: [VariantModel]
 
-    init() {}
+    init() { self.memberExternalIDs = [] }
 
     init(brandID: UUID, sourceID: UUID?, item: FetchedItem) {
         self.$brand.id = brandID
@@ -141,6 +145,7 @@ final class ProductModel: Model, @unchecked Sendable {
         self.isAvailable = item.isAvailable
         self.tags = item.tags
         self.productType = item.productType
+        self.memberExternalIDs = item.memberExternalIDs
         self.publishedAt = item.publishedAt
         self.lastSeenAt = Date()
     }

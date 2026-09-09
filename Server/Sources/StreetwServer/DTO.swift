@@ -110,7 +110,12 @@ extension FeedItem {
             // What the garment is, not what happened to it. A feed row is keyed by its
             // event, and one product produces several — so nothing downstream could tell
             // that a shared link and a feed card were the same thing.
-            productExternalID: product?.externalID
+            productExternalID: product?.externalID,
+            // For a release, the garments the storefront listed in it. The phone cannot ask
+            // — it never polls in server mode — and without this every collection page falls
+            // back to matching a word from the title, which is what printed five board
+            // shorts under ISLAND PUFF PRINT TRUCKER HAT.
+            memberExternalIDs: product?.memberExternalIDs
         )
     }
 }

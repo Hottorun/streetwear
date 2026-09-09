@@ -364,6 +364,16 @@ actor Poller {
                 )
             }
 
+            // Collections announced before the membership could be read hold none, and
+            // nothing else would ever go back for them: `/collections.json` is filtered by
+            // `since`, so a collection is offered to the merge exactly once in its life.
+            // Without this the fix reaches only collections published from today onward,
+            // while every release already on somebody's feed keeps falling back to the word
+            // match — which is what put five board shorts inside a hat.
+            if kind == .collections, !isFirstPoll {
+                try? await fillMemberships(brandID: brandID, store: source.asBrandSource.url)
+            }
+
             // Only now, once a fetch has completed and its batch is stored, is the
             // baseline genuinely spent. A source that emits nothing on a first sight —
             // a page watch storing its opening fingerprint — counts too: it has seen
@@ -424,6 +434,51 @@ actor Poller {
             return false
         }
         return cadence.isWithinWindow()
+    }
+
+    /// How many stored collections one poll goes back for. A handful per brand per cycle
+    /// converges within a day and keeps the cost beside the poll that is already happening.
+    private static let membershipBackfill = 3
+    /// How far back it is worth going. A release nobody can still see in a feed is not
+    /// worth a request — the client keeps 400 rows per brand and retention prunes events at
+    /// thirty days.
+    private static let membershipBackfillDays = 45.0
+
+    /// Reads the real contents of collections stored before that was possible.
+    ///
+    /// Newest first and capped, filtered in Swift rather than in SQL: "an empty array
+    /// column" is not something Fluent expresses the same way on Postgres and SQLite, which
+    /// is exactly the class of difference that passes locally and fails on the deployment.
+    /// The window keeps the scan small enough that reading a few extra rows is cheaper than
+    /// being clever about it.
+    private func fillMemberships(brandID: UUID, store: URL) async throws {
+        let since = Date().addingTimeInterval(-Self.membershipBackfillDays * 86_400)
+        let stale = try await ProductModel.query(on: app.db)
+            .filter(\.$brand.$id == brandID)
+            .filter(\.$kind == UpdateKind.collection.rawValue)
+            .filter(\.$publishedAt >= since)
+            .sort(\.$publishedAt, .descending)
+            .limit(40)
+            .all()
+            .filter { $0.memberExternalIDs.isEmpty }
+            .prefix(Self.membershipBackfill)
+
+        for collection in stale {
+            // The handle is the last segment of the link the adapter built —
+            // `/collections/<handle>` — and is the only place it survives.
+            guard let link = collection.linkURL,
+                  let handle = URL(string: link)?.lastPathComponent,
+                  !handle.isEmpty, handle != "collections"
+            else { continue }
+            guard let membership = try? await CollectionsSource.membership(
+                of: handle,
+                in: store,
+                http: http
+            ), !membership.externalIDs.isEmpty else { continue }
+
+            collection.memberExternalIDs = membership.externalIDs
+            try await collection.save(on: app.db)
+        }
     }
 
     /// The brand is locked when *any* of its sources currently is.
@@ -591,6 +646,15 @@ actor Poller {
 
         if product.imageURLs.isEmpty, !item.imageURLStrings.isEmpty {
             product.imageURLs = item.imageURLStrings
+            changed = true
+        }
+        // A collection stored before the membership was readable holds none, and the merge
+        // above only ever touches rows it already has — so without this the release pages
+        // for every collection already in the catalogue stay on the word match forever.
+        // Filled only when empty, like the images: a storefront that stops answering must
+        // not blank a list we were once told.
+        if product.memberExternalIDs.isEmpty, !item.memberExternalIDs.isEmpty {
+            product.memberExternalIDs = item.memberExternalIDs
             changed = true
         }
         // A name can arrive late. Rows stored before the sitemap adapter learned to read

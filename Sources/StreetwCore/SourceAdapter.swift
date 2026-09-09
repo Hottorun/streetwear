@@ -43,6 +43,21 @@ public struct FetchedItem: Sendable, Hashable {
     public var tags: [String]
     public var productType: String?
     public var variants: [VariantInfo]
+    /// For a `.collection`, the products the storefront says are **in** it.
+    ///
+    /// `/collections.json` announces a release and does not list it, so which garments
+    /// belong to one used to be guessed — a distinctive word from the title, falling back
+    /// to whatever published within a day and a half of it. The fallback is what put five
+    /// ALWEIZ board shorts and a bag on a page headed ISLAND PUFF PRINT TRUCKER HAT, whose
+    /// actual contents are six colourways of that hat. A guess presented as a release's
+    /// contents is a statement about stock, and it was wrong on every brand looked at.
+    ///
+    /// Shopify does publish the membership, at `/collections/<handle>/products.json`, and
+    /// that is what this carries — `CollectionsSource` reads it for the few collections a
+    /// poll is about to announce. Empty for every other kind, for a storefront that
+    /// answered nothing, and for rows written before this existed; `Brand.members(of:)`
+    /// keeps the word match for exactly those.
+    public var memberExternalIDs: [String]
 
     public init(
         externalID: String,
@@ -59,7 +74,8 @@ public struct FetchedItem: Sendable, Hashable {
         isAvailable: Bool? = nil,
         tags: [String] = [],
         productType: String? = nil,
-        variants: [VariantInfo] = []
+        variants: [VariantInfo] = [],
+        memberExternalIDs: [String] = []
     ) {
         self.externalID = externalID
         self.title = title
@@ -76,6 +92,7 @@ public struct FetchedItem: Sendable, Hashable {
         self.tags = tags
         self.productType = productType
         self.variants = variants
+        self.memberExternalIDs = memberExternalIDs
     }
 }
 

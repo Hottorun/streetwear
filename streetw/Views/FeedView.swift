@@ -792,6 +792,57 @@ private struct BrandSpread: View {
             }
         }
 
+        // **One release, stated once.** Billionaire Boys Club announced its Yankees edit
+        // three times in a single spread and every word of it was true: `/collections.json`
+        // gave the release, `/products.json` gave the two tees in it, and the brand's own
+        // blog gave the announcement — three sources, three kinds, three buckets, and
+        // nothing in this function had ever been in a position to notice they were one
+        // piece of news. So the card said it, then "2 new products" printed the same two
+        // garments underneath it, then "A new post" printed the same announcement again
+        // with no photograph.
+        //
+        // Neither of these hides anything the spread was not already showing: the garments
+        // are in the release card's strip and on the page its headline opens, and the post
+        // is the same sentence as the release above it. Both still count as unread, both
+        // still reach the brand's queue, and the foot link's total is untouched — it has
+        // always been `group.updates.count`, the whole of what the brand published.
+        // **Fold what the release card is already drawing, and nothing else.** The first
+        // version of this read `memberExternalIDs` alone, which is empty on every
+        // collection stored before the poller could read one — so on the brands actually
+        // in front of somebody it folded nothing, and Represent went on printing "9 pieces
+        // in this release" above "9 new products" showing the same nine garments. The
+        // membership and the word match are the two answers `Brand.members(of:)` gives, in
+        // its order, so asking the same question here keeps the two in step: a card showing
+        // nothing folds nothing, which is the honest outcome for a release whose contents
+        // we cannot name.
+        //
+        // Matched against this spread's own products rather than the brand's catalogue —
+        // the question is only ever about the handful of unread rows about to be drawn, and
+        // `members(of:)` faults the whole relationship to answer a wider one.
+        var announced = Set<String>()
+        for release in result.releases {
+            if !release.memberExternalIDs.isEmpty {
+                announced.formUnion(release.memberExternalIDs)
+                continue
+            }
+            let words = BrandUpdate.distinctiveWords(in: release.title)
+            guard !words.isEmpty else { continue }
+            for product in byKind[.product] ?? [] where product.mentionsAny(of: words) {
+                announced.insert(product.productExternalID ?? product.externalID)
+            }
+        }
+        if !announced.isEmpty {
+            byKind[.product]?.removeAll { announced.contains($0.productExternalID ?? $0.externalID) }
+            if byKind[.product]?.isEmpty == true { byKind[.product] = nil }
+        }
+        if !result.releases.isEmpty {
+            let brandWords = Set(BrandUpdate.distinctiveWords(in: group.brand.name))
+            byKind[.post]?.removeAll { post in
+                result.releases.contains { Self.restates($0.title, as: post.title, ignoring: brandWords) }
+            }
+            if byKind[.post]?.isEmpty == true { byKind[.post] = nil }
+        }
+
         // **A lock is a property of the storefront, not of an unread row.** A brand can be
         // locked with its `.dropLock` event already read — or, in server mode, with the lock
         // recorded on the brand and no event of its own in this window at all. That is the
@@ -842,7 +893,24 @@ private struct BrandSpread: View {
                 kind: bucket.kind,
                 // What happened, not what is left after the lead was taken out of it.
                 total: bucket.items.count + (bucket.kind == leadKind ? 1 : 0),
-                shown: Array(bucket.items.prefix(storyLimit)),
+                // **A markdown states itself and does not spend a row of the page.**
+                //
+                // `MarkdownsView` exists precisely because the feed is the wrong home for
+                // price cuts: the feed is ordered by recency and a cut is worth as much a
+                // week later as it was on the day, which is why that screen is *not*
+                // emptied by reading and keeps its own `markdownDismissedAt` verdict. It
+                // has its own badge in the toolbar and its own way in. Printing three
+                // tiles of the same thing under every brand was the same list said twice,
+                // and it was a third of the height of a spread whose subject is what just
+                // dropped.
+                //
+                // The headline stays, and stays a link — "4 price cuts" still opens the
+                // four, per the rule that every count on a spread opens the list it
+                // counts. What goes is the evidence row, because a markdown is a claim
+                // about a *number* and the tile was never the thing that carried it.
+                shown: bucket.kind == .priceDrop
+                    ? []
+                    : Array(bucket.items.prefix(storyLimit)),
                 // Read off `byKind` rather than off the bucket, so the sizes still name the
                 // garment that became the lead.
                 detail: bucket.kind == .restock
@@ -854,6 +922,51 @@ private struct BrandSpread: View {
         let drawn = result.stories.reduce(result.lead == nil ? 0 : 1) { $0 + $1.shown.count }
         result.overflow = max(0, group.updates.count - result.releases.count - drawn)
         return result
+    }
+
+    /// Whether a blog post is announcing the release the spread already leads with.
+    ///
+    /// A brand that runs a Shopify blog publishes its drop twice — as a collection and as a
+    /// post about the collection — and the two titles are never identical, because one is a
+    /// page name and the other is a headline. BBC's read "The Women's Edit: New York
+    /// Yankees™ | Billionaire Boys Club" and "New York Yankees™ | Billionaire Boys Club".
+    ///
+    /// Containment over letters and digits catches that pair and nothing more awkward: the
+    /// punctuation is where the two disagree — a colon, a trademark, an ampersand written
+    /// out — but a headline that adds so much as one trailing word to the page name is no
+    /// longer contained in it, and headlines add words. So the words themselves are
+    /// compared too, and that is the test that carries most of them.
+    ///
+    /// **The brand's own name is struck out first.** Nearly every post a brand writes names
+    /// it — "Billionaire Boys Club" is three distinctive words on its own — so counting
+    /// those would fold two genuinely different announcements together the moment both
+    /// mentioned the label, which inside that brand's own spread they always do.
+    ///
+    /// What is left has to overlap in at least two words, and then either the post adds
+    /// nothing the release did not name, or **one** word of its own. That slack is the
+    /// whole difference between a rule that works and the one shipped before it: a page is
+    /// called "The Women's Edit: New York Yankees | Billionaire Boys Club" and the post
+    /// about it is headlined "Introducing the New York Yankees Collection", and a strict
+    /// subset test folds neither. Slack on the post's side only, because headlines add
+    /// words and page names do not.
+    ///
+    /// Two words is the floor because one is a coincidence — every drop a brand makes is
+    /// "denim" sooner or later. The cost of the slack, accepted knowingly: a genuinely
+    /// separate post sharing two words and adding one ("Women's Running Edit" against the
+    /// release above) is folded away. That shape is rare, the duplicate it prevents is not,
+    /// and nothing is lost from the brand's queue either way.
+    private static func restates(_ release: String, as post: String, ignoring brand: Set<String>) -> Bool {
+        let a = release.lowercased().filter { $0.isLetter || $0.isNumber }
+        let b = post.lowercased().filter { $0.isLetter || $0.isNumber }
+        if a.count >= 12, b.count >= 12, a.contains(b) || b.contains(a) { return true }
+
+        let release = Set(BrandUpdate.distinctiveWords(in: release)).subtracting(brand)
+        let post = Set(BrandUpdate.distinctiveWords(in: post)).subtracting(brand)
+        guard !release.isEmpty, !post.isEmpty else { return false }
+        guard release.intersection(post).count >= 2 else {
+            return release.isSubset(of: post) || post.isSubset(of: release)
+        }
+        return post.subtracting(release).count <= 1 || release.subtracting(post).isEmpty
     }
 
     /// What came back, the reader's own sizes first.

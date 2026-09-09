@@ -93,6 +93,41 @@ final class SyncEngine {
         // new drops. The server had exactly this bug; this is the same rule.
         let reachedSomething = outcomes.contains { if case .success = $0.1 { true } else { false } }
         if reachedSomething { brand.lastSyncedAt = Date() }
+
+        // The same repair the server's `Poller.fillMemberships` makes, for the mode where
+        // the phone is the poller. `/collections.json` is filtered by `since`, so a
+        // collection is offered to the merge exactly once in its life — without this, the
+        // membership reaches only collections published from here on and every release
+        // already on the feed keeps falling back to the word match.
+        if since != nil, reachedSomething { await fillMemberships(brand) }
+    }
+
+    /// How many stored collections one sync goes back for, and how far back it looks. Small
+    /// because it converges — a brand with three unfilled releases is done in one sync, and
+    /// a release old enough to have aged out of the feed is not worth a request.
+    private static let membershipBackfill = 3
+    private static let membershipBackfillDays = 45.0
+
+    /// Reads the real contents of collections stored before that was possible.
+    private func fillMemberships(_ brand: Brand) async {
+        guard let store = brand.sources.first(where: { $0.kind == .collections })?.url else { return }
+        let cutoff = Date().addingTimeInterval(-Self.membershipBackfillDays * 86_400)
+        let stale = brand.updates
+            .filter { $0.kind == .collection && $0.memberExternalIDs.isEmpty && $0.publishedAt >= cutoff }
+            .sorted(by: BrandUpdate.newestFirst)
+            .prefix(Self.membershipBackfill)
+
+        for collection in stale {
+            // The handle is the last segment of the link the adapter built —
+            // `/collections/<handle>` — and is the only place it survives.
+            guard let handle = collection.linkURL?.lastPathComponent,
+                  !handle.isEmpty, handle != "collections"
+            else { continue }
+            guard let membership = try? await CollectionsSource.membership(of: handle, in: store),
+                  !membership.externalIDs.isEmpty
+            else { continue }
+            collection.memberExternalIDs = membership.externalIDs
+        }
     }
 
     // MARK: - Applying results
@@ -181,6 +216,9 @@ final class SyncEngine {
             variants: item.variants
         )
         update.releaseDate = item.releaseDate
+        // What the storefront says is in this collection, when it said anything. Empty for
+        // every other kind — see `BrandUpdate.memberExternalIDs`.
+        update.memberExternalIDs = item.memberExternalIDs
         // Classified at write time rather than on every read: it is pure text work over
         // fields that never change after insert, and the feed re-evaluates its filter on
         // every render pass.
@@ -257,6 +295,12 @@ final class SyncEngine {
         update.priceText = item.priceText
         if update.imageURLStrings.isEmpty { update.imageURLStrings = item.imageURLStrings }
         if update.tags.isEmpty { update.tags = item.tags }
+        // A collection stored before the membership was read has none, and nothing else
+        // would ever revisit it — the same reason `RemoteSync.backfill` exists. Filled only
+        // when empty: a storefront that later stops answering must not blank a list we hold.
+        if update.memberExternalIDs.isEmpty, !item.memberExternalIDs.isEmpty {
+            update.memberExternalIDs = item.memberExternalIDs
+        }
         // A name can arrive late: a sitemap row stored before the adapter learned to read
         // the image extension holds a randomised handle where the product name should be.
         // Only ever an upgrade — a real title is never replaced by a hash.

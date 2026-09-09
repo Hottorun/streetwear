@@ -109,6 +109,52 @@ public enum Release {
         return false
     }
 
+    /// Whether a collection is announcing a **release**, judged by what is in it rather than
+    /// by what it is called.
+    ///
+    /// Every earlier attempt at this question read the *title* — `isRelease` below demands a
+    /// season or a year, which is right for Discover and far too strict for a followed
+    /// brand's feed, where it would refuse a real collab. Reading the title at all was the
+    /// mistake: a storefront's collection list is mostly furniture, and the furniture is
+    /// named by a merchandiser with no interest in our problem. Four real ones from one
+    /// evening's feed, each announced as news:
+    ///
+    ///     "All Mens Denim Bottoms"  — Fear of God, 5 pieces, none newer than 54 days
+    ///     "custom link"             — Episodes Project, 65 pieces, 7 of them recent
+    ///     "ISLAND PUFF PRINT TRUCKER HAT" — Corteiz, 6 hats, oldest 314 days
+    ///     "BABY BISCOTTO BAG"       — Amiri, one of 250 collections, nearly all rails
+    ///
+    /// What separates them is not the name, it is the stock: **a release's contents were put
+    /// on the shelf when it was announced, and a navigation rail's were not.** That is
+    /// answerable now `CollectionsSource` reads the real membership.
+    ///
+    /// A proportion rather than a count, because a rail with a few new things in it is still
+    /// a rail — "custom link" carries 7 recent pieces among 65. A third rather than a
+    /// majority, because a genuine release carries core stock alongside the new: measured
+    /// across eight live collections, the two real ones sat at 43% and 100% and the four
+    /// rails at 0%, 0%, 0% and 11%, so anywhere in that gap works and the low end of it
+    /// costs less. `publishedAt`, not `createdAt` — brands build a product record a season
+    /// ahead, so creation dates put a genuine collab's pieces months before their own
+    /// announcement (BBC's Yankees edit reads 0 fresh by creation and 43% by publication).
+    ///
+    /// - Parameters:
+    ///   - publishedAt: when the storefront published the collection.
+    ///   - members: when each product in it was published. Empty means the storefront did
+    ///     not answer, which is not the same as an empty collection — see the caller.
+    public static func isAnnouncement(publishedAt: Date, members: [Date]) -> Bool {
+        guard !members.isEmpty else { return false }
+        let window = -contemporaryAfter ... contemporaryBefore
+        let fresh = members.filter { window.contains(publishedAt.timeIntervalSince($0)) }.count
+        return fresh > 0 && fresh * 3 >= members.count
+    }
+
+    /// How long before its announcement a garment may have been shelved and still count as
+    /// part of it. Generous because a collection page routinely goes up *after* its pieces:
+    /// Amiri's Baby Biscotto bags were on sale six days before the page grouping them.
+    private static let contemporaryBefore: TimeInterval = 30 * 86_400
+    /// …and a little after, for the pieces added once the page exists.
+    private static let contemporaryAfter: TimeInterval = 2 * 86_400
+
     /// The words in a collection's name that are distinctive enough to find its contents by.
     ///
     /// A release is announced as one row and its garments are published as another sixty,

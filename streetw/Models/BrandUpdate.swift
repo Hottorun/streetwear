@@ -72,6 +72,17 @@ final class BrandUpdate {
     /// Sizes that returned to stock on the sync that flagged this as a restock.
     var restockedSizes: [String] = []
 
+    /// For a `.collection`, the garments the storefront says are **in** it, keyed the way
+    /// `oncePerProduct` keys one — `shopify:<id>`.
+    ///
+    /// The membership used to be guessed from a distinctive word in the title, falling back
+    /// to whatever published within a day and a half of it, because `/collections.json`
+    /// names a release and does not list it. Shopify serves the real answer one path along
+    /// and `CollectionsSource` now reads it. Empty is normal and means "we were not told" —
+    /// every row written before this shipped, every non-Shopify source, and any storefront
+    /// that did not answer — so `Brand.members(of:)` keeps the word match behind it.
+    var memberExternalIDs: [String] = []
+
     var isSeen: Bool = false
 
     /// Dominant colour read off the photograph rather than out of the title — a brand
@@ -657,10 +668,20 @@ final class BrandUpdate {
     }
 
     /// Whether this product's own text carries one of those words.
+    ///
+    /// **Whole tokens, never substrings** — the same rule the gender classifier learned the
+    /// hard way, met again here. `contains` put every garment whose copy mentions "printed"
+    /// inside a collection called ISLAND PUFF **PRINT** TRUCKER HAT, and every cufflink
+    /// inside one called "custom **link**". A release page is a claim about what is in a
+    /// release, so a loose match is not a slightly worse answer, it is a false one.
     func mentionsAny(of words: [String]) -> Bool {
         guard !words.isEmpty else { return false }
-        let haystack = ([title, productType ?? ""] + tags).joined(separator: " ").lowercased()
-        return words.contains { haystack.contains($0) }
+        let haystack = ([title, productType ?? ""] + tags)
+            .joined(separator: " ")
+            .lowercased()
+            .split(whereSeparator: { !$0.isLetter && !$0.isNumber })
+        let tokens = Set(haystack.map(String.init))
+        return words.contains { tokens.contains($0) }
     }
 
     /// Sizes from this restock that the user actually wears.

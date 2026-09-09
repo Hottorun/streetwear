@@ -245,6 +245,10 @@ Adapters live in `streetw/Sources/` and are resolved through `SourceAdapters.ada
 - `CollectionsSource` — public `/collections.json`, so a release is one named event rather
   than sixty product rows. **This endpoint calls the body field `description`, where
   `/products.json` calls it `body_html`** — the wrong key loses every summary silently.
+  It also reads `/collections/<handle>/products.json` for the few collections a poll is
+  about to announce, which is both the release's real contents and the evidence for
+  `Release.isAnnouncement` — a collection list is mostly navigation, and only the stock in
+  one can tell a drop from a rail. See `docs/design-decisions.md`.
 - `FeedSource` — one `XMLParser` delegate handling both RSS `<item>` and Atom `<entry>`.
 - `SitemapSource` — `/sitemap.xml` for brands that are neither Shopify nor feed-publishing.
   Uses `<lastmod>` as `published_at`, so `since` filtering needs no extra state. Skips

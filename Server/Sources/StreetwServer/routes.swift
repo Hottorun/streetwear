@@ -558,22 +558,46 @@ func routes(_ app: Application) throws {
         brandID: UUID,
         on db: any Database
     ) async throws -> (images: [String], count: Int) {
-        let words = Release.distinctiveWords(in: release.title)
-        guard !words.isEmpty else { return ([], 0) }
+        let matched: [ProductModel]
 
-        let recent = try await ProductModel.query(on: db)
-            .filter(\.$brand.$id == brandID)
-            .filter(\.$kind == UpdateKind.product.rawValue)
-            .sort(\.$publishedAt, .descending)
-            .limit(releaseScan)
-            .all()
+        if !release.memberExternalIDs.isEmpty {
+            // **What the storefront listed.** `CollectionsSource` reads
+            // `/collections/<handle>/products.json` once, at the poll that first sees a
+            // collection, so the membership is a stored fact rather than a guess for
+            // anything polled since. Bounded by the id list, which is a release's worth.
+            let wanted = release.memberExternalIDs
+            matched = try await ProductModel.query(on: db)
+                .filter(\.$brand.$id == brandID)
+                .filter(\.$externalID ~~ wanted)
+                .sort(\.$publishedAt, .descending)
+                .limit(releaseScan)
+                .all()
+                .filter { !$0.imageURLs.isEmpty }
+        } else {
+            // Collections stored before that shipped. The word match is what this route
+            // always did, and it is wrong often enough that it is now the fallback rather
+            // than the answer — see `Brand.members(of:)` for what it printed.
+            let words = Release.distinctiveWords(in: release.title)
+            guard !words.isEmpty else { return ([], 0) }
 
-        let matched = recent.filter { product in
-            guard !product.imageURLs.isEmpty else { return false }
-            let haystack = ([product.title, product.productType ?? ""] + product.tags)
-                .joined(separator: " ")
-                .lowercased()
-            return words.contains { haystack.contains($0) }
+            let recent = try await ProductModel.query(on: db)
+                .filter(\.$brand.$id == brandID)
+                .filter(\.$kind == UpdateKind.product.rawValue)
+                .sort(\.$publishedAt, .descending)
+                .limit(releaseScan)
+                .all()
+
+            matched = recent.filter { product in
+                guard !product.imageURLs.isEmpty else { return false }
+                let tokens = Set(
+                    ([product.title, product.productType ?? ""] + product.tags)
+                        .joined(separator: " ")
+                        .lowercased()
+                        .split(whereSeparator: { !$0.isLetter && !$0.isNumber })
+                        .map(String.init)
+                )
+                return words.contains { tokens.contains($0) }
+            }
         }
 
         // **Spread across the body, not taken in catalogue order.**

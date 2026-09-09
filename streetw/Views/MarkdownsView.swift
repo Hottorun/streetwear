@@ -212,7 +212,15 @@ private struct MarkdownTile: View {
                 }
             }
 
-            SizeRun(entries: SizeRun.entries(for: update, profile: sizes.profile), size: 11, limit: 5)
+            // Wrapping for the same reason `MemberTile` does: this is a half-width cell in
+            // a two-column grid, and five tokens is a cap on the count rather than on the
+            // width — a waist run measures wider than the column and spills into it.
+            SizeRun(
+                entries: SizeRun.entries(for: update, profile: sizes.profile),
+                size: 11,
+                limit: 5,
+                wraps: true
+            )
         }
     }
 }

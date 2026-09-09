@@ -238,11 +238,24 @@ struct SizeRun: View {
     /// Order inside each group is untouched, so each half is still a ladder.
     private var shown: [Entry] {
         if wraps {
-            guard entries.count > Self.regroupAbove else { return entries }
-            return entries.filter(\.isAvailable) + entries.filter { !$0.isAvailable }
+            guard entries.count > Self.regroupAbove else { return capped(entries) }
+            return capped(entries.filter(\.isAvailable) + entries.filter { !$0.isAvailable })
         }
         guard entries.count > limit else { return entries }
         return Array(entries.filter(\.isAvailable).prefix(limit))
+    }
+
+    /// `limit` applies to a wrapped run too, so a **grid tile** can wrap and still be short.
+    ///
+    /// It used to apply only to the unwrapped branch, which left a card's row with one
+    /// defence against overflow — dropping tokens — and dropping is a cap on the *count*
+    /// where the constraint is the *width*. Five waist sizes fit in half a phone and five
+    /// shoe sizes do not, so `MemberTile`'s run ran past its own cell and shoved the price
+    /// into the neighbouring column. Wrapping is the fix for the width; this keeps the cap
+    /// that stops a wrapped tile growing to four lines. The three page-sized callers pass
+    /// `.max`, so nothing they draw changes.
+    private func capped(_ list: [Entry]) -> [Entry] {
+        list.count > limit ? Array(list.prefix(limit)) : list
     }
 
     var body: some View {

@@ -689,6 +689,10 @@ final class RemoteSync {
             // What the garment is, beside what happened to it — so a link shared from
             // Safari can find the card the feed already drew for the same product.
             update.productExternalID = item.productExternalID
+            // For a release, what the storefront says is in it. The poller reads the real
+            // membership once; nil from a server that predates the field, and the client
+            // falls back to the word match exactly as it did.
+            update.memberExternalIDs = item.memberExternalIDs ?? []
             // The server already matched against this device's profile. Kept as a
             // fallback for items that genuinely have no variants — a collection
             // announcement, a page change — where the local check can't answer.
@@ -767,6 +771,13 @@ final class RemoteSync {
         // shipped, and everything already in the feed stays un-matchable by a share.
         if update.productExternalID == nil, let productID = item.productExternalID {
             update.productExternalID = productID
+            changed = true
+        }
+        // Same reason again, for the one row type where a missing list is not a cosmetic
+        // gap: a collection stored before the poller read its membership can only fall back
+        // to the word match, which is what printed the wrong garments in the first place.
+        if update.memberExternalIDs.isEmpty, let members = item.memberExternalIDs, !members.isEmpty {
+            update.memberExternalIDs = members
             changed = true
         }
         guard changed else { return }

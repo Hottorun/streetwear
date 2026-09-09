@@ -106,3 +106,81 @@ struct ReleaseTests {
         #expect(Release.distinctiveWords(in: "Vol 2").contains("2"))
     }
 }
+
+/// The other question, and the one the feed actually asks: **is this a release**, judged by
+/// the stock in it rather than by its name.
+///
+/// Every case here is measured. Each row is a real collection, its real publication date,
+/// and how many of its real members were shelved within thirty days of it — read off the
+/// live storefronts on the evening the feed announced four rails as drops.
+@Suite("Release announcements")
+struct ReleaseAnnouncementTests {
+    private let announced = Date(timeIntervalSince1970: 1_788_000_000)
+
+    /// `fresh` of `total` members shelved with the collection.
+    private func members(fresh: Int, of total: Int) -> [Date] {
+        let recent = announced.addingTimeInterval(-5 * 86_400)
+        let old = announced.addingTimeInterval(-200 * 86_400)
+        return (0..<total).map { $0 < fresh ? recent : old }
+    }
+
+    @Test(
+        "Rails measured on live storefronts are refused",
+        arguments: [
+            // Fear of God — 5 pieces, the newest shelved 54 days before the page.
+            (name: "All Mens Denim Bottoms", fresh: 0, total: 5),
+            // Corteiz — 6 colourways of one hat, the newest 102 days before.
+            (name: "ISLAND PUFF PRINT TRUCKER HAT", fresh: 0, total: 6),
+            // Episodes Project — a theme-editor menu placeholder holding the shop.
+            (name: "custom link", fresh: 7, total: 65)
+        ]
+    )
+    func railsAreRefused(row: (name: String, fresh: Int, total: Int)) {
+        #expect(
+            !Release.isAnnouncement(
+                publishedAt: announced,
+                members: members(fresh: row.fresh, of: row.total)
+            ),
+            "announced a rail: \(row.name)"
+        )
+    }
+
+    @Test(
+        "Releases measured on live storefronts are admitted",
+        arguments: [
+            // BBC's Yankees womenswear edit — the one the title vocabulary would refuse,
+            // since "edit" and "women" both read as navigation. 43%.
+            (name: "The Women's Edit: New York Yankees | Billionaire Boys Club", fresh: 10, total: 23),
+            // Amiri's bag launch: the page went up six days after the bags did.
+            (name: "BABY BISCOTTO BAG", fresh: 4, total: 4),
+            (name: "AUTUMN-WINTER 2026 MENSWEAR", fresh: 21, total: 35)
+        ]
+    )
+    func releasesAreAdmitted(row: (name: String, fresh: Int, total: Int)) {
+        #expect(
+            Release.isAnnouncement(
+                publishedAt: announced,
+                members: members(fresh: row.fresh, of: row.total)
+            ),
+            "refused a real release: \(row.name)"
+        )
+    }
+
+    /// An empty answer is not an empty collection — it is a storefront that did not reply,
+    /// and the caller announces those rather than losing a drop to one failed request.
+    @Test("Nothing to read is not a release")
+    func emptyIsRefused() {
+        #expect(!Release.isAnnouncement(publishedAt: announced, members: []))
+    }
+
+    /// A collection page routinely goes up after the garments, and occasionally before —
+    /// Amiri's bags were on sale six days early, and pieces get added once a page exists.
+    @Test("Contemporary runs both ways")
+    func windowIsTwoSided() {
+        let justAfter = [announced.addingTimeInterval(86_400)]
+        #expect(Release.isAnnouncement(publishedAt: announced, members: justAfter))
+
+        let longBefore = [announced.addingTimeInterval(-90 * 86_400)]
+        #expect(!Release.isAnnouncement(publishedAt: announced, members: longBefore))
+    }
+}

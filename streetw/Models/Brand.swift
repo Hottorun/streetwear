@@ -148,61 +148,84 @@ final class Brand {
         BrandUpdate.oncePerProduct(updates).prefix(limit).map { $0 }
     }
 
-    /// The garments that landed with a collection announcement.
+    /// The garments in a collection.
     ///
-    /// A collection is the one kind of update that is *about* other updates. `/collections.json`
-    /// says a release exists and names it; it does not list what is in it, and the products
-    /// arrive separately down `/products.json`. So the membership is reconstructed here,
-    /// from two signals that agree in practice and cost no network:
+    /// A collection is the one kind of update that is *about* other updates, and
+    /// `/collections.json` names a release without listing it. This used to reconstruct the
+    /// membership from two guesses — a distinctive word from the title, then, failing that,
+    /// anything published within a day and a half of it — on the argument that reading the
+    /// real list would be a network call per card in a scrolling feed, and that being wrong
+    /// costs a few extra garments rather than a missed drop.
     ///
-    /// - **A distinctive word.** Brands tag and title their releases — "FW26", "Denim
-    ///   Tears x …" — so a product carrying a rare word from the collection's name is
-    ///   almost certainly in it. Common words are useless for this and are skipped, or
-    ///   "The Collection" would match the entire catalogue.
-    /// - **Landing at the same time.** Failing that, a release and its products publish
-    ///   together. The window is generous because storefronts stagger a drop across a day.
+    /// **Both halves of that were wrong.** The call does not belong in a scrolling feed and
+    /// never did: it belongs in the poll, once, when the collection is first seen, which is
+    /// where `CollectionsSource` now makes it. And the cost was not a few extra garments.
+    /// Corteiz announced ISLAND PUFF PRINT TRUCKER HAT, whose six colourways of that hat
+    /// share no word with any of them; the word match found nothing, the window swept up
+    /// whatever else had landed, and the release page printed five ALWEIZ board shorts, a
+    /// ripstop bag and a bucket hat under "5 PIECES". Not one of them was in the collection.
+    /// A page that states what is in a release is making a claim about stock, and it was
+    /// false on every brand it was checked against.
     ///
-    /// Deliberately a heuristic. The alternative is fetching `/collections/<handle>/products.json`
-    /// per collection, which is a network call per card in a scrolling feed, and being
-    /// wrong here costs a page with a few extra garments on it — not a missed drop.
+    /// So: the storefront's own answer when we have it, the word match for rows written
+    /// before we did, and **nothing at all** otherwise. A release we cannot name the
+    /// contents of prints no contents — `CollectionCard` and `CollectionReleaseView` both
+    /// draw an empty strip rather than a wrong one, which is the honest shape for a
+    /// collection page a brand has announced and not yet filled.
     func members(
         of collection: BrandUpdate,
-        window: TimeInterval = 36 * 3_600,
         cap: Int = 60
     ) -> [BrandUpdate] {
-        // **Only things that dropped.** This filtered on `kind != .collection`, which admits
-        // every other kind of event a brand produces — and a release lands in the middle of
-        // ordinary trading, so the window swept up restocks of last season's stock, price
-        // drops on the sale rail and page changes, and printed them as the contents of a new
-        // collection. A restock is by definition *not* part of something that has only just
-        // been announced: it is a garment that already existed coming back. The word match
-        // is no protection either, since a re-shelved item from the same season carries the
-        // same season code.
+        // **What the storefront said, whenever it said anything.**
         //
-        // Deduplicated for the same reason `recentUpdates` is: one garment, one tile.
+        // Matched on the garment's key rather than the event's, the same one
+        // `oncePerProduct` folds on: a feed row is `event:<uuid>` in server mode and one
+        // garment produces several over its life, so joining on `externalID` would match
+        // nothing on the mode the app ships in.
+        //
+        // **And it admits any kind of row, which the guess below must not.** The rule here
+        // used to be `.product` only, everywhere, on the argument that a release lands in
+        // the middle of ordinary trading and a restock is by definition not part of
+        // something only just announced. That is an argument about a *guess* — it was
+        // protecting a 36-hour window that would otherwise sweep up last season's stock —
+        // and it is simply false against a list the shop published. Billionaire Boys Club
+        // is the proof: its Yankees collection is 29 garments, 14 of them shelved in the
+        // last fortnight, and every one of those 14 has a product record 181 days older
+        // than its shelving. `Reshelving` reads that correctly and files all fourteen as
+        // `.restock`, so the `.product` filter left the release with nothing in it — a card
+        // that could never fill, for a collection sitting on the storefront in plain sight.
+        // A re-merchandised collection is most of what a brand announces; refusing to draw
+        // one is refusing to draw the common case.
+        //
+        // Nothing that is not a garment can slip in, because the join is on the id list:
+        // a page change or a lock carries no `shopify:<id>` and matches no member.
+        if !collection.memberExternalIDs.isEmpty {
+            let wanted = Set(collection.memberExternalIDs)
+            let named = updates.filter {
+                $0.id != collection.id && wanted.contains($0.productExternalID ?? $0.externalID)
+            }
+            return BrandUpdate.oncePerProduct(named)
+                .prefix(cap)
+                .map { $0 }
+        }
+
+        // Rows written before the membership was carried, and sources that never carry it.
+        // Brands tag and title their releases, so a product holding a rare word from the
+        // collection's name is usually in it — good enough to keep an old card populated,
+        // and not good enough to have ever been the primary answer.
+        //
+        // **`.product` only, here and only here.** This is the guess, and the objection
+        // above is the right one for a guess: a re-shelved item from the same season
+        // carries the same season code, so admitting restocks would let the sale rail into
+        // a page announcing a new season. Deduplicated for the same reason `recentUpdates`
+        // is: one garment, one tile.
+        let words = BrandUpdate.distinctiveWords(in: collection.title)
+        guard !words.isEmpty else { return [] }
         let candidates = BrandUpdate.oncePerProduct(
             updates.filter { $0.kind == .product && $0.id != collection.id }
         )
-        let words = BrandUpdate.distinctiveWords(in: collection.title)
-
-        // A word match is evidence; a timestamp is only an absence of evidence to the
-        // contrary. So the two are tried in order rather than OR'd together — OR'ing them
-        // was wrong in the one case that matters most: on a brand's **first sync** the
-        // whole back catalogue is stored at once and shares a publication time, so a
-        // release announced in the same batch swallowed all of it and the page announced
-        // "292 PIECES IN THIS RELEASE".
-        if !words.isEmpty {
-            let named = candidates.filter { $0.mentionsAny(of: words) }
-            if !named.isEmpty { return named.sorted(by: BrandUpdate.newestFirst) }
-        }
-
-        // Nothing in the name to go on. Fall back to what landed alongside it, capped —
-        // a release is a release and not a catalogue, and a page of sixty is already
-        // generous enough to be wrong without being absurd.
-        let start = collection.publishedAt.addingTimeInterval(-window)
-        let end = collection.publishedAt.addingTimeInterval(window)
         return candidates
-            .filter { (start...end).contains($0.publishedAt) }
+            .filter { $0.mentionsAny(of: words) }
             .sorted(by: BrandUpdate.newestFirst)
             .prefix(cap)
             .map { $0 }

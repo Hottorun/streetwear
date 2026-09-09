@@ -623,7 +623,8 @@ private struct CatalogueTile: View {
             SizeRun(
                 entries: SizeRun.entries(for: update, profile: sizes.profile),
                 size: 10,
-                limit: 6
+                limit: 6,
+                wraps: true
             )
         }
         .contentShape(.rect)

@@ -476,6 +476,12 @@ public struct FeedItem: Codable, Sendable, Hashable, Identifiable {
     ///
     /// Nil for an event with no product behind it: a page change, a storefront locking.
     public var productExternalID: String?
+    /// For a `.collection`, the products the storefront says are in it.
+    ///
+    /// Optional because a server that predates it sends nothing, and an older client must
+    /// go on decoding — the client falls back to matching a distinctive word from the
+    /// title, which is what every release page did before this existed and got wrong.
+    public var memberExternalIDs: [String]?
 
     public var id: UUID { eventID }
 
@@ -508,7 +514,8 @@ public struct FeedItem: Codable, Sendable, Hashable, Identifiable {
         productType: String? = nil,
         tags: [String]? = nil,
         genderVersion: Int? = nil,
-        productExternalID: String? = nil
+        productExternalID: String? = nil,
+        memberExternalIDs: [String]? = nil
     ) {
         self.eventID = eventID
         self.kind = kind
@@ -531,6 +538,7 @@ public struct FeedItem: Codable, Sendable, Hashable, Identifiable {
         self.tags = tags
         self.genderVersion = genderVersion
         self.productExternalID = productExternalID
+        self.memberExternalIDs = memberExternalIDs
     }
 }
 

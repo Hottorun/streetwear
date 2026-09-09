@@ -1220,6 +1220,133 @@ struct CollectionsSourceTests {
         #expect(result.etag == "W/\"c1\"")
     }
 
+    /// The membership question, with a `since` — which is every poll after the first.
+    ///
+    /// Each of these is a shape taken from a live storefront on the evening the feed was
+    /// full of furniture; see `Release.isAnnouncement` for the measured proportions.
+    @Suite("Collection membership")
+    struct Membership {
+        private let list = """
+        {"collections": [
+          {"id": 10, "title": "&Kin Fall 2026", "handle": "kin-fall-2026",
+           "published_at": "2026-09-08T09:00:00Z", "image": null, "products_count": 4},
+          {"id": 11, "title": "All Mens Denim Bottoms", "handle": "all-mens-denim",
+           "published_at": "2026-09-08T09:00:00Z", "image": null, "products_count": 5}
+        ]}
+        """
+
+        /// Four garments shelved the week the collection was announced: a release.
+        private let fresh = """
+        {"products": [
+          {"id": 1, "published_at": "2026-09-05T09:00:00Z"},
+          {"id": 2, "published_at": "2026-09-05T09:00:00Z"},
+          {"id": 3, "published_at": "2026-09-06T09:00:00Z"},
+          {"id": 4, "published_at": "2026-09-07T09:00:00Z"}
+        ]}
+        """
+
+        /// Five garments that have been on the shelf for months: a navigation rail. This is
+        /// Fear of God's denim page, which the feed announced as a new collection and then
+        /// drew as "Nothing in it yet".
+        private let stale = """
+        {"products": [
+          {"id": 5, "published_at": "2026-03-05T09:00:00Z"},
+          {"id": 6, "published_at": "2026-03-05T09:00:00Z"},
+          {"id": 7, "published_at": "2026-04-06T09:00:00Z"},
+          {"id": 8, "published_at": "2026-05-07T09:00:00Z"},
+          {"id": 9, "published_at": "2026-06-07T09:00:00Z"}
+        ]}
+        """
+
+        private func source() -> BrandSource {
+            BrandSource(kind: .collections, url: URL(string: "https://kith.com/collections.json")!)
+        }
+
+        private func client(membership: Bool = true) -> MockHTTPClient {
+            let http = MockHTTPClient()
+            http.stub("/collections.json", .init(body: Data(list.utf8)))
+            if membership {
+                http.stub("/collections/kin-fall-2026/products.json?limit=250", .init(body: Data(fresh.utf8)))
+                http.stub("/collections/all-mens-denim/products.json?limit=250", .init(body: Data(stale.utf8)))
+            }
+            return http
+        }
+
+        private let lastPoll = ISO8601DateFormatter().date(from: "2026-09-08T08:00:00Z")!
+
+        @Test("A collection of newly shelved garments is announced, carrying its contents")
+        func announcesARelease() async throws {
+            let result = try await CollectionsSource(http: client()).fetch(source(), since: lastPoll)
+
+            let item = try #require(result.items.first { $0.title == "&Kin Fall 2026" })
+            #expect(item.memberExternalIDs == ["shopify:1", "shopify:2", "shopify:3", "shopify:4"])
+        }
+
+        /// The whole point. A rail of months-old stock is not news because a merchandiser
+        /// published the page today, and the title cannot tell you that — "All Mens Denim
+        /// Bottoms" and "&Kin Fall 2026" are both perfectly plausible names for a drop.
+        @Test("A rail of old stock is refused however recently its page was published")
+        func refusesARail() async throws {
+            let result = try await CollectionsSource(http: client()).fetch(source(), since: lastPoll)
+
+            #expect(result.items.count == 1)
+            #expect(!result.items.contains { $0.title == "All Mens Denim Bottoms" })
+        }
+
+        /// A storefront that will not answer must not cost a real drop. The card degrades
+        /// to what it always was — the client's word match — rather than vanishing.
+        @Test("A storefront that does not answer is still announced, without members")
+        func announcesUnverifiedOnFailure() async throws {
+            let http = client(membership: false)
+            let result = try await CollectionsSource(http: http).fetch(source(), since: lastPoll)
+
+            #expect(result.items.count == 2)
+            #expect(result.items.allSatisfy { $0.memberExternalIDs.isEmpty })
+        }
+
+        /// One launch, merchandised as three overlapping rails. Amiri published BISCOTTO
+        /// BAG (8), BABY BISCOTTO BAG (4) and BISCOTTO SHOULDER BAG (4) on the same day,
+        /// with both fours inside the eight — verified against the live storefront.
+        @Test("A collection inside another announced one is not a second piece of news")
+        func collapsesSubsets() {
+            let whole = FetchedItem(
+                externalID: "collection:1", title: "BISCOTTO BAG",
+                publishedAt: .now, kind: .collection,
+                memberExternalIDs: (1...8).map { "shopify:\($0)" }
+            )
+            let part = FetchedItem(
+                externalID: "collection:2", title: "BABY BISCOTTO BAG",
+                publishedAt: .now, kind: .collection,
+                memberExternalIDs: (1...4).map { "shopify:\($0)" }
+            )
+            let elsewhere = FetchedItem(
+                externalID: "collection:3", title: "AUTUMN-WINTER 2026",
+                publishedAt: .now, kind: .collection,
+                memberExternalIDs: ["shopify:90", "shopify:91"]
+            )
+            let unverified = FetchedItem(
+                externalID: "collection:4", title: "A shop that did not answer",
+                publishedAt: .now, kind: .collection
+            )
+
+            let kept = CollectionsSource.withoutSubsets([whole, part, elsewhere, unverified])
+
+            #expect(kept.map(\.title) == [
+                "BISCOTTO BAG", "AUTUMN-WINTER 2026", "A shop that did not answer"
+            ])
+        }
+
+        /// A brand's first sync stores its whole catalogue pre-marked seen, so there is
+        /// nothing to qualify — and a storefront like Amiri's carries 250 collections.
+        @Test("A baseline poll spends no requests on membership")
+        func baselineAsksNothing() async throws {
+            let http = client()
+            _ = try await CollectionsSource(http: http).fetch(source(), since: nil)
+
+            #expect(http.requestedKeys == ["/collections.json"])
+        }
+    }
+
     /// "All" and "Frontpage" exist on every Shopify store as navigation. Announcing them
     /// would be wrong on the first poll and wrong again on every theme change.
     @Test("Structural collections are never announced")
