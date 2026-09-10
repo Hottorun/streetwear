@@ -107,6 +107,22 @@ Changing these silently will break intended behavior:
   does not** — a size you don't wear is said in vermilion, not by removing the product, because a
   sold-out size today is the restock this app exists to catch. A new screen that lists a brand's
   output calls `passes`; it does not write its own copy of the rule.
+- **"May this be shown" and "is this yours" are two questions, and one predicate was
+  answering both.** `SizeProfile.matches` is the never-hide filter: it says *yes* whenever it
+  cannot tell — an unreadable scale, a ladder nobody has filled in, no profile at all — because
+  hiding a real drop is the one outcome it must never produce. Every label in the app was reading
+  that as a statement about the reader. "IN YOUR SIZE", the vermilion rule under a token, the
+  accent bar on a tile, "BACK IN L, S" and `availableInMySize` on the wire are **claims**, and
+  answering a claim with the filter's optimism turns "we cannot read this size" into "yes, that is
+  yours". A profile holding a bare `44` — `.other`, because 44 is as likely an EU shoe, an EU
+  jacket or a waist, and only "EU 44" says which — had a run of 38 40 42 come back ruled in
+  vermilion as the reader's sizes. An empty profile was worse: `matches` short-circuits on
+  `isEmpty`, so the entire feed was marked as somebody's size before they had entered one.
+  `SizeProfile.claims` is the strict half and is silent on every "don't know" — the opposite
+  default, deliberately, because an unmarked size costs a glance at the run and a wrongly marked
+  one costs the accent all its meaning. One-size is shown and not claimed: it fits everybody,
+  which is not a fact about this reader. `Notifier` keeps `matches`, because waking somebody is
+  the place where a false positive really is cheaper than a miss.
 - **A count is subject to the same filter as the list it counts.** `Brand.unseenCount` counts
   everything unseen and no screen means that: the feed cleared to "all caught up" under a Menswear
   setting while the brands list still claimed 40 unread and the brand page still printed UNREAD in

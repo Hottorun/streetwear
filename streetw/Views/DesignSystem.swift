@@ -312,7 +312,7 @@ extension SizeRun {
             // which sizes just came back, and those are available by definition.
             return update.restockedSizes
                 .filter { $0 != "Default Title" && !$0.isEmpty }
-                .map { Entry(token: $0.uppercased(), isAvailable: true, isMine: profile.matches($0)) }
+                .map { Entry(token: $0.uppercased(), isAvailable: true, isMine: profile.claims($0)) }
         }
 
         return entries(for: update.variants, profile: profile)
@@ -340,7 +340,7 @@ extension SizeRun {
                 byToken[token] = Entry(
                     token: token,
                     isAvailable: variant.available,
-                    isMine: profile.matches(raw)
+                    isMine: profile.claims(raw)
                 )
                 order.append(token)
             }

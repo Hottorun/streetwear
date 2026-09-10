@@ -982,7 +982,7 @@ private struct BrandSpread: View {
         for item in items {
             for size in item.restockedSizes where size != "Default Title" && !size.isEmpty {
                 guard seen.insert(size).inserted else { continue }
-                if profile.matches(size) { mine.append(size) } else { others.append(size) }
+                if profile.claims(size) { mine.append(size) } else { others.append(size) }
             }
         }
         let shown = (mine + others).prefix(4)

@@ -472,7 +472,7 @@ final class BrandUpdate {
     /// Buyable right now *and* in a size the user wears.
     func availableSizes(matching profile: SizeProfile) -> [String] {
         variants
-            .filter { $0.available && profile.matches($0) }
+            .filter { $0.available && profile.claims($0) }
             .map(\.displaySize)
     }
 
@@ -480,7 +480,7 @@ final class BrandUpdate {
     /// filter should never hide something just because we don't know its sizing.
     func isAvailable(in profile: SizeProfile) -> Bool {
         guard !variants.isEmpty else { return true }
-        return variants.contains { $0.available && profile.matches($0) }
+        return variants.contains { $0.available && profile.claims($0) }
     }
 
     /// Whether this item belongs in a browsing view at all.
@@ -686,7 +686,7 @@ final class BrandUpdate {
 
     /// Sizes from this restock that the user actually wears.
     func restockedSizes(matching profile: SizeProfile) -> [String] {
-        restockedSizes.filter { profile.matches($0) }
+        restockedSizes.filter { profile.claims($0) }
     }
 
     var imageURLs: [URL] {
@@ -700,12 +700,41 @@ final class BrandUpdate {
     /// all but one away. Every tile in every grid calls it, and `BrandSpread.lead` calls it
     /// down a brand's products until one answers, so a feed of forty-nine cards was parsing
     /// several hundred URLs it had no intention of using.
-    var primaryImageURL: URL? { imageURLStrings.first.flatMap(URL.init(string:)) }
-
-    /// Whether there is a photograph at all, without parsing one.
+    /// The first string that is actually a URL, not simply the first string.
     ///
-    /// The question every grid actually asks before drawing a tile. `primaryImageURL != nil`
-    /// answers it by building a `URL`, which is the expensive half of a test whose result is
-    /// a `Bool`.
-    var hasPhotograph: Bool { imageURLStrings.first?.isEmpty == false }
+    /// These two lines have to agree with `hasPhotograph` below, and they did not: one
+    /// tested the array for a non-empty first element and the other parsed it. A row whose
+    /// leading string will not parse therefore passed every "has a photograph" filter in
+    /// the app and then handed `UpdateImage` a nil — and a nil url is the one path in
+    /// `CachedImage` that fails *instantly and permanently*, with no request, no retry and
+    /// nothing to recover on. What is drawn is the wordmark placeholder, which is the mark
+    /// reserved for a product that genuinely has no picture, so the tile reads as a
+    /// statement about the garment rather than as the fault it is. It survives relaunching
+    /// the app, because nothing about it involves the network.
+    ///
+    /// Falling through to the next string rather than giving up also fixes the narrower
+    /// case: a product whose first photograph is unusable and whose other eight are fine
+    /// had no picture at all.
+    var primaryImageURL: URL? {
+        for string in imageURLStrings where !string.isEmpty {
+            if let url = URL(string: string) { return url }
+        }
+        return nil
+    }
+
+    /// Whether there is a photograph at all.
+    ///
+    /// The question every grid asks before drawing a tile, and it **must** be the same
+    /// question `primaryImageURL` answers — a filter that admits a row the drawing code
+    /// then cannot draw is worse than no filter, because the row reaches the screen as a
+    /// permanent placeholder instead of being left out.
+    ///
+    /// The cheap emptiness test survives as the first clause, which is what the original
+    /// version of this was reaching for: it settles the common case — Palace's sitemap rows
+    /// hold an empty array for as long as they exist — without parsing anything. Only a row
+    /// that claims a photograph pays for one `URL` to confirm it.
+    var hasPhotograph: Bool {
+        guard imageURLStrings.first?.isEmpty == false else { return false }
+        return primaryImageURL != nil
+    }
 }

@@ -478,6 +478,47 @@ public struct SizeProfile: Codable, Hashable, Sendable {
         }
     }
 
+    /// Whether this is a size the wearer actually told us they wear.
+    ///
+    /// **The strict half of a pair, and the half that was missing.** `matches` above answers
+    /// "may this be shown", and it answers *true* whenever it does not know — an
+    /// unrecognised scale, a ladder nobody has filled in, no profile at all — because
+    /// hiding a real drop is the one outcome that filter must never produce. That is right
+    /// for a filter and wrong for a label, and every caller wanting a label was using it:
+    /// "IN YOUR SIZE", the vermilion rule under a token, "BACK IN L, S", the accent bar on
+    /// a tile and `availableInMySize` on the wire are all **claims about the reader**, and
+    /// answering them with the filter's optimism turns "we cannot read this size" into
+    /// "yes, that is yours".
+    ///
+    /// What that looked like: a profile holding a bare "44" — which is `.other`, since 44
+    /// is as likely an EU shoe, an EU jacket or a waist, and only "EU 44" says which — had
+    /// every unreadable size in the app ruled in vermilion, so a run of 38 40 42 came back
+    /// as *your* sizes to somebody who wears none of them. An empty profile was worse
+    /// still: `isEmpty` returns true from `matches`, so the whole feed was marked as the
+    /// reader's size before they had entered one.
+    ///
+    /// Silent rather than optimistic on every "don't know", which is the opposite default
+    /// from `matches` and deliberately so: an unmarked size costs a glance at the run, and
+    /// a wrongly marked one costs the accent all its meaning.
+    public func claims(_ raw: String) -> Bool {
+        guard let size = SizeNormalizer.normalize(raw) else { return false }
+        switch size.kind {
+        case .apparel: return apparel.contains(size.token)
+        case .waist: return waist.contains(size.token)
+        case .shoe:
+            guard !shoe.isEmpty else { return false }
+            return size.isConverted ? matchesConvertedShoe(size.token) : shoe.contains(size.token)
+        // A one-size item fits everybody, which is why `matches` admits it — but "fits
+        // everybody" is not a fact about *this* reader, and printing IN YOUR SIZE over a
+        // beanie that says nothing about them is the accent spent on nothing.
+        case .oneSize: return false
+        // The whole point. We could not read it, so we cannot claim it.
+        case .other: return false
+        }
+    }
+
+    public func claims(_ variant: VariantInfo) -> Bool { claims(variant.displaySize) }
+
     /// A converted size matches anything within half a size.
     ///
     /// Brand conversion tables genuinely disagree by that much — a foot that is a US 9

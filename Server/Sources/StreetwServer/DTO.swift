@@ -94,7 +94,7 @@ extension FeedItem {
             restockedSizes: profile.isEmpty ? event.sizes : mine,
             availableInMySize: variants.isEmpty
                 ? false
-                : variants.contains { $0.available && profile.matches($0.asVariantInfo) },
+                : variants.contains { $0.available && profile.claims($0.asVariantInfo) },
             // Sent in full so the client's size run, colourway swatches and restock
             // watcher have something to work with. Withholding these is what made the
             // whole size feature inert in the app's default server-backed mode.

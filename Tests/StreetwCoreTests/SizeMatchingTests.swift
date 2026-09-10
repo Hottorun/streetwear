@@ -314,3 +314,70 @@ struct SizeProfileTests {
         #expect(SizeProfile().summary == "Not set")
     }
 }
+
+/// The other half of the pair: what the app is entitled to call *your* size.
+///
+/// `matches` is the never-hide filter and says yes whenever it cannot tell. Every label in
+/// the app — "IN YOUR SIZE", the vermilion rule, "BACK IN L, S" — was reading that as a
+/// statement about the reader, so a profile it could not read marked sizes nobody wears.
+@Suite("Size claims")
+struct SizeClaimTests {
+    private func profile(apparel: [String] = [], shoe: [String] = [], waist: [String] = []) -> SizeProfile {
+        var p = SizeProfile()
+        p.apparel = Set(apparel)
+        p.shoe = Set(shoe)
+        p.waist = Set(waist)
+        return p
+    }
+
+    /// The reported case. A bare "44" is `.other` — as likely an EU shoe, an EU jacket or a
+    /// waist — so it enters no ladder, and the run of bare numbers beside it is `.other`
+    /// too. The filter says yes to all of them; the label must say no.
+    @Test("An unreadable size is never claimed, and neither are the ones beside it")
+    func unreadableIsNeverClaimed() {
+        let mine = profile(shoe: ["44"])
+        for token in ["38", "40", "42", "44"] {
+            #expect(mine.matches(token), "the filter must not hide \(token)")
+            #expect(!mine.claims(token), "claimed \(token) as the reader's size")
+        }
+    }
+
+    /// Worse than the above and the same root: `matches` short-circuits on an empty
+    /// profile, so the whole feed came back marked as somebody's size before they had
+    /// entered one.
+    @Test("An empty profile claims nothing")
+    func emptyClaimsNothing() {
+        let empty = SizeProfile()
+        #expect(empty.matches("M"))
+        #expect(!empty.claims("M"))
+    }
+
+    /// A ladder nobody has filled in is not a ladder that matches everything. Somebody who
+    /// entered shoe sizes and no letters must not have every hoodie called their size.
+    @Test("An unfilled ladder claims nothing on that ladder")
+    func unfilledLadderClaimsNothing() {
+        let shoesOnly = profile(shoe: ["10"])
+        #expect(shoesOnly.matches("M"))
+        #expect(!shoesOnly.claims("M"))
+        #expect(shoesOnly.claims("10"))
+    }
+
+    /// And it still says yes when it genuinely knows — including across a conversion, where
+    /// the half-size tolerance is the whole reason the shoe ladder is stored in US.
+    @Test("A size the reader actually wears is claimed")
+    func realSizesAreClaimed() {
+        #expect(profile(apparel: ["L"]).claims("Large"))
+        #expect(profile(waist: ["32"]).claims("W32"))
+        #expect(profile(shoe: ["10"]).claims("EU 44"))
+        #expect(!profile(shoe: ["10"]).claims("EU 38"))
+    }
+
+    /// One size fits everyone, which is why the filter admits it — but that is not a fact
+    /// about this reader, and the accent is spent on nothing by saying so.
+    @Test("One-size is shown but not claimed")
+    func oneSizeIsNotAClaim() {
+        let mine = profile(apparel: ["M"])
+        #expect(mine.matches("One Size"))
+        #expect(!mine.claims("One Size"))
+    }
+}
