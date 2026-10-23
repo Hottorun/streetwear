@@ -141,6 +141,11 @@ public enum BrandDiscovery {
         guard !trimmed.isEmpty else { return nil }
         let withScheme = trimmed.contains("://") ? trimmed : "https://\(trimmed)"
         guard var components = URLComponents(string: withScheme), let host = components.host else { return nil }
+        // **Every user-supplied URL in the project passes through here**, on both sides of
+        // the wire, which is why the refusal lives here rather than at the two routes that
+        // happen to be the dangerous ones today. A host that is not publicly routable is
+        // not a storefront; see `HostSafety` for what that bought.
+        guard HostSafety.isPublic(host: host) else { return nil }
         components.scheme = "https"
         components.host = host
         components.path = ""

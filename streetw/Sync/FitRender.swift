@@ -16,7 +16,11 @@ import StreetwCore
 import SwiftUI
 
 enum FitRender {
-    private static let log = Logger(subsystem: "com.kern.functional.streetw", category: "fits")
+    // `nonisolated`: read from the detached encode task below. A `Logger` is `Sendable`
+    // and stateless, so this was only main-actor by the project-wide inference.
+    private nonisolated static let log = Logger(
+        subsystem: "com.kern.functional.streetw", category: "fits"
+    )
 
     /// Beside the cutouts, and for the same reason: regenerating is not free, and a
     /// thumbnail that disappears under storage pressure looks like a lost outfit.
@@ -44,6 +48,12 @@ enum FitRender {
     ///   contain holes and should not be written — see `write`.
     @discardableResult
     static func warm(_ fit: Fit) async -> Bool {
+        // **A deleted fit must not answer `true`.** `Fit.placed` is `isGone`-guarded and
+        // answers emptily, so a fit deleted before this ran walked an empty list, found
+        // nothing incomplete, and reported success — after which the caller wrote
+        // `fit.renderFile` on a deleted model and trapped. Reachable by keeping a suggested
+        // fit and deleting it, or cancelling the canvas, while the piece loads.
+        guard !fit.isGone else { return false }
         var isComplete = true
         for entry in fit.placed where entry.item.update?.cutoutFile == nil {
             // The same photograph `FitPieceImage` will draw, at the same width — asking for
@@ -61,7 +71,9 @@ enum FitRender {
             )
             if decoded == nil { isComplete = false }
         }
-        return isComplete
+        // Asked again on the way out: the loop above is a network fetch per piece, which is
+        // seconds, and the delete usually happens *during* it rather than before.
+        return isComplete && !fit.isGone
     }
 
     /// Draws the canvas off-screen and writes it out. Returns the filename, or nil if
@@ -73,6 +85,8 @@ enum FitRender {
     @MainActor
     @discardableResult
     static func write(_ fit: Fit, side: CGFloat = 900) async -> String? {
+        // Same reason as `warm`, and this one reaches `fit.id` directly.
+        guard !fit.isGone else { return nil }
         let renderer = ImageRenderer(
             // No `.background` here: the ground belongs to the fit and `FitCanvasSurface`
             // draws it. It used to be an adaptive `Color.paper`, which baked whichever

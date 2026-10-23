@@ -72,6 +72,11 @@ final class Fit {
     /// a build that knew a ground this one does not must still open.
     var ground: FitBackground {
         guard !isGone else { return .base }
+        // `nonisolated` on the initialiser rather than a hop here: the project builds with
+        // `SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor`, so a plain `enum` init is inferred
+        // main-actor even though it reads nothing but its own raw value. In Swift 5 this is
+        // a warning and the call happens anyway; in Swift 6 it is an error. See the
+        // initialiser's own note.
         return backgroundName.flatMap(FitBackground.init(rawValue:)) ?? .base
     }
 
@@ -197,7 +202,11 @@ final class Fit {
 /// decision. It round-trips through `rawValue` like any other case, so nothing downstream
 /// knows the difference, and an unparseable string still falls back to `base` rather than
 /// failing, which is what lets a fit written by a newer build open here.
-enum FitBackground: Hashable, Identifiable, Sendable {
+// `nonisolated` on the whole type: a ground is a string and a colour, with no state that
+// belongs to any actor, and it is read from `Fit.ground` — which `FitRender` reaches from
+// a detached task. The project's `SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor` would
+// otherwise infer main-actor on every member of it.
+nonisolated enum FitBackground: Hashable, Identifiable, Sendable {
     /// The default, matching `Color.paper` in its light appearance.
     case bone
     case chalk
@@ -286,6 +295,12 @@ enum FitBackground: Hashable, Identifiable, Sendable {
     /// Fails only on a string that is neither a known token nor a hex, and `Fit.ground`
     /// treats that as the default — a fit written by a build that knew a ground this one does
     /// not must still open.
+    ///
+    /// **`nonisolated` because it genuinely is.** The project sets
+    /// `SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor`, which infers main-actor on everything
+    /// that does not say otherwise — including this, which reads nothing but the string it
+    /// was handed. Under Swift 5 the mismatch is a warning and the call proceeds; under
+    /// Swift 6 it is an error, and `Fit.ground` is read from nonisolated contexts.
     init?(rawValue: String) {
         if let preset = Self.presets.first(where: { $0.rawValue == rawValue }) {
             self = preset
@@ -816,7 +831,7 @@ enum FitSuggestions {
         for slot in filled.keys {
             filled[slot] = Array(
                 (filled[slot] ?? [])
-                    .sorted { ($0.update.publishedAt ?? .distantPast) > ($1.update.publishedAt ?? .distantPast) }
+                    .sorted { $0.update.publishedAt > $1.update.publishedAt }
                     .prefix(perSlotCandidates)
             )
         }

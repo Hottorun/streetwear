@@ -125,13 +125,26 @@ struct streetwApp: App {
                 .environment(confirmation)
                 .environment(collection)
                 .environment(hints)
-                .task { await DevSeed.runIfRequested(in: sharedModelContainer.mainContext) }
+                .task {
+                    await DevSeed.runIfRequested(in: sharedModelContainer.mainContext)
+                    // Screenshot affordance: `-demoOpen <externalID>` lands on one product
+                    // page, through the same route a notification tap takes.
+                    if let id = UserDefaults.standard.string(forKey: "demoOpen"), !id.isEmpty {
+                        route.open(.update(externalID: id))
+                    }
+                }
         }
         .modelContainer(sharedModelContainer)
         .onChange(of: scenePhase) { _, phase in
             // Queue the next wake-up on the way out. Submitting while active is allowed
             // but pointless — the system only ever runs it once we're backgrounded.
             if phase == .background { AppDelegate.schedule() }
+
+            // The Discover ledger is written in batches rather than once per card — see
+            // `DiscoverDeck.markSeen` — so leaving the foreground is where it gets settled.
+            // `.inactive` as well as `.background`: that is the phase a swipe-up to the app
+            // switcher reaches, and the one before a kill.
+            if phase != .active { deck.persistSeen() }
 
             // Anything shared while the app was closed is filed on the way back in.
             // On becoming active rather than on launch, because the usual path is
@@ -220,6 +233,7 @@ struct streetwApp: App {
 enum DevSeed {
     static func runIfRequested(in context: ModelContext) async {
         seedSizesIfRequested()
+        DemoCatalog.seedIfRequested(in: context)
         await seedBrandsIfRequested(in: context)
         // **Not only inside `-seedBrands`.** It was called at the tail of the brand seed and
         // nowhere else, so in server mode — where brands arrive from the sync rather than

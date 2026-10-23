@@ -739,7 +739,7 @@ actor PollLoop {
                 // a crash or a transient APNs failure, and this is what picks it back up.
                 if let notifier { await notifier.dispatch() }
 
-                if let reaper, await self.isSweepDue() { await reaper.sweep() }
+                if let reaper, self.isSweepDue() { await reaper.sweep() }
 
                 try? await Task.sleep(for: interval)
             }

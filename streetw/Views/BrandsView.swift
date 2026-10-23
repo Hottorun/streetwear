@@ -9,6 +9,7 @@ struct BrandsView: View {
     @Environment(\.modelContext) private var context
     @Environment(SyncEngine.self) private var engine: SyncEngine
     @Environment(RemoteSync.self) private var remote: RemoteSync
+    @Environment(\.dismiss) private var dismiss
     @Environment(ServerSettings.self) private var settings: ServerSettings
     @Environment(BrandSuggestions.self) private var suggestions: BrandSuggestions
     @Environment(SizeProfileStore.self) private var sizes: SizeProfileStore
@@ -50,7 +51,7 @@ struct BrandsView: View {
                 if brands.isEmpty {
                     EditorialEmptyState(
                         title: "No brands on watch",
-                        action: "PASTE A BRAND'S WEBSITE AND STREETW WORKS OUT WHAT IT CAN WATCH"
+                        action: "PASTE A BRAND'S WEBSITE AND DROPWALL WORKS OUT WHAT IT CAN WATCH"
                     )
                 } else {
                     List {
@@ -92,6 +93,12 @@ struct BrandsView: View {
             .toolbarTitleDisplayMode(.inlineLarge)
             .appDestinations()
             .toolbar {
+                // Presented as a sheet from the feed's brand rail, and it was the one sheet
+                // in the app with no way out but a swipe — every other one has a Done or a
+                // Close.
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("Done") { dismiss() }
+                }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Add brand", systemImage: "plus") { isAdding = true }
                 }
@@ -113,6 +120,11 @@ struct BrandsView: View {
         // writes each id to a ledger before it sends, so a pass killed halfway is retried
         // on the next sync rather than silently lost.
         let remoteIDs = doomed.compactMap(\.remoteID)
+        // **Before the delete, never after.** `Brand.updates` cascades to `BrandUpdate`,
+        // which cascades to `SavedItem` — so without this the swipe takes the whole
+        // collection from that brand with it, silently, on a control that says nothing
+        // about saves.
+        for brand in doomed { brand.releaseKeepsakes() }
         for brand in doomed { context.delete(brand) }
         try? context.save()
 

@@ -69,7 +69,10 @@ struct DiscoverProductSheet: View {
                 VStack(alignment: .leading, spacing: 0) {
                     ImageGallery(
                         urls: imageURLs,
-                        drawnWidth: 900,
+                        // 420, not 900: the sheet is one screen wide (about 402pt), and
+                        // 900 × 3 snapped to the ladder's 1600px top rung for an image
+                        // drawn at a third of that.
+                        drawnWidth: 420,
                         isZoomable: true,
                         // Fixed sweep, like the collection wall and like the card this was
                         // opened from: a photograph does not invert, so what it sits on
@@ -170,7 +173,7 @@ struct DiscoverProductSheet: View {
                         .tracking(1)
                 }
                 .foregroundStyle(isSaved ? Color.signal : Color.ink)
-                .frame(height: 34)
+                .frame(minHeight: 34)
                 .padding(.horizontal, 16)
                 .overlay { Capsule().stroke(isSaved ? Color.signal : Color.ink, lineWidth: 1) }
             }
@@ -184,7 +187,7 @@ struct DiscoverProductSheet: View {
                             .font(.system(size: 9, weight: .semibold))
                             .foregroundStyle(Color.muted)
                     }
-                    .frame(height: 34)
+                    .frame(minHeight: 34)
                     .contentShape(.rect)
                 }
                 .buttonStyle(.borderless)

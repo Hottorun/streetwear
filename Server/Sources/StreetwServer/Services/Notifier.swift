@@ -56,6 +56,20 @@ struct NotifyResult: Sendable, Equatable {
     var sent = 0
     var failed = 0
     var prunedTokens = 0
+
+    /// Brands whose fan-out hit a *transient* failure this pass — a 503 from Apple, a TLS
+    /// blip, a dropped connection — as opposed to a token Apple has told us is dead.
+    ///
+    /// Their still-fresh events are left unstamped so the next pass tries again. Without
+    /// this, `notified_at` was written for every *pending* event whatever happened to it:
+    /// a single bad minute at Apple silently consumed the alert, with no retry and nothing
+    /// that would ever revisit it.
+    ///
+    /// The retry is bounded by `maxAge` and needs no counter of its own: once an event is
+    /// older than the freshness window it is no longer news, falls out of `fresh`, and is
+    /// stamped like any other stale event. So a brand that fails forever costs one extra
+    /// attempt per pass until its events age out, not an unbounded queue.
+    var retryableBrands: Set<UUID> = []
 }
 
 /// What a `probe` pass did, reported per device rather than as totals.
@@ -215,7 +229,7 @@ actor Notifier {
             let message = PushMessage(
                 deviceToken: token,
                 environment: device.environment,
-                title: "streetw",
+                title: "Dropwall",
                 body: "Test push — if you can read this, alerts work.",
                 brandID: Self.probeBrandID,
                 // No collapse id on purpose. A real batch collapses so a brand can't
@@ -355,7 +369,24 @@ actor Notifier {
         }
 
         do {
-            let ids = pending.compactMap(\.id)
+            // **Not every pending event — only the ones this pass is actually finished
+            // with.** An event whose brand hit a transient failure keeps its null
+            // `notified_at` so the next pass picks it up, *provided it is still fresh*;
+            // anything past `maxAge` is stamped regardless, because it has stopped being
+            // news and retrying it forever would be worse than dropping it.
+            let deferred = Set(
+                fresh
+                    .filter { result.retryableBrands.contains($0.$brand.id) }
+                    .compactMap(\.id)
+            )
+            let ids = pending.compactMap(\.id).filter { !deferred.contains($0) }
+            guard !ids.isEmpty else {
+                app.logger.info("notifier: deferred \(deferred.count) event(s) for retry")
+                return result
+            }
+            if !deferred.isEmpty {
+                app.logger.info("notifier: deferred \(deferred.count) event(s) for retry")
+            }
             try await EventModel.query(on: db)
                 .filter(\.$id ~~ ids)
                 .set(\.$notifiedAt, to: Date())
@@ -459,6 +490,7 @@ actor Notifier {
                     } catch {
                         app.logger.warning("notifier: watch push failed: \(error)")
                         result.failed += 1
+                        result.retryableBrands.insert(watch.$brand.id)
                     }
                 }
             }
@@ -548,6 +580,7 @@ actor Notifier {
                     } catch {
                         app.logger.warning("notifier: push failed: \(error)")
                         result.failed += 1
+                        result.retryableBrands.insert(brandID)
                     }
                 }
             }

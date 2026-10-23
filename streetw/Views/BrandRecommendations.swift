@@ -411,7 +411,7 @@ struct SuggestedBrandCard: View {
         if Double(item.followers) >= Popularity.meaningfulFollowers {
             return "\(item.followers) PEOPLE WATCHING"
         }
-        return item.brand.website.flatMap { URL(string: $0)?.host() }?.uppercased() ?? "NEW TO STREETW"
+        return item.brand.website.flatMap { URL(string: $0)?.host() }?.uppercased() ?? "NEW TO DROPWALL"
     }
 
     var body: some View {
@@ -493,7 +493,18 @@ struct FollowButton: View {
                 }
             }
             .foregroundStyle(onDark ? Color(uiColor: UIColor(red: 0.055, green: 0.055, blue: 0.047, alpha: 1)) : Color.paper)
-            .frame(width: width, height: onDark ? 34 : 32)
+            // **A fixed width truncated the word.** At a large Dynamic Type setting
+            // "FOLLOW" came out as "FOL…", which is not a label — and a control whose own
+            // name is cut off is the first thing a reader at that setting sees. So `width`
+            // becomes a floor rather than a ceiling, with real padding either side, and the
+            // button grows with its text instead of clipping it.
+            //
+            // The height is a floor for the same reason, and 44 is Apple's minimum target —
+            // the drawn capsule was 32–34 and short of it even at the default setting.
+            .lineLimit(1)
+            .padding(.horizontal, 14)
+            .frame(minWidth: width, minHeight: onDark ? 34 : 32)
+            .frame(minHeight: 44)
             .background {
                 if onDark {
                     Capsule().fill(Color(uiColor: UIColor(red: 0.961, green: 0.961, blue: 0.941, alpha: 1)))

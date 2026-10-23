@@ -18,6 +18,7 @@
 //   what makes the size run on one card align with the next one down the page.
 
 import StreetwCore
+import UIKit
 import SwiftUI
 
 // MARK: - Colour
@@ -85,19 +86,49 @@ private extension UIColor {
 // MARK: - Type
 
 extension Font {
+    /// **Every size in the app is scaled, and this is the only place that happens.**
+    ///
+    /// The three roles below were `Font.system(size:)`, which does not scale — so text
+    /// rendered identically at xSmall and at AX5, and there was not one `relativeTo:`,
+    /// `@ScaledMetric` or semantic text style anywhere in the target. For somebody who
+    /// needs larger type the app was simply unreadable, with nothing they could do about it.
+    ///
+    /// The app cannot move onto the eleven system text styles: it is set on a scale of its
+    /// own (11, 12, 13, 15, 17, 19, 22 …) and that scale is the design. So each size is
+    /// anchored to the *nearest* style and scaled relative to it, which leaves every size
+    /// exactly as drawn at the default setting — nothing moves for the people it already
+    /// suited — and moves all of them together for everybody else.
+    ///
+    /// Anchoring matters rather than using one style for everything: iOS scales a caption
+    /// less aggressively than a title, which is what keeps a 30pt masthead from swallowing
+    /// the 11pt label under it at the large end.
+    private static func scaled(_ size: CGFloat) -> CGFloat {
+        let style: UIFont.TextStyle
+        switch size {
+        case ..<12: style = .caption2
+        case ..<14: style = .caption1
+        case ..<16: style = .footnote
+        case ..<18: style = .body
+        case ..<21: style = .title3
+        case ..<28: style = .title2
+        default:    style = .title1
+        }
+        return UIFontMetrics(forTextStyle: style).scaledValue(for: size)
+    }
+
     /// Serif, for titles and mastheads. The editorial voice of the app.
     static func editorial(_ size: CGFloat, _ weight: Font.Weight = .regular) -> Font {
-        .system(size: size, weight: weight, design: .serif)
+        .system(size: scaled(size), weight: weight, design: .serif)
     }
 
     /// Monospaced, for anything that is data: sizes, prices, times, counts.
     static func data(_ size: CGFloat, _ weight: Font.Weight = .regular) -> Font {
-        .system(size: size, weight: weight, design: .monospaced)
+        .system(size: scaled(size), weight: weight, design: .monospaced)
     }
 
     /// Grotesque caps, for brand names. Always paired with `.tracking`.
     static func wordmark(_ size: CGFloat, _ weight: Font.Weight = .semibold) -> Font {
-        .system(size: size, weight: weight, design: .default)
+        .system(size: scaled(size), weight: weight, design: .default)
     }
 }
 
@@ -113,6 +144,11 @@ struct Wordmark: View {
             .tracking(size * 0.14)
             .foregroundStyle(color)
             .lineLimit(1)
+            // A brand name is the one string that must never be cut: "BILLIONAIRE BOYS
+            // CLUB" truncated to "BILLIONAIRE BOY…" is a different brand. `lineLimit(1)` is
+            // right — a wordmark does not wrap — so the give has to come from the size.
+            // `BrandMonogram` already does this; the wordmark itself did not.
+            .minimumScaleFactor(0.7)
     }
 }
 
@@ -350,7 +386,9 @@ extension SizeRun {
     }
 
     /// Apparel in shop order, then shoes numerically, then the rest as they came.
-    private static func canonical(_ a: Entry, _ b: Entry) -> Bool {
+    ///
+    /// `nonisolated`: pure ordering over two value types, called from a nonisolated sort.
+    private nonisolated static func canonical(_ a: Entry, _ b: Entry) -> Bool {
         func rank(_ token: String) -> (Int, Double, String) {
             if let index = SizeProfile.apparelOptions.firstIndex(of: token) {
                 return (0, Double(index), token)

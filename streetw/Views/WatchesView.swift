@@ -73,14 +73,34 @@ struct WatchesView: View {
 
             ForEach(watches) { watch in
                 if let update = watch.update {
-                    NavigationLink(value: ProductRoute(update: update)) {
-                        WatchListRow(watch: watch, update: update)
+                    // **`.swipeActions` only works inside a `List`**, and this is a
+                    // `LazyVStack` in a `ScrollView` — so the modifier that used to be here
+                    // was inert. The swipe is the gesture most people try first, and it did
+                    // nothing at all: no movement, no action, no feedback. The feature was
+                    // only ever reachable through the context menu, which is a long press
+                    // nobody is told about.
+                    //
+                    // So the affordance is visible instead, in the trailing column, the way
+                    // `DropCalendarView` already puts its action beside a row. The context
+                    // menu stays for whoever has learned it.
+                    HStack(spacing: 12) {
+                        NavigationLink(value: ProductRoute(update: update)) {
+                            WatchListRow(watch: watch, update: update)
+                        }
+                        .buttonStyle(.plain)
+
+                        Button { remove(watch) } label: {
+                            DataLabel(text: "STOP", color: .signal)
+                                // 44pt of target under a small label, which is Apple's
+                                // minimum and roughly twice what the text occupies.
+                                .frame(minWidth: 44, minHeight: 44)
+                                .contentShape(.rect)
+                        }
+                        .buttonStyle(.borderless)
+                        .accessibilityLabel("Stop watching \(update.title)")
                     }
-                    .buttonStyle(.plain)
+                    .padding(.trailing, 20)
                     .overlay(alignment: .bottom) { Rule().padding(.horizontal, 20) }
-                    .swipeActions(edge: .trailing) {
-                        Button("Stop", role: .destructive) { remove(watch) }
-                    }
                     .contextMenu {
                         Button("Stop watching", systemImage: "bell.slash", role: .destructive) {
                             remove(watch)

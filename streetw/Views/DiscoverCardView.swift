@@ -240,7 +240,17 @@ struct DiscoverCardView: View {
                 // **A transparent layer carrying the save gesture is safe here** and only
                 // here: a grid has no gesture of its own to lose.
                 DiscoverMosaic(
-                    urls: entry.presentation == .release ? members : spread,
+                    // **Falls back rather than drawing nothing.** A release is a mosaic of
+                    // its members, and a release that arrived without any drew an empty page
+                    // with the brand's wordmark alone in the middle of it — which reads as a
+                    // card that failed to load. The server should never send one (see the
+                    // collection filter in `/v1/discover`), but "should never" is not a
+                    // reason for the client to have no answer: the brand's own range is
+                    // always on the card already, it is what a `.brand` card is drawn from,
+                    // and it is a far better answer than blank.
+                    urls: entry.presentation == .release
+                        ? (members.isEmpty ? spread : members)
+                        : spread,
                     mark: card.brand.name,
                     topInset: Self.chromeTop,
                     bottomInset: Self.chromeBottom
@@ -325,10 +335,19 @@ struct DiscoverCardView: View {
                         // tint of the ink instead — a chip you can see over a photograph
                         // without introducing a third colour to the screen.
                         .background(Color.sweepInk.opacity(0.08), in: Circle())
+                        // Drawn at 34, targeted at 44. This one sits on a full-bleed
+                        // photograph inside a paging scroll, which is the likeliest place in
+                        // the app to miss a control.
+                        .frame(width: 44, height: 44)
+                        .contentShape(.rect)
                 }
                 .buttonStyle(.borderless)
                 .sensoryFeedback(.selection, trigger: isSaved)
-                .accessibilityLabel("Save")
+                // **The label has to move when the glyph does.** It said "Save" whether or
+                // not the item was saved, while the only indication of state was a filled
+                // bookmark turning vermilion — colour and shape, neither of which is spoken.
+                // `SaveAction` already gets this right; this is the same sentence.
+                .accessibilityLabel(isSaved ? "Remove from saved" : "Save")
                 .padding(.trailing, 16)
                 .padding(.top, 100)
             }
@@ -774,7 +793,7 @@ struct DiscoverCardView: View {
                         size: 11,
                         color: Self.groundInk.opacity(markedRead ? 0.3 : 0.55)
                     )
-                    .frame(height: 34)
+                    .frame(minHeight: 34)
                     .contentShape(.rect)
                 }
                 .buttonStyle(.borderless)
@@ -797,7 +816,7 @@ struct DiscoverCardView: View {
 
             Button(action: onDismiss) {
                 DataLabel(text: "NOT FOR ME", size: 11, color: Self.groundInk.opacity(0.55))
-                    .frame(height: 34)
+                    .frame(minHeight: 34)
                     .contentShape(.rect)
             }
             .buttonStyle(.borderless)
@@ -932,7 +951,17 @@ private struct DiscoverMosaic: View {
                                     // as a collection. The garment is shown whole on its own
                                     // card.
                                     contentMode: .fill,
-                                    drawnWidth: 400,
+                                    // **130, not 400.** `drawnWidth` is in points and the
+                                    // rendition ladder multiplies by a scale of 3, so 400
+                                    // resolved to 1200px — for a tile that is about 133pt
+                                    // wide. Eighteen of those per card is roughly 100MB of
+                                    // bitmaps against a 160MB decode budget, with three
+                                    // cards realised at a time: the cache thrashed
+                                    // continuously and evicted the feed behind it, which
+                                    // reads as the whole app getting slower the longer it
+                                    // is used. 130 matches what `FeedTile` already asks for
+                                    // and the ladder has a 400px rung for it.
+                                    drawnWidth: 130,
                                     backdrop: .sweep,
                                     mark: mark
                                 )

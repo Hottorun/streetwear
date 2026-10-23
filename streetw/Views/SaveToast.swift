@@ -62,6 +62,20 @@ final class SaveConfirmation {
     var choosingBoard: BrandUpdate?
     var settingWatch: BrandUpdate?
 
+    /// The save somebody has asked to remove, held here for exactly the reason above.
+    ///
+    /// **Un-saving is asked about, and the question has to outlive the card.** Removing a
+    /// save deletes the note, the size note and the board filing with it — `SaveDetailView`
+    /// has always confirmed that and says precisely what goes, while the bookmark on a card
+    /// and the Remove item in its menu did the same thing silently. The bookmark is the
+    /// worse of the two: a small target on a photograph in a scrolling feed, where the
+    /// gesture to un-save is indistinguishable from the gesture to save.
+    ///
+    /// Owned by the app rather than by the card, because the card is in a `LazyVStack` and
+    /// is routinely recycled or scrolled away — a dialog owned by one would be torn down
+    /// underneath itself, which is the same reason `choosingBoard` lives here.
+    var removingSave: BrandUpdate?
+
     /// How much room the screen underneath needs at the bottom.
     ///
     /// The toast is anchored above the tab bar, which is right for every screen except the

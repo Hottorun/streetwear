@@ -135,6 +135,15 @@ public enum SourceError: LocalizedError, Equatable {
     case notThisKind
     case emptyPayload
     case disallowedByRobots(String)
+    /// This host's politeness queue is already booked past its horizon, so the request was
+    /// refused rather than joined to the back of it.
+    ///
+    /// Its own case because the right answer is unlike every other failure here: nothing is
+    /// wrong with the storefront, the request would very likely have worked, and the only
+    /// reason it did not run is that somebody else is already queued for that host. A caller
+    /// should say "busy, try shortly" rather than "this site could not be read". See
+    /// `PoliteFetcher.maxQueueAhead`.
+    case hostBusy(String, retryAfter: TimeInterval)
     /// An edge sat in front of the origin and refused us — a bot challenge, not the
     /// storefront's own answer. Its own case because the fix is completely different from
     /// every other failure here: there is nothing wrong with the source, and nothing a
@@ -153,6 +162,7 @@ public enum SourceError: LocalizedError, Equatable {
         case .notThisKind: "Not a supported source"
         case .emptyPayload: "Nothing returned"
         case .disallowedByRobots(let path): "robots.txt disallows \(path)"
+        case .hostBusy(let host, _): "Too many requests queued for \(host) just now"
         case .blockedByEdge: "Blocked by the site's bot protection"
         case .ucp(let reason): "The store's agent endpoint refused: \(reason)"
         }
@@ -339,9 +349,41 @@ public enum Net {
     static let session: URLSession = {
         let config = URLSessionConfiguration.default
         config.timeoutIntervalForRequest = 20
+        // **An inactivity timer is not a ceiling.** `timeoutIntervalForRequest` resets on
+        // every byte received, so a host that drips one byte a second holds a slot open
+        // forever — and the poller runs its sources in sequence, so one such host stalls
+        // polling, notifications and retention for everybody. This is the wall-clock bound.
+        config.timeoutIntervalForResource = 120
         config.requestCachePolicy = .useProtocolCachePolicy
-        return URLSession(configuration: config)
+        return URLSession(configuration: config, delegate: RedirectGuard(), delegateQueue: nil)
     }()
+
+    /// Re-checks the host on every hop, because checking only the input does not hold.
+    ///
+    /// `BrandDiscovery.normalizedURL` refuses a private host and forces `https`, which
+    /// reads like enough and is not: a perfectly public host that a stranger controls can
+    /// answer a 302 pointing at `http://169.254.169.254/…`, and `URLSession` follows
+    /// redirects by default without asking anyone. The input check would have passed and
+    /// the request would still have landed on the metadata endpoint.
+    ///
+    /// Returning nil hands the caller the redirect *response* rather than following it, so
+    /// a refused hop surfaces as a 3xx with no body — which every adapter already treats as
+    /// "nothing here" — instead of as an error that would need a path of its own.
+    private final class RedirectGuard: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
+        func urlSession(
+            _ session: URLSession,
+            task: URLSessionTask,
+            willPerformHTTPRedirection response: HTTPURLResponse,
+            newRequest request: URLRequest,
+            completionHandler: @escaping (URLRequest?) -> Void
+        ) {
+            guard let url = request.url, HostSafety.isPublic(url: url) else {
+                completionHandler(nil)
+                return
+            }
+            completionHandler(request)
+        }
+    }
 
     /// Shared on-disk cache. `AsyncImage` goes through `URLSession.shared`, which by
     /// default has a memory-only cache — product shots were being refetched on every

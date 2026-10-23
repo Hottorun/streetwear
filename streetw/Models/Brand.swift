@@ -230,4 +230,36 @@ final class Brand {
             .prefix(cap)
             .map { $0 }
     }
+
+    /// Detaches everything the person kept, so deleting the brand cannot take it with them.
+    ///
+    /// **`Brand.updates` cascades to `BrandUpdate`, which cascades to `SavedItem`.** So
+    /// `context.delete(brand)` used to destroy the whole collection from that brand —
+    /// notes, board filings, size notes — and quietly gut every fit those pieces were in.
+    /// Two ordinary actions reached it and neither said so: swipe-to-delete in the brands
+    /// sheet, and "Stop following", which does not delete anything itself but leaves the
+    /// row absent from the next follow list, where the prune removes it minutes later. A
+    /// row offering "Follow again" reads as reversible, and it was not.
+    ///
+    /// A save is something the person made; a `BrandUpdate` is something the app fetched.
+    /// The first must outlive the second. So a kept row is *detached* rather than deleted:
+    /// `BrandUpdate.brand` is already optional, because a link shared from a storefront
+    /// nobody follows lands in exactly that state and the whole app already draws it.
+    ///
+    /// `siteName` carries the name forward, because `brandLabel` reads the brand first and
+    /// the site second — without it a detached save would lose its wordmark and fall back
+    /// to a bare hostname, which is a worse answer than the one we already had. Only when
+    /// the site said nothing itself, so a real `og:site_name` is never overwritten.
+    ///
+    /// Call this **before** `context.delete(brand)`, always, on every path that removes a
+    /// brand. Following the brand again re-creates the row and re-fetches its catalogue;
+    /// the detached saves stay where they are, which is the collection.
+    func releaseKeepsakes() {
+        // Snapshotted: assigning `brand = nil` removes the row from `updates`, and
+        // mutating a relationship while iterating it is how this goes wrong quietly.
+        for update in Array(updates) where !update.saves.isEmpty {
+            if update.siteName?.isEmpty != false { update.siteName = name }
+            update.brand = nil
+        }
+    }
 }

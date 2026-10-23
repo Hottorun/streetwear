@@ -216,7 +216,7 @@ struct OnboardingView: View {
         case .gender:
             "Narrow the feed to what you'd actually wear."
         case .brands:
-            "Pick a few brands and Dropwall watches their catalogs for drops, restocks and the moment a storefront locks down."
+            "Pick a few brands and Dropwall watches their catalogues for drops, restocks and the moment a storefront locks down."
         case .howItWorks:
             "Four things that are easy to miss."
         case .alerts:

@@ -237,6 +237,14 @@ struct FeedTile: View {
                                 .frame(height: 2)
                         }
                     }
+                    // **Said, as well as drawn.** A 2pt vermilion rule is the whole of the
+                    // "your size is in there" signal, and colour alone is not a signal for
+                    // everybody. `SizeRun` already speaks this ("your size, available"); the
+                    // tile was the one place the same fact was silent.
+                    .accessibilityElement(children: .combine)
+                    .accessibilityLabel(
+                        isMine ? "\(update.title), in your size" : update.title
+                    )
 
                 Text(update.title)
                     .font(.editorial(12))
@@ -403,7 +411,11 @@ struct SaveAction: View {
     var body: some View {
         Button {
             if isSaved {
-                removeSave(update, in: context)
+                if let save = update.save, isAuthored(save) {
+                    confirmation.removingSave = update
+                } else {
+                    removeSave(update, in: context)
+                }
             } else {
                 setSave(update, .inspiration, in: context, confirm: confirmation)
             }
@@ -413,6 +425,13 @@ struct SaveAction: View {
                 .foregroundStyle(isSaved ? Color.signal : Color.ink)
                 .frame(width: 30, height: 30)
                 .background(Color.paper.opacity(0.92), in: Circle())
+                // **The drawn size stays 30pt; the target becomes 44.** This is the app's
+                // commonest action and it sits on a photograph in a scrolling feed, which is
+                // the worst place to be a third under Apple's minimum. Making the circle
+                // itself bigger would put a chip over the artwork; making the *hit area*
+                // bigger costs nothing visible.
+                .frame(width: 44, height: 44)
+                .contentShape(.rect)
         }
         .buttonStyle(.borderless)
         .sensoryFeedback(.selection, trigger: isSaved)
@@ -452,7 +471,16 @@ struct UpdateMenu: View {
         }
 
         if update.save != nil {
-            Button("Remove", systemImage: "trash", role: .destructive) { removeSave(update, in: context) }
+            Button("Remove from saved", systemImage: "trash", role: .destructive) {
+                // Through the app-level question, for two reasons: a `Menu` builder cannot
+                // host a `confirmationDialog` of its own, and the menu's host view is a card
+                // in a lazy stack that may be recycled before an answer arrives.
+                if let save = update.save, isAuthored(save) {
+                    confirmation.removingSave = update
+                } else {
+                    removeSave(update, in: context)
+                }
+            }
         }
         if let link = update.linkURL {
             Divider()
@@ -495,10 +523,30 @@ private func setSave(
 }
 
 @MainActor
-private func removeSave(_ update: BrandUpdate, in context: ModelContext) {
+func removeSave(_ update: BrandUpdate, in context: ModelContext) {
     guard let save = update.save else { return }
     context.delete(save)
     try? context.save()
+}
+
+/// Whether un-saving this would throw away something the person made, rather than just a
+/// bookmark they can put back with one tap.
+///
+/// `SaveDetailView` asks before removing and says exactly what goes — "Your note and where
+/// you filed it go too. Fits it appears in are left alone." The bookmark on a card and the
+/// Remove item in its menu did the identical thing and asked nothing, and the bookmark is
+/// the worse of the two: a small target on a photograph in a scrolling feed, where the
+/// gesture to un-save is indistinguishable from the gesture to save.
+///
+/// So the confirmation is conditional rather than universal. Asking every time would make
+/// the commonest action in the app a two-step one to protect the case that does not need
+/// protecting; asking never loses work. This asks exactly when there is work to lose.
+@MainActor
+private func isAuthored(_ save: SavedItem) -> Bool {
+    if let note = save.note, !note.isEmpty { return true }
+    if let sizeNote = save.sizeNote, !sizeNote.isEmpty { return true }
+    if save.board != nil { return true }
+    return !save.fits.isEmpty
 }
 
 // `UpdateCarousel` used to live here, and `BrandDetailView` was its only caller. A

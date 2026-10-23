@@ -682,8 +682,12 @@ struct FitStudio: View {
         // stack of empty rectangles and that file would be what the fit looked like for as
         // long as it existed. Nothing waits on it.
         Task {
-            guard await FitRender.warm(fit) else { return }
-            fit.renderFile = await FitRender.write(fit)
+            guard await FitRender.warm(fit), !fit.isGone else { return }
+            let file = await FitRender.write(fit)
+            // Checked once more: `write` renders and encodes, and the delete can land in
+            // the middle of that. Assigning a stored property on a deleted `@Model` traps.
+            guard !fit.isGone, let file else { return }
+            fit.renderFile = file
             try? context.save()
         }
 

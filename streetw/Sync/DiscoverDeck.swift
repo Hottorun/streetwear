@@ -156,11 +156,18 @@ final class DiscoverDeck {
     private static let seenKey = "discoverSeen"
     private static let seenLimit = 2000
 
-    private var seen: [String] {
-        get { UserDefaults.standard.stringArray(forKey: Self.seenKey) ?? [] }
-        set {
-            UserDefaults.standard.set(Array(newValue.suffix(Self.seenLimit)), forKey: Self.seenKey)
-        }
+    /// The ledger in memory, in order. Flushed to `UserDefaults` in batches — see `markSeen`.
+    private var seenOrder: [String] = []
+
+    /// How many marks may go unwritten. Ten cards of a browsing ledger is a cost nobody can
+    /// perceive if the app is killed mid-scroll; a write per card was one they could.
+    private static let flushEvery = 10
+    private var unflushed = 0
+
+    private func flushSeen() {
+        guard unflushed > 0 else { return }
+        UserDefaults.standard.set(Array(seenOrder.suffix(Self.seenLimit)), forKey: Self.seenKey)
+        unflushed = 0
     }
 
     private var seenSet: Set<String> = []
@@ -178,17 +185,36 @@ final class DiscoverDeck {
     private let seenAtLaunch: Set<String>
 
     init() {
-        let ledger = Set(UserDefaults.standard.stringArray(forKey: Self.seenKey) ?? [])
+        let stored = UserDefaults.standard.stringArray(forKey: Self.seenKey) ?? []
+        let ledger = Set(stored)
+        seenOrder = stored
         seenSet = ledger
         seenAtLaunch = ledger
     }
+
+    /// Writes the ledger out. Called when the app leaves the foreground, which is the one
+    /// moment a batched write has to be settled.
+    func persistSeen() { flushSeen() }
 
     /// Marks a card as looked at. Called when it reaches the screen, not when it is
     /// fetched — a page held in memory that nobody scrolled to has not been seen.
     func markSeen(_ id: String) {
         guard !seenSet.contains(id) else { return }
         seenSet.insert(id)
-        seen.append(id)
+        seenOrder.append(id)
+        unflushed += 1
+
+        // **This used to be a read-modify-write of the whole ledger, per card.**
+        // `seen.append(id)` read 2,000 bridged `NSString`s out of `UserDefaults`, appended,
+        // took the suffix into a fresh array and handed 2,000 strings back for plist
+        // serialisation — on the main actor, inside the frame that was also committing a new
+        // full-screen photograph. It is called from every card's `onAppear`, so it ran on
+        // every swipe of a feed built for continuous scrolling.
+        //
+        // The ordered list lives in memory now and is written in batches. `seenSet` is what
+        // filtering actually reads, and that was already in memory, so nothing downstream
+        // can tell the difference.
+        if unflushed >= Self.flushEvery { flushSeen() }
     }
 
     // MARK: - Paging
@@ -196,6 +222,16 @@ final class DiscoverDeck {
     func loadIfNeeded(remote: RemoteSync, settings: ServerSettings) async {
         guard settings.isConfigured, settings.isRegistered else { return }
         guard !isLoading, !isExhausted else { return }
+        await load(remote: remote)
+    }
+
+    /// Asks again after a failure, from the retry the empty state offers.
+    ///
+    /// Separate from `loadIfNeeded` because that one guards on `isExhausted`, and a page
+    /// that threw may well have set the cursor to nil on a previous, successful call — the
+    /// question here is "try the same request again", not "is there more".
+    func retry(remote: RemoteSync, settings: ServerSettings) async {
+        guard settings.isConfigured, settings.isRegistered, !isLoading else { return }
         await load(remote: remote)
     }
 
@@ -218,8 +254,22 @@ final class DiscoverDeck {
     /// asks again, which is slower and cannot hang.
     private static let maxSkippedPages = 5
 
+    /// Why the last page failed, or nil if it didn't.
+    ///
+    /// **The deck could not say which of three things had happened**, and the view printed
+    /// the most damaging reading of them: "You've seen everything Dropwall knows about."
+    /// That single branch was reached when the request threw, when registration had not
+    /// finished so no request was made at all, *and* when the catalogue was genuinely spent.
+    /// On a first run over a bad network it told somebody they had exhausted the catalogue
+    /// of a service they had joined a minute earlier.
+    ///
+    /// Cleared at the start of every attempt, so a success erases it and the banner cannot
+    /// outlive the failure it describes.
+    private(set) var lastError: String?
+
     private func load(remote: RemoteSync) async {
         isLoading = true
+        lastError = nil
         defer { isLoading = false }
 
         for _ in 0..<Self.maxSkippedPages {
@@ -244,9 +294,11 @@ final class DiscoverDeck {
                 }
                 if isExhausted { return }
             } catch {
-                // Quiet and non-fatal: the deck keeps what it has, and the obvious recovery
-                // is to keep scrolling, which asks again.
+                // Still non-fatal — the deck keeps what it has — but no longer silent. With
+                // cards on screen this changes nothing; with none it is the difference
+                // between "we couldn't load this" and a false claim about the catalogue.
                 Self.log.info("discover page failed: \(error.localizedDescription)")
+                lastError = error.localizedDescription
                 return
             }
         }

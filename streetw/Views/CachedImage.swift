@@ -205,7 +205,13 @@ actor ImageLoader {
 
     /// Decoded images, keyed by the exact URL requested. `URLCache` holds the bytes, but
     /// re-decoding a 400px JPEG on every cell reuse is the other half of scroll cost.
-    private let decoded = NSCache<NSURL, UIImage>()
+    // `nonisolated(unsafe)` names something already true of the type rather than waving
+    // away a race: `NSCache` is documented thread-safe for reads and writes from any
+    // thread, which is the whole reason `cached(_:)` below can be `nonisolated` and let a
+    // caller on another thread ask for a warm image without a hop. The project-wide
+    // `SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor` inferred main-actor on it anyway, so
+    // that access was a warning under Swift 5 and an error under Swift 6.
+    private nonisolated(unsafe) let decoded = NSCache<NSURL, UIImage>()
 
     private init() {
         // **Bounded by bytes, not by count.** A count limit is meaningless when the entries
@@ -225,6 +231,12 @@ actor ImageLoader {
     }
 
     nonisolated func cached(_ url: URL) -> UIImage? {
+        // `NSCache` is documented thread-safe — you may read and write it from any thread —
+        // which is the whole reason this accessor can be `nonisolated` and why callers on
+        // other threads can ask for a warm image without a hop. The property itself was
+        // still inferred main-actor by the project-wide default, so reaching it from here
+        // was a warning under Swift 5 and an error under Swift 6. `nonisolated(unsafe)`
+        // names what is already true of the type rather than waving away a real race.
         decoded.object(forKey: url as NSURL)
     }
 

@@ -65,16 +65,37 @@ struct ImageViewer: View {
         .statusBarHidden()
         .onAppear {
             index = min(max(initialIndex, 0), max(urls.count - 1, 0))
-            // Every photograph at full width, not just the one landed on: the reason to
-            // be here is to compare details, and paging is the whole point of the count
-            // in the corner.
-            ImageLoader.shared.prefetch(urls, width: Self.zoomWidth)
+            warm(around: index)
         }
+        // Warmed again as you page, which is what makes a bounded window work at all.
+        .onChange(of: index) { _, now in warm(around: now) }
+    }
+
+    /// **The one either side, not the whole set.**
+    ///
+    /// This used to prefetch every photograph of the product at `zoomWidth`. At the ladder's
+    /// top rung that is about 10MB decoded apiece, so opening the viewer on a product with a
+    /// dozen shots pulled well over 100MB into a cache budgeted at 160 — evicting the entire
+    /// feed behind it, which is then re-fetched and re-decoded on the way back out. The
+    /// prefetch queue is depth-capped, but a depth cap bounds concurrency, not bytes.
+    ///
+    /// ±1 is enough: a swipe lands on a frame that is already warm, and the reason to bound
+    /// it is that most people never reach the twelfth photograph.
+    private func warm(around centre: Int) {
+        let window = (centre - 1)...(centre + 1)
+        let neighbours = window.compactMap { urls.indices.contains($0) ? urls[$0] : nil }
+        ImageLoader.shared.prefetch(neighbours, width: Self.zoomWidth)
     }
 
     /// What to ask the CDN for once someone is actually looking closely. Deliberately far
-    /// above the feed's 400 — there is no point offering a 3× zoom into a 400px file.
-    static let zoomWidth = 1600
+    /// above the feed's 130 — there is no point offering a 3× zoom into a 400px file.
+    ///
+    /// **In points, like every other `width` in the app.** It read 1600 and was documented as
+    /// if it were pixels; the renditions multiply by a scale of 3 before snapping to the
+    /// ladder, so the unit was the one thing about it that was wrong. 540 × 3 snaps to the
+    /// same 1600px top rung, so nothing about the image that arrives changes — only the
+    /// number stops meaning something different here from everywhere else.
+    static let zoomWidth = 540
 }
 
 /// One photograph that can be magnified and moved.

@@ -98,7 +98,10 @@ struct NotificationsSection: View {
     ///
     /// A rule under a line of type rather than a filled `.bordered` button: the page is
     /// paper, and a system button on it reads as a fragment of another app.
-    private struct SettingsAction: View {
+    ///
+    /// File scope rather than nested, since `AboutSection` presses things too and two
+    /// copies of one shape is how two shapes happen.
+    struct SettingsAction: View {
         let title: String
 
         var body: some View {
@@ -130,6 +133,59 @@ struct NotificationsSection: View {
             return .ok
         } catch {
             return .unreachable
+        }
+    }
+}
+
+/// What the app is, where its promises are written down, and which build this is.
+///
+/// **None of this was reachable from inside the app.** The privacy policy and the support
+/// page exist and are live, and App Store Connect has their URLs — but a person holding the
+/// app had no route to either, and no build number to quote to anybody. Reviewers look for
+/// this and users ask for it, and it costs a section.
+///
+/// The privacy line is here rather than scattered because the app makes a real promise and
+/// was making it in three places at once ("Boards are private", "Nothing is shared
+/// anywhere", "Saved as a link, never scraped") without ever saying the whole of it.
+struct AboutSection: View {
+    @Environment(\.openURL) private var openURL
+
+    private static let privacy = URL(string: "https://www.hottorun.com/dropwall/privacy")!
+    private static let support = URL(string: "https://www.hottorun.com/dropwall/support")!
+
+    /// Read from the bundle rather than hardcoded, so it cannot drift from what was shipped.
+    private var version: String {
+        let short = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "—"
+        let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "—"
+        return "\(short) (\(build))"
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            SettingsHeader(
+                title: "About",
+                note: "DROPWALL \(version)"
+            )
+
+            Text("""
+                Your saves, your boards, your fits and what you write about your style stay \
+                on this phone. Only the brands you follow and your sizes reach the server, \
+                so it knows what to watch and when to wake you.
+                """)
+                .font(.editorial(15))
+                .lineSpacing(3)
+                .foregroundStyle(Color.muted)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Button { openURL(Self.privacy) } label: {
+                NotificationsSection.SettingsAction(title: "Privacy policy")
+            }
+            .buttonStyle(.borderless)
+
+            Button { openURL(Self.support) } label: {
+                NotificationsSection.SettingsAction(title: "Support")
+            }
+            .buttonStyle(.borderless)
         }
     }
 }

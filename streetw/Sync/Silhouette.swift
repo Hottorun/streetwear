@@ -29,7 +29,12 @@ import OSLog
 import StreetwCore
 import UIKit
 
-enum Silhouette {
+// `nonisolated` on the whole namespace. Everything here is pixel arithmetic over an
+// immutable `CGImage` — as the note on `measure` says, it has no business on the main
+// actor at all — and `measure` deliberately runs it in a detached task to keep a full
+// decode of a 3000px original off the main thread. Without this the project-wide
+// main-actor inference made that detachment a warning rather than a guarantee.
+nonisolated enum Silhouette {
     private static let log = Logger(subsystem: "com.kern.functional.streetw", category: "silhouette")
 
     /// The buffer this works in. The outline needs far less resolution than the sticker —
@@ -67,6 +72,15 @@ enum Silhouette {
         await Task.detached(priority: .utility) { scan(image, slot: slot) }.value
     }
 
+    /// **`nonisolated`, and that is the whole point of this function.**
+    ///
+    /// The comment above `measure` explains why this work was moved off the main thread: it
+    /// opens a `CGContext` and forces a full decode of a 2000–3200px original, twelve at a
+    /// time, and on the main actor that froze the Saved and Style tabs. But with the
+    /// project's default main-actor isolation this stayed *inferred* main-actor, so the
+    /// `Task.detached` above it was calling a main-actor function — a warning under Swift 5
+    /// (which is why it worked) and an error under Swift 6. The escape from the main thread
+    /// was incidental rather than guaranteed; this makes it the former.
     private static func scan(_ image: CGImage, slot: GarmentSlot) -> String? {
         guard SilhouetteBands.speaks(for: slot) else { return nil }
         guard let mask = Mask(image, side: workingSide) else { return nil }

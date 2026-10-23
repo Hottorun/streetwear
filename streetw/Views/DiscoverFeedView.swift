@@ -102,6 +102,56 @@ struct DiscoverFeedView: View {
     /// then handed to the deck through a `.task(id:)`, so the actual re-rank (a `Pairing`
     /// pass over every held card) happens when this *changes*, not when SwiftUI decides to
     /// evaluate a body.
+    /// A cheap stand-in for `deckContext`, and the thing the re-rank is actually keyed on.
+    ///
+    /// **`.task(id:)` evaluates its id on every body pass**, so using `deckContext` itself as
+    /// the key meant building the whole thing every time SwiftUI looked at this view — which
+    /// runs `GarmentClassifier` over the entire wardrobe twice (once for the slot counts,
+    /// once inside `Garment.init`), then `BrandVectorBuilder.taste`, which tokenises every
+    /// tag of every save and classifies the wardrobe again. Three of the `@Query`s on this
+    /// view are unpredicated, so *any* `context.save()` anywhere in the app — a sync landing,
+    /// the image tagger draining its backlog — paid all of that on the main actor, while the
+    /// pager was mid-swipe.
+    ///
+    /// It also closed a loop: `taste` reads `deck.cards`, and `deck.cards` is what
+    /// `deck.update(context:)` produces, so every page load changed the context and asked for
+    /// another rank it did not need. Building the context *inside* the task breaks that.
+    ///
+    /// The same shape as `followedKey` right below, which already does this correctly, and as
+    /// `StyleView.ReadingMemo`. Counts and one date: nothing here runs a classifier.
+    private struct DeckKey: Equatable {
+        var saves: Int
+        var wardrobe: Int
+        var newestSave: Date?
+        var dismissals: Int
+        var followed: Int
+        var gender: GenderPreference
+        /// The sentence, not the parse: everything else in a `StyleStatement` is derived
+        /// from this, so comparing one string is both cheaper and exactly as sensitive.
+        var statement: String
+        var slot: GarmentSlot?
+    }
+
+    private var deckKey: DeckKey {
+        var wardrobe = 0
+        var newest: Date?
+        for save in saves {
+            if save.type == .wardrobe { wardrobe += 1 }
+            if let at = newest { if save.savedAt > at { newest = save.savedAt } }
+            else { newest = save.savedAt }
+        }
+        return DeckKey(
+            saves: saves.count,
+            wardrobe: wardrobe,
+            newestSave: newest,
+            dismissals: dismissals.count,
+            followed: followedBrands.count,
+            gender: sizes.profile.gender,
+            statement: statement.statement.text,
+            slot: slot
+        )
+    }
+
     private var deckContext: DeckContext {
         // A save with no photograph is excluded outright, the same rule `GoesWith` and
         // `FitSuggestions` apply: this page is looked at before it is read.
@@ -255,7 +305,9 @@ struct DiscoverFeedView: View {
         .task(id: settings.token) {
             await deck.loadIfNeeded(remote: remote, settings: settings)
         }
-        .task(id: deckContext) {
+        // Keyed on the fingerprint, and the context is built in here — so the expensive
+        // derivation happens once per actual change rather than once per body.
+        .task(id: deckKey) {
             deck.update(context: deckContext)
         }
         // The other supply. Ordered after the context deliberately: `adopt` ranks, and
@@ -441,10 +493,35 @@ struct DiscoverFeedView: View {
                 ink: .sweepInk,
                 detail: .sweepInk.opacity(0.55)
             )
+        } else if let trouble = deck.lastError {
+            // **A failure is not an empty catalogue**, and this branch used to claim it was.
+            // Tappable, because a paging `ScrollView` has no pull-to-refresh to fall back on
+            // — without a control here the only recovery was to quit the app.
+            Button {
+                Task { await deck.retry(remote: remote, settings: settings) }
+            } label: {
+                EditorialEmptyState(
+                    title: "Couldn't load Discover",
+                    action: "\(trouble.uppercased()) — TAP TO TRY AGAIN",
+                    ink: .sweepInk,
+                    detail: .sweepInk.opacity(0.55)
+                )
+            }
+            .buttonStyle(.plain)
+        } else if !settings.isRegistered {
+            // The other silent state: `loadIfNeeded` returns early until registration lands,
+            // so nothing was ever asked for. Saying "you've seen everything" here was the
+            // worst of the three readings, and it is the one a first run actually hits.
+            EditorialEmptyState(
+                title: "Setting up",
+                action: "THIS TAKES A MOMENT ON A NEW INSTALL",
+                ink: .sweepInk,
+                detail: .sweepInk.opacity(0.55)
+            )
         } else {
             EditorialEmptyState(
                 title: "Nothing left to show you",
-                action: "YOU'VE SEEN EVERYTHING STREETW KNOWS ABOUT — ADD A BRAND BY ITS WEBSITE",
+                action: "YOU'VE SEEN EVERYTHING DROPWALL KNOWS ABOUT — ADD A BRAND BY ITS WEBSITE",
                 ink: .sweepInk,
                 detail: .sweepInk.opacity(0.55)
             )
@@ -503,7 +580,7 @@ struct DiscoverFeedView: View {
                 .padding(.horizontal, 18)
             }
             .scrollIndicators(.hidden)
-            .frame(height: 34)
+            .frame(minHeight: 34)
         }
         .padding(.top, 4)
         // The status bar sits on the card's own ground, which is already flat sweep up

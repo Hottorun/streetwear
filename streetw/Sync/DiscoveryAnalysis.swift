@@ -52,7 +52,32 @@ final class DiscoveryAnalysis {
         var packshotURL: URL?
     }
 
-    private var results: [String: Result] = [:]
+    /// Boxed so `NSCache` can hold it — the cache needs a class, and `Result` is a value.
+    private final class Box {
+        let result: Result
+        init(_ result: Result) { self.result = result }
+    }
+
+    /// **Budgeted in bytes, and evictable.**
+    ///
+    /// This was a plain `[String: Result]`, and a `Result` holds a `sticker: UIImage` cut
+    /// from a photograph decoded at 1200px. Nothing ever removed an entry, and the object is
+    /// held in app state for the life of the process on purpose — so the measurements
+    /// survive a tab switch. On a feed explicitly built for unbounded scrolling that is an
+    /// unbounded pile of full-size bitmaps that no memory-pressure path could reclaim:
+    /// scroll a hundred cards and the app is killed by jetsam, which a person experiences as
+    /// a crash while browsing.
+    ///
+    /// `NSCache` is the shape every other cache in this app already uses, and
+    /// `ImageLoader`'s own note states the rule this type was breaking: budget in bytes,
+    /// never in count. The budget is deliberately a fraction of the decoded-image cache —
+    /// stickers are a convenience on the card, not the photographs themselves, and losing
+    /// one costs a re-measure rather than a blank screen.
+    private let results: NSCache<NSString, Box> = {
+        let cache = NSCache<NSString, Box>()
+        cache.totalCostLimit = min(48 << 20, Int(ProcessInfo.processInfo.physicalMemory / 48))
+        return cache
+    }()
     /// In flight, so two cards scrolling past each other do not both fetch the same
     /// photograph — and so a card returned to is not re-analysed from scratch.
     private var working: Set<String> = []
@@ -65,7 +90,7 @@ final class DiscoveryAnalysis {
     /// 3200² PNGs, which decode to a 41MB bitmap.
     private static let measuredWidth = 1200
 
-    func result(for id: String) -> Result? { results[id] }
+    func result(for id: String) -> Result? { results.object(forKey: id as NSString)?.result }
 
     /// Measures one card, once.
     ///
@@ -74,7 +99,7 @@ final class DiscoveryAnalysis {
     /// would otherwise run it hundreds of times for cards nobody looked at.
     func analyse(_ card: DiscoverCard) async {
         let id = card.productExternalID
-        guard results[id] == nil, !working.contains(id) else { return }
+        guard results.object(forKey: id as NSString) == nil, !working.contains(id) else { return }
         working.insert(id)
         defer { working.remove(id) }
 
@@ -117,10 +142,19 @@ final class DiscoveryAnalysis {
         guard !lift.wasInterrupted else { return }
 
         let reading = await VisualReading.read(choice.image)
-        results[id] = Result(
-            sticker: lift.mask.map { UIImage(cgImage: $0) },
+        let sticker = lift.mask.map { UIImage(cgImage: $0) }
+        let result = Result(
+            sticker: sticker,
             reading: reading,
             packshotURL: choice.url
+        )
+        // Costed by the sticker, which is all of the weight — the reading is a handful of
+        // numbers. A card whose lift declined costs a nominal 1 so it is still evictable
+        // rather than immortal.
+        results.setObject(
+            Box(result),
+            forKey: id as NSString,
+            cost: sticker?.byteCost ?? 1
         )
     }
 

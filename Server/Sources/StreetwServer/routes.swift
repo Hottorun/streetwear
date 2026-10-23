@@ -16,6 +16,27 @@ import Vapor
 /// where it does not, the poller fills the page in from the next drop onwards.
 private let catchUpWindow: TimeInterval = 30 * 86_400
 
+/// Makes this device the only holder of an APNs token.
+///
+/// **A token identifies a phone, and a phone must not appear twice.** `apns_token` carries
+/// no uniqueness constraint, and nothing used to clear it from an older row — while the
+/// client has a documented path that mints a *new* device for the same phone: a 401 on the
+/// sizes push spends the credential and re-registers. The old row keeps its live token and
+/// its own follows, so `Notifier` finds both and the same phone receives every alert twice,
+/// for as long as both rows exist. Apple will not tell us: the token is valid on both.
+///
+/// So the newest registration takes the token and any older holder loses it. The old device
+/// row is left in place rather than deleted — it may still be the row somebody's follows
+/// hang off, and losing those is a worse failure than a stale row that can no longer be
+/// pushed to.
+private func claimAPNsToken(_ token: String, for deviceID: UUID, on db: any Database) async throws {
+    try await DeviceModel.query(on: db)
+        .filter(\.$apnsToken == token)
+        .filter(\.$id != deviceID)
+        .set(\.$apnsToken, to: nil)
+        .update()
+}
+
 func routes(_ app: Application) throws {
     // Kept as a bare 200 for the platform's health check — it must stay cheap and must
     // not fail the deploy just because the database is briefly unreachable.
@@ -98,7 +119,13 @@ func routes(_ app: Application) throws {
 
     /// Anonymous registration: no login and no PII. Returns the bearer token every
     /// other route requires.
-    v1.post("devices") { req async throws -> DeviceResponse in
+    ///
+    /// **Rate limited per address, and it is the most important one.** This route has to be
+    /// open — a phone cannot authenticate before it has registered — and it hands out a
+    /// working credential, so without a limit here the device tier is decorative: anyone
+    /// can mint as many identities as they like and spend every other budget in parallel.
+    v1.grouped(RateLimit(store: app.rateLimits.registration, identity: .address, name: "register"))
+        .post("devices") { req async throws -> DeviceResponse in
         let body = try req.content.decode(RegisterDevice.self)
 
         let user = UserModel()
@@ -113,12 +140,30 @@ func routes(_ app: Application) throws {
             locale: body.locale
         )
         try await device.save(on: req.db)
+        if let token = body.apnsToken {
+            try await claimAPNsToken(token, for: try device.requireID(), on: req.db)
+        }
         return DeviceResponse(deviceID: try device.requireID(), token: device.authToken)
     }
 
     // Both, and the order matters: find the device, then insist there was one. See
     // `RequireDevice` — the authenticator alone never refused anybody.
-    let authed = v1.grouped(DeviceAuthenticator()).grouped(RequireDevice())
+    //
+    // The standard budget sits on the group rather than on each route, for the same reason
+    // `RequireDevice` does: membership should be the guarantee, so a route added later
+    // cannot be unlimited by having forgotten a line. It is set far above what the app does
+    // — see `RateLimits` — so the only caller it can refuse is one that is not the app.
+    let authed = v1
+        .grouped(DeviceAuthenticator())
+        .grouped(RequireDevice())
+        .grouped(RateLimit(store: app.rateLimits.standard, identity: .device, name: "standard"))
+
+    /// The two routes that spend *outbound* budget: they make this server fetch a storefront
+    /// somebody named, and one of them writes a row the poller revisits every twenty minutes
+    /// from then on. They also share the poller's `PoliteFetcher`, so hammering them delays
+    /// real polling for the host in question — see `RateLimit.swift`.
+    let outbound = authed
+        .grouped(RateLimit(store: app.rateLimits.outbound, identity: .device, name: "outbound"))
 
     authed.patch("devices", "me") { req async throws -> HTTPStatus in
         let device = try await req.authenticatedDevice()
@@ -127,6 +172,11 @@ func routes(_ app: Application) throws {
         if let token = body.apnsToken { device.apnsToken = token }
         if let environment = body.environment { device.environment = environment }
         try await device.save(on: req.db)
+        // The commoner of the two paths: a phone that reinstalls registers afresh and then
+        // hands over the same APNs token here.
+        if let token = body.apnsToken {
+            try await claimAPNsToken(token, for: try device.requireID(), on: req.db)
+        }
 
         if let sizes = body.sizes {
             let user = try await device.$user.get(on: req.db)
@@ -318,7 +368,7 @@ func routes(_ app: Application) throws {
     /// Dry run: what would we watch here? Creates nothing. Exists so the client's
     /// "check site" preview doesn't have to fetch storefronts from the phone, which
     /// would sidestep the server's politeness budget entirely.
-    authed.get("brands", "probe") { req async throws -> BrandProbe in
+    outbound.get("brands", "probe") { req async throws -> BrandProbe in
         guard let raw = try? req.query.get(String.self, at: "url"),
               BrandDiscovery.normalizedURL(raw) != nil else {
             throw Abort(.badRequest, reason: "Not a usable URL")
@@ -343,7 +393,7 @@ func routes(_ app: Application) throws {
 
     /// Probe a URL and, if it is watchable, create the shared brand. Runs outside the
     /// poll loop so a slow discovery can't stall routine checks.
-    authed.post("brands", "discover") { req async throws -> BrandDTO in
+    outbound.post("brands", "discover") { req async throws -> BrandDTO in
         let body = try req.content.decode(DiscoverBrand.self)
         guard let base = BrandDiscovery.normalizedURL(body.url) else {
             throw Abort(.badRequest, reason: "Not a usable URL")
@@ -445,6 +495,14 @@ func routes(_ app: Application) throws {
             .filter(\.$brand.$id == body.brandID)
             .first()
         if existing == nil {
+            // **Checked rather than left to the foreign key.** `follows.brand_id` is a real
+            // FK, so an id the catalogue no longer holds raised a constraint violation —
+            // which is not an `AbortError` and surfaced as a generic 500 "Something went
+            // wrong." A client holding a stale id could do nothing with that; a 404 it can
+            // act on by searching again. `POST /v1/watches` already answers this way.
+            guard try await BrandModel.find(body.brandID, on: req.db) != nil else {
+                throw Abort(.notFound, reason: "No brand with that id.")
+            }
             try await FollowModel(userID: device.$user.id, brandID: body.brandID).save(on: req.db)
         }
         return .created
@@ -728,7 +786,19 @@ func routes(_ app: Application) throws {
                 // than reaching forward for replacements, which would double-serve them at
                 // the next depth.
                 let garments = rows.prefix(discoverPerBrand).filter {
-                    !$0.imageURLs.isEmpty
+                    // **A collection is not a garment, and this is where one got in.**
+                    // A release has its own path a few lines below, which loads its members
+                    // and refuses to emit a card without them. Reaching the feed through
+                    // *this* loop instead skipped all of that: `DiscoverCard`'s product
+                    // initialiser takes no `members`, so the row arrived with an empty
+                    // array — and the client draws a release as a mosaic of its members, so
+                    // the card rendered as a blank page with a lone wordmark on it.
+                    //
+                    // Seen live on Cap City's "09.16 - Wednesdays Drop": one image, a title
+                    // that reads like a product, `memberCount: 0`, and it was the first card
+                    // on the Discover tab.
+                    $0.kind != UpdateKind.collection.rawValue
+                        && !$0.imageURLs.isEmpty
                         && PreviewImages.isGarment(title: $0.title, imageURL: $0.imageURLs.first)
                 }
                 guard !garments.isEmpty else { continue }

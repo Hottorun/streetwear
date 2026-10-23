@@ -93,12 +93,56 @@ public actor PoliteFetcher: HTTPFetching {
         return parsed
     }
 
+    /// How many callers deep one host's queue may be before the next is refused.
+    ///
+    /// **Reserving before sleeping is what makes the budget correct, and it is also what
+    /// made it a weapon.** A slot is claimed by pushing `nextSlot[host]` forward *before*
+    /// waiting, so concurrent callers queue instead of all firing at once — that part is
+    /// deliberate and load-bearing. But there was no ceiling on how far forward, so a
+    /// thousand interactive probes aimed at one storefront booked that host's queue over an
+    /// hour into the future, and **the poller's own request for the brand queued behind all
+    /// of them**. Being early is the entire product; that is how a drop arrives late.
+    ///
+    /// **Measured in requests, not in seconds, and that distinction is the whole fix.** The
+    /// first attempt at this was an absolute horizon — refuse anything queued more than a
+    /// minute out — which is wrong in a way a test caught immediately: the interval is per
+    /// host and can legitimately be larger than any constant picked here. A site publishing
+    /// `Crawl-delay: 120` books the next slot two minutes ahead *by its own request*, so
+    /// every second fetch of it, robots.txt included, would have been refused and the brand
+    /// would have become permanently unpollable. Counting callers instead scales with
+    /// whatever politeness the host asked for: ordinary sequential use is a queue of one and
+    /// can never trip, while the abuse case is bounded at this many requests no matter how
+    /// many are attempted.
+    public static let maxQueueDepth = 8
+
+    /// The rule itself, as a pure function, because it is the part worth pinning.
+    ///
+    /// Driving this through the actor in a test does not work and is worth saying why: an
+    /// actor admits one caller at a time, so a burst of concurrent callers cannot build a
+    /// deep queue faster than the executor lets them in — the test ends up measuring the
+    /// scheduler rather than the rule. The arithmetic is two comparisons; testing it
+    /// directly says exactly what it does, deterministically.
+    ///
+    /// `delay == 0` means there is no spacing and therefore no queue to be deep, which is
+    /// the configured state in most of the suite.
+    public static func isQueueTooDeep(wait: TimeInterval, delay: TimeInterval) -> Bool {
+        guard delay > 0 else { return false }
+        return wait > delay * Double(maxQueueDepth)
+    }
+
     private func waitForSlot(host: String, delay: TimeInterval) async throws {
         let now = Date()
         let slot = max(now, nextSlot[host] ?? .distantPast)
-        nextSlot[host] = slot.addingTimeInterval(delay)
-
         let wait = slot.timeIntervalSince(now)
+
+        if Self.isQueueTooDeep(wait: wait, delay: delay) {
+            // Deliberately *not* reserving in this branch: a refused caller must not push
+            // the queue further out, or a loop of refusals would starve the poller just as
+            // effectively as a loop of successes did.
+            throw SourceError.hostBusy(host, retryAfter: wait)
+        }
+
+        nextSlot[host] = slot.addingTimeInterval(delay)
         if wait > 0 {
             try await Task.sleep(for: .seconds(wait))
         }

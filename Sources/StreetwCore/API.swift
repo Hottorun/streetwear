@@ -14,20 +14,35 @@ public struct SizePayload: Codable, Sendable, Hashable {
     /// Always US tokens — `SizeProfile` stores them canonically, whatever scale the user
     /// reads them in, so this needs no scale of its own.
     public var shoe: [String]
+    /// The waist ladder, which is its own question: a 32 is not an M, no table converts
+    /// between them, and a person wears one of each.
+    ///
+    /// **It was missing from this payload while the column, the migration and the
+    /// server-side matching all existed.** So the server stored an empty waist set on
+    /// every device update, `claims` answered false for every pair of trousers, and
+    /// restock targeting was switched off on denim and workwear — half of what these
+    /// brands make. The client recomputes size matching locally from `variants`, so the
+    /// screen looked right the whole time and only the notifications were wrong. Someone
+    /// who had entered waists and nothing else got no size targeting at all.
+    ///
+    /// Optional, so a server that predates it still decodes this body.
+    public var waist: [String]?
     /// Which genders the user wants pushed. Held server-side for the same reason the
     /// sizes are: the server decides whether a drop is news for this person, and it can
     /// only do that if it knows. Optional for back-compatibility.
     public var gender: String?
 
-    public init(apparel: [String], shoe: [String], gender: String? = nil) {
+    public init(apparel: [String], shoe: [String], waist: [String]? = nil, gender: String? = nil) {
         self.apparel = apparel
         self.shoe = shoe
+        self.waist = waist
         self.gender = gender
     }
 
     public init(_ profile: SizeProfile) {
         self.apparel = Array(profile.apparel)
         self.shoe = Array(profile.shoe)
+        self.waist = Array(profile.waist)
         self.gender = profile.gender.rawValue
     }
 
@@ -36,6 +51,10 @@ public struct SizePayload: Codable, Sendable, Hashable {
         var profile = SizeProfile()
         profile.apparel = Set(apparel.compactMap { SizeNormalizer.normalize($0)?.token })
         profile.shoe = Set(shoe.compactMap { SizeNormalizer.normalize($0)?.token })
+        // Absent and empty are the same thing here — an older client simply never had a
+        // waist to send — so both leave the ladder empty, and an empty ladder filters
+        // nothing rather than hiding everything.
+        profile.waist = Set((waist ?? []).compactMap { SizeNormalizer.normalize($0)?.token })
         profile.gender = gender.flatMap(GenderPreference.init(rawValue:)) ?? .everything
         return profile
     }

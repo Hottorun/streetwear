@@ -23,7 +23,6 @@ Connect and gets crawled, and that it is served over HTTPS.
 `privacy-policy.html` beside this file is the same text as a single self-contained page you can
 upload as-is.
 
-**Before you publish it**, replace the three bracketed placeholders below, and re-read the
 "What the server receives" section against the app as it actually is on the day you ship.
 
 ---

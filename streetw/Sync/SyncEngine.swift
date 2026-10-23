@@ -35,7 +35,8 @@ final class SyncEngine {
     }
 
     func sync(brands: [Brand]) async {
-        guard !isSyncing, !brands.isEmpty else { return }
+        // The demo catalogue's storefronts do not exist; polling them only records failures.
+        guard !isSyncing, !brands.isEmpty, !DemoCatalog.isActive else { return }
         isSyncing = true
         lastError = nil
         newItemCount = 0
@@ -59,6 +60,7 @@ final class SyncEngine {
     }
 
     func sync(brand: Brand) async {
+        guard !DemoCatalog.isActive else { return }
         let due = brand.sources.filter { $0.enabled && $0.kind.isAutomatic && $0.isReadyToCheck }
         guard !due.isEmpty else { return }
 

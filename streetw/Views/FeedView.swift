@@ -326,6 +326,10 @@ struct FeedView: View {
             }
             .overlay(alignment: .bottom) { syncStatus }
             .sheet(isPresented: $isShowingCalendar) { DropCalendarView() }
+            // Screenshot affordance: `-demoSheet calendar` opens the drop calendar at launch.
+            .task {
+                if UserDefaults.standard.string(forKey: "demoSheet") == "calendar" { isShowingCalendar = true }
+            }
             .sheet(isPresented: $isShowingWatches) { WatchesView() }
             .sheet(isPresented: $isShowingMarkdowns) { MarkdownsView() }
             .sheet(isPresented: $isAddingBrand) { AddBrandView() }
@@ -527,7 +531,7 @@ struct FeedView: View {
     private func subhead(_ feed: Feed) -> String {
         // Points at the rail directly above rather than at the abstraction. The one control
         // that answers this sentence is eight points away and is the only thing on screen.
-        if brands.isEmpty { return "TAP ADD AND STREETW STARTS WATCHING A BRAND'S CATALOG" }
+        if brands.isEmpty { return "TAP ADD AND DROPWALL STARTS WATCHING A BRAND'S CATALOGUE" }
         if feed.hasHiddenUnseen {
             return "SHOWING \(sizes.profile.gender.label.uppercased()) ONLY — CHANGE IT IN SETTINGS"
         }
@@ -617,7 +621,7 @@ struct FeedView: View {
         let trouble = settings.isConfigured ? remote.lastError : engine.lastError
         if let trouble, !isSyncingNow {
             VStack(alignment: .leading, spacing: 6) {
-                DataLabel(text: "COULDN'T REACH STREETW", color: .signal)
+                DataLabel(text: "COULDN'T REACH DROPWALL", color: .signal)
                 Text(trouble)
                     .font(.editorial(15))
                     .foregroundStyle(Color.ink)
@@ -1145,6 +1149,9 @@ private struct BrandSpread: View {
                     .foregroundStyle(Color.muted)
                     .frame(width: 28, height: 28)
                     .overlay(Circle().stroke(Color.hairline, lineWidth: 0.5))
+                    // The ring stays 28pt; the target reaches Apple's 44.
+                    .frame(width: 44, height: 44)
+                    .contentShape(.rect)
             }
             .buttonStyle(.borderless)
             .accessibilityLabel("Mark \(group.brand.name) seen")

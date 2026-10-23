@@ -104,6 +104,15 @@ struct ContentView: View {
         // Ink, not the system blue: the accent is reserved for things that are happening
         // now, so it must never be spent on ordinary controls.
         .tint(.ink)
+        // **Scaled, but bounded.** `Font.editorial/data/wordmark` now scale with the
+        // reader's setting, which is the whole point — but this app is dense by design: a
+        // size run of twenty tokens, three-up garment grids, a tab bar of four. Past
+        // accessibility2 those stop being tight and start being unusable, and an app that
+        // cannot be operated is not more accessible than one set slightly small.
+        //
+        // At the root rather than per screen, so a sheet or a pushed page cannot escape it.
+        // The four largest settings still get the largest type the layout can actually hold.
+        .dynamicTypeSize(...DynamicTypeSize.accessibility2)
         // Tapping a facet in the taste summary is a question about the collection, so it
         // is answered in the collection. Keyed on the request count rather than on the
         // facet: asking for the one you are already looking at is a legitimate way to get
@@ -179,13 +188,35 @@ struct ContentView: View {
         // the pending destination is read on appearance as well as on change.
         .task { follow(route.pending) }
         .onChange(of: route.pending) { _, destination in follow(destination) }
+        // **The close control is added here, not in the views.** Both are also pushed onto a
+        // navigation stack elsewhere, where a Done button would be wrong — so the dismiss
+        // belongs to the presentation, which is the thing that knows it is modal.
+        //
+        // Without it, tapping a notification landed on a product page whose only exit was a
+        // downward swipe: `ProductDetailView`'s toolbar is a More menu and
+        // `BrandDetailView`'s is Refresh, so neither offered a way back. That is often a
+        // person's very first interaction with a Dropwall notification.
         .sheet(item: $opened) { update in
-            NavigationStack { ProductDetailView(update: update) }
-                .tint(.ink)
+            NavigationStack {
+                ProductDetailView(update: update)
+                    .toolbar {
+                        ToolbarItem(placement: .topBarLeading) {
+                            Button("Close", systemImage: "xmark") { opened = nil }
+                        }
+                    }
+            }
+            .tint(.ink)
         }
         .sheet(item: $openedBrand) { brand in
-            NavigationStack { BrandDetailView(brand: brand) }
-                .tint(.ink)
+            NavigationStack {
+                BrandDetailView(brand: brand)
+                    .toolbar {
+                        ToolbarItem(placement: .topBarLeading) {
+                            Button("Close", systemImage: "xmark") { openedBrand = nil }
+                        }
+                    }
+            }
+            .tint(.ink)
         }
         // Both driven from the confirmation rather than from the toast, which dismisses
         // itself on the tap that opens them — a sheet owned by a view that is going away
@@ -193,6 +224,36 @@ struct ContentView: View {
         .sheet(item: Bindable(confirmation).choosingBoard) { update in
             BoardPicker(update: update)
                 .presentationDetents([.medium])
+        }
+        // **Un-saving is asked about, wherever it was asked from.** The bookmark on a card
+        // and the Remove item in its menu both delete the note, the size note and the board
+        // filing along with the save — `SaveDetailView` has always said so and both of these
+        // did it in silence. Hosted here rather than on the card for the same reason as the
+        // sheets below: the card lives in a `LazyVStack` and is recycled or scrolled off on
+        // its own schedule, and a dialog owned by one would go with it.
+        //
+        // Only reached when there is something to lose — see `isAuthored`. A bare bookmark
+        // still comes off in one tap, because making the commonest action in the app a
+        // two-step one to protect the case that needs no protecting is its own kind of wrong.
+        .confirmationDialog(
+            "Remove this from your collection?",
+            isPresented: Binding(
+                get: { confirmation.removingSave != nil },
+                set: { if !$0 { confirmation.removingSave = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("Remove", role: .destructive) {
+                if let update = confirmation.removingSave {
+                    removeSave(update, in: context)
+                }
+                confirmation.removingSave = nil
+            }
+            Button("Keep", role: .cancel) { confirmation.removingSave = nil }
+        } message: {
+            // The same sentence `SaveDetailView` uses, because it is the same act and a
+            // second wording of one promise is how the two stop agreeing.
+            Text("Your note and where you filed it go too. Fits it appears in are left alone.")
         }
         .sheet(item: Bindable(confirmation).settingWatch) { update in
             WatchEditor(update: update)

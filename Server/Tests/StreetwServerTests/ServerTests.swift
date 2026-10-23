@@ -3269,3 +3269,156 @@ struct NotificationPolicyTests {
         }
     }
 }
+
+/// The feed cursor travels in the query string, not in a body, and for a long time the
+/// server could not read it.
+///
+/// `configure` pinned `APICoding` onto the JSON coder only. Vapor decodes query values with
+/// a separate `URLEncodedFormDecoder`, whose default date strategy is `.secondsSince1970` —
+/// a plain `Double(_:)` parse. The client sends ISO-8601, so the decode threw, the `try?` at
+/// the call site swallowed it, and every request silently fell back to "the last seven
+/// days": a device away for longer than that could never reach anything older, and every
+/// ordinary refresh re-pulled up to 200 hydrated events instead of a delta.
+///
+/// Nothing exercised `?since=`, which is why it survived. These do.
+@Suite("Feed cursor")
+struct FeedCursorTests {
+    /// What the app actually puts on the wire — `StreetwAPI.feed(since:)`.
+    private func clientFormatted(_ date: Date) -> String {
+        ISO8601DateFormatter().string(from: date)
+    }
+
+    @Test("The configured query decoder reads the format the client sends")
+    func decodesISO8601() throws {
+        let decoder = URLEncodedFormDecoder(
+            configuration: .init(dateDecodingStrategy: .iso8601)
+        )
+        struct Cursor: Codable { var since: Date }
+
+        let moment = Date(timeIntervalSince1970: 1_780_000_000)
+        let decoded = try decoder.decode(
+            Cursor.self, from: "since=\(clientFormatted(moment))"
+        )
+        #expect(abs(decoded.since.timeIntervalSince(moment)) < 1)
+    }
+
+    @Test("Vapor's default query decoder does not — which is the bug this pins")
+    func defaultStrategyCannotReadIt() {
+        struct Cursor: Codable { var since: Date }
+        let moment = Date(timeIntervalSince1970: 1_780_000_000)
+        // `.secondsSince1970` is the default, and an ISO-8601 string is not a Double.
+        #expect(throws: (any Error).self) {
+            try URLEncodedFormDecoder().decode(
+                Cursor.self, from: "since=\(clientFormatted(moment))"
+            )
+        }
+    }
+
+    @Test("A cursor handed back out survives a round trip")
+    func roundTrips() throws {
+        struct Cursor: Codable, Equatable { var since: Date }
+        let encoder = URLEncodedFormEncoder(
+            configuration: .init(dateEncodingStrategy: .iso8601)
+        )
+        let decoder = URLEncodedFormDecoder(
+            configuration: .init(dateDecodingStrategy: .iso8601)
+        )
+        // Whole seconds: ISO-8601 without fractional digits is what both ends write.
+        let sent = Cursor(since: Date(timeIntervalSince1970: 1_780_000_000))
+        let wire = try encoder.encode(sent)
+        let back = try decoder.decode(Cursor.self, from: wire)
+        #expect(abs(back.since.timeIntervalSince(sent.since)) < 1)
+    }
+}
+
+/// The budget that stops the device tier being decorative.
+///
+/// `POST /v1/devices` is unauthenticated by necessity and hands out a working credential, so
+/// "behind `RequireDevice`" meant "behind one extra request" until these existed. The
+/// arithmetic is the part that is easy to get subtly wrong, so it is tested directly rather
+/// than through a server.
+@Suite("Rate limiting")
+struct RateLimitTests {
+    private let t0 = Date(timeIntervalSince1970: 1_780_000_000)
+
+    @Test("A burst is allowed up to capacity, and the next one is refused")
+    func burstThenRefuse() {
+        var bucket = TokenBucket(capacity: 3, refillPerSecond: 1, now: t0)
+        #expect(bucket.take(now: t0) == nil)
+        #expect(bucket.take(now: t0) == nil)
+        #expect(bucket.take(now: t0) == nil)
+        #expect(bucket.take(now: t0) != nil)
+    }
+
+    @Test("Waiting earns the request back")
+    func refills() {
+        var bucket = TokenBucket(capacity: 2, refillPerSecond: 1, now: t0)
+        _ = bucket.take(now: t0)
+        _ = bucket.take(now: t0)
+        #expect(bucket.take(now: t0) != nil)
+        #expect(bucket.take(now: t0.addingTimeInterval(1)) == nil)
+    }
+
+    @Test("It never refills past capacity, however long the wait")
+    func capped() {
+        var bucket = TokenBucket(capacity: 2, refillPerSecond: 1, now: t0)
+        let later = t0.addingTimeInterval(10_000)
+        #expect(bucket.take(now: later) == nil)
+        #expect(bucket.take(now: later) == nil)
+        #expect(bucket.take(now: later) != nil)
+    }
+
+    /// Telling somebody to wait zero seconds is telling them to retry immediately, which is
+    /// what got them refused.
+    @Test("A refusal always names at least one second")
+    func retryAfterIsUseful() {
+        var bucket = TokenBucket(capacity: 1, refillPerSecond: 1000, now: t0)
+        _ = bucket.take(now: t0)
+        let wait = bucket.take(now: t0)
+        #expect(wait != nil)
+        #expect((wait ?? 0) >= 1)
+    }
+
+    @Test("Callers are counted separately")
+    func perIdentity() async {
+        let store = RateLimitStore(capacity: 1, refillPerSecond: 0.001)
+        #expect(await store.take("device-a", now: t0) == nil)
+        #expect(await store.take("device-a", now: t0) != nil)
+        // A second caller is unaffected by the first having spent its budget.
+        #expect(await store.take("device-b", now: t0) == nil)
+    }
+
+    /// A limiter that leaks memory per attacker is a denial of service with extra steps.
+    @Test("Full buckets are swept rather than kept forever")
+    func sweeps() async {
+        let store = RateLimitStore(capacity: 1, refillPerSecond: 1)
+        _ = await store.take("one", now: t0)
+        #expect(await store.tracked == 1)
+        var bucket = TokenBucket(capacity: 1, refillPerSecond: 1, now: t0)
+        _ = bucket.take(now: t0)
+        // Spent means "refilled to full", i.e. indistinguishable from a fresh bucket.
+        #expect(bucket.isSpent(now: t0) == false)
+        #expect(bucket.isSpent(now: t0.addingTimeInterval(5)) == true)
+    }
+
+    /// Limiting on `peerAddress` behind a proxy puts the whole internet in one bucket.
+    @Test("The client address comes from the left of X-Forwarded-For")
+    func forwardedFor() {
+        let app = Application(.testing)
+        defer { app.shutdown() }
+        let request = Request(application: app, on: app.eventLoopGroup.next())
+        request.headers.replaceOrAdd(name: .xForwardedFor, value: "203.0.113.9, 10.0.0.1")
+        #expect(RateLimit.key(for: .address, request: request) == "203.0.113.9")
+    }
+
+    @Test("A device is told apart by its bearer token")
+    func deviceIdentity() {
+        let app = Application(.testing)
+        defer { app.shutdown() }
+        let request = Request(application: app, on: app.eventLoopGroup.next())
+        request.headers.bearerAuthorization = .init(token: "abc123def456")
+        #expect(RateLimit.key(for: .device, request: request) == "abc123def456")
+        // And a key is never logged whole.
+        #expect(RateLimit.redact("abc123def456") == "abc123…")
+    }
+}

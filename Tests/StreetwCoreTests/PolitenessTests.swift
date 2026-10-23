@@ -161,6 +161,62 @@ struct PoliteFetcherTests {
         #expect(!client.paths.contains("/products.json"), "must not have been requested")
     }
 
+    /// **The queue is bounded by depth, and that is what stops it being a weapon.**
+    ///
+    /// A slot is reserved before sleeping, so concurrent callers queue rather than all
+    /// firing at once — deliberate and load-bearing. With no ceiling, a loop of interactive
+    /// probes at one storefront booked its queue arbitrarily far ahead and the poller's own
+    /// request queued behind every one of them. Being early is the whole product.
+    @Test("The queue-depth rule refuses a deep queue and admits a shallow one")
+    func queueDepthRule() {
+        let delay = 2.0
+        let horizon = delay * Double(PoliteFetcher.maxQueueDepth)
+
+        // Ordinary sequential use: one caller ahead. Never refused.
+        #expect(!PoliteFetcher.isQueueTooDeep(wait: delay, delay: delay))
+        // A handful queued is still fine — that is what the reservation is for.
+        #expect(!PoliteFetcher.isQueueTooDeep(wait: horizon, delay: delay))
+        // Past the allowance, refused.
+        #expect(PoliteFetcher.isQueueTooDeep(wait: horizon + 0.1, delay: delay))
+        // The attack: a thousand probes at one host.
+        #expect(PoliteFetcher.isQueueTooDeep(wait: 1000 * delay, delay: delay))
+    }
+
+    /// The rule scales with whatever politeness the host asked for, which is the whole
+    /// reason it counts callers instead of seconds.
+    @Test("A long Crawl-delay raises the allowance rather than breaking the host")
+    func depthScalesWithDelay() {
+        // 120s Crawl-delay: one queued caller is 120s out and must still be admitted. An
+        // absolute one-minute horizon refused exactly this, which would have made a polite
+        // site permanently unpollable.
+        #expect(!PoliteFetcher.isQueueTooDeep(wait: 120, delay: 120))
+        #expect(!PoliteFetcher.isQueueTooDeep(wait: 900, delay: 120))
+        #expect(PoliteFetcher.isQueueTooDeep(wait: 2000, delay: 120))
+    }
+
+    /// With no spacing configured there is no queue, so nothing can be too deep.
+    @Test("Zero delay never refuses")
+    func zeroDelayAdmits() {
+        #expect(!PoliteFetcher.isQueueTooDeep(wait: 9999, delay: 0))
+    }
+
+    /// The case an absolute horizon got wrong, kept as a test because it is the reason the
+    /// rule is what it is: a host that asks for a long delay must still be fetchable.
+    @Test("A host with a long Crawl-delay is still fetchable, one request after another")
+    func longCrawlDelayStillWorks() async throws {
+        let client = TimingClient()
+        // Far larger than any constant a wall-clock horizon would have used.
+        let polite = PoliteFetcher(wrapping: client, minInterval: 0.05)
+        client.robotsBody = "User-agent: *\nAllow: /\nCrawl-delay: 0.05"
+
+        // Sequential use is a queue of one and must never be refused, however wide the
+        // interval — this is what the first version of the ceiling broke.
+        for index in 0..<4 {
+            _ = try await polite.get(URL(string: "https://example.com/s\(index).json")!)
+        }
+        #expect(client.paths.filter { $0.hasPrefix("/s") }.count == 4)
+    }
+
     /// The guarantee that matters when many sources for one brand come due together.
     @Test("Concurrent requests to one host are spaced out")
     func spacesConcurrentRequests() async throws {

@@ -77,12 +77,25 @@ final class RemoteSync {
     /// nothing to do with identity. `POST /v1/devices` then mints a device with no follows,
     /// the next `follows()` answers `[]`, and the merge below used to read that as "you
     /// unfollowed everything". One refused request emptied the app.
-    func ensureRegistered(sizes: SizeProfile) async throws {
+    ///
+    /// **`sizes` is optional, and nil is not the same as empty.** The size push doubles as
+    /// the liveness check above, so every caller wants to make it — but only the ones that
+    /// actually hold the profile may send one. `probe` and `searchBrands` were passing a
+    /// fresh `SizeProfile()`, and the server applies what it is given destructively
+    /// (`user.sizeProfile = sizes.asProfile`): so opening Add brand and typing a query
+    /// zeroed the apparel, shoe and waist sets and reset the gender filter to everything,
+    /// once per debounced keystroke. Nothing on screen changes — the client re-derives size
+    /// matching locally from `variants` — so the only symptom was restock pushes targeted
+    /// on a profile the person had never chosen, in both directions, until the next launch
+    /// sync happened to put it back. Nil sends no `sizes` key at all, which the server
+    /// reads as "not telling you about sizes", and the token is still exercised.
+    func ensureRegistered(sizes: SizeProfile? = nil) async throws {
         guard let baseURL = settings.baseURL else { throw APIError.notConfigured }
+        let payload = sizes.map(SizePayload.init)
 
         if settings.token != nil {
             do {
-                try await api?.updateDevice(UpdateDevice(sizes: SizePayload(sizes)))
+                try await api?.updateDevice(UpdateDevice(sizes: payload))
                 return
             } catch APIError.unauthorized {
                 Self.log.info("server rejected the stored device token; registering again")
@@ -94,8 +107,16 @@ final class RemoteSync {
         let response = try await anonymous.register(
             RegisterDevice(
                 environment: BackgroundServices.apnsEnvironment,
-                locale: Locale.current.identifier,
-                sizes: SizePayload(sizes)
+                // **Deliberately not sent.** This carried `Locale.current.identifier`, the
+                // server stored it on the device row, and nothing has ever read it — so it
+                // was a piece of information about somebody held for no purpose, and one
+                // the privacy policy's "what our server receives" list did not mention. The
+                // field stays on the DTO so an older server still decodes this body; the
+                // honest fix for an unused field is to stop collecting it, not to document
+                // it. If a regional storefront feature ever wants it, it can come back with
+                // the policy line that has to accompany it.
+                locale: nil,
+                sizes: payload
             )
         )
         settings.token = response.token
@@ -177,13 +198,17 @@ final class RemoteSync {
     /// for the rest of the session, which is the exact failure `BrandSuggestions` already
     /// had once.
     func probe(url: String) async throws -> BrandProbe {
-        try await ensureRegistered(sizes: SizeProfile())
+        // No sizes: this call has none to offer, and an empty profile is a destructive
+        // statement rather than a silent one. See `ensureRegistered`.
+        try await ensureRegistered()
         guard let api else { throw APIError.notConfigured }
         return try await api.probe(url: url)
     }
 
     func searchBrands(_ query: String) async throws -> [BrandDTO] {
-        try await ensureRegistered(sizes: SizeProfile())
+        // No sizes: this call has none to offer, and an empty profile is a destructive
+        // statement rather than a silent one. See `ensureRegistered`.
+        try await ensureRegistered()
         guard let api else { throw APIError.notConfigured }
         return try await api.searchBrands(query)
     }
@@ -549,11 +574,27 @@ final class RemoteSync {
             }
 
             if let brand = byRemoteID[id] {
-                brand.name = Self.displayName(dto.name)
-                brand.currencyCode = dto.currency
-                brand.isLockedForDrop = dto.lockedForDrop
-                if let logo = dto.logoURL { brand.logoURLString = logo }
-                brand.sources = dto.sources.map(Self.source(from:))
+                // **Guarded, every one of them.** A SwiftData setter registers a change
+                // whether or not the value differs, and `sources` is a Codable array that is
+                // re-encoded on assignment — so this marked every followed brand dirty on
+                // every sync, and the `context.save()` that follows invalidates every
+                // `@Query` in the app. At a 60-second foreground refresh that rebuilt the
+                // whole view tree once a minute for nothing: `FeedView` re-walked the unread
+                // queue, `StyleView` re-digested the collection, and Discover re-ranked.
+                let name = Self.displayName(dto.name)
+                if brand.name != name { brand.name = name }
+                if brand.currencyCode != dto.currency { brand.currencyCode = dto.currency }
+                if brand.isLockedForDrop != dto.lockedForDrop {
+                    brand.isLockedForDrop = dto.lockedForDrop
+                }
+                if let logo = dto.logoURL, brand.logoURLString != logo {
+                    brand.logoURLString = logo
+                }
+                // Compared before assigning for the same reason, and it is the expensive
+                // one: `BrandSource` is `Equatable`, so this is a value comparison against
+                // a re-encode of the whole array.
+                let sources = dto.sources.map(Self.source(from:))
+                if brand.sources != sources { brand.sources = sources }
             } else {
                 let brand = Brand(
                     name: Self.displayName(dto.name),
@@ -587,6 +628,10 @@ final class RemoteSync {
         let remoteIDs = Set(remote.compactMap(\.id))
         for brand in existing {
             if let id = brand.remoteID, !remoteIDs.contains(id) {
+                // This is the path "Stop following" actually removes a brand by, minutes
+                // later and from a different screen — so it is the one where losing the
+                // collection would be least connected to the act that caused it.
+                brand.releaseKeepsakes()
                 context.delete(brand)
             }
         }

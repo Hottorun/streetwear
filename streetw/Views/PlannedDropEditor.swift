@@ -32,6 +32,7 @@ struct PlannedDropEditor: View {
     }
 
     @Environment(\.dismiss) private var dismiss
+    @State private var isConfirmingDelete = false
     @Environment(\.modelContext) private var context
     /// Only to know whether there is a server to tell about this date — see `canHint`.
     @Environment(ServerSettings.self) private var settings
@@ -276,18 +277,36 @@ struct PlannedDropEditor: View {
     }
 
     private var deleteButton: some View {
+        // **Asked, because this is the one kind of claim in the app nobody can get back.**
+        // A `PlannedDrop` is hand-entered — a date, a title, a note, and two alerts already
+        // scheduled — and it is the only thing here that did not come from a storefront. It
+        // was also a plain single-tap button on a form, not a menu item behind a long press.
         Button("Delete this drop", systemImage: "trash", role: .destructive) {
-            if case .existing(let drop) = subject {
-                DropReminders.cancel(drop)
-                context.delete(drop)
-                try? context.save()
-                onChange()
-            }
-            dismiss()
+            isConfirmingDelete = true
         }
         .font(.data(13, .semibold))
         .buttonStyle(.borderless)
         .padding(.top, 8)
+        .confirmationDialog(
+            "Delete this drop?",
+            isPresented: $isConfirmingDelete,
+            titleVisibility: .visible
+        ) {
+            Button("Delete", role: .destructive) { performDelete() }
+            Button("Keep", role: .cancel) {}
+        } message: {
+            Text("The date, the note and both reminders go with it. Nothing else changes.")
+        }
+    }
+
+    private func performDelete() {
+        if case .existing(let drop) = subject {
+            DropReminders.cancel(drop)
+            context.delete(drop)
+            try? context.save()
+            onChange()
+        }
+        dismiss()
     }
 
     // MARK: - Persistence

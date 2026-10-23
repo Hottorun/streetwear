@@ -35,6 +35,11 @@ struct AddBrandView: View {
     @State private var results: [BrandDTO] = []
     @State private var isSearching = false
     @State private var searchError: String?
+    /// A follow that failed, shown inline under the row it failed on. Separate from
+    /// `searchError` because that one is a page state and this one must not be.
+    @State private var followError: String?
+    /// Which row the follow failed on, so the line appears under that one and not the list.
+    @State private var failedToFollow: UUID?
     /// The brand currently being followed, so its row can show progress rather than the
     /// whole list going blank.
     @State private var pending: UUID?
@@ -133,6 +138,15 @@ struct AddBrandView: View {
                 } else {
                     ForEach(results) { dto in
                         resultRow(dto)
+                        // Under the row it happened to, so it reads as "that one didn't
+                        // work" rather than as the screen having failed. Only on the row in
+                        // question — `pending` is nil again by the time this draws, so the
+                        // id is compared against the one the failure was recorded for.
+                        if let followError, failedToFollow == dto.id {
+                            DataLabel(text: followError.uppercased(), color: .signal)
+                                .padding(.horizontal, 20)
+                                .padding(.bottom, 14)
+                        }
                     }
                 }
             }
@@ -215,13 +229,13 @@ struct AddBrandView: View {
             // X yet", which describes *follows* — but this searches the catalog, so it
             // claimed something it hadn't checked and read as a bug whenever the real
             // cause was that the search never ran.
-            Text("No brand called “\(trimmed)” in the catalog yet.")
+            Text("No brand called “\(trimmed)” in the catalogue yet.")
                 .font(.editorial(19))
                 .foregroundStyle(Color.ink)
                 .fixedSize(horizontal: false, vertical: true)
 
             if looksLikeSite {
-                Text("Add it and Dropwall will work out what its site publishes — the catalog, a feed, or the page itself.")
+                Text("Add it and Dropwall will work out what its site publishes — the catalogue, a feed, or the page itself.")
                     .font(.editorial(14))
                     .foregroundStyle(Color.muted)
                     .fixedSize(horizontal: false, vertical: true)
@@ -269,7 +283,7 @@ struct AddBrandView: View {
         // as a missing brand.
         guard settings.isConfigured else {
             results = []
-            searchError = "Not connected to the Dropwall catalog."
+            searchError = "Not connected to the Dropwall catalogue."
             return
         }
 
@@ -288,13 +302,21 @@ struct AddBrandView: View {
 
     private func follow(_ dto: BrandDTO) async {
         pending = dto.id
+        followError = nil
+        failedToFollow = nil
         defer { pending = nil }
         do {
             try await remote.followExisting(dto, sizes: sizes.profile)
             await remote.sync(sizes: sizes.profile)
             dismiss()
         } catch {
-            searchError = error.localizedDescription
+            // **Not `searchError`.** That one is rendered as a full-page "Couldn't search"
+            // state, so a failed *follow* replaced the results list the person was looking
+            // at — the search they had just run vanished, and the only way back was to type
+            // it again. A follow that fails should leave the screen exactly as it was and
+            // say so on the row it happened to.
+            followError = error.localizedDescription
+            failedToFollow = dto.id
         }
     }
 }

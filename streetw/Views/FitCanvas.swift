@@ -535,8 +535,12 @@ struct FitCanvas: View {
             // Saving a fit a second after opening it produced exactly that: a picture of
             // two garments and two grey squares. Better to keep the previous render, or
             // none at all and let the card draw the live surface, than to bake in a hole.
-            guard await FitRender.warm(target) else { return }
-            target.renderFile = await FitRender.write(target)
+            guard await FitRender.warm(target), !target.isGone else { return }
+            let file = await FitRender.write(target)
+            // Checked once more: `write` renders and encodes, and the delete can land in
+            // the middle of that. Assigning a stored property on a deleted `@Model` traps.
+            guard !target.isGone, let file else { return }
+            target.renderFile = file
             try? context.save()
         }
         dismiss()

@@ -260,6 +260,10 @@ struct StyleView: View {
             .sheet(isPresented: $isShowingSettings) { SettingsSheet() }
             .sheet(isPresented: $isComposing) { FitCanvas(fit: nil) }
             .sheet(item: $editing) { FitCanvas(fit: $0) }
+            // Screenshot affordance: `-demoSheet fit` opens the newest kept fit at launch.
+            .task {
+                if UserDefaults.standard.string(forKey: "demoSheet") == "fit" { editing = fits.first }
+            }
             // The other half of the pass that runs on the Saved tab. Cutouts are what the
             // canvas is built out of, and a fit can be composed from here without that tab
             // ever having been opened — which left the stickers un-lifted for exactly the
@@ -338,9 +342,7 @@ struct StyleView: View {
                                 }
                             }
                             Button("Delete fit", systemImage: "trash", role: .destructive) {
-                                if let render = fit.renderFile { FitRender.remove(render) }
-                                context.delete(fit)
-                                try? context.save()
+                                fitPendingDeletion = fit
                             }
                         }
                     }
@@ -348,8 +350,36 @@ struct StyleView: View {
                 .padding(.horizontal, 20)
             }
             .scrollIndicators(.hidden)
+            // Hosted on the scroll view, not on the card: the card lives in a lazy stack and
+            // is routinely recycled, so a dialog owned by one would be torn down underneath
+            // itself. The same reason `SaveConfirmation` is owned by the app.
+            .confirmationDialog(
+                "Delete this fit?",
+                isPresented: Binding(
+                    get: { fitPendingDeletion != nil },
+                    set: { if !$0 { fitPendingDeletion = nil } }
+                ),
+                titleVisibility: .visible
+            ) {
+                Button("Delete", role: .destructive) {
+                    guard let fit = fitPendingDeletion, !fit.isGone else { return }
+                    if let render = fit.renderFile { FitRender.remove(render) }
+                    context.delete(fit)
+                    try? context.save()
+                    fitPendingDeletion = nil
+                }
+                Button("Keep", role: .cancel) {}
+            } message: {
+                // True, and the reassurance somebody hesitating actually needs: `Fit.items`
+                // cascades in neither direction.
+                Text("The clothes in it stay in your collection.")
+            }
         }
     }
+
+    /// The fit a delete has been asked about. Held here rather than on the card for the
+    /// reason in the dialog's own comment.
+    @State private var fitPendingDeletion: Fit?
 
     private func suggestedFits(_ suggested: [SuggestedFit]) -> some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -529,8 +559,12 @@ struct StyleView: View {
         // and `FitStudio` hold. Without it a kept fit shows the live canvas until the next
         // time it is edited, which is slower and can disagree with what was on the card.
         Task {
-            guard await FitRender.warm(fit) else { return }
-            fit.renderFile = await FitRender.write(fit)
+            guard await FitRender.warm(fit), !fit.isGone else { return }
+            let file = await FitRender.write(fit)
+            // Checked once more: `write` renders and encodes, and the delete can land in
+            // the middle of that. Assigning a stored property on a deleted `@Model` traps.
+            guard !fit.isGone, let file else { return }
+            fit.renderFile = file
             try? context.save()
         }
     }
@@ -734,6 +768,8 @@ struct SettingsSheet: View {
                     StyleStatementSection()
                     Rule()
                     NotificationsSection()
+                    Rule()
+                    AboutSection()
                 }
                 .padding(.horizontal, 20)
                 .padding(.top, 4)

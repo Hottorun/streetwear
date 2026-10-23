@@ -87,6 +87,31 @@ func configure(_ app: Application) async throws {
     ContentConfiguration.global.use(encoder: APICoding.encoder, for: .json)
     ContentConfiguration.global.use(decoder: APICoding.decoder, for: .json)
 
+    // **And the query string, which is where the cursor actually travels.**
+    //
+    // The two lines above pin the JSON *body* coder, and `since` is not in a body — it is
+    // `?since=` on `GET /v1/feed`. Vapor decodes query values with a separate
+    // `URLEncodedFormDecoder` whose default date strategy is `.secondsSince1970`, i.e. a
+    // plain `Double(_:)` parse. The client sends ISO-8601 (`StreetwAPI.feed(since:)`), so
+    // `Double("2026-09-16T22:00:00Z")` was nil, the decode threw, the `try?` at the call
+    // site swallowed it, and **every request silently fell back to the seven-day default**.
+    //
+    // The comment above describes exactly this failure and was attached to the wrong coder.
+    // What it cost: a device away for more than a week could never reach anything older
+    // than seven days — retention holds thirty, and the query is `.descending.limit(200)`,
+    // so the rows existed and were simply unreachable, and the client then advanced its
+    // cursor past them. And in the ordinary case every foreground refresh re-pulled up to
+    // 200 fully hydrated events with their whole variant arrays instead of a delta, at a
+    // sixty-second throttle, which is the precise cost this server exists to avoid.
+    //
+    // The encoder is pinned too, so anything this service sends as a query round-trips.
+    ContentConfiguration.global.use(
+        urlDecoder: URLEncodedFormDecoder(configuration: .init(dateDecodingStrategy: .iso8601))
+    )
+    ContentConfiguration.global.use(
+        urlEncoder: URLEncodedFormEncoder(configuration: .init(dateEncodingStrategy: .iso8601))
+    )
+
     // Every outbound request goes through the politeness budget: robots.txt obeyed,
     // and at most one request per host per interval no matter how many sources are due.
     let interval = Environment.get("POLITE_INTERVAL").flatMap(Double.init) ?? 2.0
