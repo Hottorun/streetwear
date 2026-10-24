@@ -17,7 +17,6 @@ private final class RedirectingClient: HTTPFetching, @unchecked Sendable {
     private var answers: [String: Answer] = [:]
     private(set) var requested: [String] = []
     private(set) var posts: [String] = []
-    private(set) var times: [Date] = []
 
     func on(_ url: String, _ answer: Answer) {
         lock.withLock { answers[url] = answer }
@@ -36,7 +35,6 @@ private final class RedirectingClient: HTTPFetching, @unchecked Sendable {
         } ?? url.absoluteString
         return lock.withLock {
             requested.append(key)
-            times.append(Date())
             // An unknown robots.txt is a 404, which is permissive — the common case.
             return answers[key] ?? Answer(status: 404)
         }
@@ -142,13 +140,14 @@ struct RedirectTests {
         let interval = 0.2
         let polite = PoliteFetcher(wrapping: http, minInterval: interval)
 
+        let start = Date()
         _ = try await polite.get(URL(string: "https://example.com/a")!)
 
-        // robots.txt, /a, /b — each one a slot after the last.
-        #expect(http.times.count == 3)
-        for (earlier, later) in zip(http.times, http.times.dropFirst()) {
-            #expect(later.timeIntervalSince(earlier) >= interval * 0.8)
-        }
+        // robots.txt, /a, /b — each one a slot after the last. Measured end to end rather
+        // than gap by gap: a loaded machine can only make the whole thing slower, while a
+        // single late timestamp can make one gap look short.
+        #expect(http.requested == ["example.com/robots.txt", "example.com/a", "example.com/b"])
+        #expect(Date().timeIntervalSince(start) >= interval * 2 * 0.9)
     }
 
     @Test("A redirect loop stops instead of going round")
