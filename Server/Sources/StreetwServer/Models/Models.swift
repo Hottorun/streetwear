@@ -299,6 +299,15 @@ final class DeviceModel: Model, @unchecked Sendable {
     @Field(key: "environment") var environment: String
     @OptionalField(key: "locale") var locale: String?
     @Timestamp(key: "updated_at", on: .update) var updatedAt: Date?
+    /// The UTC day (`yyyy-MM-dd`) this device last sent a usage report, and nothing finer.
+    ///
+    /// The one per-device fact the usage counts keep, and it is overwritten rather than
+    /// appended to: it is what lets "how many people used it this week" be answered without
+    /// counting one person's ten opens as ten people, and without any row that says which
+    /// device did what. Written only by `POST /v1/usage` — never by the feed or the size push,
+    /// which a background refresh also makes, so a phone in a drawer is not an active user.
+    /// See `UsageLedger.markActive`.
+    @OptionalField(key: "active_on") var activeOn: String?
 
     init() {}
 
@@ -471,4 +480,25 @@ final class BrandCheckWatcherModel: Model, @unchecked Sendable {
         self.$user.id = userID
         self.instagram = instagram
     }
+}
+
+/// How many times one thing happened on one day, across everybody.
+///
+/// **Not personal and not catalogue — a total.** There is no `user_id` and no `device_id` here
+/// and there must never be one: the whole promise of the usage counts is that what arrives is
+/// added to a number shared by everybody and nothing else is kept. One row per (day, event),
+/// unique, so the table grows by at most a dozen rows a day however many reports arrive.
+/// See `UsageLedger` and `UsagePolicy`.
+final class UsageCountModel: Model, @unchecked Sendable {
+    static let schema = "usage_counts"
+
+    @ID(key: .id) var id: UUID?
+    /// `yyyy-MM-dd` in UTC. A string rather than a date column, so Postgres and SQLite agree
+    /// on where a day ends and the ordering is plain text.
+    @Field(key: "day") var day: String
+    /// A `UsageEvent` raw value, or one of `UsagePolicy`'s server-only active rows.
+    @Field(key: "event") var event: String
+    @Field(key: "total") var total: Int
+
+    init() {}
 }

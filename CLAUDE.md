@@ -201,7 +201,7 @@ plutil -p /tmp/streetw-dd/Build/Products/Debug-iphonesimulator/streetw.app/Info.
 ### Tests
 
 ```bash
-swift test                                    # all 394
+swift test                                    # all 456
 swift test --filter "Size normalisation"      # one suite
 swift test --filter relockFiresAgain          # one test
 ```
@@ -335,6 +335,9 @@ bought it. The short form of the load-bearing ones:
 - Only a price *drop* past 5% is an event; restock outranks it; a lock fires on the transition.
 - Push: one per brand per **cooldown**, `aps-environment` is load-bearing, one `threadID` for the
   whole app.
+- The buy bar opens a Shopify cart permalink only when **exactly one available variant is
+  yours** by `SizeProfile.claims` (never `matches`) in the colourway on screen, and says
+  "CHECK OUT", not "bag"; everything else gets the exact product page (`Checkout`).
 
 ### Push, and why it was silent for months
 
@@ -773,6 +776,7 @@ the local path in the `else`. Adding a new one means adding both halves:
 | APNs token / environment | `PATCH /v1/devices/me` |
 | stock watches | `POST` / `GET` / `DELETE /v1/watches` |
 | poll hints from the drop calendar | `PUT /v1/poll-hints` (whole set; no-op standalone) |
+| anonymous usage counts | `POST /v1/usage` (daily tallies; standalone counts and sends nothing) — read back with `GET /admin/usage`, see `docs/server.md` |
 | recommendations | `GET /v1/brands/popular` |
 | the Discover feed | `GET /v1/discover` (no standalone equivalent — the phone only holds brands somebody already followed, which is the opposite of the question) |
 
@@ -862,7 +866,8 @@ builds the executable. Omitting them yields a confusing "overlapping sources" er
 
 **The catalog is global** — brands, sources, products and variants are one row per real-world thing;
 only users, devices, follows, size profiles, watches and poll hints are personal. Never add a
-`user_id` to a catalog table.
+`user_id` to a catalog table. `usage_counts` is neither: totals per day per event, with no user or
+device id ever — the one per-device usage fact is `devices.active_on`, overwritten.
 
 **Read `docs/server.md` before touching the poller, the schema, migrations or `Notifier`.** The
 traps that cost the most: a `[String]` column must be `TEXT[]` on Postgres and **cannot reproduce on

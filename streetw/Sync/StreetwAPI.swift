@@ -235,6 +235,11 @@ struct StreetwAPI: Sendable {
         try await send(path: "v1/poll-hints", method: "PUT", body: PollHintSync(hints: hints))
     }
 
+    /// Adds this device's tallies to everybody's totals. See `UsageCounts`.
+    func reportUsage(_ report: UsageReport) async throws -> UsageReceipt {
+        try await send(path: "v1/usage", method: "POST", body: report)
+    }
+
     /// One brand's recent history, outside the feed cursor. See the route's own note for
     /// why this cannot be a `since` on `/v1/feed`.
     func brandFeed(brandID: UUID, limit: Int = 60) async throws -> FeedResponse {

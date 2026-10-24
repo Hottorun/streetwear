@@ -1176,6 +1176,57 @@ func routes(_ app: Application) throws {
             .map(\.asPollHint)
     }
 
+    // MARK: Usage
+
+    /// Add this device's tallies to everybody's totals.
+    ///
+    /// Written from the refusals outwards, like `PUT /v1/poll-hints`, because a route that
+    /// writes on every call is a way to make the database work on a stranger's say-so:
+    ///
+    /// 1. **Device required**, and its own budget on top of the standard one — see
+    ///    `RateLimits.usage`.
+    /// 2. **A small body.** 32KB, against the server's 1MB default: a full week of every
+    ///    event is about six. Refused at the door, before anything is decoded.
+    /// 3. **`UsagePolicy` decides every row** — a whitelisted name, a day in the last week,
+    ///    a count a person could reach, no row twice — and refuses a long report whole.
+    /// 4. **Nothing written names the device.** The tallies go into shared totals; the
+    ///    device row keeps one overwritten day, which is how weekly actives are counted.
+    ///    See `UsageLedger`.
+    ///
+    /// One transaction, so a report is added whole or not at all — the phone keeps what it
+    /// sent until a reply arrives, and half a report followed by a retry would count twice.
+    let usageBodyLimit: ByteCount = "32kb"
+    authed.grouped(RateLimit(store: app.rateLimits.usage, identity: .device, name: "usage"))
+        .on(.POST, "usage", body: .collect(maxSize: usageBodyLimit)) { req async throws -> UsageReceipt in
+        // Checked again here because Vapor applies a route's limit only to a body that
+        // streams in: one that arrives in a single read — which is most bodies under a
+        // socket buffer — is handed over whole and never measured against it.
+        guard (req.body.data?.readableBytes ?? 0) <= usageBodyLimit.value else {
+            throw Abort(.payloadTooLarge)
+        }
+        let device = try await req.authenticatedDevice()
+        let report = try req.content.decode(UsageReport.self)
+        let now = Date()
+
+        let (accepted, refused) = UsagePolicy.accepted(report, now: now)
+        guard !accepted.isEmpty else { return UsageReceipt(accepted: 0, refused: refused) }
+
+        try await req.db.transaction { db in
+            try await UsageLedger.add(accepted, on: db)
+            // Only a report that counted something makes the device active. Nothing else
+            // stamps it — not the feed, not the size push — because a background refresh
+            // makes both, and a phone in a drawer is not somebody using the app.
+            try await UsageLedger.markActive(device, now: now, on: db)
+        }
+        return UsageReceipt(accepted: accepted.count, refused: refused)
+    }
+
+    /// The totals, for the operator. `?days=` how far back, default four weeks.
+    admin.get("usage") { req async throws -> UsageSummary in
+        let days = min(max((try? req.query.get(Int.self, at: "days")) ?? 28, 1), 366)
+        return try await UsageLedger.summary(days: days, now: Date(), on: req.db)
+    }
+
     // MARK: Ops
 
     /// Manual kick, for development and for verifying a new brand without waiting.

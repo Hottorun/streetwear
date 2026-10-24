@@ -216,6 +216,25 @@ Changing these silently will break intended behavior:
   exception to the table further down: `SharedSaveImporter` already does the same through the same
   adapter, and there is no route for "what is in stock right now" because the question is always
   about the single product being looked at.
+- **The buy bar checks out in your size only when it can say which** (`Checkout`,
+  `StorefrontBar`). It always opened the product page, so buying meant picking the size the app
+  already knew, again, on the shop's own menu — five steps on the one page where a drop is won
+  or lost. For a Shopify product (`shopify:` key, numeric variant ids) with **exactly one
+  available variant you wear** in the colourway on screen, it now opens the cart permalink
+  `https://<product host>/cart/<variant>:1` and says "CHECK OUT IN M · KITH.COM". Four rules
+  hold it. **`claims`, never `matches`**: the filter's optimism turns "can't read 44" into
+  "yours", which on a size run is a wrongly ruled token and here is money — so no profile, an
+  unreadable size, two of your sizes in stock or four colourways with none chosen all open the
+  page instead. **The label says checkout, not bag**: a permalink skips the bag, and a button
+  promising one and opening a payment page is not trusted twice. **The product's own host**,
+  because `usa.` is a different shop in a different currency. And **`UIApplication.open`, not an
+  in-app browser**: a shop's app claims its URLs as universal links and is where somebody is
+  signed in with a card saved. Otherwise it is the exact product page — `?variant=<id>` when
+  your one size is sold out, so the shop says so — and on every other platform the page
+  untouched, because no other platform's variant URL is something the catalogue tells us
+  (WooCommerce wants a per-store attribute slug, Salesforce a product-scoped parameter, UCP
+  publishes nothing about its web URLs). Variant ids needed no wire change: `VariantInfo.id` has
+  always been the Shopify id, stored server-side as `variants.external_id`.
 - **Following a brand the poller has watched for months hands over its recent history, pre-marked
   seen.** The feed cursor is one timestamp across every followed brand, so `GET /v1/feed` correctly
   reports that nothing has happened since — the brand page opened empty, its counts read zero, and

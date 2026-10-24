@@ -363,6 +363,7 @@ enum SharedSaveImporter {
             if let product { apply(product, to: existing) }
             if existing.save == nil {
                 context.insert(SavedItem(update: existing, type: .inspiration))
+                UsageCounts.record(.saveAdded)
                 return externalID
             }
             return nil
@@ -400,6 +401,7 @@ enum SharedSaveImporter {
 
         context.insert(update)
         context.insert(SavedItem(update: update, type: .inspiration, note: nil))
+        UsageCounts.record(.saveAdded)
         return externalID
     }
 

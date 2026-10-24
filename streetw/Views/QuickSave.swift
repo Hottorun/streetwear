@@ -32,6 +32,7 @@
 //   now is a coordinator with a *stable identity*; the handle owns the real gesture and
 //   reports to it.
 
+import StreetwCore
 import SwiftData
 import SwiftUI
 
@@ -258,6 +259,7 @@ struct BoardPicker: View {
         let save = update.save ?? {
             let created = SavedItem(update: update, type: type)
             context.insert(created)
+            UsageCounts.record(.saveAdded)
             return created
         }()
         save.type = type

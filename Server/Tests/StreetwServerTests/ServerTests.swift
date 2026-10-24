@@ -253,7 +253,7 @@ struct RouteTests {
     @Test("Admin routes refuse without the key")
     func adminRefusesWithoutTheKey() async throws {
         try await withServer { app in
-            for path in ["admin/status", "admin/catalog"] {
+            for path in ["admin/status", "admin/catalog", "admin/usage"] {
                 try await app.testing().test(.GET, path) { res in
                     #expect(res.status == .unauthorized, "\(path) must not answer anonymously")
                 }
@@ -3746,6 +3746,213 @@ struct BrandCheckTests {
             let result = await Reaper(app: app).sweep()
             #expect(result.checks == 1)
             #expect(try await BrandCheckModel.query(on: app.db).count() == 0)
+        }
+    }
+}
+
+@Suite("Usage counts")
+struct UsageCountTests {
+    private var today: String { UsagePolicy.day(of: Date()) }
+
+    /// A registered device's headers, and its row.
+    private func device(_ app: Application) async throws -> (HTTPHeaders, DeviceModel) {
+        let auth = try await deviceAuth(app)
+        let token = try #require(auth.bearerAuthorization?.token)
+        let row = try #require(
+            try await DeviceModel.query(on: app.db).filter(\.$authToken == token).first()
+        )
+        return (auth, row)
+    }
+
+    private func report(
+        _ app: Application,
+        _ headers: HTTPHeaders,
+        _ counts: [UsageCount]
+    ) async throws -> (HTTPStatus, UsageReceipt?) {
+        var outcome: (HTTPStatus, UsageReceipt?) = (.internalServerError, nil)
+        try await app.testing().test(.POST, "v1/usage", headers: headers, beforeRequest: { req in
+            try req.content.encode(UsageReport(counts: counts))
+        }, afterResponse: { res async throws in
+            outcome = (res.status, res.status == .ok ? try res.content.decode(UsageReceipt.self) : nil)
+        })
+        return outcome
+    }
+
+    private func total(_ app: Application, _ day: String, _ event: String) async throws -> Int? {
+        try await UsageCountModel.query(on: app.db)
+            .filter(\.$day == day)
+            .filter(\.$event == event)
+            .first()?.total
+    }
+
+    @Test("Counting refuses anonymous callers")
+    func requiresADevice() async throws {
+        try await withServer { app in
+            let (status, _) = try await report(app, HTTPHeaders(), [
+                UsageCount(day: today, event: "tab.feed", count: 1)
+            ])
+            #expect(status == .unauthorized)
+            #expect(try await UsageCountModel.query(on: app.db).count() == 0)
+        }
+    }
+
+    /// The whole design: two people's reports end up in one number, and nothing records
+    /// which of them sent what.
+    @Test("Reports from different devices add up to one total per day per event")
+    func reportsAddUp() async throws {
+        try await withServer { app in
+            let (first, _) = try await device(app)
+            let (second, _) = try await device(app)
+
+            _ = try await report(app, first, [UsageCount(day: today, event: "tab.feed", count: 3)])
+            _ = try await report(app, second, [
+                UsageCount(day: today, event: "tab.feed", count: 2),
+                UsageCount(day: today, event: "save.added", count: 1)
+            ])
+            _ = try await report(app, first, [UsageCount(day: today, event: "tab.feed", count: 1)])
+
+            #expect(try await total(app, today, "tab.feed") == 6)
+            #expect(try await total(app, today, "save.added") == 1)
+            // One row per (day, event) — plus the two active rows — however many reports.
+            #expect(try await UsageCountModel.query(on: app.db).filter(\.$event == "tab.feed").count() == 1)
+        }
+    }
+
+    @Test("Unknown names and stale days are refused row by row, and the rest still counts")
+    func refusesRowByRow() async throws {
+        try await withServer { app in
+            let (auth, _) = try await device(app)
+            let (status, receipt) = try await report(app, auth, [
+                UsageCount(day: today, event: "app.opened", count: 1),
+                UsageCount(day: today, event: "tab.someday", count: 1),
+                UsageCount(day: "2020-01-01", event: "app.opened", count: 1),
+                UsageCount(day: today, event: UsagePolicy.activeWeek, count: 40)
+            ])
+            #expect(status == .ok)
+            #expect(receipt == UsageReceipt(accepted: 1, refused: 3))
+            #expect(try await total(app, today, "app.opened") == 1)
+            #expect(try await total(app, today, "tab.someday") == nil)
+            #expect(try await total(app, "2020-01-01", "app.opened") == nil)
+        }
+    }
+
+    @Test("A report past the bound is refused whole and writes nothing")
+    func oversizedReportWritesNothing() async throws {
+        try await withServer { app in
+            let (auth, row) = try await device(app)
+            let rows = (0...UsagePolicy.maxEntries).map { index in
+                UsageCount(day: today, event: UsageEvent.allCases[index % UsageEvent.allCases.count].rawValue, count: 1)
+            }
+            let (status, receipt) = try await report(app, auth, rows)
+            #expect(status == .ok)
+            #expect(receipt?.accepted == 0)
+            #expect(try await UsageCountModel.query(on: app.db).count() == 0)
+            // And a report that counted nothing does not make the device active.
+            let after = try await DeviceModel.find(row.id, on: app.db)
+            #expect(after?.activeOn == nil)
+        }
+    }
+
+    /// Refused at the door, before anything is decoded — the route's body limit is far below
+    /// the server's default, because a week of every event is a few kilobytes.
+    @Test("An oversized body is refused before it is read")
+    func bodyLimit() async throws {
+        try await withServer { app in
+            let (auth, _) = try await device(app)
+            let padding = String(repeating: "x", count: 40_000)
+            try await app.testing().test(.POST, "v1/usage", headers: auth, beforeRequest: { req in
+                try req.content.encode(UsageReport(counts: [
+                    UsageCount(day: today, event: padding, count: 1)
+                ]))
+            }, afterResponse: { res async throws in
+                #expect(res.status == .payloadTooLarge)
+            })
+        }
+    }
+
+    /// "How many people used it" is answered by one overwritten day on the device row, so
+    /// ten reports from one phone are one active device, not ten.
+    @Test("A device is counted active once a day, however often it reports")
+    func activeOncePerDay() async throws {
+        try await withServer { app in
+            let (first, row) = try await device(app)
+            let (second, _) = try await device(app)
+            let week = try #require(UsagePolicy.weekStart(ofDay: today))
+
+            for _ in 0..<3 {
+                _ = try await report(app, first, [UsageCount(day: today, event: "app.opened", count: 1)])
+            }
+            _ = try await report(app, second, [UsageCount(day: today, event: "app.opened", count: 1)])
+
+            #expect(try await total(app, today, UsagePolicy.activeDay) == 2)
+            #expect(try await total(app, week, UsagePolicy.activeWeek) == 2)
+            #expect(try await DeviceModel.find(row.id, on: app.db)?.activeOn == today)
+        }
+    }
+
+    /// The weekly row is what this feature was asked for: a person who opens the app on
+    /// five days is five daily actives and one weekly one.
+    @Test("A new day in the same week is a daily active but not a second weekly one")
+    func weeklyActives() async throws {
+        try await withServer { app in
+            let (_, row) = try await device(app)
+            // A Wednesday, then the Friday of the same week, then the next Monday.
+            let wednesday = try #require(UsagePolicy.date(ofDay: "2026-10-21")).addingTimeInterval(3600)
+            let friday = wednesday.addingTimeInterval(2 * 86_400)
+            let monday = wednesday.addingTimeInterval(5 * 86_400)
+
+            try await UsageLedger.markActive(row, now: wednesday, on: app.db)
+            try await UsageLedger.markActive(row, now: friday, on: app.db)
+            try await UsageLedger.markActive(row, now: friday, on: app.db)
+            try await UsageLedger.markActive(row, now: monday, on: app.db)
+
+            #expect(try await total(app, "2026-10-21", UsagePolicy.activeDay) == 1)
+            #expect(try await total(app, "2026-10-23", UsagePolicy.activeDay) == 1)
+            #expect(try await total(app, "2026-10-26", UsagePolicy.activeDay) == 1)
+            #expect(try await total(app, "2026-10-19", UsagePolicy.activeWeek) == 1)
+            #expect(try await total(app, "2026-10-26", UsagePolicy.activeWeek) == 1)
+            #expect(try await DeviceModel.find(row.id, on: app.db)?.activeOn == "2026-10-26")
+        }
+    }
+
+    /// The counting route must not become a way to make the database write: it has a budget
+    /// of its own, well below the standard one and well above anything the app does.
+    @Test("Reports past the usage budget are refused")
+    func rateLimited() async throws {
+        try await withServer { app in
+            let (auth, _) = try await device(app)
+            var statuses: [HTTPStatus] = []
+            for _ in 0..<11 {
+                let (status, _) = try await report(app, auth, [
+                    UsageCount(day: today, event: "tab.feed", count: 1)
+                ])
+                statuses.append(status)
+            }
+            #expect(statuses.prefix(10).allSatisfy { $0 == .ok })
+            #expect(statuses.last == .tooManyRequests)
+        }
+    }
+
+    @Test("The operator reads the totals, the daily and the weekly actives")
+    func adminSummary() async throws {
+        try await withServer { app in
+            let (auth, _) = try await device(app)
+            _ = try await report(app, auth, [
+                UsageCount(day: today, event: "tab.style", count: 2),
+                UsageCount(day: today, event: "push.opened", count: 1)
+            ])
+
+            try await app.testing().test(.GET, "admin/usage?days=7", headers: adminAuth) { res async throws in
+                #expect(res.status == .ok)
+                let summary = try res.content.decode(UsageSummary.self)
+                #expect(summary.to == today)
+                #expect(summary.activeLastSevenDays == 1)
+                #expect(summary.weeks.first?.activeDevices == 1)
+                let day = try #require(summary.days.first)
+                #expect(day.day == today)
+                #expect(day.activeDevices == 1)
+                #expect(day.counts == ["tab.style": 2, "push.opened": 1])
+            }
         }
     }
 }

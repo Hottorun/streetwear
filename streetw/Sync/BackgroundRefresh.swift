@@ -211,6 +211,12 @@ extension AppDelegate: UNUserNotificationCenterDelegate {
         BackgroundServices.route?.open(
             PushDestination(response.notification.request.content.userInfo)
         )
+        // Only the server's own alerts. A drop reminder or a standalone watch is scheduled
+        // on the phone, and counting it here would make "do the pushes get tapped" partly a
+        // question about the drop calendar.
+        if response.notification.request.trigger is UNPushNotificationTrigger {
+            UsageCounts.record(.pushOpened)
+        }
     }
 }
 

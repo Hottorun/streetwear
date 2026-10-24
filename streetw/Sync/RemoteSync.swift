@@ -179,6 +179,7 @@ final class RemoteSync {
         let brand = try await api.discover(DiscoverBrand(url: url, instagram: instagram))
         if let id = brand.id {
             try await api.follow(brandID: id)
+            UsageCounts.record(.brandFollowed)
             // **The brand's own history, as history.** `RemoteSync.follow` has always done
             // this and `addBrand` — the path onboarding and the add-brand screen both take —
             // did not, so what a shop published before you had ever heard of it arrived as
@@ -203,7 +204,9 @@ final class RemoteSync {
         // statement rather than a silent one. See `ensureRegistered`.
         try await ensureRegistered()
         guard let api else { throw APIError.notConfigured }
-        return try await api.startCheck(url: url)
+        let check = try await api.startCheck(url: url)
+        UsageCounts.record(.brandCheck)
+        return check
     }
 
     func check(id: UUID) async throws -> BrandCheck {
@@ -222,6 +225,10 @@ final class RemoteSync {
         guard let api else { throw APIError.notConfigured }
         let check = try await api.watchCheck(id: id, instagram: instagram)
         if let brand = check.brand, let brandID = brand.id {
+            // Counted when the follow exists, not when it was asked for: a watch placed while
+            // the check is still running comes back here again once it has settled, and
+            // that is the one call that carries a brand.
+            UsageCounts.record(.brandFollowed)
             mergeBrands([brand], isCompleteList: false)
             try? context.save()
             await catchUp(brandID: brandID)
@@ -255,6 +262,7 @@ final class RemoteSync {
         try await ensureRegistered(sizes: sizes)
         guard let api, let id = dto.id else { throw APIError.notConfigured }
         try await api.follow(brandID: id)
+        UsageCounts.record(.brandFollowed)
         mergeBrands([dto], isCompleteList: false)
         try? context.save()
         await catchUp(brandID: id)
@@ -263,6 +271,7 @@ final class RemoteSync {
     func follow(brandID: UUID) async throws {
         guard let api else { throw APIError.notConfigured }
         try await api.follow(brandID: brandID)
+        UsageCounts.record(.brandFollowed)
         await catchUp(brandID: brandID)
     }
 
@@ -395,6 +404,16 @@ final class RemoteSync {
             lastError = error.localizedDescription
             return nil
         }
+    }
+
+    // MARK: - Usage counts
+
+    /// Carries a usage report. Throws rather than recording `lastError`, because what to do
+    /// with each failure — keep, drop, or repair the registration — is `UsageCounts`'s call,
+    /// and none of them is worth a line on the feed.
+    func reportUsage(_ report: UsageReport) async throws -> UsageReceipt {
+        guard settings.isConfigured, let api else { throw APIError.notConfigured }
+        return try await api.reportUsage(report)
     }
 
     // MARK: - Watches

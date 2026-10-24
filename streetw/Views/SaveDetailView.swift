@@ -101,6 +101,7 @@ struct SaveDetailView: View {
     var body: some View {
         let stock = stock()
         let colorways = self.colorways
+        let checkout = update?.checkoutLink(profile: sizes.profile, colorway: selectedColorway)
 
         return NavigationStack(path: $path) {
             ScrollView {
@@ -191,8 +192,8 @@ struct SaveDetailView: View {
             // Pinned rather than left at the foot of the scroll. Everything below the rule
             // is an annotation you can come back to; going to look at the thing is not.
             .safeAreaInset(edge: .bottom) {
-                if let link = update?.linkURL {
-                    StorefrontBar(url: link, isSoldOut: stock.isSoldOut)
+                if let checkout {
+                    StorefrontBar(link: checkout, isSoldOut: stock.isSoldOut)
                 }
             }
             .toolbar {

@@ -89,6 +89,15 @@
 			  Which brands are followed and which products are watched. This is the whole
 			  point of the server: it polls once for everyone and sends a push when
 			  something a follower cares about moves.
+
+			  And the anonymous usage counts (`UsageCounts`, `POST /v1/usage`): how many
+			  times a day the app was opened, each tab shown, a search run, a save or a fit
+			  made, a push tapped. Analytics, so it is declared as a purpose here. The
+			  counts themselves are added to shared totals on arrival and stored against
+			  no device — but Apple's label answers "linked" per data type rather than per
+			  purpose, and this type is already linked for the follows above, so it stays
+			  linked rather than splitting the type in two. App Store Connect must say the
+			  same: Product Interaction, App Functionality and Analytics.
 			-->
 			<key>NSPrivacyCollectedDataType</key>
 			<string>NSPrivacyCollectedDataTypeProductInteraction</string>
@@ -99,6 +108,7 @@
 			<key>NSPrivacyCollectedDataTypePurposes</key>
 			<array>
 				<string>NSPrivacyCollectedDataTypePurposeAppFunctionality</string>
+				<string>NSPrivacyCollectedDataTypePurposeAnalytics</string>
 			</array>
 		</dict>
 		<dict>

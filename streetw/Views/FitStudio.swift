@@ -676,6 +676,7 @@ struct FitStudio: View {
         fit.backgroundName = background.rawValue
         context.insert(fit)
         try? context.save()
+        UsageCounts.record(.fitCreated)
 
         // The render is written after the fact and only when every piece actually decoded —
         // `ImageRenderer` draws one frame synchronously, so an unwarmed canvas comes out as a

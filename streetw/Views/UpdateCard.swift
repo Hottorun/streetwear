@@ -516,6 +516,7 @@ private func setSave(
         save.type = type
     } else {
         context.insert(SavedItem(update: update, type: type))
+        UsageCounts.record(.saveAdded)
     }
     update.isSeen = true
     try? context.save()
