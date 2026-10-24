@@ -202,10 +202,32 @@ Part of the streetw guidance set; see `CLAUDE.md` for the index and the build ru
   one detection on an image already in hand, and no further photograph is fetched. And when
   detection is unavailable it answers *false*, which degrades to "keep what the brand put
   first" rather than wandering the gallery. `packshotURLString` is stored beside the images
-  rather than replacing `primaryImageURL`, because the lead shot is still what the feed, the
-  gallery and the collection wall should show — but `FitPieceImage` falls back to the
-  packshot, and **`FitRender.warm` has to ask for the same URL at the same width** or the
-  renderer finds an empty cache and writes a fit with a hole in it.
+  rather than replacing `primaryImageURL`, because the lead shot is still what the feed,
+  Discover and the product page show — but `FitPieceImage` falls back to the packshot, and
+  **`FitRender.warm` has to ask for the same URL at the same width** or the renderer finds an
+  empty cache and writes a fit with a hole in it.
+- **On the wall and on a save's own page, the packshot is the cover** (`SavedItem.coverURLString`).
+  This reverses the line above for exactly two surfaces, on purpose. A feed card is an
+  announcement and the styling is part of it, so the feed and Discover keep the brand's first
+  photograph. A wall of things somebody kept is a collection of *garments*, and Stüssy's
+  model-first galleries put a person in boots on the wall to stand for a shirt. The order is a
+  cover chosen by hand ("Set as cover", on the photograph in `SaveDetailView`), then the
+  packshot, then the lead shot — so **where no packshot is known nothing changes**. Both stored
+  answers are honoured only while they are still one of the product's image strings, because
+  `SharedSaveImporter.repair` can replace a share's whole gallery. The page's gallery *leads*
+  with the cover and is never filtered (`SavedItem.galleryURLs`); a colourway's photograph is
+  found in it by URL, since the catalogue's index is into the brand's order. Choosing the
+  photograph the automatic rule would pick anyway **clears** the choice rather than pinning it,
+  which is the way back and means a better packshot found later still arrives. **The cover is a
+  display choice and nothing else**: the cutout, the colour and the silhouette are still
+  measured on the packshot, and a fit's piece still falls back to it — somebody choosing a
+  lookbook frame to *look at* has not said it is a better photograph to *measure*.
+- **The wall's tile shape is the cover's shape.** `imageAspect` is measured on the photograph
+  `ImageTagger` analysed, which is the packshot — so until this the wall drew the lead shot in
+  a tile shaped for the packshot, letterboxing every model-first gallery. It is now written
+  whenever the packshot is chosen, not only when the tags are due, so a pass that re-picks it
+  for the cutout alone keeps the tile honest. A cover chosen by hand carries its own
+  `coverAspect`, read off the copy the gallery has just drawn. The wall still never crops.
 - **`Seamless` cannot lift a light garment off a light sweep, by construction**, and that is
   a correct refusal rather than a bug. Measured against real catalogues: it lifts 10/10 of
   Kith's photography (border spread 0.000, erasing ~90%), and refuses a white BAPE crewneck

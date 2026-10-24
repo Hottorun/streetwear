@@ -308,8 +308,11 @@ struct CollectionTile: View {
             // proportions and a lookbook shot doesn't lose its top and bottom to a
             // square. The tile takes the picture's shape, so `.fit` letterboxes nothing
             // in the normal case and only rescues the extremes the clamp catches.
+            //
+            // The cover, not the brand's lead shot — see `SavedItem.coverURLString`. The
+            // aspect the wall lays this tile out at is the cover's own, so the two agree.
             UpdateImage(
-                url: update?.primaryImageURL,
+                url: save.coverURL,
                 kind: update?.kind ?? .product,
                 aspect: aspect,
                 contentMode: .fit,

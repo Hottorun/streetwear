@@ -509,8 +509,11 @@ struct SavedView: View {
     /// and the old 0.66–1.5 window squared off every lookbook shot on the wall. The
     /// remaining bounds are only there to stop a panorama or a size chart from blowing
     /// one column out and leaving the other empty.
+    ///
+    /// The *cover's* shape — see `SavedItem.coverAspectMeasured` — because that is the
+    /// photograph the tile draws.
     private func aspect(for save: SavedItem, offset: Int) -> CGFloat {
-        if let measured = save.update?.imageAspect, measured > 0 {
+        if let measured = save.coverAspectMeasured, measured > 0 {
             return min(max(CGFloat(measured), 0.4), 2.2)
         }
         let ratios: [CGFloat] = [1, 0.8, 1, 0.75]

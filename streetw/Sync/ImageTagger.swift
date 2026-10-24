@@ -303,12 +303,17 @@ enum ImageTagger {
             let image = shot.image
             update.packshotURLString = shot.url.absoluteString
 
+            // The shape of the photograph just chosen, every time one is — not only when the
+            // tags are due. The packshot is the collection wall's cover (see
+            // `SavedItem.coverURLString`), the wall lays each tile out at its cover's measured
+            // shape, and a pass that re-picks the packshot for the cutout alone (a version
+            // bump, a detector that answers on this phone and did not on the last) would
+            // otherwise leave the tile shaped for the previous picture. Free: it is decoded.
+            if image.size.height > 0 {
+                update.imageAspect = Double(image.size.width / image.size.height)
+            }
+
             if needsTags {
-                // Free: the image is already decoded, and the wall would otherwise be
-                // guessing tile heights from a hash of the item id.
-                if image.size.height > 0 {
-                    update.imageAspect = Double(image.size.width / image.size.height)
-                }
                 update.visionCategories = await categories(in: image)
                 update.analyzedAt = Date()
             }

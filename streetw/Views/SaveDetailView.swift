@@ -101,16 +101,21 @@ struct SaveDetailView: View {
     var body: some View {
         let stock = stock()
         let colorways = self.colorways
+        let gallery = save.galleryURLs
 
         return NavigationStack(path: $path) {
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
-                    if let update, !update.imageURLs.isEmpty {
+                    if let update, !gallery.isEmpty {
                         // The whole set, paged, not just the first frame. You kept this
                         // particular thing; the other seven photographs of it are already
                         // on the phone.
+                        //
+                        // Led by the cover, the photograph the wall shows for this tile — so
+                        // opening it lands on the picture that was tapped rather than on the
+                        // brand's lookbook frame. Reordered, never filtered.
                         ImageGallery(
-                            urls: update.imageURLs,
+                            urls: gallery,
                             kind: update.kind,
                             isZoomable: true,
                             // The same fixed sweep the wall uses. Opening a tile must not
@@ -119,6 +124,7 @@ struct SaveDetailView: View {
                             mark: update.brandLabel,
                             selection: $imageIndex
                         )
+                        .overlay(alignment: .bottomLeading) { coverControl(gallery) }
                     }
 
                     VStack(alignment: .leading, spacing: 26) {
@@ -127,8 +133,13 @@ struct SaveDetailView: View {
                         if !colorways.isEmpty {
                             ColorwaySection(colorways: colorways, selected: $selectedColorway)
                                 .onChange(of: selectedColorway) { _, colour in
-                                    guard let index = update?.imageIndex(forColorway: colour) else { return }
-                                    withAnimation(.easeInOut(duration: 0.25)) { imageIndex = index }
+                                    // The catalogue's index is into the brand's order, and this
+                                    // gallery leads with the cover — so it is found by URL.
+                                    guard let update,
+                                          let index = update.imageIndex(forColorway: colour),
+                                          let position = gallery.firstIndex(of: update.imageURLs[index])
+                                    else { return }
+                                    withAnimation(.easeInOut(duration: 0.25)) { imageIndex = position }
                                 }
                         }
                         if let update {
@@ -490,6 +501,67 @@ struct SaveDetailView: View {
         default:
             return nil
         }
+    }
+
+    /// Which photograph stands for this on the wall, and the way to change it.
+    ///
+    /// On the photograph rather than in a menu, in the same corner chip the count already
+    /// uses: the question is about the picture being looked at, and an action that lives two
+    /// levels down from the thing it acts on is one nobody finds. The first frame is always the
+    /// cover — the gallery leads with it — so there the chip says so, and everywhere else it
+    /// offers to make this one the cover.
+    @ViewBuilder
+    private func coverControl(_ gallery: [URL]) -> some View {
+        if gallery.count > 1 {
+            let position = min(max(imageIndex, 0), gallery.count - 1)
+            Group {
+                if position == 0 {
+                    DataLabel(text: "COVER", size: 10, color: .ink)
+                } else {
+                    Button { setCover(gallery[position]) } label: {
+                        DataLabel(text: "SET AS COVER", size: 10, color: .ink)
+                    }
+                    .buttonStyle(.borderless)
+                }
+            }
+            .padding(.horizontal, 7)
+            .padding(.vertical, 4)
+            .background(Color.paper.opacity(0.92), in: Capsule())
+            .padding(12)
+        }
+    }
+
+    /// Makes this photograph the cover, measured, and keeps it on screen.
+    ///
+    /// The wall lays a tile out at its photograph's own shape and never crops, so a cover
+    /// needs its aspect — read off the copy the gallery has just drawn, which is already
+    /// decoded, and fetched only if it somehow is not. The gallery reorders to lead with the
+    /// new cover, so the index moves to 0 with it, or the page would jump to a different
+    /// photograph under the tap that chose this one.
+    private func setCover(_ url: URL) {
+        let rendition = ImageRendition.sized(url, width: Self.galleryWidth)
+        let aspect = ImageLoader.shared.cached(rendition).flatMap(Self.aspect(of:))
+        guard save.setCover(url.absoluteString, aspect: aspect) else { return }
+        try? context.save()
+        imageIndex = 0
+        guard aspect == nil, save.coverImageURLString == url.absoluteString else { return }
+        Task {
+            guard let image = try? await ImageLoader.shared.load(rendition, width: Self.galleryWidth),
+                  !save.isGone, save.coverImageURLString == url.absoluteString
+            else { return }
+            save.coverAspect = Self.aspect(of: image)
+            try? context.save()
+        }
+    }
+
+    /// The width `ImageGallery` draws at by default, so the cached rendition is the one on
+    /// screen rather than a second request for the same photograph.
+    private static let galleryWidth = 400
+
+    /// `nonisolated` so it can be handed to `flatMap` as a function reference — the same
+    /// reason as `FitCanvas.itemID(fromPayload:)`.
+    private nonisolated static func aspect(of image: UIImage) -> Double? {
+        image.size.height > 0 ? Double(image.size.width / image.size.height) : nil
     }
 
     private func chip(label: String, isOn: Bool, action: @escaping () -> Void) -> some View {

@@ -90,9 +90,9 @@ final class BrandUpdate {
     var visionColor: String?
     /// Wardrobe categories from Vision's on-device classifier.
     var visionCategories: [String] = []
-    /// Width ÷ height of the primary image, measured when it was analysed. Lets the
-    /// collection wall lay tiles out at the shape of the actual photograph instead of
-    /// guessing.
+    /// Width ÷ height of the photograph `ImageTagger` measured — the packshot, which is the
+    /// collection wall's cover when nobody has chosen one. Lets the wall lay tiles out at the
+    /// shape of the actual photograph instead of guessing.
     var imageAspect: Double?
     /// When the image was last analysed. Nil means "not yet"; set even when analysis
     /// fails, so a dead image URL isn't retried on every launch forever.
@@ -127,10 +127,11 @@ final class BrandUpdate {
     ///
     /// Stored beside the images rather than replacing `primaryImageURL`, because the two
     /// answer different questions. The lead photograph is what the brand chose to sell the
-    /// thing with and is what the feed, the gallery and the collection wall should keep
-    /// showing; this is the one worth *measuring*, and the one the fit canvas should fall
-    /// back to when there is no cutout — a model in trousers and boots is not a stand-in
-    /// for a shirt.
+    /// thing with and is what the feed, Discover and the product page keep showing — there
+    /// the styling is part of the announcement. This is the one worth *measuring*, the one
+    /// the fit canvas falls back to when there is no cutout — a model in trousers and boots
+    /// is not a stand-in for a shirt — and, for something somebody kept, the cover on the
+    /// collection wall and on its own page. See `SavedItem.coverURLString`.
     var packshotURLString: String?
 
     var packshotURL: URL? { packshotURLString.flatMap(URL.init(string:)) }

@@ -59,6 +59,20 @@ final class SavedItem {
     /// something is a fact and liking it is not. See `TasteScope` for who reads what.
     var isExcludedFromTaste: Bool = false
 
+    /// The photograph somebody chose to stand for this on the wall, overriding the packshot.
+    ///
+    /// Stored as one of the product's own image strings, and only honoured while it still is
+    /// one: a share whose gallery `SharedSaveImporter.repair` later replaces must not go on
+    /// pointing at a photograph the product no longer has. See `cover`.
+    var coverImageURLString: String?
+
+    /// Width ÷ height of `coverImageURLString`, measured when it was chosen.
+    ///
+    /// The wall never crops — a tile takes its photograph's shape — and `imageAspect` was
+    /// measured on the packshot, so a cover somebody picked needs a shape of its own or the
+    /// tile is laid out for a different picture.
+    var coverAspect: Double?
+
     /// The size you own, or the one you're waiting for. Free text on purpose — brands
     /// run their own scales and "44" or "Youth L" must be as storable as "M".
     var sizeNote: String?
@@ -125,4 +139,71 @@ final class SavedItem {
         boards.count == 1 ? boards[0].name : type.label
     }
 
+    // MARK: - The cover
+
+    /// The photograph the wall and this item's own page lead with.
+    ///
+    /// **The product, not the brand's lead shot.** A feed card is an announcement, and there
+    /// the styling is part of it — so the feed and Discover keep the photograph the brand put
+    /// first. A wall of things somebody kept is the opposite case: it is a collection of
+    /// garments, and Stüssy's model-first galleries put a person in boots on the wall to stand
+    /// for a shirt. `ProductShot` already finds the frame with nobody in it, so that is the
+    /// cover; a photograph chosen by hand beats it; and where neither is known — nothing has
+    /// been analysed yet, or the packshot is not in the gallery any more — it is the lead
+    /// shot, which is exactly what the wall showed before.
+    var coverURLString: String? {
+        guard let update else { return nil }
+        if let chosen = coverImageURLString, update.imageURLStrings.contains(chosen) { return chosen }
+        return Self.automaticCover(of: update)
+    }
+
+    var coverURL: URL? {
+        coverURLString.flatMap(URL.init(string:)) ?? update?.primaryImageURL
+    }
+
+    /// The cover's measured shape, or nil when nothing has measured it yet.
+    ///
+    /// `imageAspect` is measured on the photograph `ImageTagger` analysed, which is the
+    /// packshot — the automatic cover — so it is the right shape whenever no cover has been
+    /// chosen by hand. A chosen one carries its own.
+    var coverAspectMeasured: Double? {
+        if let chosen = coverImageURLString, chosen == coverURLString { return coverAspect }
+        return update?.imageAspect
+    }
+
+    /// What the cover is when nobody has chosen one.
+    private static func automaticCover(of update: BrandUpdate) -> String? {
+        if let packshot = update.packshotURLString, update.imageURLStrings.contains(packshot) {
+            return packshot
+        }
+        return update.imageURLStrings.first { URL(string: $0) != nil }
+    }
+
+    /// Chooses the cover. Returns whether anything changed, so a caller can skip the save.
+    ///
+    /// Choosing the photograph the automatic rule would pick anyway **clears** the choice
+    /// rather than pinning it: that is the way back to "whatever the product shot is", and it
+    /// means a better packshot found by a later analysis still reaches this item.
+    @discardableResult
+    func setCover(_ string: String, aspect: Double?) -> Bool {
+        guard let update, update.imageURLStrings.contains(string) else { return false }
+        let pinned = string == Self.automaticCover(of: update) ? nil : string
+        let shape = pinned == nil ? nil : aspect
+        guard pinned != coverImageURLString || shape != coverAspect else { return false }
+        coverImageURLString = pinned
+        coverAspect = shape
+        return true
+    }
+
+    /// The product's photographs in the order this item's page pages through them: the cover
+    /// first, then everything else in the brand's own order. Only ever reordered, never
+    /// filtered — every photograph is still there to swipe to, which is `ProductShot`'s rule.
+    var galleryURLs: [URL] {
+        guard let update else { return [] }
+        var strings = update.imageURLStrings
+        if let cover = coverURLString, let index = strings.firstIndex(of: cover), index > 0 {
+            strings.insert(strings.remove(at: index), at: 0)
+        }
+        return strings.compactMap(URL.init(string:))
+    }
 }
