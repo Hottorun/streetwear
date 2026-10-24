@@ -279,10 +279,28 @@ struct CollectionTile: View {
     /// down every tile, which makes the most-repeated element the one saying the least.
     /// Silent there instead.
     var showsBrand: Bool = true
+    /// Nil when the wall is not selecting; otherwise whether this tile is in the selection.
+    /// While selecting, a tap is `onOpen` — which the wall points at the selection instead
+    /// of at the item's page — and the long-press menu is withheld, because a menu of
+    /// one-item actions over a many-item selection would act on the wrong thing.
+    var isSelected: Bool?
+    /// Starts selecting with this tile, from its long-press menu. Nil where the host has no
+    /// select mode.
+    var onSelect: (() -> Void)?
 
     private var update: BrandUpdate? { save.update }
 
     var body: some View {
+        // Nothing for a save deleted out from under the wall — a bulk delete removes rows the
+        // lazy stack may still hold for one pass, and every read below would trap.
+        if save.isGone {
+            Color.clear.frame(width: 0, height: 0)
+        } else {
+            tile
+        }
+    }
+
+    private var tile: some View {
         VStack(alignment: .leading, spacing: 7) {
             // Two to a row on the collection wall, and never cropped. The feed fills its
             // tiles because a grid of thumbnails needs one rhythm; the archive is the
@@ -304,6 +322,9 @@ struct CollectionTile: View {
                 backdrop: .sweep,
                 mark: update?.brandLabel
             )
+            .overlay(alignment: .topTrailing) {
+                if let isSelected { SelectionMark(isOn: isSelected).padding(8) }
+            }
 
             VStack(alignment: .leading, spacing: 3) {
                 // The garment first. The wordmark used to sit above the title in tracked
@@ -334,7 +355,41 @@ struct CollectionTile: View {
         }
         .contentShape(.rect)
         .onTapGesture { onOpen() }
-        .contextMenu { if let update { UpdateMenu(update: update) } }
+        .contextMenu {
+            if isSelected == nil, let update {
+                UpdateMenu(update: update)
+                if let onSelect {
+                    Divider()
+                    Button("Select", systemImage: "checkmark.circle", action: onSelect)
+                }
+            }
+        }
+        .accessibilityAddTraits(isSelected == true ? .isSelected : [])
+    }
+}
+
+/// Whether a tile on the wall is in the selection.
+///
+/// A ring and a tick, in ink — never the accent, which is rationed to things happening *to*
+/// somebody, and a selection is a thing they are doing. Drawn on a paper disc so it reads on
+/// a white sweep and on a black jacket alike.
+struct SelectionMark: View {
+    let isOn: Bool
+
+    var body: some View {
+        ZStack {
+            Circle()
+                .fill(isOn ? Color.ink : Color.paper.opacity(0.92))
+            Circle()
+                .strokeBorder(isOn ? Color.ink : Color.muted, lineWidth: 1)
+            if isOn {
+                Image(systemName: "checkmark")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(Color.paper)
+            }
+        }
+        .frame(width: 24, height: 24)
+        .accessibilityHidden(true)
     }
 }
 
@@ -464,9 +519,22 @@ struct UpdateMenu: View {
                     } label: {
                         // A tick rather than a separate "remove from board" action:
                         // the menu shows where this already is, and tapping toggles it.
-                        Label(board.name, systemImage: update.save?.board?.id == board.id ? "checkmark" : "square")
+                        // Each board on its own — a save can be on several, so ticking one
+                        // no longer takes it off another.
+                        Label(board.name, systemImage: update.save?.isFiled(on: board) == true ? "checkmark" : "square")
                     }
                 }
+            }
+        }
+
+        if let save = update.save {
+            // On the menu as well as on the item's page and in a selection: leaving one thing
+            // out is usually decided while looking at it, wherever that is. See `TasteRule`.
+            Button(
+                save.isExcludedFromTaste ? "Use for my taste" : "Don't use for my taste",
+                systemImage: save.isExcludedFromTaste ? "eye" : "eye.slash"
+            ) {
+                CollectionEdit.exclude([save], !save.isExcludedFromTaste, in: context)
             }
         }
 
@@ -494,8 +562,7 @@ struct UpdateMenu: View {
     private func file(_ update: BrandUpdate, on board: Board) {
         if update.save == nil { setSave(update, .inspiration, in: context) }
         guard let save = update.save else { return }
-        save.board = save.board?.id == board.id ? nil : board
-        try? context.save()
+        CollectionEdit.toggle([save], on: board, in: context)
     }
 }
 
@@ -519,7 +586,7 @@ private func setSave(
     }
     update.isSeen = true
     try? context.save()
-    confirm?.confirm(update, destination: update.save?.board?.name ?? type.label)
+    confirm?.confirm(update, destination: update.save?.destinationLabel ?? type.label)
 }
 
 @MainActor
@@ -545,7 +612,7 @@ func removeSave(_ update: BrandUpdate, in context: ModelContext) {
 private func isAuthored(_ save: SavedItem) -> Bool {
     if let note = save.note, !note.isEmpty { return true }
     if let sizeNote = save.sizeNote, !sizeNote.isEmpty { return true }
-    if save.board != nil { return true }
+    if !save.boards.isEmpty { return true }
     return !save.fits.isEmpty
 }
 

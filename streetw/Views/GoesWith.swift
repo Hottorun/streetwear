@@ -23,6 +23,8 @@ import SwiftUI
 struct GoesWith: View {
     @Environment(StyleStatementStore.self) private var statement: StyleStatementStore
     @Query(sort: \SavedItem.savedAt, order: .reverse) private var saves: [SavedItem]
+    /// Only the boards with a taste setting — see `Board.shapingTaste`. Usually none.
+    @Query(filter: Board.shapingTaste) private var tasteBoards: [Board]
 
     let subject: BrandUpdate
 
@@ -41,10 +43,14 @@ struct GoesWith: View {
     /// A save with no photograph is excluded outright. This row is looked at before it is
     /// read, and a tile with nothing in it is not a suggestion — the same rule
     /// `FitSuggestions` and the fit tray already apply.
+    ///
+    /// Through `TasteScope.pairingPool`: a wardrobe piece left out of the taste reading is
+    /// still owned and still offered here, while the everything-kept fallback leaves out what
+    /// somebody said is not theirs — it is standing in for "you", and that is the one save
+    /// known not to be.
     private var wardrobe: [SavedItem] {
         let kept = saves.filter { $0.update?.imageURLStrings.isEmpty == false }
-        let owned = kept.filter { $0.type == .wardrobe }
-        return owned.isEmpty ? kept : owned
+        return TasteScope(boards: tasteBoards, saves: saves).pairingPool(kept)
     }
 
     private var pairs: [(update: BrandUpdate, reason: String?)] {

@@ -146,6 +146,12 @@ struct QuickSaveModifier: ViewModifier {
 }
 
 /// Choose where this goes. Opened by a left swipe, and the only modal in the feed.
+///
+/// Two kinds of row, because they are two kinds of choice. *Kept as* is one of two answers, so
+/// choosing it is the whole decision and closes the sheet, as it always did. A board is a
+/// toggle: a save can be on several, so a tap files or unfiles it and the sheet stays open for
+/// the next one. This used to be one list of radio buttons, in which picking a board quietly
+/// took the item off the one it was already on.
 struct BoardPicker: View {
     @Environment(\.modelContext) private var context
     @Environment(\.dismiss) private var dismiss
@@ -171,8 +177,9 @@ struct BoardPicker: View {
                     // The two built-in destinations first: most things are kept without
                     // ever being filed, and requiring a board would defeat a quick save.
                     ForEach(SavedItem.SaveType.allCases) { type in
-                        row(label: type.label, isOn: update.save?.board == nil && update.save?.type == type) {
-                            file(type: type, board: nil)
+                        BoardRow(label: type.label, filing: update.save?.type == type ? .all : .none) {
+                            keep(as: type)
+                            dismiss()
                         }
                     }
 
@@ -184,8 +191,8 @@ struct BoardPicker: View {
                     }
 
                     ForEach(boards) { board in
-                        row(label: board.name, isOn: update.save?.board?.id == board.id) {
-                            file(type: update.save?.type ?? .inspiration, board: board)
+                        BoardRow(label: board.name, filing: update.save?.isFiled(on: board) == true ? .all : .none) {
+                            CollectionEdit.toggle([keep(as: update.save?.type ?? .inspiration)], on: board, in: context)
                         }
                     }
 
@@ -208,8 +215,10 @@ struct BoardPicker: View {
             .navigationTitle("Add to")
             .toolbarTitleDisplayMode(.inline)
             .toolbar {
+                // "Done", not "Cancel": every tap above has already happened, and a button
+                // offering to take them back would be a lie.
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button("Cancel") { dismiss() }
+                    Button("Done") { dismiss() }
                 }
             }
             .alert("New board", isPresented: $isNaming) {
@@ -223,18 +232,47 @@ struct BoardPicker: View {
         .tint(.ink)
     }
 
-    private func row(label: String, isOn: Bool, action: @escaping () -> Void) -> some View {
+    private func createBoard() {
+        guard let board = CollectionEdit.newBoard(named: newName, after: boards, in: context) else { return }
+        CollectionEdit.file([keep(as: update.save?.type ?? .inspiration)], on: board, in: context)
+    }
+
+    /// Filing something implies keeping it, so this saves it if it wasn't already —
+    /// and marks it read, because acting on a card is acknowledging you've seen it.
+    @discardableResult
+    private func keep(as type: SavedItem.SaveType) -> SavedItem {
+        if let save = update.save, save.type == type, update.isSeen { return save }
+        let save = update.save ?? {
+            let created = SavedItem(update: update, type: type)
+            context.insert(created)
+            return created
+        }()
+        save.type = type
+        update.isSeen = true
+        try? context.save()
+        return save
+    }
+}
+
+/// One destination in a board picker: its name, and a rule saying whether what is being
+/// filed is there.
+///
+/// The same vermilion rule the size run uses for "this one is yours", so selection reads the
+/// same way everywhere in the app. Half a rule when only some of a selection is there — the one
+/// state a single save never has and a selection on the wall often does.
+struct BoardRow: View {
+    let label: String
+    let filing: CollectionEdit.Filing
+    let action: () -> Void
+
+    var body: some View {
         Button(action: action) {
             HStack {
                 Text(label)
                     .font(.editorial(16))
                     .foregroundStyle(Color.ink)
                 Spacer()
-                // The same vermilion rule the size run uses for "this one is yours", so
-                // selection reads the same way everywhere in the app.
-                Rectangle()
-                    .fill(isOn ? Color.signal : Color.hairline)
-                    .frame(width: 22, height: isOn ? 3 : 1)
+                mark
             }
             .padding(.horizontal, 20)
             .padding(.vertical, 15)
@@ -242,29 +280,23 @@ struct BoardPicker: View {
         }
         .buttonStyle(.borderless)
         .overlay(alignment: .bottom) { Rule().padding(.horizontal, 20) }
+        .accessibilityAddTraits(filing == .all ? .isSelected : [])
+        .accessibilityValue(filing == .some ? "Some" : "")
     }
 
-    private func createBoard() {
-        let name = newName.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !name.isEmpty else { return }
-        let board = Board(name: name, sortIndex: (boards.map(\.sortIndex).max() ?? 0) + 1)
-        context.insert(board)
-        file(type: update.save?.type ?? .inspiration, board: board)
-    }
-
-    /// Filing something implies keeping it, so this saves it if it wasn't already —
-    /// and marks it read, because acting on a card is acknowledging you've seen it.
-    private func file(type: SavedItem.SaveType, board: Board?) {
-        let save = update.save ?? {
-            let created = SavedItem(update: update, type: type)
-            context.insert(created)
-            return created
-        }()
-        save.type = type
-        save.board = board
-        update.isSeen = true
-        try? context.save()
-        dismiss()
+    @ViewBuilder
+    private var mark: some View {
+        switch filing {
+        case .all:
+            Rectangle().fill(Color.signal).frame(width: 22, height: 3)
+        case .some:
+            HStack(spacing: 0) {
+                Rectangle().fill(Color.signal).frame(width: 11, height: 3)
+                Rectangle().fill(Color.hairline).frame(width: 11, height: 1)
+            }
+        case .none:
+            Rectangle().fill(Color.hairline).frame(width: 22, height: 1)
+        }
     }
 }
 

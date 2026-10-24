@@ -77,6 +77,11 @@ struct streetwApp: App {
         }
         sharedModelContainer = container
 
+        // Before any view exists, so nothing ever draws a board with half its saves still
+        // filed the 1.0 way. Does nothing once the store has been through it. See
+        // `BoardFiling`.
+        MainActor.assumeIsolated { BoardFiling.adoptLegacy(in: container.mainContext) }
+
         let settings = ServerSettings()
         let sizes = SizeProfileStore()
         let remote = RemoteSync(context: container.mainContext, settings: settings)

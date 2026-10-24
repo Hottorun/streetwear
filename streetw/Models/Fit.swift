@@ -554,12 +554,17 @@ enum FitSuggestions {
     ///   from the wardrobe and a kept fit is a record rather than a proposal — and nothing
     ///   was doing it: both cards stayed on the row after being kept, and tapping either
     ///   again wrote a second outfit holding the same clothes.
+    /// - Parameter mood: the saves on the board somebody is in the mood for, by id. The row
+    ///   leans towards them — see `moodLean` — and is not narrowed to them: the rest of the
+    ///   wardrobe is still in the pool, because a mood says which way to lean, and a row that
+    ///   silently stopped proposing everything else would be a filter nobody set.
     static func build(
         from saves: [SavedItem],
         candidates: [BrandUpdate] = [],
         limit: Int = 6,
         statement: StyleStatement = StyleStatement(),
-        kept: [Fit] = []
+        kept: [Fit] = [],
+        mood: Set<UUID> = []
     ) -> [SuggestedFit] {
         var bySlot: [GarmentSlot: [FitPiece]] = [:]
         var sets: [FitPiece] = []
@@ -585,11 +590,18 @@ enum FitSuggestions {
         }
 
         // Newest first within each slot, so a fit is built from what someone is currently
-        // into rather than from whatever they saved a year ago.
-        for slot in bySlot.keys {
-            bySlot[slot]?.sort { ($0.save?.savedAt ?? .distantPast) > ($1.save?.savedAt ?? .distantPast) }
+        // into rather than from whatever they saved a year ago — and the mood's pieces ahead
+        // of the rest, because the search below only looks at the first `searchWidth` of a
+        // slot, and a lean that never reaches the pool cannot lean anything.
+        func isMood(_ piece: FitPiece) -> Bool { piece.save.map { mood.contains($0.id) } ?? false }
+        func comesFirst(_ a: FitPiece, _ b: FitPiece) -> Bool {
+            if isMood(a) != isMood(b) { return isMood(a) }
+            return (a.save?.savedAt ?? .distantPast) > (b.save?.savedAt ?? .distantPast)
         }
-        sets.sort { ($0.save?.savedAt ?? .distantPast) > ($1.save?.savedAt ?? .distantPast) }
+        for slot in bySlot.keys {
+            bySlot[slot]?.sort(by: comesFirst)
+        }
+        sets.sort(by: comesFirst)
 
         // **Only where the wardrobe is genuinely empty.** See `gapPieces` for why this is a
         // gap-filler rather than a general source of pieces.
@@ -621,7 +633,8 @@ enum FitSuggestions {
             guard !verdict.isRefused else { return }
             let fit = SuggestedFit(items: items, reason: verdict.reason)
             guard seen.insert(fit.id).inserted else { return }
-            proposals.append((fit, verdict.score))
+            let share = Double(items.count(where: isMood)) / Double(max(items.count, 1))
+            proposals.append((fit, verdict.score + share * moodLean))
         }
 
         // A set is the whole body already: it takes shoes, a cap and a jacket and nothing
@@ -719,6 +732,16 @@ enum FitSuggestions {
     static func key(ofProducts ids: [UUID]) -> String {
         Set(ids.map(\.uuidString)).sorted().joined(separator: "|")
     }
+
+    /// How much a proposal made entirely of the mood's pieces is lifted, scaled down by the
+    /// share of it that is.
+    ///
+    /// Sized against the scores it competes with: `Outfit`'s own bonuses are of the order of a
+    /// tenth (the focal bonus is 0.15), so a quarter is enough for a fit built around the mood
+    /// to lead a row of otherwise comparable proposals. It reorders and never admits — a
+    /// refused proposal is refused before this is added — and `spread` still keeps one board's
+    /// clothes from filling every card.
+    private static let moodLean = 0.25
 
     /// How many tops and how many bottoms are considered. Bounds the search at
     /// `searchWidth²` proposals; past that the extra combinations are drawn from clothes

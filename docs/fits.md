@@ -248,7 +248,14 @@ snapping**, because a grid turns a collage back into a form.
   tiles — which is exactly what the first saved fit produced. `FitPieceImage` reads
   `ImageLoader.cached` directly and `warm` is what guarantees it is populated, at the *same width*.
 - **A fit is its own type that files onto a board**, rather than living inside one — `Fit.board`
-  nullifies exactly as `SavedItem.board` does, so deleting a board never deletes an outfit.
+  nullifies exactly as `Board.saves` does for saves, so deleting a board never deletes an outfit.
+  A fit is still on at most one board; saves went many-to-many (`docs/collection.md`) and fits did
+  not, because nothing has asked for it yet and every board change is a migration.
+- **The fit row leans towards the mood and reads only what counts** (`FitSuggestions.build(mood:)`,
+  `TasteScope.fitPool`). The wardrobe is always in the pool — owned is owned, whatever its taste
+  setting — and inspiration only when it counts. The mood's pieces sort first within each slot, so
+  they reach the bounded search at all, and a proposal is lifted by `moodLean` times the share of it
+  that is the mood; the header says which board it is leaning towards.
 - **The Style tab is not a settings screen.** Sizes and the gender filter moved to Settings; what
   is left is a reading of your taste and things to do with it.
   - **`StyleReading` holds every threshold that turns a measurement into a word**, because two

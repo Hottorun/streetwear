@@ -96,6 +96,8 @@ struct BrandRecommendations: View {
     @Query(filter: #Predicate<Brand> { $0.followed }) private var followed: [Brand]
     @Query(sort: \SavedItem.savedAt, order: .reverse) private var saves: [SavedItem]
     @Query private var dismissals: [BrandDismissal]
+    /// Only the boards with a taste setting — see `Board.shapingTaste`. Usually none.
+    @Query(filter: Board.shapingTaste) private var tasteBoards: [Board]
 
     /// The ranking, held rather than recomputed per render.
     ///
@@ -119,6 +121,9 @@ struct BrandRecommendations: View {
         var dismissals: Int
         var followed: Int
         var statement: StyleStatement
+        /// What counts towards taste. Leaving something out, or choosing a mood, changes none
+        /// of the counts above.
+        var taste: TasteScope
     }
 
     private var key: Key {
@@ -127,7 +132,8 @@ struct BrandRecommendations: View {
             saves: saves.count,
             dismissals: dismissals.count,
             followed: followed.count,
-            statement: statement.statement
+            statement: statement.statement,
+            taste: TasteScope(boards: tasteBoards, saves: saves)
         )
     }
 
@@ -196,22 +202,23 @@ struct BrandRecommendations: View {
     /// - Parameter pool: the candidates, passed in rather than read again. `candidates`
     ///   walks every followed brand and every dismissal to build three sets, and it was
     ///   being evaluated once here and once more by the caller.
-    private func recommender(pool: [PopularBrand]) -> Recommender {
-        let usable = saves.compactMap(\.update)
+    ///
+    /// Built from what counts towards taste, leaning on the mood when there is one — see
+    /// `TasteScope`. The threshold is on how many *different* saves that is, not on their
+    /// weight: a mood board of three is not a taste of eight because it is leant on.
+    /// - Parameter taste: the same scope the key was built from, so the ranking and the
+    ///   decision to re-rank cannot disagree about who counts.
+    private func recommender(pool: [PopularBrand], taste scope: TasteScope) -> Recommender {
+        let usable = scope.weighted(saves).compactMap { entry in
+            entry.save.update.map { (product: $0.productSummary, weight: entry.weight) }
+        }
         let vectors = pool.compactMap(\.vector)
 
         var taste = BrandVector()
         if usable.count >= Self.minimumSavesToReRank, !vectors.isEmpty {
             taste = BrandVectorBuilder.taste(
-                from: usable.map {
-                    ProductSummary(
-                        title: $0.title,
-                        productType: $0.productType,
-                        tags: $0.tags,
-                        priceAmount: $0.priceAmount,
-                        publishedAt: $0.publishedAt
-                    )
-                },
+                from: usable.map(\.product),
+                weights: usable.map(\.weight),
                 comparedWith: vectors
             )
         }
@@ -250,9 +257,9 @@ struct BrandRecommendations: View {
         }
     }
 
-    private func rank() -> Ranked {
+    private func rank(taste: TasteScope) -> Ranked {
         let pool = candidates
-        let ranker = recommender(pool: pool)
+        let ranker = recommender(pool: pool, taste: taste)
 
         var result = Ranked()
         if ranker.taste.isEmpty, ranker.dismissed.isEmpty {
@@ -286,7 +293,7 @@ struct BrandRecommendations: View {
         VStack(alignment: .leading, spacing: 0) {
             block
         }
-        .task(id: key) { ranked = rank() }
+        .task(id: key) { ranked = rank(taste: key.taste) }
     }
 
     @ViewBuilder

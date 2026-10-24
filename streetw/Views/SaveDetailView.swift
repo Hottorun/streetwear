@@ -168,6 +168,7 @@ struct SaveDetailView: View {
                         )
                         boardPicker
                         typePicker
+                        tastePicker
                     }
                     .padding(.horizontal, 20)
                 }
@@ -420,14 +421,14 @@ struct SaveDetailView: View {
     /// has just decided this thing belongs with something else.
     private var boardPicker: some View {
         VStack(alignment: .leading, spacing: 10) {
-            DataLabel(text: "BOARD")
+            DataLabel(text: "BOARDS")
             // Wraps rather than scrolls: on a detail page you want to see every board at
-            // once, not hunt along a strip.
+            // once, not hunt along a strip. Each chip on its own — a save can be on several,
+            // so filing it on one never takes it off another.
             FlowRow(spacing: 8) {
                 ForEach(boards) { board in
-                    chip(label: board.name, isOn: save.board?.id == board.id) {
-                        save.board = save.board?.id == board.id ? nil : board
-                        try? context.save()
+                    chip(label: board.name, isOn: save.isFiled(on: board)) {
+                        CollectionEdit.toggle([save], on: board, in: context)
                     }
                 }
                 chip(label: boards.isEmpty ? "New board" : "+ New", isOn: false) {
@@ -444,11 +445,50 @@ struct SaveDetailView: View {
             HStack(spacing: 8) {
                 ForEach(SavedItem.SaveType.allCases) { type in
                     chip(label: type.label, isOn: save.type == type) {
-                        save.type = type
-                        try? context.save()
+                        CollectionEdit.keep([save], as: type, in: context)
                     }
                 }
             }
+        }
+    }
+
+    /// Whether this is part of what the app reads your taste from. See `TasteRule`.
+    ///
+    /// On this page because this is where somebody is looking at one thing and deciding what
+    /// it is to them — the half of the page below the masthead is exactly that. The line under
+    /// the chips says when a *board* is deciding instead, because a setting that something else
+    /// is overriding without saying so is the same as a control that does not work.
+    private var tastePicker: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            DataLabel(text: "YOUR TASTE")
+            HStack(spacing: 8) {
+                chip(label: "Use it", isOn: !save.isExcludedFromTaste) {
+                    CollectionEdit.exclude([save], false, in: context)
+                }
+                chip(label: "Don't use it", isOn: save.isExcludedFromTaste) {
+                    CollectionEdit.exclude([save], true, in: context)
+                }
+            }
+            if let line = boardTasteLine {
+                DataLabel(text: line, size: 9)
+            }
+        }
+    }
+
+    /// What one of its boards is doing to this save's taste, when that is not what the chips
+    /// say. Read through `TasteRule` itself, so this cannot describe a different answer from
+    /// the one every taste engine is given.
+    private var boardTasteLine: String? {
+        let modes = Set(save.boards.map(\.tasteMode))
+        switch TasteRule.role(isExcluded: save.isExcludedFromTaste, boards: modes) {
+        case .mood:
+            let mood = save.boards.first { $0.tasteMode == .mood }?.name ?? ""
+            return "PART OF YOUR MOOD · \(mood.uppercased())"
+        case .ignored where !save.isExcludedFromTaste:
+            let board = save.boards.first { $0.tasteMode == .ignored }?.name ?? ""
+            return "LEFT OUT — \(board.uppercased()) DOESN'T COUNT"
+        default:
+            return nil
         }
     }
 
@@ -468,12 +508,8 @@ struct SaveDetailView: View {
     /// Filing straight onto a board that did not exist a second ago, which is the usual
     /// way a board gets made: you find the second thing that belongs with the first.
     private func createBoard() {
-        let name = newBoardName.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !name.isEmpty else { return }
-        let created = Board(name: name, sortIndex: (boards.map(\.sortIndex).max() ?? 0) + 1)
-        context.insert(created)
-        save.board = created
-        try? context.save()
+        guard let created = CollectionEdit.newBoard(named: newBoardName, after: boards, in: context) else { return }
+        CollectionEdit.file([save], on: created, in: context)
     }
 
     private func commit() {
