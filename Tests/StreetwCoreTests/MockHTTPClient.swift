@@ -12,6 +12,9 @@ final class MockHTTPClient: HTTPFetching, @unchecked Sendable {
         var body: Data = Data()
         var etag: String?
         var finalURL: URL?
+        /// Handed back as the `Location` of a 3xx, which the mock never follows — exactly
+        /// like `Net.singleHop`, so whatever wraps it is the one that has to.
+        var location: String?
     }
 
     private let lock = NSLock()
@@ -96,7 +99,8 @@ final class MockHTTPClient: HTTPFetching, @unchecked Sendable {
             data: stub.body,
             status: stub.status,
             finalURL: stub.finalURL ?? url,
-            etag: stub.etag
+            etag: stub.etag,
+            location: stub.location
         )
     }
 

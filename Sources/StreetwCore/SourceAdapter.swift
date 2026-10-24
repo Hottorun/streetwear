@@ -155,6 +155,13 @@ public enum SourceError: LocalizedError, Equatable {
     /// this app, not by retrying against the storefront. Folding them into `badResponse`
     /// would hide the one class of failure we can actually do something about.
     case ucp(String)
+    /// The URL names an address no storefront lives at — see `HostSafety`.
+    ///
+    /// Refused by the fetchers themselves rather than only where a person types a URL,
+    /// because most URLs this package fetches were never typed by anybody: a sitemap index
+    /// names its children, robots.txt names its sitemaps, a page names its next hop. Each of
+    /// those is the storefront's word, and the storefront is whoever controls the domain.
+    case privateHost(String)
 
     public var errorDescription: String? {
         switch self {
@@ -165,6 +172,7 @@ public enum SourceError: LocalizedError, Equatable {
         case .hostBusy(let host, _): "Too many requests queued for \(host) just now"
         case .blockedByEdge: "Blocked by the site's bot protection"
         case .ucp(let reason): "The store's agent endpoint refused: \(reason)"
+        case .privateHost(let host): "\(host) is not a public address"
         }
     }
 }
@@ -199,15 +207,45 @@ public struct HTTPResponse: Sendable {
     public var status: Int
     public var finalURL: URL?
     public var etag: String?
+    /// The `Location` header, verbatim, of a redirect nobody followed yet.
+    ///
+    /// Carried because redirects are followed by hand now — see `Net.maxRedirects` — and
+    /// whoever follows them needs to know where they point.
+    public var location: String?
 
-    public init(data: Data, status: Int, finalURL: URL? = nil, etag: String? = nil) {
+    public init(data: Data, status: Int, finalURL: URL? = nil, etag: String? = nil, location: String? = nil) {
         self.data = data
         self.status = status
         self.finalURL = finalURL
         self.etag = etag
+        self.location = location
     }
 
     public var notModified: Bool { status == 304 }
+
+    /// Where this redirect points, resolved against the URL that answered — nil for anything
+    /// that is not one, or that points somewhere a fetch must not go.
+    ///
+    /// `Location` is routinely relative (Hollister answers `/products.json` with
+    /// `/shop/FileNotFoundError?…`), so it is resolved rather than parsed. Only http and
+    /// https come back: a `javascript:` or `file:` target is not a page.
+    ///
+    /// - Parameter keepsMethod: true for a request that is not a GET. Only 307 and 308
+    ///   promise to repeat the same method and body; a 301 or 302 after a POST is a browser
+    ///   being sent somewhere to *look*, and replaying a JSON-RPC call there means nothing.
+    public func redirectTarget(from url: URL, keepsMethod: Bool = false) -> URL? {
+        let statuses: Set<Int> = keepsMethod ? [307, 308] : [301, 302, 303, 307, 308]
+        guard statuses.contains(status),
+              let location = location?.trimmingCharacters(in: .whitespaces), !location.isEmpty,
+              let resolved = URL(string: location, relativeTo: url)?.absoluteURL,
+              resolved.scheme == "https" || resolved.scheme == "http",
+              var components = URLComponents(url: resolved, resolvingAgainstBaseURL: false)
+        else { return nil }
+        // A fragment never reaches the server, and leaving it on makes two spellings of the
+        // same hop look like a new URL to the loop check.
+        components.fragment = nil
+        return components.url
+    }
 
     /// Storefronts lock down before a drop; that's a signal, not a failure.
     ///
@@ -299,9 +337,14 @@ public extension HTTPFetching {
 
 public struct LiveHTTPFetcher: HTTPFetching {
     private let userAgent: String
+    private let followsRedirects: Bool
 
-    public init(userAgent: String = Net.userAgent) {
+    /// - Parameter followsRedirects: false for a fetcher that something else will follow
+    ///   redirects *for* — `PoliteFetcher`, which has to see every hop to apply robots.txt
+    ///   and the host's spacing to it. See `Net.singleHop`.
+    public init(userAgent: String = Net.userAgent, followsRedirects: Bool = true) {
         self.userAgent = userAgent
+        self.followsRedirects = followsRedirects
     }
 
     /// Returns body plus status, without throwing on 4xx — callers care about
@@ -310,31 +353,69 @@ public struct LiveHTTPFetcher: HTTPFetching {
     /// `etag` is replayed as `If-None-Match`, so unchanged catalogs cost a 304 with an
     /// empty body instead of re-downloading megabytes of JSON on every poll.
     public func get(_ url: URL, etag: String?) async throws -> HTTPResponse {
-        var request = URLRequest(url: url)
-        request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
-        if let etag {
-            request.setValue(etag, forHTTPHeaderField: "If-None-Match")
+        try await follow(from: url, keepsMethod: false) { target in
+            var request = URLRequest(url: target)
+            request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
+            if let etag {
+                request.setValue(etag, forHTTPHeaderField: "If-None-Match")
+            }
+            return request
         }
+    }
+
+    public func post(_ url: URL, json body: Data, accept: String) async throws -> HTTPResponse {
+        try await follow(from: url, keepsMethod: true) { target in
+            var request = URLRequest(url: target)
+            request.httpMethod = "POST"
+            request.httpBody = body
+            request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.setValue(accept, forHTTPHeaderField: "Accept")
+            return request
+        }
+    }
+
+    /// One request per hop, every hop checked, at most `Net.maxRedirects` of them.
+    ///
+    /// The session never follows a redirect itself (`Net.session`), so this is the only
+    /// place one is followed here — and the private-address check that used to live in the
+    /// session's delegate lives here, on the first URL as well as on every hop after it. A
+    /// hop that is refused, loops back or exceeds the limit is returned as the redirect it
+    /// was: a 3xx with no body, which every adapter already reads as "nothing here".
+    private func follow(
+        from url: URL,
+        keepsMethod: Bool,
+        request build: (URL) -> URLRequest
+    ) async throws -> HTTPResponse {
+        guard HostSafety.isPublic(url: url) else {
+            throw SourceError.privateHost(url.host() ?? url.absoluteString)
+        }
+        var current = url
+        var response = try await send(build(current))
+        guard followsRedirects else { return response }
+
+        var visited: Set<String> = [current.absoluteString]
+        for _ in 0..<Net.maxRedirects {
+            guard let next = response.redirectTarget(from: current, keepsMethod: keepsMethod),
+                  HostSafety.isPublic(url: next),
+                  visited.insert(next.absoluteString).inserted
+            else { break }
+            current = next
+            response = try await send(build(current))
+        }
+        return response
+    }
+
+    private func send(_ request: URLRequest) async throws -> HTTPResponse {
         let (data, response) = try await Net.session.data(for: request)
         let http = response as? HTTPURLResponse
         return HTTPResponse(
             data: data,
             status: http?.statusCode ?? 0,
-            finalURL: http?.url,
-            etag: http?.value(forHTTPHeaderField: "ETag")
+            finalURL: http?.url ?? request.url,
+            etag: http?.value(forHTTPHeaderField: "ETag"),
+            location: http?.value(forHTTPHeaderField: "Location")
         )
-    }
-
-    public func post(_ url: URL, json body: Data, accept: String) async throws -> HTTPResponse {
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.httpBody = body
-        request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue(accept, forHTTPHeaderField: "Accept")
-        let (data, response) = try await Net.session.data(for: request)
-        let http = response as? HTTPURLResponse
-        return HTTPResponse(data: data, status: http?.statusCode ?? 0, finalURL: http?.url)
     }
 }
 
@@ -344,7 +425,22 @@ public enum Net {
     /// impersonating a browser — and being identifiable is what keeps access.
     public static let userAgent = "Dropwall/1.0 (+https://github.com/Hottorun/streetwear)"
 
+    /// Follows redirects itself, checking each hop's host and nothing else. For one-off
+    /// reads on somebody's behalf — a shared link, the product page somebody is looking
+    /// at — where there is no politeness budget in play.
     public static let live = LiveHTTPFetcher()
+
+    /// Never follows a redirect: the 3xx comes back with its `Location`, for a caller that
+    /// follows it under its own rules. This is what `PoliteFetcher` wraps.
+    public static let singleHop = LiveHTTPFetcher(followsRedirects: false)
+
+    /// How many redirects one fetch will follow.
+    ///
+    /// **Five: the floor RFC 9309 sets for robots.txt, and plenty for a storefront.** An
+    /// ordinary chain is two or three — http to https, apex to `www.`, a region. Hollister
+    /// answers `/products.json` with a redirect to `/shop/FileNotFoundError` that loops, and
+    /// URLSession's own limit meant a long run of unspaced requests to learn nothing.
+    public static let maxRedirects = 5
 
     static let session: URLSession = {
         let config = URLSessionConfiguration.default
@@ -355,21 +451,26 @@ public enum Net {
         // polling, notifications and retention for everybody. This is the wall-clock bound.
         config.timeoutIntervalForResource = 120
         config.requestCachePolicy = .useProtocolCachePolicy
-        return URLSession(configuration: config, delegate: RedirectGuard(), delegateQueue: nil)
+        return URLSession(configuration: config, delegate: RedirectRefusal(), delegateQueue: nil)
     }()
 
-    /// Re-checks the host on every hop, because checking only the input does not hold.
+    /// Hands every redirect back instead of following it.
     ///
-    /// `BrandDiscovery.normalizedURL` refuses a private host and forces `https`, which
-    /// reads like enough and is not: a perfectly public host that a stranger controls can
-    /// answer a 302 pointing at `http://169.254.169.254/…`, and `URLSession` follows
-    /// redirects by default without asking anyone. The input check would have passed and
-    /// the request would still have landed on the metadata endpoint.
+    /// **Following was where two checks went missing.** The session used to follow on its
+    /// own, re-checking only that each hop's host was public — necessary, because a public
+    /// host a stranger controls can answer a 302 pointing at `http://169.254.169.254/…` —
+    /// and nothing else. robots.txt was read for the first URL alone and every later hop
+    /// went out unspaced: victoriassecret.com redirects to `/gb/`, which its robots.txt
+    /// disallows, and Hollister's `/products.json` to `/shop/FileNotFoundError`, which its
+    /// robots.txt disallows too. Both were fetched anyway, because nothing asked.
     ///
-    /// Returning nil hands the caller the redirect *response* rather than following it, so
-    /// a refused hop surfaces as a 3xx with no body — which every adapter already treats as
-    /// "nothing here" — instead of as an error that would need a path of its own.
-    private final class RedirectGuard: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
+    /// So the session follows nothing and the fetchers do it by hand: `LiveHTTPFetcher`
+    /// with the host check, `PoliteFetcher` with the host check, robots.txt and the
+    /// per-host interval on every hop. Returning nil delivers the redirect response itself,
+    /// `Location` included. That holds on Linux as well: swift-corelibs-foundation asks the
+    /// session's delegate for tasks started by `data(for:)` and treats nil the same way —
+    /// read in its source, since no local build can show it.
+    private final class RedirectRefusal: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
         func urlSession(
             _ session: URLSession,
             task: URLSessionTask,
@@ -377,11 +478,7 @@ public enum Net {
             newRequest request: URLRequest,
             completionHandler: @escaping (URLRequest?) -> Void
         ) {
-            guard let url = request.url, HostSafety.isPublic(url: url) else {
-                completionHandler(nil)
-                return
-            }
-            completionHandler(request)
+            completionHandler(nil)
         }
     }
 

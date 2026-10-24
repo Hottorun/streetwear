@@ -830,6 +830,16 @@ rather than all firing at once. `Net.userAgent` is honest on purpose — verifie
 browser. A missing robots.txt is treated as permissive: failing closed would drop brands
 for an unrelated reason.
 
+**Every redirect hop is a request like any other.** `Net.session` follows nothing; the
+fetchers follow by hand, at most `Net.maxRedirects` hops with loops cut short. `PoliteFetcher`
+checks each hop's host against `HostSafety`, its robots.txt and its interval — it must wrap
+`Net.singleHop` (the default), because a base that follows redirects itself lets every hop after
+the first escape all three, which is how victoriassecret.com's redirect into its disallowed
+`/gb/` and Hollister's `/products.json` → `/shop/FileNotFoundError` (also disallowed) were
+fetched unasked. `Net.live` follows with the host check alone, for one-off reads on somebody's
+behalf. Rules are matched against `percentEncodedPath`, never `URL.path`, which drops the
+trailing slash and so could never match `Disallow: /gb/`.
+
 ### StreetwCore must compile on Linux
 
 The server image builds it with swift-corelibs-foundation, which differs from Apple's
