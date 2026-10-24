@@ -253,6 +253,13 @@ final class UserModel: Model, @unchecked Sendable {
     /// Waists in inches. Its own ladder, not a flavour of `apparel_sizes` — a 32 is not
     /// an M and no table converts between them.
     @Field(key: "waist_sizes") var waistSizes: [String]
+    /// Women's dress sizes as US tokens. See `AddUserDressAndSuitSizes`.
+    @Field(key: "dress_sizes") var dressSizes: [String]
+    /// Jacket chests in inches.
+    @Field(key: "suit_sizes") var suitSizes: [String]
+    /// Jacket lengths: "S", "R", "L". Its own column rather than folded into `suit_sizes`,
+    /// for the reason `SizeProfile.suitLength` is its own field.
+    @Field(key: "suit_lengths") var suitLengths: [String]
     /// Vestigial. One-size items fit everyone, so the preference was removed and this is
     /// now always true — kept only because the column is `NOT NULL` in a schema that is
     /// already applied in production, and dropping it would be a migration bought for
@@ -266,15 +273,24 @@ final class UserModel: Model, @unchecked Sendable {
         self.apparelSizes = []
         self.shoeSizes = []
         self.waistSizes = []
+        self.dressSizes = []
+        self.suitSizes = []
+        self.suitLengths = []
         self.includeOneSize = true
     }
 
+    /// The display scales (`shoeScale`, `dressScale`, `suitScale`) have no column on
+    /// purpose: they change how a size is *read out*, never what is stored or matched, and
+    /// they never leave the phone.
     var sizeProfile: SizeProfile {
         get {
             var profile = SizeProfile()
             profile.apparel = Set(apparelSizes)
             profile.shoe = Set(shoeSizes)
             profile.waist = Set(waistSizes)
+            profile.dress = Set(dressSizes)
+            profile.suit = Set(suitSizes)
+            profile.suitLength = Set(suitLengths)
             profile.gender = gender.flatMap(GenderPreference.init(rawValue:)) ?? .everything
             return profile
         }
@@ -282,6 +298,9 @@ final class UserModel: Model, @unchecked Sendable {
             apparelSizes = Array(newValue.apparel)
             shoeSizes = Array(newValue.shoe)
             waistSizes = Array(newValue.waist)
+            dressSizes = Array(newValue.dress)
+            suitSizes = Array(newValue.suit)
+            suitLengths = Array(newValue.suitLength)
             includeOneSize = true
             gender = newValue.gender.rawValue
         }
