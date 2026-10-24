@@ -358,7 +358,8 @@ struct FeedState {
         switch update.kind {
         case .restock:
             let printable = update.restockedSizes.filter { $0 != "Default Title" && !$0.isEmpty }
-            let mine = printable.filter { profile.claims($0) }
+            let context = update.sizeContext
+            let mine = printable.filter { profile.claims($0, in: context) }
 
             // The bug this replaces: when nothing that came back was a size the user
             // wears, the card fell back to printing *every* returned size in the accent —

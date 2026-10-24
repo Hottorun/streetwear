@@ -56,7 +56,7 @@ final class StockWatch {
         // a brand's first sync dumping its back catalogue into the feed. Watching
         // something in stock and being told immediately that it is in stock is noise.
         self.wasAvailable = WatchTarget(size: size, color: color)
-            .isSatisfied(by: update?.variants ?? [])
+            .isSatisfied(by: update?.variants ?? [], in: update?.sizeContext ?? .unknown)
     }
 
     var isActive: Bool { firedAt == nil }
@@ -67,9 +67,14 @@ final class StockWatch {
     /// How the watch reads in a list: "M · Black", "US 9", "Any size or colour".
     var summary: String { target.summary }
 
-    /// Variants this watch is about — the ones matching its size and colour pins.
-    func matching(_ variants: [VariantInfo]) -> [VariantInfo] { target.matching(variants) }
+    /// Variants this watch is about — the ones matching its size and colour pins, read on
+    /// the watched garment's own ladder.
+    func matching(_ variants: [VariantInfo]) -> [VariantInfo] {
+        target.matching(variants, in: update?.sizeContext ?? .unknown)
+    }
 
     /// Whether anything this watch cares about is buyable right now.
-    func isSatisfied(by variants: [VariantInfo]) -> Bool { target.isSatisfied(by: variants) }
+    func isSatisfied(by variants: [VariantInfo]) -> Bool {
+        target.isSatisfied(by: variants, in: update?.sizeContext ?? .unknown)
+    }
 }

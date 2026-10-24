@@ -471,8 +471,9 @@ final class BrandUpdate {
 
     /// Buyable right now *and* in a size the user wears.
     func availableSizes(matching profile: SizeProfile) -> [String] {
-        variants
-            .filter { $0.available && profile.claims($0) }
+        let context = sizeContext
+        return variants
+            .filter { $0.available && profile.claims($0, in: context) }
             .map(\.displaySize)
     }
 
@@ -480,7 +481,28 @@ final class BrandUpdate {
     /// filter should never hide something just because we don't know its sizing.
     func isAvailable(in profile: SizeProfile) -> Bool {
         guard !variants.isEmpty else { return true }
-        return variants.contains { $0.available && profile.claims($0) }
+        let context = sizeContext
+        return variants.contains { $0.available && profile.claims($0, in: context) }
+    }
+
+    /// What this garment's sizes are printed on, so a "38" is read as a shoe on a sneaker,
+    /// a waist on trousers and a French 38 on a dress. See `SizeContext`.
+    ///
+    /// **Ask once per question, never per variant** — it runs the slot classifier and reads
+    /// `gender`, which re-runs its own classifier whenever the stored revision is stale. And
+    /// a run with no number in it needs no context at all, which is most of them: S M L
+    /// reads the same on every garment, so the classifiers are skipped outright.
+    var sizeContext: SizeContext {
+        let run = variants.map(\.displaySize)
+        guard SizeContext.matters(for: run + restockedSizes) else { return .unknown }
+        return SizeContext.of(
+            slot: garmentSlot,
+            gender: gender,
+            title: title,
+            productType: productType,
+            tags: tags,
+            sizes: run.isEmpty ? restockedSizes : run
+        )
     }
 
     /// Whether this item belongs in a browsing view at all.
@@ -686,7 +708,8 @@ final class BrandUpdate {
 
     /// Sizes from this restock that the user actually wears.
     func restockedSizes(matching profile: SizeProfile) -> [String] {
-        restockedSizes.filter { profile.claims($0) }
+        let context = sizeContext
+        return restockedSizes.filter { profile.claims($0, in: context) }
     }
 
     var imageURLs: [URL] {

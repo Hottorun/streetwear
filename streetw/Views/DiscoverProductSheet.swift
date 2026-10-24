@@ -147,7 +147,7 @@ struct DiscoverProductSheet: View {
     }
 
     private var sizeEntries: [SizeRun.Entry] {
-        SizeRun.entries(for: variants, profile: sizes.profile)
+        SizeRun.entries(for: variants, in: card.sizeContext, profile: sizes.profile)
     }
 
     private func description(_ text: String) -> some View {

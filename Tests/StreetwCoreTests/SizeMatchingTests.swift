@@ -172,19 +172,19 @@ struct SizeProfileTests {
         let empty = SizeProfile()
         #expect(empty.isEmpty)
         for raw in ["M", "XXL", "9", "44", "OS"] {
-            #expect(empty.matches(raw), "empty profile should not filter \(raw)")
+            #expect(empty.matches(raw, in: .unknown), "empty profile should not filter \(raw)")
         }
     }
 
     @Test("Matches only the chosen apparel and shoe sizes")
     func matchesChosen() {
-        #expect(profile.matches("M"))
-        #expect(profile.matches("medium"))
-        #expect(profile.matches("9.5"))
-        #expect(profile.matches("US 9"))
-        #expect(!profile.matches("S"))
-        #expect(!profile.matches("XXL"))
-        #expect(!profile.matches("10"))
+        #expect(profile.matches("M", in: .unknown))
+        #expect(profile.matches("medium", in: .unknown))
+        #expect(profile.matches("9.5", in: .unknown))
+        #expect(profile.matches("US 9", in: .unknown))
+        #expect(!profile.matches("S", in: .unknown))
+        #expect(!profile.matches("XXL", in: .unknown))
+        #expect(!profile.matches("10", in: .unknown))
     }
 
     /// A one-size item fits everyone by definition, so it is never filtered out. The
@@ -193,15 +193,15 @@ struct SizeProfileTests {
     @Test("One-size items always match")
     func oneSizeAlwaysMatches() {
         for raw in ["OS", "O/S", "One Size", "Default Title"] {
-            #expect(profile.matches(raw))
+            #expect(profile.matches(raw, in: .unknown))
         }
     }
 
     @Test("Unrecognised sizing is shown, never hidden")
     func unknownIsPermissive() {
-        #expect(profile.matches("44"))
-        #expect(profile.matches("Youth L"))
-        #expect(profile.matches("32"))
+        #expect(profile.matches("44", in: .unknown))
+        #expect(profile.matches("Youth L", in: .unknown))
+        #expect(profile.matches("32", in: .unknown))
     }
 
     /// Bottoms are sized by the inch and used to normalise to `.other` — never hidden,
@@ -210,11 +210,11 @@ struct SizeProfileTests {
     func matchesWaist() {
         var p = profile
         p.waist = ["32", "34"]
-        #expect(p.matches("32"))
-        #expect(p.matches("W34"))
-        #expect(p.matches("32x30"))
-        #expect(!p.matches("36"))
-        #expect(!p.matches("W 28"))
+        #expect(p.matches("32", in: .unknown))
+        #expect(p.matches("W34", in: .unknown))
+        #expect(p.matches("32x30", in: .unknown))
+        #expect(!p.matches("36", in: .unknown))
+        #expect(!p.matches("W 28", in: .unknown))
     }
 
     /// The failure this would otherwise have introduced: somebody enters a waist, and
@@ -224,15 +224,15 @@ struct SizeProfileTests {
         var waistOnly = SizeProfile()
         waistOnly.waist = ["32"]
         #expect(!waistOnly.isEmpty)
-        #expect(waistOnly.matches("M"), "clothing must not vanish because only a waist was set")
-        #expect(waistOnly.matches("9.5"), "shoes must not vanish either")
-        #expect(!waistOnly.matches("36"))
+        #expect(waistOnly.matches("M", in: .unknown), "clothing must not vanish because only a waist was set")
+        #expect(waistOnly.matches("9.5", in: .unknown), "shoes must not vanish either")
+        #expect(!waistOnly.matches("36", in: .unknown))
 
         var shoesOnly = SizeProfile()
         shoesOnly.shoe = ["9"]
-        #expect(shoesOnly.matches("M"))
-        #expect(shoesOnly.matches("32"))
-        #expect(!shoesOnly.matches("11"))
+        #expect(shoesOnly.matches("M", in: .unknown))
+        #expect(shoesOnly.matches("32", in: .unknown))
+        #expect(!shoesOnly.matches("11", in: .unknown))
     }
 
     @Test("The summary names the waist ladder")
@@ -249,20 +249,20 @@ struct SizeProfileTests {
     @Test("A converted shoe size matches within half a size")
     func convertedSizesAreTolerant() {
         // Profile is US 9 and 9.5.
-        #expect(profile.matches("EU 42.5"), "EU 42.5 is US 9 exactly")
-        #expect(profile.matches("EU 43"), "EU 43 is US 9.5 exactly")
-        #expect(profile.matches("EU 44"), "EU 44 is US 10 — within half a size of the owned 9.5")
-        #expect(!profile.matches("EU 45"), "EU 45 is US 11 — genuinely not this foot")
-        #expect(!profile.matches("EU 40"), "EU 40 is US 7 — genuinely not this foot")
+        #expect(profile.matches("EU 42.5", in: .unknown), "EU 42.5 is US 9 exactly")
+        #expect(profile.matches("EU 43", in: .unknown), "EU 43 is US 9.5 exactly")
+        #expect(profile.matches("EU 44", in: .unknown), "EU 44 is US 10 — within half a size of the owned 9.5")
+        #expect(!profile.matches("EU 45", in: .unknown), "EU 45 is US 11 — genuinely not this foot")
+        #expect(!profile.matches("EU 40", in: .unknown), "EU 40 is US 7 — genuinely not this foot")
     }
 
     /// The tolerance must not leak into sizes that were never converted, or the whole
     /// profile becomes a size wider than the user asked for.
     @Test("An exact US size gets no tolerance")
     func nativeSizesAreExact() {
-        #expect(!profile.matches("10"))
-        #expect(!profile.matches("US 10"))
-        #expect(!profile.matches("8.5"))
+        #expect(!profile.matches("10", in: .unknown))
+        #expect(!profile.matches("US 10", in: .unknown))
+        #expect(!profile.matches("8.5", in: .unknown))
     }
 
     @Test("Shoe sizes are stored in US and displayed in the chosen scale")
@@ -274,8 +274,8 @@ struct SizeProfileTests {
         #expect(european.summary.contains("EU"))
         #expect(european.summary.contains("42.5"))
         // Matching is unaffected: the scale is a reading preference, not a filter.
-        #expect(european.matches("US 9"))
-        #expect(!european.matches("US 11"))
+        #expect(european.matches("US 9", in: .unknown))
+        #expect(!european.matches("US 11", in: .unknown))
     }
 
     /// A profile written before `shoeScale` existed is sitting in UserDefaults on a real
@@ -299,10 +299,10 @@ struct SizeProfileTests {
             size: "9",
             color: "WHITE/OWHITE/CBROWN"
         )
-        #expect(profile.matches(variant))
+        #expect(profile.matches(variant, in: .unknown))
 
         let wrongSize = VariantInfo(id: "2", title: "BLACK / 11", available: true, size: "11")
-        #expect(!profile.matches(wrongSize))
+        #expect(!profile.matches(wrongSize, in: .unknown))
     }
 
     @Test("Summary lists sizes in canonical order")
@@ -337,8 +337,8 @@ struct SizeClaimTests {
     func unreadableIsNeverClaimed() {
         let mine = profile(shoe: ["44"])
         for token in ["38", "40", "42", "44"] {
-            #expect(mine.matches(token), "the filter must not hide \(token)")
-            #expect(!mine.claims(token), "claimed \(token) as the reader's size")
+            #expect(mine.matches(token, in: .unknown), "the filter must not hide \(token)")
+            #expect(!mine.claims(token, in: .unknown), "claimed \(token) as the reader's size")
         }
     }
 
@@ -348,8 +348,8 @@ struct SizeClaimTests {
     @Test("An empty profile claims nothing")
     func emptyClaimsNothing() {
         let empty = SizeProfile()
-        #expect(empty.matches("M"))
-        #expect(!empty.claims("M"))
+        #expect(empty.matches("M", in: .unknown))
+        #expect(!empty.claims("M", in: .unknown))
     }
 
     /// A ladder nobody has filled in is not a ladder that matches everything. Somebody who
@@ -357,19 +357,19 @@ struct SizeClaimTests {
     @Test("An unfilled ladder claims nothing on that ladder")
     func unfilledLadderClaimsNothing() {
         let shoesOnly = profile(shoe: ["10"])
-        #expect(shoesOnly.matches("M"))
-        #expect(!shoesOnly.claims("M"))
-        #expect(shoesOnly.claims("10"))
+        #expect(shoesOnly.matches("M", in: .unknown))
+        #expect(!shoesOnly.claims("M", in: .unknown))
+        #expect(shoesOnly.claims("10", in: .unknown))
     }
 
     /// And it still says yes when it genuinely knows — including across a conversion, where
     /// the half-size tolerance is the whole reason the shoe ladder is stored in US.
     @Test("A size the reader actually wears is claimed")
     func realSizesAreClaimed() {
-        #expect(profile(apparel: ["L"]).claims("Large"))
-        #expect(profile(waist: ["32"]).claims("W32"))
-        #expect(profile(shoe: ["10"]).claims("EU 44"))
-        #expect(!profile(shoe: ["10"]).claims("EU 38"))
+        #expect(profile(apparel: ["L"]).claims("Large", in: .unknown))
+        #expect(profile(waist: ["32"]).claims("W32", in: .unknown))
+        #expect(profile(shoe: ["10"]).claims("EU 44", in: .unknown))
+        #expect(!profile(shoe: ["10"]).claims("EU 38", in: .unknown))
     }
 
     /// One size fits everyone, which is why the filter admits it — but that is not a fact
@@ -377,7 +377,7 @@ struct SizeClaimTests {
     @Test("One-size is shown but not claimed")
     func oneSizeIsNotAClaim() {
         let mine = profile(apparel: ["M"])
-        #expect(mine.matches("One Size"))
-        #expect(!mine.claims("One Size"))
+        #expect(mine.matches("One Size", in: .unknown))
+        #expect(!mine.claims("One Size", in: .unknown))
     }
 }
