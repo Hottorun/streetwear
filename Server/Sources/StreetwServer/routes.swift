@@ -897,13 +897,32 @@ func routes(_ app: Application) throws {
 
     // MARK: Feed
 
-    /// Events since a cursor, hydrated with their product. Cursor is the timestamp of
-    /// the last event the client saw, so paging is stable as new events arrive.
+    /// Events since a cursor, hydrated with their product, a page at a time and fairly
+    /// between brands — see `FeedPaging` for the order and why it is the one it is.
+    ///
+    /// `?since=` begins a read: the window is everything after the cursor up to the newest
+    /// event visible now, which comes back as `nextCursor`. When the window does not fit in
+    /// one page the response also carries a `continuation`, and `?continuation=` carries the
+    /// read on from exactly there — same window, same order — until it comes back nil.
+    ///
+    /// The 1.0 app sends `since` and never `continuation`, and moves its cursor to
+    /// `nextCursor` exactly as it always has; the only thing that changed for it is *which*
+    /// 200 events the one page holds. See `FeedPaging`.
     authed.get("feed") { req async throws -> FeedResponse in
         let device = try await req.authenticatedDevice()
         let user = try await device.$user.get(on: req.db)
-        let since = (try? req.query.get(Date.self, at: "since")) ?? Date().addingTimeInterval(-7 * 86_400)
         let limit = min((try? req.query.get(Int.self, at: "limit")) ?? 100, 200)
+
+        var resumed: FeedContinuation?
+        if let token = try? req.query.get(String.self, at: "continuation") {
+            guard let decoded = FeedContinuation(token: token) else {
+                throw Abort(.badRequest, reason: "Not a continuation this server wrote.")
+            }
+            resumed = decoded
+        }
+        let since = resumed?.since
+            ?? (try? req.query.get(Date.self, at: "since"))
+            ?? Date().addingTimeInterval(-7 * 86_400)
 
         let followed = try await FollowModel.query(on: req.db)
             .filter(\.$user.$id == device.$user.id)
@@ -911,20 +930,55 @@ func routes(_ app: Application) throws {
             .map(\.$brand.id)
         guard !followed.isEmpty else { return FeedResponse(items: [], nextCursor: nil) }
 
-        let events = try await EventModel.query(on: req.db)
+        // The whole window, three columns a row, so the ranking can see every brand's share
+        // of it; products and variants are loaded for the one page afterwards.
+        //
+        // **Bounded above in Swift, not in SQL.** The upper bound is a timestamp read back out
+        // of this database on the first page, and binding it again is not guaranteed to keep
+        // its last microsecond — so `<= until` could drop the newest event, which re-ranks its
+        // whole brand by one and slides rows past the reader. Comparing the decoded values
+        // with each other is exact, because every page decodes the same rows the same way.
+        let window = try await EventModel.query(on: req.db)
             .filter(\.$brand.$id ~~ followed)
             .filter(\.$createdAt > since)
-            .sort(\.$createdAt, .descending)
-            .limit(limit)
+            .field(\.$id)
+            .field(\.$brand.$id)
+            .field(\.$createdAt)
+            .all()
+            .compactMap { event -> FeedPaging.Row? in
+                guard let id = event.id, let createdAt = event.createdAt else { return nil }
+                if let until = resumed?.until, createdAt > until { return nil }
+                return FeedPaging.Row(id: id, brandID: event.$brand.id, createdAt: createdAt)
+            }
+        guard let until = resumed?.until ?? window.map(\.createdAt).max() else {
+            return FeedResponse(items: [], nextCursor: nil)
+        }
+
+        let page = FeedPaging.page(window, after: resumed?.after, limit: limit)
+        let hydrated = page.ids.isEmpty ? [] : try await EventModel.query(on: req.db)
+            .filter(\.$id ~~ page.ids)
             .with(\.$brand)
             .with(\.$product) { $0.with(\.$variants) }
             .all()
+        let byID = Dictionary(
+            hydrated.compactMap { event in event.id.map { ($0, event) } },
+            uniquingKeysWith: { first, _ in first }
+        )
 
         let profile = user.sizeProfile
-        let items = events.compactMap { event -> FeedItem? in
-            FeedItem(event: event, profile: profile)
-        }
-        return FeedResponse(items: items, nextCursor: events.first?.createdAt)
+        let items = page.ids
+            .compactMap { byID[$0] }
+            .compactMap { FeedItem(event: $0, profile: profile) }
+        return FeedResponse(
+            items: items,
+            // The head of the read only. A continued page is not progress through the
+            // device's own feed — the client keeps the cursor the first page gave it, which
+            // is exactly what `brands/:id/feed` says for the same reason.
+            nextCursor: resumed == nil ? until : nil,
+            continuation: page.next.map {
+                FeedContinuation(since: since, until: until, after: $0).token
+            }
+        )
     }
 
     /// One brand's recent history, independent of the cursor.

@@ -225,6 +225,25 @@ Changing these silently will break intended behavior:
   must never advance `cursor` — that would skip every other brand's events in the same window — and
   must never arrive unread, which is the 250-product bug delivered at the exact moment somebody is
   deciding whether following was a good idea.
+- **A sync reads the feed to the end, a page at a time, and loses nothing at a page
+  boundary** (`FeedPager`, the server's `FeedPaging`). It asked once for 200 and moved the
+  cursor to the newest of them, so anything older than the 200th event between two syncs was
+  behind the cursor before it was ever sent — and with the page newest first, one busy brand
+  could fill it and push a quiet brand's only drop out. The server's order is now fair between
+  brands and a page that leaves anything behind carries a `continuation`. Four rules on this
+  side. **The cursor moves when the head lands**, because a read is a fixed window and the rest
+  of it is remembered as the server's own token (`feedPendingReads`, beside `feedCursor`) —
+  the token is written before the cursor, and each page is saved before either, so a process
+  killed between them reads a page twice rather than never. **Five pages per sync, head
+  first**: what happened since you last looked is what a push is about, and a phone away for
+  a fortnight can be owed tens of thousands of events that one foreground refresh must not try
+  to pull; what waits is the deep end of the busiest brands, because the order is fair. At
+  most four unfinished windows are kept and past that the oldest goes — the one remaining way
+  to lose an event, and it takes a phone more than four whole windows behind. **Only the first
+  page can fail a sync**: everything after it is already pending, so a dropped connection on
+  page three is a slower catch-up and not a failed refresh. And **a first sync stops at its
+  first page**, because it is a baseline and history owes nothing — the same reason it is
+  stored read. A continuation the server refuses is spent, not retried for ever.
 - **A collection is not a product** (`CollectionCard`, `CollectionReleaseView`). It is the one update
   that is *about* other updates, and it was drawn as a garment: no photograph (a season page rarely
   has one), an empty size run, no price, and a tap onto a product page with nothing on it — so

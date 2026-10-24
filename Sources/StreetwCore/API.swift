@@ -643,12 +643,29 @@ public struct FeedItem: Codable, Sendable, Hashable, Identifiable {
 
 public struct FeedResponse: Codable, Sendable {
     public var items: [FeedItem]
-    /// Timestamp of the newest event in this page; pass back as `since` to page forward.
+    /// Timestamp of the newest event the read could see; pass back as `since` on the next
+    /// sync. Set on the first page of a read only — a continued page is not progress through
+    /// the head of the feed, and nil there means "leave the cursor where it is".
     public var nextCursor: Date?
+    /// The rest of this read, when it did not fit in one page. Pass back as `continuation`
+    /// and nothing else; nil means the window is complete.
+    ///
+    /// **Why a sync now takes more than one request.** The first page used to be the whole
+    /// answer: newest first, capped at 200, with `nextCursor` its newest event — so whatever
+    /// was older than the 200th event fell behind the cursor without ever being sent. A
+    /// device that had been away while a busy brand wrote 250 restocks lost every other
+    /// brand's news in that window, and the quiet brand's one drop was precisely the row that
+    /// went. See `FeedPaging` on the server for the order pages come in and why it is fair
+    /// between brands.
+    ///
+    /// Optional, and ignored by the 1.0 app, which asks once and moves its cursor exactly as
+    /// before. Opaque for the reason `DiscoverResponse.nextCursor` is.
+    public var continuation: String?
 
-    public init(items: [FeedItem], nextCursor: Date? = nil) {
+    public init(items: [FeedItem], nextCursor: Date? = nil, continuation: String? = nil) {
         self.items = items
         self.nextCursor = nextCursor
+        self.continuation = continuation
     }
 }
 

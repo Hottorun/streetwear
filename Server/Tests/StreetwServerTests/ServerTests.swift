@@ -3283,7 +3283,7 @@ struct NotificationPolicyTests {
 /// Nothing exercised `?since=`, which is why it survived. These do.
 @Suite("Feed cursor")
 struct FeedCursorTests {
-    /// What the app actually puts on the wire — `StreetwAPI.feed(since:)`.
+    /// What the app actually puts on the wire — `StreetwAPI.feed(_:)`.
     private func clientFormatted(_ date: Date) -> String {
         ISO8601DateFormatter().string(from: date)
     }
@@ -3747,5 +3747,240 @@ struct BrandCheckTests {
             #expect(result.checks == 1)
             #expect(try await BrandCheckModel.query(on: app.db).count() == 0)
         }
+    }
+}
+
+/// More happened between two syncs than one page holds.
+///
+/// `GET /v1/feed` answered newest first with at most 200 events, `nextCursor` was the newest
+/// of them, and the client asked once per sync and moved its cursor there — so everything
+/// older than the 200th event was behind the cursor before it was ever sent. Found by
+/// reading the code, which is why the first test here reproduces it before anything else.
+@Suite("Feed paging")
+struct FeedPagingTests {
+    private func brand(_ app: Application, slug: String) async throws -> UUID {
+        let brand = BrandModel(
+            name: slug, slug: slug, website: "https://\(slug)",
+            instagramHandle: nil, usesGeneratedName: false
+        )
+        try await brand.save(on: app.db)
+        return try brand.requireID()
+    }
+
+    /// Events one second apart, oldest first, ending `endingAgo` seconds before now — so the
+    /// order on the wire is the order written here, whatever the database's clock resolution.
+    @discardableResult
+    private func events(
+        _ app: Application,
+        brandID: UUID,
+        count: Int,
+        endingAgo: TimeInterval,
+        kind: UpdateKind = .product
+    ) async throws -> [UUID] {
+        var ids: [UUID] = []
+        for index in 0..<count {
+            let event = EventModel(brandID: brandID, productID: nil, kind: kind)
+            try await event.save(on: app.db)
+            event.createdAt = Date().addingTimeInterval(-endingAgo - Double(count - 1 - index))
+            try await event.save(on: app.db)
+            ids.append(try event.requireID())
+        }
+        return ids
+    }
+
+    private func follow(_ app: Application, _ brandIDs: [UUID], auth: HTTPHeaders) async throws {
+        for id in brandIDs {
+            try await app.testing().test(.POST, "v1/follows", headers: auth, beforeRequest: { req in
+                try req.content.encode(FollowBrand(brandID: id))
+            }, afterResponse: { _ in })
+        }
+    }
+
+    private func page(_ app: Application, auth: HTTPHeaders, query: String) async throws -> FeedResponse {
+        var response = FeedResponse(items: [])
+        try await app.testing().test(.GET, "v1/feed?\(query)", headers: auth) { res async throws in
+            #expect(res.status == .ok)
+            response = try res.content.decode(FeedResponse.self)
+        }
+        return response
+    }
+
+    private func since(_ date: Date) -> String {
+        "since=" + (ISO8601DateFormatter().string(from: date)
+            .addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? "")
+    }
+
+    /// Follows a read to its end, the way `FeedPager` does, and returns every page.
+    private func read(
+        _ app: Application, auth: HTTPHeaders, from cursor: Date? = nil, limit: Int = 200
+    ) async throws -> [FeedResponse] {
+        var pages = [try await page(
+            app, auth: auth, query: "limit=\(limit)" + (cursor.map { "&\(since($0))" } ?? "")
+        )]
+        while let token = pages.last?.continuation, pages.count < 50 {
+            pages.append(try await page(app, auth: auth, query: "limit=\(limit)&continuation=\(token)"))
+        }
+        return pages
+    }
+
+    /// The reproduction, as first written: one request, then the next sync from wherever
+    /// that one left the cursor — exactly what the shipped client does. It failed with 200 of
+    /// 251 delivered, and the one missing quiet-brand drop among the 51. It now follows the
+    /// continuation, which is the protocol a client that can page uses.
+    @Test("Every event between two syncs reaches the device, however many there are")
+    func nothingIsLostPastAPage() async throws {
+        try await withServer { app in
+            let quiet = try await brand(app, slug: "quiet.com")
+            let busy = try await brand(app, slug: "busy.com")
+            // The quiet brand's one drop lands first; then a busy brand writes more than a
+            // page on top of it before the phone next looks.
+            let early = try await events(app, brandID: quiet, count: 1, endingAgo: 600)
+            let late = try await events(app, brandID: busy, count: 250, endingAgo: 10)
+            let auth = try await deviceAuth(app)
+            try await follow(app, [quiet, busy], auth: auth)
+
+            let pages = try await read(app, auth: auth)
+            let delivered = pages.flatMap { $0.items.map(\.eventID) }
+
+            #expect(Set(delivered) == Set(early + late))
+            #expect(delivered.count == early.count + late.count, "nothing sent twice")
+            #expect(pages.count == 2)
+
+            // And the next sync, from the cursor the first page named, owes nothing.
+            let cursor = try #require(pages.first?.nextCursor)
+            let next = try await read(app, auth: auth, from: cursor)
+            #expect(Set(next.flatMap { $0.items.map(\.eventID) }).isSubset(of: Set(late)))
+        }
+    }
+
+    /// The build in the App Store asks once and cannot page, so its one page has to be the
+    /// right 200: the quiet brand's only drop rather than the busy brand's 201st restock.
+    /// What it loses now is the deep end of the busiest brand, which is the least valuable
+    /// row in the window rather than the most.
+    @Test("The one page the 1.0 app reads is fair between brands, and names the newest event")
+    func firstPageIsFair() async throws {
+        try await withServer { app in
+            let quiet = try await brand(app, slug: "quiet.com")
+            let busy = try await brand(app, slug: "busy.com")
+            let early = try await events(app, brandID: quiet, count: 1, endingAgo: 600)
+            let late = try await events(app, brandID: busy, count: 250, endingAgo: 10)
+            let auth = try await deviceAuth(app)
+            try await follow(app, [quiet, busy], auth: auth)
+
+            let first = try await page(app, auth: auth, query: "limit=200")
+            let ids = first.items.map(\.eventID)
+            #expect(ids.count == 200)
+            #expect(ids.contains(early[0]))
+            // Newest first within a brand, so what the busy brand gives up is its oldest.
+            #expect(Array(ids.filter { $0 != early[0] }) == Array(late.reversed().prefix(199)))
+            // `nextCursor` is still what the 1.0 app moves to: the newest event in the window.
+            let newest = try #require(try await EventModel.find(late.last, on: app.db)?.createdAt)
+            let cursor = try #require(first.nextCursor)
+            #expect(abs(cursor.timeIntervalSince(newest)) < 1)
+            #expect(first.continuation != nil)
+        }
+    }
+
+    /// The window is fixed when the read begins. Something written mid-read belongs to the
+    /// next read; slipping it into this one would shift every position after it.
+    @Test("An event written mid-read waits for the next read")
+    func windowIsFixed() async throws {
+        try await withServer { app in
+            let busy = try await brand(app, slug: "busy.com")
+            let before = try await events(app, brandID: busy, count: 250, endingAgo: 30)
+            let auth = try await deviceAuth(app)
+            try await follow(app, [busy], auth: auth)
+
+            let first = try await page(app, auth: auth, query: "limit=200")
+            let token = try #require(first.continuation)
+            let during = try await events(app, brandID: busy, count: 3, endingAgo: 0)
+            let rest = try await page(app, auth: auth, query: "limit=200&continuation=\(token)")
+
+            let read = first.items.map(\.eventID) + rest.items.map(\.eventID)
+            #expect(Set(read) == Set(before))
+            #expect(rest.continuation == nil)
+            #expect(rest.nextCursor == nil, "a continued page is not progress through the head")
+
+            let cursor = try #require(first.nextCursor)
+            let next = try await page(app, auth: auth, query: "limit=200&\(since(cursor))")
+            #expect(Set(during).isSubset(of: Set(next.items.map(\.eventID))))
+        }
+    }
+
+    /// Why the position is a keyset rather than an offset. An unfollow between two pages
+    /// removes a whole brand's rows, and an offset would slide the next brand's past the
+    /// reader unseen.
+    @Test("Unfollowing a brand mid-read skips nothing of the others")
+    func unfollowMidReadSkipsNothing() async throws {
+        try await withServer { app in
+            let a = try await brand(app, slug: "a.com")
+            let b = try await brand(app, slug: "b.com")
+            let c = try await brand(app, slug: "c.com")
+            let fromA = try await events(app, brandID: a, count: 150, endingAgo: 300)
+            let fromB = try await events(app, brandID: b, count: 150, endingAgo: 200)
+            let fromC = try await events(app, brandID: c, count: 150, endingAgo: 100)
+            let auth = try await deviceAuth(app)
+            try await follow(app, [a, b, c], auth: auth)
+
+            var pages = [try await page(app, auth: auth, query: "limit=100")]
+            try await app.testing().test(.DELETE, "v1/follows/\(b.uuidString)", headers: auth) { _ in }
+            while let token = pages.last?.continuation {
+                pages.append(try await page(app, auth: auth, query: "limit=100&continuation=\(token)"))
+            }
+
+            let delivered = Set(pages.flatMap { $0.items.map(\.eventID) })
+            #expect(Set(fromA + fromC).isSubset(of: delivered))
+            #expect(delivered.isSubset(of: Set(fromA + fromB + fromC)))
+        }
+    }
+
+    @Test("A continuation this server did not write is refused, not guessed at")
+    func foreignContinuationIsRefused() async throws {
+        try await withServer { app in
+            let busy = try await brand(app, slug: "busy.com")
+            try await events(app, brandID: busy, count: 1, endingAgo: 0)
+            let auth = try await deviceAuth(app)
+            try await follow(app, [busy], auth: auth)
+
+            try await app.testing().test(
+                .GET, "v1/feed?continuation=not-a-token", headers: auth
+            ) { res async throws in
+                #expect(res.status == .badRequest)
+            }
+        }
+    }
+
+    /// The order itself, with no database: rank first, then newest, so a page boundary can
+    /// fall anywhere and every brand's newest still comes before anybody's second.
+    @Test("The fair order interleaves brands by rank, newest first within a rank")
+    func fairOrder() {
+        let t0 = Date(timeIntervalSince1970: 1_780_000_000)
+        let a = UUID(), b = UUID()
+        let rows = [
+            FeedPaging.Row(id: UUID(), brandID: a, createdAt: t0.addingTimeInterval(1)),
+            FeedPaging.Row(id: UUID(), brandID: a, createdAt: t0.addingTimeInterval(2)),
+            FeedPaging.Row(id: UUID(), brandID: a, createdAt: t0.addingTimeInterval(3)),
+            FeedPaging.Row(id: UUID(), brandID: b, createdAt: t0),
+        ]
+        let order = FeedPaging.ordered(rows).map(\.id)
+        #expect(order == [rows[2].id, rows[3].id, rows[1].id, rows[0].id])
+
+        let first = FeedPaging.page(rows, after: nil, limit: 2)
+        #expect(first.ids == [rows[2].id, rows[3].id])
+        let second = FeedPaging.page(rows, after: first.next, limit: 2)
+        #expect(second.ids == [rows[1].id, rows[0].id])
+        #expect(second.next == nil)
+    }
+
+    @Test("A continuation survives the trip to the client and back, to the last bit")
+    func continuationRoundTrips() throws {
+        let sent = FeedContinuation(
+            since: Date(timeIntervalSince1970: 1_780_000_000.123456),
+            until: Date(timeIntervalSince1970: 1_780_086_400.654321),
+            after: .init(rank: 7, createdAt: Date(timeIntervalSince1970: 1_780_050_000.000789), id: UUID())
+        )
+        let token = sent.token
+        #expect(!token.contains("+") && !token.contains("/") && !token.contains("="))
+        #expect(FeedContinuation(token: token) == sent)
     }
 }

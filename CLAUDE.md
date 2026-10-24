@@ -330,6 +330,8 @@ bought it. The short form of the load-bearing ones:
 - There is no refresh button — `scenePhase == .active` and pull-to-refresh, on two very different
   throttles (60s server, 20min standalone).
 - A brand's first sync is a baseline, and only a sync that reached something may spend it.
+- A sync reads the feed to the end, a page at a time (`FeedPager`), and the server's pages are fair
+  between brands (`FeedPaging`) — one page per sync is how anything past the 200th event was lost.
 - Ordering: brands by `lastActivityAt` (stored, never by newest *unread*); a brand's output by
   `BrandUpdate.newestFirst`; one garment one row via `oncePerProduct`.
 - Only a price *drop* past 5% is an event; restock outranks it; a lock fires on the transition.
@@ -763,7 +765,7 @@ the local path in the `else`. Adding a new one means adding both halves:
 
 | Operation | Server route |
 |---|---|
-| launch/refresh sync | `GET /v1/follows` + `GET /v1/feed` |
+| launch/refresh sync | `GET /v1/follows` + `GET /v1/feed`, then `?continuation=` until it comes back nil — five pages a sync, the rest kept for the next (`FeedPager`) |
 | catch up on a brand just followed | `GET /v1/brands/:id/feed` (merged as a baseline) |
 | find a brand | `GET /v1/brands?q=` (name **or** pasted URL) |
 | "check site" preview | `POST /v1/brands/checks`, then `GET /v1/brands/checks/:id` until it settles (creates nothing) |

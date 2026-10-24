@@ -42,6 +42,15 @@ final class RemoteSync {
         set { UserDefaults.standard.set(newValue, forKey: "feedCursor") }
     }
 
+    /// Reads of the feed that ran out of budget before they finished — the server's own
+    /// continuation tokens, newest first. Beside the cursor because they are the other half
+    /// of the same position: the cursor says where the last read began, these say what of
+    /// the earlier ones is still owed. See `FeedPager`.
+    private var pendingFeedReads: [String] {
+        get { UserDefaults.standard.stringArray(forKey: "feedPendingReads") ?? [] }
+        set { UserDefaults.standard.set(newValue, forKey: "feedPendingReads") }
+    }
+
     init(context: ModelContext, settings: ServerSettings) {
         self.context = context
         self.settings = settings
@@ -491,7 +500,8 @@ final class RemoteSync {
             let brands = try await api.follows()
             mergeBrands(brands, isCompleteList: true)
 
-            // First sync pulls a week; afterwards only what's new since the cursor.
+            // First sync pulls a week; afterwards everything since the cursor, a page at a
+            // time — see `FeedPager` for what a sync reads and in what order.
             //
             // **And that first window is history, not news.** With no cursor there is
             // nothing this install has ever been told, so everything the feed hands back
@@ -502,19 +512,13 @@ final class RemoteSync {
             // is context. The next genuine drop is then the first unread thing in the app.
             let isFirstSync = cursor == nil
             let startedAt = Date()
-            let response = try await api.feed(since: cursor)
-            merge(response.items, asBaseline: isFirstSync)
-
-            // Only advance once the merge succeeded, so a failure re-fetches rather
-            // than silently skipping a window of events.
-            if let next = response.nextCursor {
-                cursor = next
-            } else if isFirstSync, !brands.isEmpty {
-                // The server had nothing to hand over for brands this device *does* follow —
-                // a shop the poller has not reached yet. The baseline is spent anyway,
-                // because the request succeeded and reached something: leaving the cursor nil
-                // would baseline the next pass too, and that one would be a real drop filed
-                // as history.
+            let outcome = try await FeedPager().run(
+                from: FeedPager.State(cursor: cursor, pending: pendingFeedReads),
+                // When the server had nothing to hand over for brands this device *does*
+                // follow — a shop the poller has not reached yet — the baseline is spent
+                // anyway, because the request succeeded and reached something: leaving the
+                // cursor nil would baseline the next pass too, and that one would be a real
+                // drop filed as history.
                 //
                 // **`!brands.isEmpty` is the whole of the rule, and leaving it out undid the
                 // fix above.** `ContentView` runs a sync at launch, which on a fresh install
@@ -524,7 +528,22 @@ final class RemoteSync {
                 // unread and the first screen of the app read "82 new from 3 brands".
                 // Measured exactly that way. Same rule `SyncEngine.sync` states for
                 // `Brand.lastSyncedAt`: only a sync that reached something may spend it.
-                cursor = startedAt
+                fallbackCursor: isFirstSync && !brands.isEmpty ? startedAt : nil,
+                fetch: { request in try await Self.page(request, from: api) },
+                // Saved per page, before the pager records the page as read: a process killed
+                // in between re-reads a page rather than skipping one.
+                merge: { items, asBaseline in
+                    self.merge(items, asBaseline: asBaseline)
+                    try? self.context.save()
+                },
+                persist: { state in
+                    self.pendingFeedReads = state.pending
+                    self.cursor = state.cursor
+                }
+            )
+            // Not a failed sync: the head landed, and what is left is already pending.
+            if let interruption = outcome.interruption {
+                Self.log.info("feed read stopped after \(outcome.pagesRead) page(s): \(interruption.localizedDescription)")
             }
             await mergeWatches()
             try? context.save()
@@ -550,6 +569,21 @@ final class RemoteSync {
             lastSyncedAt = Date()
         } catch {
             lastError = error.localizedDescription
+        }
+    }
+
+    /// One page for `FeedPager`.
+    ///
+    /// A continuation the server will not read — a deploy that changed what one holds — is
+    /// answered as an empty, finished page, so the pager spends it. Retrying it would cost a
+    /// request on every sync for the life of the install and could never succeed.
+    private static func page(_ request: FeedPager.Request, from api: StreetwAPI) async throws -> FeedResponse {
+        guard case .resume = request else { return try await api.feed(request) }
+        do {
+            return try await api.feed(request)
+        } catch APIError.server(400, _) {
+            log.info("server refused a stored feed continuation; dropping it")
+            return FeedResponse(items: [])
         }
     }
 

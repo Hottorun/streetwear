@@ -46,6 +46,38 @@ Part of the streetw guidance set; see `CLAUDE.md` for the index and the build ru
   `isAvailable(in:)` returns true for everything, so the size filter matched every item and the
   size run — the app's signature element — rendered as blank space on every non-restock. The
   saving was never real either; a product carries tens of variants, not thousands.
+- **The feed is read to the end, in pages that are fair between brands** (`FeedPaging`,
+  `GET /v1/feed`). It answered newest first with at most 200 events and named the newest of
+  them as the cursor, and the app asked once per sync — so everything older than the 200th
+  event between two syncs fell behind the cursor without ever being sent. A busy brand writing
+  250 restocks pushed every other brand's news out of the window, and a quiet brand's one drop
+  was exactly the row that went. Found by reading the code; reproduced by
+  `FeedPagingTests.nothingIsLostPastAPage` (200 of 251 delivered) before it was fixed. Five
+  details are load-bearing:
+  - **The order is fair**: every brand's newest event before any brand's second newest (rank
+    within brand, then newest first). One busy brand can no longer fill a page while another
+    has something unsent — it fills the *tail* of the read. This applies to the first page
+    too, which is all the 1.0 app reads: it still gets one page and `nextCursor` is still the
+    newest event in the window, but what it loses now is the deep end of the busiest brand
+    rather than a quiet brand's only drop.
+  - **The window is fixed when the read begins** — `(since, newest event visible now]` — and
+    `continuation` carries it, opaque, until it comes back nil. An event written mid-read
+    belongs to the next read.
+  - **The position is a keyset, not an offset.** An unfollow between pages removes a whole
+    brand's rows and an offset would slide the next brand's past the reader. The keyset only
+    moves for retention deleting a brand's rows mid-read, which touches nothing younger than
+    the thirty-day horizon.
+  - **The ranking and the keyset compare in Swift, never in SQL**, and the upper bound is
+    applied in Swift too. The bound is a timestamp read out of the database on the first
+    page; binding it back is not guaranteed to keep its last microsecond, and a `<= until`
+    that dropped the newest event would re-rank its whole brand by one and slide rows past
+    the reader. Decoded values compared with each other are exact, because every page decodes
+    the same rows the same way. Only a three-column projection of the window is loaded; the
+    page alone is hydrated with products and variants.
+  - **The token is JSON in base64url** rather than an ISO date, because the ISO-8601 the rest
+    of the API speaks keeps whole seconds and the window's bounds must round-trip exactly.
+  The client's half — a budget of five pages per sync, the head first, unfinished windows kept
+  as their tokens — is `FeedPager` in `StreetwCore`; see `docs/design-decisions.md`.
 - **`/status` counts every table**, `users` included. It was the one table it didn't touch,
   which is exactly why a completely broken registration path still reported green.
 - **Only the *unexpected* is worth a buzz** (`Notifier.isWorthWaking`). A drop, a collection and

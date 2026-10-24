@@ -216,10 +216,17 @@ struct StreetwAPI: Sendable {
         try await send(path: "v1/watches", method: "GET", body: Optional<Never>.none)
     }
 
-    func feed(since: Date?, limit: Int = 200) async throws -> FeedResponse {
+    /// One page of the feed — the head of a read, or the rest of one. See `FeedPager`.
+    func feed(_ request: FeedPager.Request, limit: Int = 200) async throws -> FeedResponse {
         var query = [URLQueryItem(name: "limit", value: String(limit))]
-        if let since {
-            query.append(URLQueryItem(name: "since", value: ISO8601DateFormatter().string(from: since)))
+        switch request {
+        case .head(let since):
+            if let since {
+                query.append(URLQueryItem(name: "since", value: ISO8601DateFormatter().string(from: since)))
+            }
+        case .resume(let token):
+            // Echoed exactly as it arrived; it is the server's own place in its own order.
+            query.append(URLQueryItem(name: "continuation", value: token))
         }
         return try await send(path: "v1/feed", method: "GET", body: Optional<Never>.none, query: query)
     }
