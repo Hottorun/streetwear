@@ -35,7 +35,7 @@ func deviceAuth(_ app: Application) async throws -> HTTPHeaders {
     return HTTPHeaders([("Authorization", "Bearer \(token)")])
 }
 
-private func withServer(_ body: (Application) async throws -> Void) async throws {
+func withServer(_ body: (Application) async throws -> Void) async throws {
     setenv("SQLITE_PATH", ":memory:", 1)
     setenv("DISABLE_POLLER", "true", 1)
     setenv("ADMIN_TOKEN", testAdminToken, 1)

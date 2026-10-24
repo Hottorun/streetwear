@@ -53,6 +53,33 @@ public struct RobotsRules: Sendable, Equatable {
         return path.range(of: regex, options: .regularExpression) != nil
     }
 
+    /// Every `Sitemap:` line, in the order the file gives them.
+    ///
+    /// Outside any group, by the standard — a sitemap is a statement about the site, not
+    /// about a crawler — which is why it is read here rather than in `parse`. Hollister,
+    /// Subdued and victoriassecret.com publish their sitemaps nowhere else, and Hollister
+    /// spells the field `SITEMAP:`.
+    public static func sitemaps(in text: String) -> [URL] {
+        var found: [URL] = []
+        for rawLine in text.split(whereSeparator: \.isNewline) {
+            let line = rawLine.trimmingCharacters(in: .whitespaces)
+            guard let colon = line.firstIndex(of: ":"),
+                  line[line.startIndex..<colon].trimmingCharacters(in: .whitespaces).lowercased() == "sitemap"
+            else { continue }
+            // The URL ends at the first space, which is where a trailing comment would start.
+            let value = line[line.index(after: colon)...]
+                .trimmingCharacters(in: .whitespaces)
+                .split(separator: " ")
+                .first
+                .map(String.init) ?? ""
+            guard let url = URL(string: value), url.scheme == "https" || url.scheme == "http",
+                  !found.contains(url)
+            else { continue }
+            found.append(url)
+        }
+        return found
+    }
+
     /// Picks the group for `userAgent`, falling back to `*`. A named group wins outright
     /// — the standard says the most specific matching group applies, not the union.
     public static func parse(_ text: String, userAgent: String) -> RobotsRules {

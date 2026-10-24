@@ -92,8 +92,11 @@ public enum BrandDiscovery {
             }
 
             // A sitemap is the fallback *before* page watching: it names individual
-            // products, where a page watch can only say "something changed".
-            if result.sources.isEmpty, let sitemap = await SitemapSource.detect(at: base, http: http) {
+            // products, where a page watch can only say "something changed". What was typed
+            // goes along whole, because its path can say which storefront was meant —
+            // `subdued.com/eu_en/` — and `base` has had the path stripped.
+            if result.sources.isEmpty,
+               let sitemap = await SitemapSource.detect(at: base, preferring: storefrontHint(raw), http: http) {
                 result.sources.append(BrandSource(kind: .sitemap, url: sitemap))
             }
 
@@ -152,6 +155,14 @@ public enum BrandDiscovery {
         components.query = nil
         components.fragment = nil
         return components.url
+    }
+
+    /// What was typed, path and all, for the one thing the path can say: which country and
+    /// language the storefront is. Read by `LocalePreference` and never fetched, so it gets
+    /// none of `normalizedURL`'s checks and needs none.
+    static func storefrontHint(_ raw: String) -> URL? {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        return URL(string: trimmed.contains("://") ? trimmed : "https://\(trimmed)")
     }
 
     /// The part of a host that identifies the *brand* rather than the storefront.

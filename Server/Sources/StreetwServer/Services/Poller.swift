@@ -355,12 +355,16 @@ actor Poller {
                 try await brand.save(on: db)
             }
 
+            // A source can declare its own read a baseline when this one has already been
+            // spent: a sitemap meeting its memory for the first time has no idea what it has
+            // seen, and without this a source baselined under the old rules would offer up a
+            // poll's worth of long-listed products as drops. See `FetchResult.isBaseline`.
             if !result.notModified {
                 hadEvent = try await merge(
-                    result.items,
+                    result.items.filter { !$0.isTentative },
                     brandID: brandID,
                     sourceID: sourceID,
-                    isBaseline: isFirstPoll
+                    isBaseline: isFirstPoll || result.isBaseline
                 )
             }
 
@@ -394,17 +398,21 @@ actor Poller {
             .filter(\.$createdAt >= Date().addingTimeInterval(-7 * 86_400))
             .count() == 0
 
+        let cadence = Cadence.next(
+            locked: source.lockedAt != nil,
+            hadRecentEvent: hadEvent,
+            quietForAWeek: quiet,
+            failures: source.failureCount,
+            // Only asked when a hint hasn't already answered it: both produce sixty
+            // seconds, and the rhythm read costs an indexed query over 400 rows.
+            inDropWindow: isHinted ? false : try await isInDropWindow(brandID: brandID),
+            hinted: isHinted
+        )
+        // A sitemap is regenerated on a schedule, not as products go up, and can be megabytes
+        // a read — see `SitemapSource.minimumInterval`. The app's own copy of the rule is in
+        // `BrandSource.isReadyToCheck`.
         source.nextCheckAt = Date().addingTimeInterval(
-            Cadence.next(
-                locked: source.lockedAt != nil,
-                hadRecentEvent: hadEvent,
-                quietForAWeek: quiet,
-                failures: source.failureCount,
-                // Only asked when a hint hasn't already answered it: both produce sixty
-                // seconds, and the rhythm read costs an indexed query over 400 rows.
-                inDropWindow: isHinted ? false : try await isInDropWindow(brandID: brandID),
-                hinted: isHinted
-            )
+            kind == .sitemap ? max(cadence, SitemapSource.minimumInterval) : cadence
         )
         try await source.save(on: db)
 

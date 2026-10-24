@@ -1579,22 +1579,40 @@ struct SitemapSourceTests {
         )
     }
 
-    @Test("Only what changed since the last check comes back")
-    func respectsSince() async throws {
+    /// Re-pointed rather than deleted: this pinned `since` filtering on `<lastmod>`, which
+    /// is exactly what a sitemap that stamps every entry with one instant — or none — defeats.
+    /// What is new is now what the source's memory has not seen, and the clock plays no part.
+    @Test("Only what the memory has not seen comes back")
+    func returnsOnlyUnseenURLs() async throws {
+        let first = try await SitemapSource(http: client(urlset)).fetch(source(), since: nil)
+        #expect(first.isBaseline)
+        var remembered = source()
+        remembered.fingerprint = first.fingerprint
+
+        // The same file again, with a `since` that would once have let one entry through.
         let since = DateParsing.any("2026-08-05T00:00:00+00:00")
-        let result = try await SitemapSource(http: client(urlset)).fetch(source(), since: since)
-        #expect(result.items.count == 1)
+        let again = try await SitemapSource(http: client(urlset)).fetch(remembered, since: since)
+        #expect(again.items.isEmpty)
+        #expect(!again.isBaseline)
+        #expect(again.fingerprint == nil, "an unchanged memory is not rewritten")
     }
 
-    /// Without `lastmod` there is no way to tell new from old, and assuming "now" would
-    /// resurface the entire catalogue on every single poll.
-    @Test("Entries with no lastmod are skipped rather than assumed new")
-    func requiresLastmod() async throws {
+    /// Re-pointed rather than deleted. Skipping entries with no `lastmod` was the guard
+    /// against "assuming now would resurface the catalogue every poll" — a fear the memory
+    /// answers properly, and a rule that skipped all 2,123 of Hollister's products.
+    @Test("Entries with no lastmod are read, and are not news twice")
+    func readsEntriesWithoutLastmod() async throws {
         let bare = """
         <urlset><url><loc>https://brand.com/products/mystery</loc></url></urlset>
         """
-        let result = try await SitemapSource(http: client(bare)).fetch(source(), since: nil)
-        #expect(result.items.isEmpty)
+        let first = try await SitemapSource(http: client(bare)).fetch(source(), since: nil)
+        #expect(first.items.count == 1)
+        #expect(first.isBaseline)
+
+        var remembered = source()
+        remembered.fingerprint = first.fingerprint
+        let again = try await SitemapSource(http: client(bare)).fetch(remembered, since: nil)
+        #expect(again.items.isEmpty)
     }
 
     @Test("A sitemap index is followed to its product children")

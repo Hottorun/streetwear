@@ -58,6 +58,15 @@ public struct FetchedItem: Sendable, Hashable {
     /// answered nothing, and for rows written before this existed; `Brand.members(of:)`
     /// keeps the word match for exactly those.
     public var memberExternalIDs: [String]
+    /// The source could only guess this is a product, and the page has to say so before
+    /// anybody is told.
+    ///
+    /// Set by `SitemapSource` for a URL that sits in a mixed sitemap with nothing to mark
+    /// it — no product path, no photograph, no product-named file. Subdued's categories and
+    /// CMS pages look exactly like that, and so do a handful of its products. The server
+    /// stores such a row silently and announces it only once `ProductPage` has found a
+    /// product on it; standalone, the phone leaves these out.
+    public var isTentative: Bool
 
     public init(
         externalID: String,
@@ -75,7 +84,8 @@ public struct FetchedItem: Sendable, Hashable {
         tags: [String] = [],
         productType: String? = nil,
         variants: [VariantInfo] = [],
-        memberExternalIDs: [String] = []
+        memberExternalIDs: [String] = [],
+        isTentative: Bool = false
     ) {
         self.externalID = externalID
         self.title = title
@@ -93,6 +103,7 @@ public struct FetchedItem: Sendable, Hashable {
         self.productType = productType
         self.variants = variants
         self.memberExternalIDs = memberExternalIDs
+        self.isTentative = isTentative
     }
 }
 
@@ -110,6 +121,16 @@ public struct FetchResult: Sendable {
     /// Storefront currency and display name, when the source can determine them.
     public var shopCurrency: String?
     public var shopName: String?
+    /// Nothing in `items` is news, whatever the caller's own baseline says.
+    ///
+    /// The callers decide a baseline from their own state — `sources.baselined_at` on the
+    /// server, `Brand.lastSyncedAt` on the phone — and for every other adapter that is the
+    /// whole answer. A sitemap keeps its own memory of what it has seen (`SitemapMemory`),
+    /// and a source that was baselined long before that memory existed has none: its first
+    /// read under the new rules would otherwise offer up to `SitemapSource.maxNewItems`
+    /// long-listed products as new drops, to everyone following it. Also set when a sitemap
+    /// has plainly been rebuilt rather than added to.
+    public var isBaseline: Bool
 
     public init(
         items: [FetchedItem] = [],
@@ -118,7 +139,8 @@ public struct FetchResult: Sendable {
         etag: String? = nil,
         notModified: Bool = false,
         shopCurrency: String? = nil,
-        shopName: String? = nil
+        shopName: String? = nil,
+        isBaseline: Bool = false
     ) {
         self.items = items
         self.fingerprint = fingerprint
@@ -127,6 +149,7 @@ public struct FetchResult: Sendable {
         self.notModified = notModified
         self.shopCurrency = shopCurrency
         self.shopName = shopName
+        self.isBaseline = isBaseline
     }
 }
 

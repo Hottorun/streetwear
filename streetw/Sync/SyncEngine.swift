@@ -153,8 +153,17 @@ final class SyncEngine {
 
                 // A 304 means "unchanged", which is different from "returned nothing" —
                 // merging its empty item list would be harmless but pointless.
+                //
+                // A source can call its own read a baseline (`FetchResult.isBaseline`) when
+                // the brand's isn't — a sitemap meeting its memory for the first time. And a
+                // tentative item is one only its page can confirm, which the server does and
+                // the phone, polling for itself, leaves out.
                 if !result.notModified {
-                    merge(result.items, into: brand, isFirstSync: isFirstSync)
+                    merge(
+                        result.items.filter { !$0.isTentative },
+                        into: brand,
+                        isFirstSync: isFirstSync || result.isBaseline
+                    )
                 }
                 if let currency = result.shopCurrency { brand.currencyCode = currency }
                 if let name = result.shopName, brand.usesGeneratedName {
