@@ -554,6 +554,7 @@ struct StyleView: View {
         fit.placements = FitArrangement.placements(for: arranged)
         context.insert(fit)
         try? context.save()
+        UsageCounts.record(.fitCreated)
 
         // The render, once every piece has actually decoded — the same contract `FitCanvas`
         // and `FitStudio` hold. Without it a kept fit shows the live canvas until the next

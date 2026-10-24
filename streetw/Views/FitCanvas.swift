@@ -523,6 +523,8 @@ struct FitCanvas: View {
 
         // Written before the render, so the canvas it draws is the one being saved.
         try? context.save()
+        // A new fit, not an edit — re-saving one somebody already made is not another outfit.
+        if fit == nil { UsageCounts.record(.fitCreated) }
 
         // The sheet closes now rather than waiting on the render. Everything the canvas
         // needs is already decoded — it was just on screen — so the warm-up is normally

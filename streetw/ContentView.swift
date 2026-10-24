@@ -29,7 +29,7 @@ struct ContentView: View {
     @Environment(PushRoute.self) private var route: PushRoute
     @Environment(SaveConfirmation.self) private var confirmation: SaveConfirmation
     @Environment(CollectionRoute.self) private var collection: CollectionRoute
-
+    @Environment(\.scenePhase) private var scenePhase
 
     /// Dev affordance, matching `-seedBrands` / `-seedSizes`: `-startTab style`
     /// opens straight to a tab so screenshots don't need UI automation.
@@ -165,6 +165,26 @@ struct ContentView: View {
             // documented as working on its own.
             DevSeed.seedSavesIfRequested(in: context)
         }
+        // The anonymous usage counts — see `UsageCounts`. An open is counted here rather
+        // than in `streetwApp`, because only this view knows which tab it opened on; and in a
+        // `.task` as well as on the phase change, because a cold launch has no earlier phase
+        // to change from. The phase is checked, so a background launch — a push, a refresh
+        // — is not somebody opening the app.
+        .task {
+            if scenePhase == .active { UsageCounts.sceneBecameActive(onTab: selection) }
+        }
+        .onChange(of: scenePhase) { _, phase in
+            switch phase {
+            case .active: UsageCounts.sceneBecameActive(onTab: selection)
+            case .background: UsageCounts.sceneEnteredBackground()
+            default: break
+            }
+        }
+        .onChange(of: selection) { _, tab in UsageCounts.tabOpened(tab) }
+        // Keyed on the token, per the rule for anything authenticated on first launch: the
+        // first open is counted before registration has finished, and this is what sends it
+        // once it has — and sends again after a stale token has been replaced.
+        .task(id: settings.token) { await UsageCounts.report(force: true) }
         // Also here, not only on `scenePhase`: `onChange` fires on *changes*, and a cold
         // launch has no previous phase to change from — so anything shared while the app
         // was not running would sit in the inbox until the user backgrounded and

@@ -43,6 +43,7 @@ enum DiscoverSave {
         // instead of appearing to do nothing.
         if update.saves.isEmpty {
             context.insert(SavedItem(update: update, type: type))
+            UsageCounts.record(.saveAdded)
         }
         try? context.save()
         return update

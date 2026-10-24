@@ -107,6 +107,7 @@ struct streetwApp: App {
                 route: route,
                 container: container
             )
+            UsageCounts.install(settings: settings, remote: remote)
         }
     }
 
@@ -138,7 +139,10 @@ struct streetwApp: App {
         .onChange(of: scenePhase) { _, phase in
             // Queue the next wake-up on the way out. Submitting while active is allowed
             // but pointless — the system only ever runs it once we're backgrounded.
-            if phase == .background { AppDelegate.schedule() }
+            if phase == .background {
+                AppDelegate.schedule()
+                UsageCounts.reportOnTheWayOut()
+            }
 
             // The Discover ledger is written in batches rather than once per card — see
             // `DiscoverDeck.markSeen` — so leaving the foreground is where it gets settled.
@@ -176,6 +180,10 @@ struct streetwApp: App {
                         settings: settings,
                         sizes: sizes
                     )
+                    // After the refresh rather than beside it: if the token has gone stale,
+                    // the sync is what notices and re-registers, and a report racing it
+                    // would try the same repair at the same moment.
+                    await UsageCounts.report()
                 }
                 Task {
                     await SharedSaveImporter.drain(
