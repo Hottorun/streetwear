@@ -335,6 +335,9 @@ bought it. The short form of the load-bearing ones:
 - Only a price *drop* past 5% is an event; restock outranks it; a lock fires on the transition.
 - Push: one per brand per **cooldown**, `aps-environment` is load-bearing, one `threadID` for the
   whole app.
+- The buy bar opens a Shopify cart permalink only when **exactly one available variant is
+  yours** by `SizeProfile.claims` (never `matches`) in the colourway on screen, and says
+  "CHECK OUT", not "bag"; everything else gets the exact product page (`Checkout`).
 
 ### Push, and why it was silent for months
 
