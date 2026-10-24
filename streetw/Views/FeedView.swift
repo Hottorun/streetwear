@@ -133,7 +133,7 @@ struct FeedView: View {
     /// So the courtesy it gets instead is saying whether the room is empty before you open
     /// it. A brand locked for a drop is the strongest signal there is that something is
     /// about to happen, so it earns the accent rather than a plain dot.
-    private var isLockedSomewhere: Bool { brands.contains { $0.isLockedForDrop } }
+    private var isLockedSomewhere: Bool { brands.contains { $0.isAnnouncingLock } }
 
     /// How many garments one story prints before the rest go behind "+N more".
     ///
@@ -234,7 +234,11 @@ struct FeedView: View {
             $0.sortKey == $1.sortKey ? $0.brand.name < $1.brand.name : $0.sortKey > $1.sortKey
         }
         result.total = result.groups.reduce(0) { $0 + $1.updates.count }
-        result.markdowns = markdowns.count { $0.kind == .priceDrop && $0.passes(profile) }
+        // The same three questions `MarkdownsView.ordered` asks, or the badge and the sheet
+        // it opens disagree about a quiet brand's price cuts.
+        result.markdowns = markdowns.count {
+            $0.kind == .priceDrop && $0.isAdmittedByFollowMode && $0.passes(profile)
+        }
         return result
     }
 
@@ -465,8 +469,9 @@ struct FeedView: View {
                 .overlay(alignment: .topTrailing) {
                     // A locked storefront earns the mark whether or not anything is unread:
                     // it is the strongest signal in the app and the moment somebody most
-                    // wants the page.
-                    if isShouting || brand.isLockedForDrop {
+                    // wants the page — unless the brand is followed in a mode that asked
+                    // the feed not to say so (`Brand.isAnnouncingLock`).
+                    if isShouting || brand.isAnnouncingLock {
                         Circle()
                             .fill(Color.signal)
                             .frame(width: 8, height: 8)
@@ -853,7 +858,7 @@ private struct BrandSpread: View {
         // strongest signal the app has, and the old header printed it from `isLockedForDrop`
         // for exactly this reason; losing it to a bucket that happens to be empty would be a
         // silent downgrade of the one line worth reading.
-        if group.brand.isLockedForDrop, byKind[.dropLock] == nil {
+        if group.brand.isAnnouncingLock, byKind[.dropLock] == nil {
             byKind[.dropLock] = []
         }
 

@@ -51,6 +51,13 @@ final class RemoteSync {
         set { UserDefaults.standard.set(newValue, forKey: "feedPendingReads") }
     }
 
+    /// When this device last changed a brand's mode, per server brand id.
+    ///
+    /// A follow list requested before the change can land after it — the sync's request in
+    /// flight while somebody taps *Quiet* — and mirroring that list would put the old mode
+    /// back on the page for a minute. A mode set after the list was asked for wins.
+    private var modeChangedAt: [UUID: Date] = [:]
+
     init(context: ModelContext, settings: ServerSettings) {
         self.context = context
         self.settings = settings
@@ -142,11 +149,17 @@ final class RemoteSync {
     ///
     /// Best effort per brand: one shop the catalogue has since dropped must not stop the
     /// other nine being restored.
+    ///
+    /// With each brand's mode, because the new identity's follows start at the server's
+    /// default — and a quiet brand restored as *Everything* starts waking somebody who had
+    /// asked it not to, for no reason they could see.
     private func refollowLocalBrands() async {
         guard let api else { return }
         let local = (try? context.fetch(FetchDescriptor<Brand>())) ?? []
-        for id in local.compactMap(\.remoteID) {
-            try? await api.follow(brandID: id)
+        for brand in local {
+            guard let id = brand.remoteID else { continue }
+            let mode = brand.followMode
+            try? await api.follow(brandID: id, mode: mode == .everything ? nil : mode)
         }
     }
 
@@ -273,6 +286,62 @@ final class RemoteSync {
         guard let api else { throw APIError.notConfigured }
         try await api.follow(brandID: brandID)
         await catchUp(brandID: brandID)
+    }
+
+    // MARK: - Follow modes
+
+    /// Changes how much of a brand reaches this device. See `FollowMode`.
+    ///
+    /// **The server first, then the phone.** The mode is what `Notifier` reads before it
+    /// sends anything, so a mode that only changed here would be the 1.0 mute again — the
+    /// page saying *Quiet* while the lock screen goes on lighting up. A failure therefore
+    /// changes nothing and says so, rather than leaving the two disagreeing until the next
+    /// follow list quietly puts the old value back.
+    ///
+    /// A brand the server has never heard of — added under `-standalone YES` — has only the
+    /// local copy, and that is the whole of it.
+    func setFollowMode(_ mode: FollowMode, for brand: Brand) async throws {
+        if settings.isConfigured, let id = brand.remoteID {
+            guard let api else { throw APIError.notConfigured }
+            try await api.setFollowMode(brandID: id, mode: mode)
+            modeChangedAt[id] = Date()
+            // The request outlived the page that made it, and a sync may have removed the
+            // brand meanwhile — reading a deleted model traps, so look before touching it.
+            guard !brand.isDeleted, brand.modelContext != nil else { return }
+        }
+        brand.apply(mode)
+        try? context.save()
+    }
+
+    /// 1.0's per-phone mute, carried onto the server as *Quiet* — once.
+    ///
+    /// Before the follow list is asked for, for the reason `drainUnfollows` is: the list is
+    /// mirrored onto every brand, and a list fetched first would arrive still saying
+    /// *Everything* for a brand somebody silenced. One request per muted brand, and only on
+    /// the sync after an update — `isMuted` is cleared the moment the server has the mode,
+    /// which is what makes it once. A refusal leaves it set and the brand exactly as 1.0
+    /// treated it, to be tried again next sync; that is also what happens against a server
+    /// that predates modes, until it is deployed.
+    ///
+    /// Quiet, and not Everything, because the promise somebody asked for was silence. See
+    /// `Brand.isMuted` for the one thing it changes.
+    private func migrateMutes() async {
+        guard let api else { return }
+        let muted = (try? context.fetch(FetchDescriptor<Brand>(predicate: #Predicate { $0.isMuted }))) ?? []
+        guard !muted.isEmpty else { return }
+        for brand in muted {
+            if let id = brand.remoteID {
+                do {
+                    try await api.setFollowMode(brandID: id, mode: .quiet)
+                } catch {
+                    Self.log.info("could not carry a mute over yet: \(error.localizedDescription)")
+                    continue
+                }
+            }
+            brand.isMuted = false
+            brand.apply(.quiet)
+        }
+        try? context.save()
     }
 
     /// Fills in what a brand has been doing before you followed it.
@@ -496,9 +565,12 @@ final class RemoteSync {
             // follow list first would merge it straight back in — the "next sync restores
             // it" trap, arriving through the repair meant to prevent it.
             await drainUnfollows()
+            // Before the follow list too, and for the same reason. See `migrateMutes`.
+            await migrateMutes()
 
+            let listedAt = Date()
             let brands = try await api.follows()
-            mergeBrands(brands, isCompleteList: true)
+            mergeBrands(brands, isCompleteList: true, listedAt: listedAt)
 
             // First sync pulls a week; afterwards everything since the cursor, a page at a
             // time — see `FeedPager` for what a sync reads and in what order.
@@ -601,7 +673,9 @@ final class RemoteSync {
     ///   so the feed a view was drawing became invalidated models underneath it: the whole
     ///   follow list gone, and a crash on the way out. There is no default; a caller has
     ///   to say which kind of list it holds.
-    private func mergeBrands(_ remote: [BrandDTO], isCompleteList: Bool) {
+    /// - Parameter listedAt: when `remote` was asked for. A mode this device changed after
+    ///   that is newer than anything in the list — see `modeChangedAt`.
+    private func mergeBrands(_ remote: [BrandDTO], isCompleteList: Bool, listedAt: Date? = nil) {
         let existing = (try? context.fetch(FetchDescriptor<Brand>())) ?? []
         var byRemoteID = Dictionary(
             existing.compactMap { brand in brand.remoteID.map { ($0, brand) } },
@@ -653,6 +727,14 @@ final class RemoteSync {
                 // a re-encode of the whole array.
                 let sources = dto.sources.map(Self.source(from:))
                 if brand.sources != sources { brand.sources = sources }
+                // The server's mode is the mode — the phone mirrors it, so the feed is
+                // decided on the same answer `Notifier` used. Nil is "this route doesn't
+                // say", never "everything": only the follow list carries it. `apply` is a
+                // no-op when nothing changed, which is the guard this block asks of every
+                // write.
+                if let mode = dto.followMode, !isNewerHere(id, than: listedAt) {
+                    brand.apply(mode)
+                }
             } else {
                 let brand = Brand(
                     name: Self.displayName(dto.name),
@@ -664,6 +746,9 @@ final class RemoteSync {
                 brand.isLockedForDrop = dto.lockedForDrop
                 brand.logoURLString = dto.logoURL
                 brand.sources = dto.sources.map(Self.source(from:))
+                // A new row has no unread rows to clear, so the plain assignment is the same
+                // as `apply` here and cheaper than faulting an empty relationship.
+                brand.followModeRaw = (dto.followMode ?? .everything).rawValue
                 context.insert(brand)
                 byRemoteID[id] = brand
             }
@@ -693,6 +778,12 @@ final class RemoteSync {
                 context.delete(brand)
             }
         }
+    }
+
+    /// Whether this device set the brand's mode after the list in hand was asked for.
+    private func isNewerHere(_ id: UUID, than listedAt: Date?) -> Bool {
+        guard let listedAt, let changed = modeChangedAt[id] else { return false }
+        return changed > listedAt
     }
 
     /// The server's view of a source, in the shape the app already stores.
@@ -809,7 +900,11 @@ final class RemoteSync {
             // render — the same argument `refreshGender` makes one line further down every
             // other insert path. See `BrandUpdate.isMerchandise`.
             update.refreshMerchandise()
-            update.isSeen = asBaseline
+            // History, or something this brand's mode does not let into the feed. The row is
+            // still stored — the brand page is its catalogue, whatever reaches the feed — and
+            // it arrives read, so the feed, the counts and the rail never need to know the
+            // mode exists. See `Brand.apply`.
+            update.isSeen = asBaseline || !brand.followMode.admits(item.updateKind)
             context.insert(update)
             // What the feed orders brands by, kept as a stored fact so the feed never has
             // to walk the store to work it out — see `Brand.lastActivityAt`.
@@ -832,8 +927,9 @@ final class RemoteSync {
                 // product type and tags, without waiting on a deploy.
                 update.refreshGender()
             }
-            // A baseline is not new material and must not be counted as any.
-            if !asBaseline { newItemCount += 1 }
+            // A baseline is not new material and must not be counted as any, and neither is
+            // a row the mode kept out of the feed.
+            if !update.isSeen { newItemCount += 1 }
         }
     }
 

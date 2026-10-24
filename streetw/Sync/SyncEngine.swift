@@ -46,6 +46,14 @@ final class SyncEngine {
             lastSyncedAt = Date()
         }
 
+        // 1.0's mute, carried over as *Quiet* — the half of `RemoteSync.migrateMutes` for the
+        // mode with no server to tell. Before the fetch, so this pass already files the
+        // brand's arrivals the way it now asks.
+        for brand in brands where brand.isMuted {
+            brand.isMuted = false
+            brand.apply(.quiet)
+        }
+
         for brand in brands {
             progress = brand.name
             await sync(brand: brand)
@@ -194,8 +202,11 @@ final class SyncEngine {
                 // See `Reshelving`.
                 let news = Reshelving.firstSighting(of: item)
                 // A brand added today shouldn't dump its entire back catalogue into the
-                // feed as "new" — the first sync is a baseline.
-                insert(item, into: brand, as: news, markSeen: isFirstSync || news == nil)
+                // feed as "new" — the first sync is a baseline. And a kind the brand's mode
+                // keeps out of the feed is stored read, the same rule `RemoteSync.merge`
+                // applies — see `Brand.apply`.
+                let admitted = news.map(brand.followMode.admits) ?? false
+                insert(item, into: brand, as: news, markSeen: isFirstSync || !admitted)
             }
         }
     }
@@ -266,13 +277,20 @@ final class SyncEngine {
         // brand whose only news was a restock kept the date of its last new product and
         // sorted below brands that had done nothing since. In server mode the question
         // does not arise — every event is its own row there, and `merge` inserts it.
+        // Whether the brand's mode lets a rewrite back into the feed. The row is rewritten
+        // either way — it is the catalogue's record of the garment — but a quiet brand's
+        // restock is not news, and flagging it unread would put it there regardless.
+        let admits = { (kind: UpdateKind) in update.brand?.followMode.admits(kind) ?? true }
+
         if !returned.isEmpty || wholeProductReturned {
             update.kind = .restock
             update.restockedSizes = returned
             update.publishedAt = Date()
             update.brand?.noteActivity(update.publishedAt)
-            update.isSeen = false
-            newItemCount += 1
+            if admits(.restock) {
+                update.isSeen = false
+                newItemCount += 1
+            }
         } else if dropped {
             update.kind = .priceDrop
             update.previousPriceText = update.priceText
@@ -282,13 +300,15 @@ final class SyncEngine {
             update.previousPriceAmount = update.priceAmount
             update.publishedAt = Date()
             update.brand?.noteActivity(update.publishedAt)
-            update.isSeen = false
             // A second cut is a new markdown, so a dismissal of the first one is spent.
             // This path *rewrites* the row rather than inserting one — in server mode every
             // event is its own row and the question never arises — so without this, waving
             // off a 10% cut in March would silently swallow the 40% cut in June.
             update.markdownDismissedAt = nil
-            newItemCount += 1
+            if admits(.priceDrop) {
+                update.isSeen = false
+                newItemCount += 1
+            }
         }
 
         update.variants = item.variants

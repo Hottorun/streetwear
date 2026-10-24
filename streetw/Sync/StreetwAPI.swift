@@ -163,8 +163,22 @@ struct StreetwAPI: Sendable {
         try await send(path: "v1/follows", method: "GET", body: Optional<Never>.none)
     }
 
-    func follow(brandID: UUID) async throws {
-        try await sendVoid(path: "v1/follows", method: "POST", body: FollowBrand(brandID: brandID))
+    /// - Parameter mode: nil for a new follow, which the server makes `.everything`; set only
+    ///   when a follow is being *restored* and the mode it had is known.
+    func follow(brandID: UUID, mode: FollowMode? = nil) async throws {
+        try await sendVoid(
+            path: "v1/follows",
+            method: "POST",
+            body: FollowBrand(brandID: brandID, mode: mode)
+        )
+    }
+
+    func setFollowMode(brandID: UUID, mode: FollowMode) async throws {
+        try await sendVoid(
+            path: "v1/follows/\(brandID.uuidString)",
+            method: "PATCH",
+            body: UpdateFollow(mode: mode)
+        )
     }
 
     func unfollow(brandID: UUID) async throws {

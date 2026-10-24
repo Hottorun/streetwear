@@ -104,8 +104,7 @@ struct streetwApp: App {
                 remote: remote,
                 sizes: sizes,
                 settings: settings,
-                route: route,
-                container: container
+                route: route
             )
         }
     }
