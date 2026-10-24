@@ -279,7 +279,13 @@ is global, so whatever the first person to add a brand accepted is what everyone
 was **already making** for the logo, so it costs nothing. Order is Shopify `/meta.json` →
 `og:site_name` → `<title>` (first segment, marketing tail dropped) → host. A generic title ("Home",
 "Official Site") is refused rather than adopted, because the field is pre-filled and pre-filled
-fields get accepted.
+fields get accepted. **So is a description of the stock** — Hollister's title is "Clothing for
+Women & Men | Teen Clothing | Hollister Co." with no `og:site_name`, and the first segment was
+offered as its global name. `BrandNaming.isDescriptive` refuses a candidate carrying a catalogue
+noun (clothing, shoes, store, sale…) *unless the domain agrees with it* — "Fashion Nova" on
+`fashionnova.com` is a brand — and with the host known, the title segment that names the domain
+wins wherever it sits (`naming`, which also strips "Official … Store UK" from the edges). Audience
+words are deliberately not catalogue nouns: "Boys" is in Billionaire Boys Club's name.
 
 **…and `/meta.json` is typed in by a human, so it is tidied where it is read.** Stüssy publishes
 `" Stüssy"` — a literal leading space — and Represent publishes `"REPRESENT | US"`. `BrandNaming`

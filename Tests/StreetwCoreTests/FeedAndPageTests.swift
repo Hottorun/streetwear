@@ -519,6 +519,73 @@ struct BrandNamingTests {
         #expect(BrandNaming.tidy("KITH") == "KITH")
         #expect(BrandNaming.tidy("  Aimé   Leon Dore ") == "Aimé Leon Dore")
     }
+
+    /// **Hollister's homepage, trimmed.** No `og:site_name`, no `application-name`, and a
+    /// title that leads with what the shop sells: "Clothing for Women & Men | Teen Clothing |
+    /// Hollister Co." The first-segment rule suggested "Clothing for Women & Men" as the name
+    /// of a brand in a global catalogue, on an add screen that shows the name rather than
+    /// asking for it.
+    @Test("A title that describes the stock gives way to the segment naming the domain")
+    func readsTheSegmentThatNamesTheDomain() {
+        let html = Fixtures.string("hollister_home.html")
+        #expect(BrandNaming.declaredName(in: html, host: "www.hollisterco.com") == "Hollister Co.")
+        // With no host to agree with, the description is still refused — the host answers
+        // instead, which is ugly and at least not wrong.
+        #expect(BrandNaming.declaredName(in: html) == nil)
+        #expect(BrandNaming.pick(siteName: nil, host: "www.hollisterco.com") == "Hollisterco")
+    }
+
+    @Test("The probe names Hollister from its own homepage")
+    func probeReadsHollister() async {
+        let http = MockHTTPClient()
+        http.stub("/", fixture: "hollister_home.html")
+        let identity = await SiteIdentityProbe.discover(at: URL(string: "https://www.hollisterco.com/")!, http: http)
+        #expect(identity.name == "Hollister Co.")
+    }
+
+    /// The words a storefront wraps around its own name come off the edges before the
+    /// domain is compared, never out of the middle.
+    @Test("A shopfront title still finds the brand inside it")
+    func stripsShopfrontWords() {
+        #expect(BrandNaming.declaredName(
+            in: "<title>Official Carhartt WIP Store UK</title>",
+            host: "www.carhartt-wip.com"
+        ) == "Carhartt WIP")
+        // Accents fold to meet the domain.
+        #expect(BrandNaming.declaredName(in: "<title>Stüssy | Official</title>", host: "stussy.com") == "Stüssy")
+        // A brand-first title is untouched by any of this.
+        #expect(BrandNaming.declaredName(in: "<title>Kith – Homepage</title>", host: "kith.com") == "Kith")
+    }
+
+    /// The domain's agreement is what lets a name carry a catalogue noun.
+    @Test("A brand named after what it sells is still a brand")
+    func domainRescuesADescriptiveName() {
+        #expect(BrandNaming.pick(siteName: "Fashion Nova", host: "www.fashionnova.com") == "Fashion Nova")
+        #expect(BrandNaming.declaredName(
+            in: "<title>Women's Clothing | Fashion Nova</title>",
+            host: "www.fashionnova.com"
+        ) == "Fashion Nova")
+    }
+
+    /// Audience words are not catalogue nouns: "Boys" is in Billionaire Boys Club's name.
+    @Test("Who a shop sells to is not a description of it")
+    func audienceWordsAreNotDescriptions() {
+        #expect(!BrandNaming.isDescriptive("Billionaire Boys Club & ICECREAM"))
+        #expect(BrandNaming.isDescriptive("Clothing for Women & Men"))
+        #expect(BrandNaming.isDescriptive("Teen Clothing"))
+        #expect(BrandNaming.pick(siteName: "Billionaire Boys Club", host: "bbcicecream.com") == "Billionaire Boys Club")
+    }
+
+    /// The poller assigns `/meta.json`'s name straight onto a generated brand name, so the
+    /// refusal has to happen where the field is produced.
+    @Test("A merchant name that only describes the stock is refused at the source")
+    func shopInfoRefusesADescription() async {
+        let http = MockHTTPClient()
+        http.stub("/meta.json", .init(body: Data(#"{"name": "Clothing Store", "currency": "EUR"}"#.utf8)))
+        let info = await ShopifySource.shopInfo(for: URL(string: "https://example.com")!, http: http)
+        #expect(info?.name == nil)
+        #expect(info?.currency == "EUR")
+    }
 }
 
 /// What a shared link can be turned into. Open Graph gives a bookmark; the storefront's
