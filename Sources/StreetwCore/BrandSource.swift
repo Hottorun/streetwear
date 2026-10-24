@@ -108,8 +108,13 @@ public struct BrandSource: Codable, Hashable, Identifiable, Sendable {
         failureCount = try container.decodeIfPresent(Int.self, forKey: .failureCount) ?? 0
     }
 
-    /// Backs off 2^failures minutes, capped at 6 hours.
+    /// Backs off 2^failures minutes, capped at 6 hours — and never reads a sitemap more
+    /// often than `SitemapSource.minimumInterval`, the floor the server's poller keeps too.
     public func isReadyToCheck(now: Date = Date()) -> Bool {
+        if kind == .sitemap, let lastCheckedAt,
+           now.timeIntervalSince(lastCheckedAt) < SitemapSource.minimumInterval {
+            return false
+        }
         guard failureCount > 0, let lastCheckedAt else { return true }
         let delay = min(pow(2.0, Double(failureCount)) * 60, 6 * 3600)
         return now.timeIntervalSince(lastCheckedAt) >= delay

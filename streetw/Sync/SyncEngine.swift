@@ -110,6 +110,66 @@ final class SyncEngine {
         // membership reaches only collections published from here on and every release
         // already on the feed keeps falling back to the word match.
         if since != nil, reachedSomething { await fillMemberships(brand) }
+
+        if reachedSomething { await readProductPages(brand) }
+    }
+
+    /// Pages read per brand per sync. Fewer than the server's per-pass budget: this runs
+    /// while somebody has the app open, and each read waits its turn on `pageFetcher`.
+    private static let pageReadBudget = 4
+
+    /// robots.txt and one request per host per second, for every page this engine reads.
+    private let pageFetcher = PoliteFetcher(minInterval: 1)
+
+    /// The standalone half of the server's `Poller.enrich`: a sitemap product's own page,
+    /// read once, for the price, stock and sizes the sitemap never had. Unread rows first —
+    /// they are what somebody is about to look at — then the newest.
+    ///
+    /// Unlike the server, nothing is held back to be announced afterwards: here the row *is*
+    /// the feed card, so reading the page fills in the card somebody already has.
+    private func readProductPages(_ brand: Brand) async {
+        guard brand.sources.contains(where: { $0.kind == .sitemap }) else { return }
+        let queue = brand.updates
+            .filter { $0.pageReadAt == nil && $0.linkURL != nil && $0.externalID.hasPrefix("sitemap:") }
+            .map { (update: $0, unread: !$0.isSeen, published: $0.publishedAt) }
+            .sorted { $0.unread != $1.unread ? $0.unread : $0.published > $1.published }
+            .prefix(Self.pageReadBudget)
+            .map(\.update)
+
+        for update in queue {
+            guard let link = update.linkURL else { continue }
+            let outcome = await ProductPage.read(link, http: pageFetcher)
+            if case .unreachable(retryable: true) = outcome { continue }
+            update.pageReadAt = Date()
+            guard case .product(let page) = outcome else { continue }
+
+            let item = page.applied(to: FetchedItem(
+                externalID: update.externalID,
+                title: update.title,
+                summary: update.summary,
+                linkURL: update.linkURL,
+                imageURLStrings: update.imageURLStrings,
+                publishedAt: update.publishedAt,
+                kind: update.kind,
+                priceText: update.priceText,
+                priceAmount: update.priceAmount,
+                isAvailable: update.isAvailable,
+                tags: update.tags,
+                productType: update.productType,
+                variants: update.variants
+            ))
+            refresh(update, with: item)
+            update.title = item.title
+            if update.summary == nil { update.summary = item.summary }
+            if item.imageURLStrings.count > update.imageURLStrings.count {
+                update.imageURLStrings = item.imageURLStrings
+            }
+            if update.productType == nil { update.productType = item.productType }
+            if update.tags.isEmpty { update.tags = item.tags }
+            // The name and the type are what both classifiers read, and both just changed.
+            update.refreshGender()
+            update.refreshMerchandise()
+        }
     }
 
     /// How many stored collections one sync goes back for, and how far back it looks. Small
@@ -161,8 +221,17 @@ final class SyncEngine {
 
                 // A 304 means "unchanged", which is different from "returned nothing" —
                 // merging its empty item list would be harmless but pointless.
+                //
+                // A source can call its own read a baseline (`FetchResult.isBaseline`) when
+                // the brand's isn't — a sitemap meeting its memory for the first time. And a
+                // tentative item is one only its page can confirm, which the server does and
+                // the phone, polling for itself, leaves out.
                 if !result.notModified {
-                    merge(result.items, into: brand, isFirstSync: isFirstSync)
+                    merge(
+                        result.items.filter { !$0.isTentative },
+                        into: brand,
+                        isFirstSync: isFirstSync || result.isBaseline
+                    )
                 }
                 if let currency = result.shopCurrency { brand.currencyCode = currency }
                 if let name = result.shopName, brand.usesGeneratedName {
@@ -311,10 +380,13 @@ final class SyncEngine {
             }
         }
 
-        update.variants = item.variants
-        update.isAvailable = item.isAvailable
-        update.priceAmount = item.priceAmount
-        update.priceText = item.priceText
+        // A source that says nothing about stock or price does not erase what the product's
+        // page said — a sitemap item carries neither, and the row's came from
+        // `readProductPages`. The same rule the server's `Poller.refresh` keeps.
+        if !item.variants.isEmpty { update.variants = item.variants }
+        update.isAvailable = item.isAvailable ?? update.isAvailable
+        update.priceAmount = item.priceAmount ?? update.priceAmount
+        update.priceText = item.priceText ?? update.priceText
         if update.imageURLStrings.isEmpty { update.imageURLStrings = item.imageURLStrings }
         if update.tags.isEmpty { update.tags = item.tags }
         // A collection stored before the membership was read has none, and nothing else

@@ -81,6 +81,7 @@ func configure(_ app: Application) async throws {
     app.migrations.add(AddDeviceActiveDay())
     app.migrations.add(AddUserDressAndSuitSizes())
     app.migrations.add(AddFollowMode())
+    app.migrations.add(AddProductEnrichment())
     if Environment.get("AUTO_MIGRATE") != "false" {
         try await app.autoMigrate()
     }

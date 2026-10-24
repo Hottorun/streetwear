@@ -232,6 +232,29 @@ Part of the streetw guidance set; see `CLAUDE.md` for the index and the build ru
     is what they are for. `active_on` is overwritten and needs no sweep.
   `GET /admin/usage?days=` reads it back: per-day totals and daily actives, calendar-week
   actives, and devices active in the last seven days. The privacy policy names every event.
+- **A sitemap product is announced from its page, not from the sitemap** (`Poller.enrich`,
+  `PendingAnnouncement`, `AddProductEnrichment`). A sitemap gives a URL and at best one
+  photograph, so every sitemap brand had no price, no stock and no sizes — no size run, no
+  markdown, nothing to watch. `ProductPage` reads the schema.org `Product` a page publishes for
+  search engines, and four details are load-bearing. **The event waits for the page**: written
+  at first sight it went out as "New arrival" over a slug with no price, and the phone keeps the
+  copy it was sent, so reading the page a minute later fixed the server's row and nobody's
+  screen. So a new row carries `pending_announcement` and `enrich`, which runs at the end of
+  every tick before the notifier, writes the event once the page is read — `announce` whatever
+  the page said, `confirm` only if it showed a product, deleting the row otherwise (a
+  tentative URL is a category page as often as a product). **The budget is per pass**:
+  `enrichmentBudget` pages, owed announcements first, then watched products older than
+  `recheckAfter`, then a baseline's unread rows, the last two behind `backfillInterval` because
+  they are a table scan. **Every read is stamped** (`enriched_at`), found or not, except our own
+  `hostBusy` — a dead URL must not be retried forever. **A re-read goes through `refresh`**, with
+  the first read as its baseline, so a watched sitemap product's restock raises the same event a
+  Shopify poll would and the watch fires on it; and `refresh` no longer lets a source that
+  publishes no price or stock (a sitemap) erase the page's.
+- **A sitemap source is never polled more than hourly** (`SitemapSource.minimumInterval`), drop
+  window, hint and lock included. Sitemaps are regenerated on a schedule — Subdued's nightly,
+  Victoria's Secret's at 02:31, Hollister's cached at the edge for a day — and Subdued's is 7.2 MB
+  a read. Its memory of what it has seen lives in `sources.fingerprint` (`SitemapMemory`), which
+  is only rewritten when it changed.
 - **`HTTPFetching`, not `HTTPClient`** — Vapor re-exports `AsyncHTTPClient.HTTPClient` and
   an unqualified collision in the server target is nastier than the wordier name.
 - **Don't name a test helper `withApp`.** VaporTesting exports a generic `withApp<T>` that

@@ -250,9 +250,34 @@ Adapters live in `streetw/Sources/` and are resolved through `SourceAdapters.ada
   `Release.isAnnouncement` — a collection list is mostly navigation, and only the stock in
   one can tell a drop from a rail. See `docs/design-decisions.md`.
 - `FeedSource` — one `XMLParser` delegate handling both RSS `<item>` and Atom `<entry>`.
+- `UCPSource` — the Universal Commerce Protocol endpoint a storefront advertises **for
+  machines**, when it has switched its JSON catalogue off. See *Reading a storefront that
+  has closed its catalogue* below. Above the sitemap because it carries prices, sizes and
+  live stock on every poll; `docs/ucp.md` has the argument.
 - `SitemapSource` — `/sitemap.xml` for brands that are neither Shopify nor feed-publishing.
-  Uses `<lastmod>` as `published_at`, so `since` filtering needs no extra state. Skips
-  entries with no `lastmod`: assuming "now" would resurface the whole catalogue every poll.
+  **What is new is what the source has not seen, never what `<lastmod>` says**: Hollister's
+  2,123 products carry no `lastmod`, Victoria's Secret stamps one instant on 17,134, and only
+  Subdued's dates mean anything. The adapter keeps its own memory in `BrandSource.fingerprint`
+  (`SitemapMemory` — 32-bit FNV digests of every product URL plus each child file's ETag), the
+  first read is a baseline (`FetchResult.isBaseline`, which the callers OR with their own so a
+  source baselined before the memory existed stays quiet), later reads offer only unseen URLs —
+  at most 250, the rest held for the next read, and a sitemap that has plainly been *rebuilt*
+  (more than half unseen) is a silent re-baseline. **robots.txt `Sitemap:` lines first** — all
+  three retailers publish theirs only there. Indexes are followed up to three levels and four
+  child fetches, and `SitemapChoice` picks children: product-named files win, other-named files
+  (categories, pages, `product_cat`) are never read, siblings that differ by locale or by a
+  non-paging query are *storefronts* and one is chosen (`LocalePreference`: the typed URL's host
+  and path, else en-US), and what remains are parts of one catalogue, all read. Discovery pins the
+  source to the chosen storefront's URL. What is a product comes from the file's name, the path,
+  or a photograph; an entry with none is *tentative* (`FetchedItem.isTentative`) and only its page
+  can confirm it. A page that sits above another listed page is its parent, not a product
+  (Victoria's Secret lists each garment once bare and once per colourway). Never read more often
+  than `SitemapSource.minimumInterval` (an hour), on both ends — sitemaps are regenerated on a
+  schedule, and Subdued's is 7.2 MB a read. **Price, stock and sizes come from each new
+  product's own page, once** — `ProductPage` reads its schema.org `Product` JSON-LD (Open Graph
+  only when it prints a price; Hollister's *homepage* says `og:type` `product`). On the server
+  `Poller.enrich` reads a few per pass and holds the product's event until it has (see
+  `docs/server.md`); standalone, `SyncEngine.readProductPages` fills in the row in place.
   **`<image:title>` is the product's name and `<image:loc>` its lead photograph** — read
   both, because the slug is not always a name: Palace randomises its handles until a drop
   is live, so `/products/e7anvz3i1psy` yielded a feed of hashes over empty tiles while the
@@ -260,10 +285,8 @@ Adapters live in `streetw/Sources/` and are resolved through `SourceAdapters.ada
   `<loc>`, so the parser must know which one it is inside or every link points at a CDN.
   A slug that still reads as a hash becomes `SitemapSource.unnamed` rather than being
   printed, and both merge paths upgrade a provisional title when a real one arrives later
-  (`isProvisional`) — dedupe is on `externalID`, so nothing else would ever revisit it.
-- `UCPSource` — the Universal Commerce Protocol endpoint a storefront advertises **for
-  machines**, when it has switched its JSON catalogue off. See *Reading a storefront that
-  has closed its catalogue* below.
+  (`isProvisional`) — dedupe is on `externalID`, so nothing else would ever revisit it. Since the
+  memory, a seen URL is never re-offered, so in practice the real name arrives with the page read.
 - `PageWatchSource` — last resort, only when nothing structured was found.
 
 Discovery prefers them in that order, so a page watch is now genuinely a fallback rather
@@ -279,7 +302,13 @@ is global, so whatever the first person to add a brand accepted is what everyone
 was **already making** for the logo, so it costs nothing. Order is Shopify `/meta.json` →
 `og:site_name` → `<title>` (first segment, marketing tail dropped) → host. A generic title ("Home",
 "Official Site") is refused rather than adopted, because the field is pre-filled and pre-filled
-fields get accepted.
+fields get accepted. **So is a description of the stock** — Hollister's title is "Clothing for
+Women & Men | Teen Clothing | Hollister Co." with no `og:site_name`, and the first segment was
+offered as its global name. `BrandNaming.isDescriptive` refuses a candidate carrying a catalogue
+noun (clothing, shoes, store, sale…) *unless the domain agrees with it* — "Fashion Nova" on
+`fashionnova.com` is a brand — and with the host known, the title segment that names the domain
+wins wherever it sits (`naming`, which also strips "Official … Store UK" from the edges). Audience
+words are deliberately not catalogue nouns: "Boys" is in Billionaire Boys Club's name.
 
 **…and `/meta.json` is typed in by a human, so it is tidied where it is read.** Stüssy publishes
 `" Stüssy"` — a literal leading space — and Represent publishes `"REPRESENT | US"`. `BrandNaming`
@@ -892,6 +921,16 @@ rather than all firing at once. `Net.userAgent` is honest on purpose — verifie
 200s from the storefronts we poll, so don't "fix" access problems by impersonating a
 browser. A missing robots.txt is treated as permissive: failing closed would drop brands
 for an unrelated reason.
+
+**Every redirect hop is a request like any other.** `Net.session` follows nothing; the
+fetchers follow by hand, at most `Net.maxRedirects` hops with loops cut short. `PoliteFetcher`
+checks each hop's host against `HostSafety`, its robots.txt and its interval — it must wrap
+`Net.singleHop` (the default), because a base that follows redirects itself lets every hop after
+the first escape all three, which is how victoriassecret.com's redirect into its disallowed
+`/gb/` and Hollister's `/products.json` → `/shop/FileNotFoundError` (also disallowed) were
+fetched unasked. `Net.live` follows with the host check alone, for one-off reads on somebody's
+behalf. Rules are matched against `percentEncodedPath`, never `URL.path`, which drops the
+trailing slash and so could never match `Disallow: /gb/`.
 
 ### StreetwCore must compile on Linux
 

@@ -175,9 +175,12 @@ public struct ShopifySource: SourceAdapter {
         // what a merchant's own slug looks like in this field, and it reached the global
         // catalogue as a brand's name. Nil here means the callers fall through to
         // `og:site_name` and the `<title>`, which is exactly what `BrandNaming.pick` is for.
+        // So is a description of the stock that does not also name the domain — the same
+        // refusal `pick` makes, made here because the poller reads this field directly.
+        let host = base.host()
         let name = meta.name
-            .flatMap(BrandNaming.withoutTail)
-            .flatMap { BrandNaming.looksLikeHandle($0) ? nil : $0 }
+            .flatMap { BrandNaming.withoutTail($0, host: host) }
+            .flatMap { BrandNaming.looksLikeHandle($0) || !BrandNaming.isUsable($0, host: host) ? nil : $0 }
         return ShopInfo(name: name, currency: meta.currency)
     }
 

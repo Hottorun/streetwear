@@ -6,6 +6,10 @@
 //   2. requests to one host are spaced by at least `minInterval` (or Crawl-delay)
 //   3. nothing is ever requested faster than that, even under concurrency
 //
+// **On every hop of a redirect, not only the first.** The wrapped fetcher must not follow
+// redirects itself (`Net.singleHop`, the default); this does, one hop at a time, and each
+// hop is a request like any other — its host's robots.txt, its host's interval.
+//
 // It lives here rather than in the server because the app polls too, and because the
 // rules are a property of being a good citizen, not of one deployment.
 
@@ -21,8 +25,12 @@ public actor PoliteFetcher: HTTPFetching {
     /// callers queue up rather than all wake at the same instant.
     private var nextSlot: [String: Date] = [:]
 
+    /// - Parameter base: what actually makes the requests. **It must hand redirects back
+    ///   rather than follow them**, or every hop after the first escapes the rules above —
+    ///   which is how a redirect into a disallowed path was fetched for as long as this
+    ///   wrapped `Net.live`. A test double that never redirects is equally fine.
     public init(
-        wrapping base: any HTTPFetching = Net.live,
+        wrapping base: any HTTPFetching = Net.singleHop,
         userAgent: String = Net.userAgent,
         minInterval: TimeInterval = 1.0
     ) {
@@ -31,19 +39,25 @@ public actor PoliteFetcher: HTTPFetching {
         self.minInterval = minInterval
     }
 
+    /// A refused hop — a private address, a loop, one past `Net.maxRedirects` — is returned
+    /// as the redirect it was. A hop robots.txt disallows throws exactly as a disallowed
+    /// first URL does: it is the same request, merely reached by a different route.
     public func get(_ url: URL, etag: String?) async throws -> HTTPResponse {
-        guard let host = url.host() else {
-            throw SourceError.badResponse(0)
-        }
+        var current = url
+        try await admit(current)
+        var response = try await base.get(current, etag: etag)
 
-        let rules = await robots(for: url, host: host)
-        let path = url.path.isEmpty ? "/" : url.path
-        guard rules.allows(path: path) else {
-            throw SourceError.disallowedByRobots(path)
+        var visited: Set<String> = [current.absoluteString]
+        for _ in 0..<Net.maxRedirects {
+            guard let next = response.redirectTarget(from: current),
+                  HostSafety.isPublic(url: next),
+                  visited.insert(next.absoluteString).inserted
+            else { break }
+            current = next
+            try await admit(current)
+            response = try await base.get(current, etag: etag)
         }
-
-        try await waitForSlot(host: host, delay: max(minInterval, rules.crawlDelay ?? 0))
-        return try await base.get(url, etag: etag)
+        return response
     }
 
     /// The same budget and the same robots check, for the one source kind whose reads are
@@ -53,24 +67,63 @@ public actor PoliteFetcher: HTTPFetching {
     /// behind everything else going to that host. robots.txt is consulted too, even though
     /// its `Disallow` rules are written for crawlers following links: a merchant who has
     /// disallowed a path has said something, and this is not the place to decide it did not
-    /// apply to us.
+    /// apply to us. Only a 307 or 308 is followed, since only those promise the same method.
     public func post(_ url: URL, json body: Data, accept: String) async throws -> HTTPResponse {
+        var current = url
+        try await admit(current)
+        var response = try await base.post(current, json: body, accept: accept)
+
+        var visited: Set<String> = [current.absoluteString]
+        for _ in 0..<Net.maxRedirects {
+            guard let next = response.redirectTarget(from: current, keepsMethod: true),
+                  HostSafety.isPublic(url: next),
+                  visited.insert(next.absoluteString).inserted
+            else { break }
+            current = next
+            try await admit(current)
+            response = try await base.post(current, json: body, accept: accept)
+        }
+        return response
+    }
+
+    /// Everything one request has to clear before it may go: a public host, that host's
+    /// robots.txt, and that host's next slot.
+    private func admit(_ url: URL) async throws {
         guard let host = url.host() else {
             throw SourceError.badResponse(0)
         }
+        // Before robots.txt, which is itself a request: a hop to a private address must not
+        // even be asked for its rules.
+        guard HostSafety.isPublic(host: host) else {
+            throw SourceError.privateHost(host)
+        }
 
         let rules = await robots(for: url, host: host)
-        let path = url.path.isEmpty ? "/" : url.path
+        let path = Self.robotsPath(of: url)
         guard rules.allows(path: path) else {
             throw SourceError.disallowedByRobots(path)
         }
 
         try await waitForSlot(host: host, delay: max(minInterval, rules.crawlDelay ?? 0))
-        return try await base.post(url, json: body, accept: accept)
+    }
+
+    /// The path robots.txt rules are matched against.
+    ///
+    /// **Not `URL.path`, which drops a trailing slash** — `/gb/` comes back as `/gb` — so
+    /// `Disallow: /gb/` could never match the very URL it names. victoriassecret.com
+    /// disallows a directory per region in exactly that form and redirects European
+    /// visitors into one of them. The percent-encoded path is also what RFC 9309 compares.
+    static func robotsPath(of url: URL) -> String {
+        let path = URLComponents(url: url, resolvingAgainstBaseURL: false)?.percentEncodedPath ?? url.path
+        return path.isEmpty ? "/" : path
     }
 
     /// Fetches and caches robots.txt. A missing or broken file is treated as permissive:
     /// failing closed would silently drop brands for an unrelated reason.
+    ///
+    /// Its own redirects are followed — apex to `www.` is common — and the file found at the
+    /// end is the one that applies, which is what RFC 9309 asks for. Each hop is spaced on
+    /// its own host; there are no rules to check it against yet, which is the point of it.
     private func robots(for url: URL, host: String) async -> RobotsRules {
         if let cached = rules[host] { return cached }
 
@@ -79,10 +132,19 @@ public actor PoliteFetcher: HTTPFetching {
         components?.query = nil
 
         var parsed = RobotsRules.permissive
-        if let robotsURL = components?.url {
+        if var current = components?.url {
             // Counts against the host's budget like any other request.
             try? await waitForSlot(host: host, delay: minInterval)
-            if let response = try? await base.get(robotsURL, etag: nil), response.status == 200 {
+            var response = try? await base.get(current, etag: nil)
+            for _ in 0..<Net.maxRedirects {
+                guard let next = response?.redirectTarget(from: current),
+                      let nextHost = next.host(), HostSafety.isPublic(host: nextHost)
+                else { break }
+                current = next
+                try? await waitForSlot(host: nextHost, delay: minInterval)
+                response = try? await base.get(current, etag: nil)
+            }
+            if let response, response.status == 200 {
                 parsed = RobotsRules.parse(
                     String(decoding: response.data, as: UTF8.self),
                     userAgent: userAgent
