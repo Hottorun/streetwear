@@ -66,11 +66,20 @@ gives the discovery URL. The door was moved, not closed, and `UCPSource` walks t
   currencies (JPY, KRW) are already whole and must not be divided.
 - **Discovery re-reads `/.well-known/ucp` every poll** rather than pinning the endpoint seen
   the day a brand was added, which would mean silently polling a dead URL the day it moves.
-- **Ranked below the sitemap, above a page watch.** On data alone it should outrank nearly
-  everything — prices, variants, live stock. What holds it down is that it is the only
-  source whose success depends on *us* being reachable, and demoting a working sitemap for
-  something that can fail on our side is the wrong trade. Above a page watch the argument is
-  unanswerable.
+- **Ranked above the sitemap, below Shopify and a feed.** This file used to say the opposite
+  while `BrandDiscovery` tried UCP first; the code was right and the sentence was the bug.
+  The argument for keeping UCP down was that it is the only source whose success depends on
+  *us* being reachable, so a working sitemap should not be demoted for something that can
+  fail on our side. Two facts answer it. `UCPSource.detect` attaches the source only after a
+  real `search_catalog` call has come back, so "can fail on our side" never means "was never
+  going to work"; and the profile is served by the same process that polls, so the outage
+  that breaks UCP has already stopped every other source too. What is left is the data, and
+  there it is not close: a sitemap names a URL and at best a photograph, and even with
+  `ProductPage` reading each new product's page once, its stock is a snapshot from the day
+  the product was first seen. UCP carries prices, the size run and live stock on every
+  poll — which is what a restock, a watch and the size filter run on. Shopify and a feed
+  stay above it because they are cheaper and need nothing from us. Above a page watch the
+  argument was always unanswerable.
 - **`POST /admin/ucp-test?url=` reports per stage**, for the same reason `push-test` does:
   "0 products" is equally true when a store has no UCP, when our profile 404s, and when the
   season is simply over, and those have three different fixes.

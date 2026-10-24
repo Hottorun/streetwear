@@ -250,6 +250,10 @@ Adapters live in `streetw/Sources/` and are resolved through `SourceAdapters.ada
   `Release.isAnnouncement` — a collection list is mostly navigation, and only the stock in
   one can tell a drop from a rail. See `docs/design-decisions.md`.
 - `FeedSource` — one `XMLParser` delegate handling both RSS `<item>` and Atom `<entry>`.
+- `UCPSource` — the Universal Commerce Protocol endpoint a storefront advertises **for
+  machines**, when it has switched its JSON catalogue off. See *Reading a storefront that
+  has closed its catalogue* below. Above the sitemap because it carries prices, sizes and
+  live stock on every poll; `docs/ucp.md` has the argument.
 - `SitemapSource` — `/sitemap.xml` for brands that are neither Shopify nor feed-publishing.
   **What is new is what the source has not seen, never what `<lastmod>` says**: Hollister's
   2,123 products carry no `lastmod`, Victoria's Secret stamps one instant on 17,134, and only
@@ -283,9 +287,6 @@ Adapters live in `streetw/Sources/` and are resolved through `SourceAdapters.ada
   printed, and both merge paths upgrade a provisional title when a real one arrives later
   (`isProvisional`) — dedupe is on `externalID`, so nothing else would ever revisit it. Since the
   memory, a seen URL is never re-offered, so in practice the real name arrives with the page read.
-- `UCPSource` — the Universal Commerce Protocol endpoint a storefront advertises **for
-  machines**, when it has switched its JSON catalogue off. See *Reading a storefront that
-  has closed its catalogue* below.
 - `PageWatchSource` — last resort, only when nothing structured was found.
 
 Discovery prefers them in that order, so a page watch is now genuinely a fallback rather
