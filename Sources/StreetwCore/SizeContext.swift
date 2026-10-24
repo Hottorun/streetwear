@@ -59,17 +59,28 @@ public struct SizeContext: Hashable, Sendable {
     /// sizes produced, where the extremities could never be ruled in as anybody's size.
     /// Nil whenever the run does not settle it, and then every bare number stays `.other`.
     public var runScale: SizeScale?
+    /// Whether the run can only be the US women's ladder, which settles what no label did.
+    ///
+    /// Plenty of womenswear brands tag nothing — every one of Staud's four hundred products
+    /// classifies as `.unknown` — so on their tops and trousers a bare "6" had no cut to be
+    /// read by, and only the dresses, which name themselves, were readable. But a run of
+    /// `00 0 2 4 … 16` is not anything else: a Japanese 0–5 run has odd numbers in it, a
+    /// waist run sits from 20 up, and a European or chest run is past 28. Read whole, for
+    /// the reason `runScale` is.
+    public var isDressRun: Bool
 
     public init(
         garment: Garment,
         cut: Cut = .unspecified,
         isTailored: Bool = false,
-        runScale: SizeScale? = nil
+        runScale: SizeScale? = nil,
+        isDressRun: Bool = false
     ) {
         self.garment = garment
         self.cut = cut
         self.isTailored = isTailored
         self.runScale = runScale
+        self.isDressRun = isDressRun
     }
 
     /// No idea what the garment is: every size reads exactly as it did before context existed.
@@ -129,6 +140,9 @@ public struct SizeContext: Hashable, Sendable {
 
         var context = SizeContext(garment: garment, cut: cut, isTailored: isTailored)
         if garment == .upper, cut == .mens { context.runScale = menswearScale(of: sizes) }
+        if garment == .upper || garment == .bottoms, cut == .womens || cut == .unspecified {
+            context.isDressRun = isDressRun(sizes)
+        }
         return context
     }
 
@@ -177,6 +191,20 @@ public struct SizeContext: Hashable, Sendable {
         case (false, true): return .eu
         default: return nil
         }
+    }
+
+    /// Every bare number even and on the US dress ladder, at least one below where waists
+    /// start, and at least two of them — one number alone says nothing about a system.
+    /// Counted in distinct sizes, because a colour axis repeats every size once per colour.
+    static func isDressRun(_ sizes: [String]) -> Bool {
+        var seen: Set<Int> = []
+        for size in sizes {
+            let text = size.trimmingCharacters(in: .whitespaces)
+            guard let value = text == "00" ? Int(DressSizes.doubleZero) : Int(text) else { continue }
+            guard value % 2 == 0, DressSizes.usRange.contains(Double(value)) else { return false }
+            seen.insert(value)
+        }
+        return seen.count >= 2 && seen.contains { $0 < 20 }
     }
 
     // MARK: - Words

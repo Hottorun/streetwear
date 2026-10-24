@@ -223,7 +223,7 @@ public enum SizeNormalizer {
         switch context.garment {
         case .unknown: return unplaced(cleaned)
         case .footwear: return footwear(cleaned)
-        case .bottoms: return bottoms(cleaned, cut: context.cut)
+        case .bottoms: return bottoms(cleaned, in: context)
         case .upper: return upper(cleaned, in: context)
         // A fitted cap's "7" is a hat size. Read as a shoe it was claimed for anybody who
         // wears a US 7, and no ladder in the profile holds a hat.
@@ -323,9 +323,16 @@ public enum SizeNormalizer {
     /// The bare band `unplaced` stops at 37 because a bare 38 might be a European shoe. No
     /// shoe is printed on a pair of trousers, so here a bare number is read across the whole
     /// range a declared waist is.
-    private static func bottoms(_ cleaned: String, cut: SizeContext.Cut) -> NormalizedSize {
+    private static func bottoms(_ cleaned: String, in context: SizeContext) -> NormalizedSize {
+        let cut = context.cut
         // A child's "8" is an age.
         guard cut != .kids else { return unread(cleaned) }
+        // A run that can only be the US dress ladder is read whole as one, its 20s included:
+        // "14 16 18 20 22" is one plus-size run, not three dress sizes and two waists.
+        if context.isDressRun, let reading = reading(cleaned), reading.scale == nil, reading.length == nil,
+           let dress = DressSizes.reading(reading.value, in: .us) {
+            return dress
+        }
         if let waist = waistToken(in: cleaned, bareRange: waistRange) {
             return NormalizedSize(kind: .waist, token: waist)
         }
@@ -402,8 +409,13 @@ public enum SizeNormalizer {
                 if let runScale = context.runScale, let chest = SuitSizes.chest(value, from: runScale) {
                     return SuitSizes.size(chest: chest, scale: runScale, written: value)
                 }
-            // Unlabelled, a bare 40 is a chest, a French 40 and an Italian 40 at once.
-            case .unspecified, .kids:
+            // Unlabelled, a bare 40 is a chest, a French 40 and an Italian 40 at once — read
+            // only when the run is one nothing but the US dress ladder prints.
+            case .unspecified:
+                if context.isDressRun, let dress = DressSizes.reading(value, in: .us) {
+                    return dress
+                }
+            case .kids:
                 break
             }
             return unread(cleaned)

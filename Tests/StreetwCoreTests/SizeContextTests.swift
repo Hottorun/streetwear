@@ -103,6 +103,25 @@ struct SizeContextDerivationTests {
         #expect(context("Wool Blazer", gender: .mens, sizes: ["42", "44", "46", "48"]).runScale == nil)
         #expect(context("Wool Blazer", gender: .mens, sizes: ["S", "M", "L"]).runScale == nil)
     }
+
+    /// Every one of Staud's four hundred products classifies as `.unknown`. A run nothing but
+    /// the US dress ladder prints settles what the missing label did not; anything else does not.
+    @Test("A run only the US dress ladder prints is a dress run")
+    func dressRun() {
+        let staud = ["00", "0", "2", "4", "6", "8", "10", "12", "14", "16"]
+        #expect(context("Wells Vest", productType: "JACKETS", sizes: staud).isDressRun)
+        #expect(context("Luisa Pant", productType: "PANTS", sizes: staud).isDressRun)
+        #expect(context("Plus Wide Leg Pant", sizes: ["14", "16", "18", "20", "22"]).isDressRun)
+
+        #expect(!context("Overshirt", sizes: ["1", "2", "3", "4"]).isDressRun, "a Japanese run has odd numbers")
+        #expect(!context("Overshirt", sizes: ["0", "2", "4", "5"]).isDressRun)
+        #expect(!context("Denim Jean", sizes: ["28", "30", "32", "34"]).isDressRun, "a waist run")
+        #expect(!context("Denim Jean", sizes: ["24", "26", "28"]).isDressRun, "nothing below the waists")
+        #expect(!context("Knit Top", sizes: ["6", "6", "6"]).isDressRun, "one size is not a system")
+        #expect(!context("Knit Top", sizes: ["36", "38", "40"]).isDressRun, "a French run and a chest run")
+        #expect(!context("Knit Top", gender: .mens, sizes: staud).isDressRun, "a man's run never is")
+        #expect(!context("Hiker Boot", sizes: staud).isDressRun, "nor a shoe's")
+    }
 }
 
 /// The collisions the roadmap names, in both directions: each string read on each garment.
@@ -249,6 +268,18 @@ struct SizesByGarmentTests {
         for raw in ["42", "44", "46", "48"] {
             #expect(read(raw, mensJacket)?.kind == .other, "\(raw) with no run to settle it")
         }
+    }
+
+    @Test("An unlabelled run that can only be dress sizes is read whole")
+    func unlabelledDressRun() {
+        let top = SizeContext(garment: .upper, isDressRun: true)
+        let pants = SizeContext(garment: .bottoms, isDressRun: true)
+        #expect(read("4", top)?.kind == .dress)
+        #expect(read("00", top)?.token == "00")
+        #expect(read("6", pants)?.token == "6")
+        #expect(read("22", pants)?.kind == .dress, "the plus end of a dress run is not a waist")
+        #expect(read("W28", pants)?.kind == .waist, "a declared waist is still a waist")
+        #expect(read("4", unlabelledTop)?.kind == .other, "without the run, still nothing")
     }
 
     @Test("Bra sizes stay unread everywhere", arguments: ["34B", "32DD", "36C"])
