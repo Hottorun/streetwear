@@ -92,3 +92,9 @@ saves never has to leave it.
 Nothing is shared with data brokers, nothing is joined with data from other companies' apps
 or websites, and no advertising or analytics SDK is present. The app does not use App
 Tracking Transparency because it does not track.
+
+The app does send anonymous usage counts to its own server: per day, how many times it was
+opened, each tab shown, a brand search run, a save or a fit made, a brand followed, a
+notification tapped. Only the numbers travel — no search text, product or brand — and the
+server adds them to totals shared by every user. This is declared as Product Interaction,
+for Analytics, and described in the privacy policy.
