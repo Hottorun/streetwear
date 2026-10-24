@@ -568,10 +568,17 @@ actor Notifier {
         let brandName = events.first?.brand.name ?? "A brand you follow"
 
         do {
-            let followers = try await FollowModel.query(on: db)
+            let follows = try await FollowModel.query(on: db)
                 .filter(\.$brand.$id == brandID)
                 .all()
-                .map(\.$user.id)
+            // How each follower hears from this brand — see `FollowMode`. A quiet follow is
+            // left out before its devices are even loaded; the watch alerts it may still be
+            // owed went out in `notifyWatches`, which never asks.
+            let modes = Dictionary(
+                follows.map { ($0.$user.id, $0.mode) },
+                uniquingKeysWith: { first, _ in first }
+            )
+            let followers = follows.filter { $0.mode != .quiet }.map(\.$user.id)
             guard !followers.isEmpty else { return }
 
             let users = try await UserModel.query(on: db).filter(\.$id ~~ followers).all()
@@ -590,7 +597,8 @@ actor Notifier {
                 guard !claimed.contains(Pair(user: userID, brand: brandID)) else { continue }
 
                 let profile = user.sizeProfile
-                let relevant = events.filter { Self.isRelevant($0, to: profile) }
+                let mode = modes[userID] ?? .everything
+                let relevant = events.filter { Self.isRelevant($0, to: profile, mode: mode) }
                 guard let copy = Self.summary(brand: brandName, events: relevant) else { continue }
                 // Only when the alert names one thing. A counted summary ("3 restocks and
                 // 2 new items") has no single product behind it, and picking one of them
@@ -668,7 +676,15 @@ actor Notifier {
     /// waking somebody" is what the question means on this side.
     static func isWorthWaking(_ kind: UpdateKind) -> Bool { kind.isSudden }
 
-    static func isRelevant(_ event: EventModel, to profile: SizeProfile) -> Bool {
+    /// - Parameter mode: how this follower follows the brand. Both questions must say yes —
+    ///   the mode only ever takes away, so a *Sales only* follow is never woken by a kind an
+    ///   *Everything* follow would not be. The default is what every follow is until
+    ///   somebody chooses otherwise.
+    static func isRelevant(
+        _ event: EventModel,
+        to profile: SizeProfile,
+        mode: FollowMode = .everything
+    ) -> Bool {
         // Gender applies to every kind, not just restocks. Being woken at 7am for a
         // women's hoodie is worse than merely seeing one in the feed, so if the filter
         // is worth having anywhere it is worth having here first.
@@ -678,7 +694,7 @@ actor Notifier {
         if let product = event.product, !profile.allows(product.gender) { return false }
 
         let kind = UpdateKind(rawValue: event.kind) ?? .product
-        guard Self.isWorthWaking(kind) else { return false }
+        guard Self.isWorthWaking(kind), mode.admits(kind) else { return false }
 
         guard kind == .restock else { return true }
         guard !profile.isEmpty, !event.sizes.isEmpty else { return true }

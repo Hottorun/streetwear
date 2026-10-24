@@ -505,6 +505,22 @@ final class BrandUpdate {
         )
     }
 
+    /// Whether the brand's follow mode lets a row of this kind into the lists that are about
+    /// *news* rather than about the brand — the markdowns list and its badge. See
+    /// `FollowMode.admits`.
+    ///
+    /// The unread feed needs no such call: a row the mode does not admit is stored already
+    /// read (`Brand.apply`). The markdowns list is the exception because it is deliberately
+    /// not emptied by reading, so a quiet brand's price cuts would sit in it — and in the
+    /// toolbar badge — however quiet it had been asked to be.
+    ///
+    /// **Not part of `passes`**, which is the browsing filter: a quiet brand's own page is
+    /// still its whole catalogue. A row with no brand behind it — a link shared from a shop
+    /// nobody follows — has no mode and always passes.
+    var isAdmittedByFollowMode: Bool {
+        brand?.followMode.admits(kind) ?? true
+    }
+
     /// Whether this item belongs in a browsing view at all.
     ///
     /// **The one filter, called from every screen that shows a list of a brand's output.**

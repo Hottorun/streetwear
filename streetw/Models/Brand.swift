@@ -16,18 +16,27 @@ final class Brand {
     var styleDescription: String?
     var myRating: Int?
     var followed: Bool = true
-    /// Still watched, still in the feed — just silent.
+    /// 1.0's mute, kept only so it can be carried over once. Nothing reads it but that.
     ///
-    /// A different knob from `followed`, and the app had only the second one. A brand that
-    /// posts forty times a week is not one you want to stop watching; it is one you want to
-    /// stop being woken by, and the only control offered was to remove it entirely. The
-    /// icon said as much: "Stop following" carried a `bell.slash`, which is what a mute
-    /// looks like everywhere else, so the row was already promising this.
+    /// It was the right instinct in the wrong place: a phone-only flag, consulted when a push
+    /// arrived in the foreground, about a push the server had already composed and sent —
+    /// and in the background iOS showed it anyway, so "muted" meant "muted while you are
+    /// looking at the app". The mode that replaced it lives on the server beside the follow
+    /// (`followMode`), where `Notifier` can decide before anything is sent.
     ///
-    /// Local, and read at notification time. The server decides *who* to notify, so a
-    /// muted brand is filtered on arrival rather than at the source — a device-level
-    /// preference does not belong in a catalog the whole app shares.
+    /// The first sync of a build that knows modes turns a muted brand into a **quiet** one
+    /// and clears this. Quiet rather than Everything because the promise somebody asked for
+    /// was silence, and breaking it is worse than the brand also leaving the feed — which is
+    /// the one thing that changes, and the brand stays on the rail and its own page. A stored
+    /// property still, because a SwiftData attribute that disappears takes the old value with
+    /// it before anything could read it.
     var isMuted: Bool = false
+    /// How much of this brand reaches the feed and the lock screen, as a `FollowMode` raw
+    /// value — a string rather than the enum for the reason `genderRaw` is one.
+    ///
+    /// In server mode a mirror of the follow row: `RemoteSync` writes it from
+    /// `GET /v1/follows` and never decides it alone. Standalone it is the only copy.
+    var followModeRaw: String = FollowMode.everything.rawValue
     var addedAt: Date = Date()
 
     var sources: [BrandSource] = []
@@ -79,6 +88,12 @@ final class Brand {
     /// Brands do this right before a drop, which is itself the signal.
     var isLockedForDrop: Bool = false
 
+    /// Whether the feed should *say* the storefront is locked: locked, and followed in a mode
+    /// that lets a lock through. The brand's own page and the brand list still print it — it
+    /// is a fact about the shop — but the rail's dot, the calendar's accent and the lock story
+    /// at the head of a spread are the feed talking, and a quiet brand asked it not to.
+    var isAnnouncingLock: Bool { isLockedForDrop && followMode.admits(.dropLock) }
+
     @Relationship(deleteRule: .cascade, inverse: \BrandUpdate.brand)
     var updates: [BrandUpdate] = []
 
@@ -98,6 +113,31 @@ final class Brand {
         self.myRating = myRating
         self.followed = followed
         self.addedAt = Date()
+    }
+
+    var followMode: FollowMode { FollowMode(lenient: followModeRaw) }
+
+    /// Sets the mode, and takes out of the unread queue whatever it no longer lets through.
+    ///
+    /// **The mode is decided where a row is written, not where the feed is drawn.** A row the
+    /// mode does not admit arrives already seen (`RemoteSync.merge`, `SyncEngine.insert`), so
+    /// the feed, every unread count and the brand rail agree without each learning the rule —
+    /// the alternative was a filter in five places and an unread queue that grew for ever,
+    /// since retention never drops anything unread. That leaves the rows that were already
+    /// unread when the mode changed, which is this: going quiet is "mark all seen" for the
+    /// kinds that will no longer arrive. Nothing is deleted — every row stays in the brand's
+    /// catalogue — and nothing is un-seen on the way back to *Everything*: what happened
+    /// while a brand was quiet is the brand's history, not news.
+    ///
+    /// Walks `updates`, which faults the brand's catalogue. That is the right cost for a tap
+    /// somebody makes once and for a sync that sees the mode change, and both callers only
+    /// get here when it does.
+    func apply(_ mode: FollowMode) {
+        guard followModeRaw != mode.rawValue else { return }
+        followModeRaw = mode.rawValue
+        for update in updates where !update.isSeen && !mode.admits(update.kind) {
+            update.isSeen = true
+        }
     }
 
     /// Everything unread, whatever it is. Only for callers that genuinely mean *everything*

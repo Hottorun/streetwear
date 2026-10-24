@@ -51,6 +51,11 @@ struct BrandDetailView: View {
     /// Which of the three counts the grid is currently showing.
     @State private var lens: Lens = .catalogue
 
+    /// A mode that has been chosen and not yet confirmed by the server, drawn as chosen so
+    /// the tap visibly landed; and what went wrong if it was refused.
+    @State private var pendingMode: FollowMode?
+    @State private var modeError: String?
+
     /// The three questions this page can answer about one brand's output.
     ///
     /// They are the three numbers that were already printed above the fold — this only
@@ -451,27 +456,41 @@ struct BrandDetailView: View {
         }
     }
 
+    /// How much of this brand reaches you, then whether you follow it at all.
+    ///
     /// Words, not switches. These are rare, deliberate and reversible — and a toggle at the
     /// top of the page made them the most prominent controls on a screen that is about
     /// looking at clothes.
     ///
-    /// **Two rows, because they were one and it was the wrong one.** "Stop following"
-    /// carried a `bell.slash` — the universal mute icon — so the app was already offering
-    /// this and then doing something much more drastic. A brand that posts forty times a
-    /// week is not one you want to stop watching; it is one you want to stop being woken
-    /// by, and until now the only way to get quiet was to delete it from your feed.
+    /// **The mode replaced a mute, and the mute was the wrong shape twice.** It was one row,
+    /// so "a brand that posts forty times a week" had two answers — put up with it, or stop
+    /// following — when what somebody wants of H&M is to watch its prices and not its daily
+    /// arrivals. And it was a flag on this phone that the server had never heard of, so a
+    /// muted brand's push was composed, sent and delivered regardless, and only dropped if
+    /// the app happened to be open. See `FollowMode`.
+    ///
+    /// Three rows, the chosen one ticked, each saying in its own line what it lets through —
+    /// the feed is the place a mode is felt, and a mode that hides things without saying so
+    /// is indistinguishable from a broken follow.
     private var followingRow: some View {
-        VStack(spacing: 0) {
+        VStack(alignment: .leading, spacing: 0) {
             if brand.followed {
-                actionRow(
-                    title: brand.isMuted ? "Unmute" : "Mute alerts",
-                    detail: brand.isMuted ? "SILENT · STILL IN YOUR FEED" : nil,
-                    symbol: brand.isMuted ? "bell" : "bell.slash",
-                    isEmphasised: brand.isMuted
-                ) {
-                    brand.isMuted.toggle()
-                    try? context.save()
+                section("What reaches you", "WATCHED ITEMS ALWAYS ALERT, WHATEVER YOU PICK") {
+                    VStack(alignment: .leading, spacing: 0) {
+                        ForEach(FollowMode.allCases) { mode in
+                            modeRow(mode)
+                        }
+                        if let modeError {
+                            DataLabel(text: modeError, size: 9, color: .signal)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .padding(.horizontal, 20)
+                                .padding(.vertical, 10)
+                        }
+                    }
                 }
+                .padding(.top, 22)
+                .padding(.bottom, 14)
+                .overlay(alignment: .bottom) { Rule().padding(.horizontal, 20) }
             }
 
             actionRow(
@@ -488,6 +507,39 @@ struct BrandDetailView: View {
             }
         }
         .overlay(alignment: .top) { Rule().padding(.horizontal, 20) }
+    }
+
+    /// One mode, as a line you can pick. The chosen one is set in ink and ticked; the others
+    /// are muted, the same two weights `actionRow` uses for a setting that is on and off.
+    private func modeRow(_ mode: FollowMode) -> some View {
+        let isChosen = (pendingMode ?? brand.followMode) == mode
+        return Button { choose(mode) } label: {
+            HStack(alignment: .firstTextBaseline) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(mode.title)
+                        .font(.data(12, .medium))
+                        .foregroundStyle(isChosen ? Color.ink : Color.muted)
+                    DataLabel(text: mode.detail, size: 9)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 12)
+                if isChosen {
+                    if pendingMode == mode {
+                        ProgressView().controlSize(.mini)
+                    } else {
+                        Image(systemName: "checkmark")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(Color.ink)
+                    }
+                }
+            }
+            .padding(.horizontal, 20)
+            .padding(.vertical, 12)
+            .contentShape(.rect)
+        }
+        .buttonStyle(.borderless)
+        .disabled(pendingMode != nil)
+        .accessibilityAddTraits(isChosen ? .isSelected : [])
     }
 
     private func actionRow(
@@ -537,6 +589,23 @@ struct BrandDetailView: View {
 
     // MARK: - Actions
 
+    /// Changes the mode where `Notifier` can see it, then here — see
+    /// `RemoteSync.setFollowMode`. Refused means unchanged, and the page says so rather
+    /// than showing a choice the lock screen is not honouring.
+    private func choose(_ mode: FollowMode) {
+        guard mode != brand.followMode, pendingMode == nil else { return }
+        pendingMode = mode
+        modeError = nil
+        Task {
+            do {
+                try await remote.setFollowMode(mode, for: brand)
+            } catch {
+                modeError = "NOT CHANGED — \(error.localizedDescription.uppercased())"
+            }
+            pendingMode = nil
+        }
+    }
+
     /// The server decides what gets polled, so following has to be recorded there, not
     /// just flagged locally.
     private func syncFollowState() {
@@ -557,6 +626,42 @@ struct BrandDetailView: View {
             await remote.sync(sizes: sizes.profile)
         } else {
             await engine.sync(brands: [brand])
+        }
+    }
+}
+
+// MARK: - Follow modes, in words
+
+/// What each mode is called and what it lets through, for the two places that print one:
+/// the brand page, where it is chosen, and the brand list, where a quiet brand has to be
+/// findable as quiet. Presentation, so it lives with the app rather than beside the rule in
+/// `StreetwCore` — the server never prints a mode.
+extension FollowMode {
+    var title: String {
+        switch self {
+        case .everything: "Everything"
+        case .salesOnly: "Sales only"
+        case .quiet: "Quiet"
+        }
+    }
+
+    /// Said as what reaches the feed, because that is where a mode is felt. The push half
+    /// follows from it — nothing is ever pushed that the feed would not have shown.
+    var detail: String {
+        switch self {
+        case .everything: "DROPS, RESTOCKS AND PRICE CUTS · ALERTS FOR DROPS"
+        case .salesOnly: "ONLY PRICE CUTS REACH YOUR FEED"
+        case .quiet: "NOTHING IN YOUR FEED, NO ALERTS · STILL SHAPES YOUR TASTE"
+        }
+    }
+
+    /// The word the brand list adds to a row, or nil for the default — a list that labels
+    /// every row *Everything* is a list that has stopped saying anything.
+    var listLabel: String? {
+        switch self {
+        case .everything: nil
+        case .salesOnly: "SALES ONLY"
+        case .quiet: "QUIET"
         }
     }
 }

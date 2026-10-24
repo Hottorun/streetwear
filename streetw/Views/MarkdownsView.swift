@@ -68,7 +68,7 @@ struct MarkdownsView: View {
     private func ordered() -> [BrandUpdate] {
         let profile = sizes.profile
         return candidates
-            .filter { $0.kind == .priceDrop && $0.passes(profile) }
+            .filter { $0.kind == .priceDrop && $0.isAdmittedByFollowMode && $0.passes(profile) }
             .map { (update: $0, isMine: $0.isInMySize(profile), cut: $0.discountShare ?? 0) }
             .sorted { a, b in
                 a.isMine == b.isMine ? a.cut > b.cut : a.isMine

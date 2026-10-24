@@ -76,6 +76,11 @@ struct DropCalendarView: View {
         }
 
         for brand in brands {
+            // A brand whose mode keeps its drops out of the feed keeps them off this page
+            // too — it is the feed's view of the future, not the brand's. A date somebody
+            // typed is above and stays whatever the mode, because they asked for it by name.
+            guard brand.followMode.admits(.product) else { continue }
+
             // **One pass over the catalogue, collecting everything all three questions
             // wanted.** The relationship is faulted once instead of three times.
             var published: [Date] = []
@@ -94,7 +99,7 @@ struct DropCalendarView: View {
                 }
             }
 
-            if brand.isLockedForDrop {
+            if brand.isLockedForDrop, brand.followMode.admits(.dropLock) {
                 // A locked storefront that also *names* a start time is the best entry
                 // this calendar can hold: observed and exact.
                 entries.append(Entry(brand: brand, kind: .locked, date: announcedAhead.min()))

@@ -54,6 +54,61 @@ Part of the streetw guidance set; see `CLAUDE.md` for the index and the build ru
   `isAvailable(in:)` returns true for everything, so the size filter matched every item and the
   size run — the app's signature element — rendered as blank space on every non-restock. The
   saving was never real either; a product carries tens of variants, not thousands.
+- **The feed is read to the end, in pages that are fair between brands** (`FeedPaging`,
+  `GET /v1/feed`). It answered newest first with at most 200 events and named the newest of
+  them as the cursor, and the app asked once per sync — so everything older than the 200th
+  event between two syncs fell behind the cursor without ever being sent. A busy brand writing
+  250 restocks pushed every other brand's news out of the window, and a quiet brand's one drop
+  was exactly the row that went. Found by reading the code; reproduced by
+  `FeedPagingTests.nothingIsLostPastAPage` (200 of 251 delivered) before it was fixed. Five
+  details are load-bearing:
+  - **The order is fair**: every brand's newest event before any brand's second newest (rank
+    within brand, then newest first). One busy brand can no longer fill a page while another
+    has something unsent — it fills the *tail* of the read. This applies to the first page
+    too, which is all the 1.0 app reads: it still gets one page and `nextCursor` is still the
+    newest event in the window, but what it loses now is the deep end of the busiest brand
+    rather than a quiet brand's only drop.
+  - **The window is fixed when the read begins** — `(since, newest event visible now]` — and
+    `continuation` carries it, opaque, until it comes back nil. An event written mid-read
+    belongs to the next read.
+  - **The position is a keyset, not an offset.** An unfollow between pages removes a whole
+    brand's rows and an offset would slide the next brand's past the reader. The keyset only
+    moves for retention deleting a brand's rows mid-read, which touches nothing younger than
+    the thirty-day horizon.
+  - **The ranking and the keyset compare in Swift, never in SQL**, and the upper bound is
+    applied in Swift too. The bound is a timestamp read out of the database on the first
+    page; binding it back is not guaranteed to keep its last microsecond, and a `<= until`
+    that dropped the newest event would re-rank its whole brand by one and slide rows past
+    the reader. Decoded values compared with each other are exact, because every page decodes
+    the same rows the same way. Only a three-column projection of the window is loaded; the
+    page alone is hydrated with products and variants.
+  - **The token is JSON in base64url** rather than an ISO date, because the ISO-8601 the rest
+    of the API speaks keeps whole seconds and the window's bounds must round-trip exactly.
+  The client's half — a budget of five pages per sync, the head first, unfinished windows kept
+  as their tokens — is `FeedPager` in `StreetwCore`; see `docs/design-decisions.md`.
+- **A follow has a mode, and `Notifier` reads it** (`follows.mode`, `FollowMode`). *Everything*,
+  *Sales only* or *Quiet*; the rule between them is `FollowMode.admits(_:)`, and what *Sales
+  only* lets through is `UpdateKind.isSale` — one switch, so a new sale kind is one case. It
+  replaced 1.0's `Brand.isMuted`, a flag on the phone consulted when a push arrived in the
+  foreground, about a push this server had already composed and sent. Four details:
+  - **`NOT NULL DEFAULT 'everything'`**, not nullable. Every existing row was made by somebody
+    who could not choose and was getting everything, and every follow the 1.0 app makes sends
+    no mode. A nullable column is also a trap: `mode != 'quiet'` is NULL for a NULL row, so
+    the obvious filter would have silenced every follow older than the migration.
+  - **The mode only takes away.** `isRelevant` asks `isWorthWaking` *and* `admits`, so a
+    *Sales only* follow is never woken by a kind an *Everything* follow would not be — today
+    that means it is woken by nothing, because a markdown is not sudden. A quiet follow is
+    dropped before its devices are loaded.
+  - **A watch alert ignores every mode.** `notifyWatches` never asks: it is the one alert
+    somebody asked for by name, and quieting a brand must not swallow the restock a watch was
+    set for.
+  - **`POST /v1/follows` only changes a mode it was sent.** Following a brand you already
+    follow — from a search result, a saved item — posts again with none, and reading that as
+    *Everything* would undo the brand page's choice. `PATCH /v1/follows/:brandID` is how a
+    mode changes, and it refuses a brand you do not follow rather than starting to.
+  The feed is **not** filtered here: every event still goes to the phone, which stores the
+  ones the mode does not admit already read. A quiet brand's own page is still its catalogue,
+  and a server-side filter would have frozen it at the moment it went quiet.
 - **`/status` counts every table**, `users` included. It was the one table it didn't touch,
   which is exactly why a completely broken registration path still reported green.
 - **Only the *unexpected* is worth a buzz** (`Notifier.isWorthWaking`). A drop, a collection and

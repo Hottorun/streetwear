@@ -246,6 +246,68 @@ Changing these silently will break intended behavior:
   must never advance `cursor` — that would skip every other brand's events in the same window — and
   must never arrive unread, which is the 250-product bug delivered at the exact moment somebody is
   deciding whether following was a good idea.
+- **A sync reads the feed to the end, a page at a time, and loses nothing at a page
+  boundary** (`FeedPager`, the server's `FeedPaging`). It asked once for 200 and moved the
+  cursor to the newest of them, so anything older than the 200th event between two syncs was
+  behind the cursor before it was ever sent — and with the page newest first, one busy brand
+  could fill it and push a quiet brand's only drop out. The server's order is now fair between
+  brands and a page that leaves anything behind carries a `continuation`. Four rules on this
+  side. **The cursor moves when the head lands**, because a read is a fixed window and the rest
+  of it is remembered as the server's own token (`feedPendingReads`, beside `feedCursor`) —
+  the token is written before the cursor, and each page is saved before either, so a process
+  killed between them reads a page twice rather than never. **Five pages per sync, head
+  first**: what happened since you last looked is what a push is about, and a phone away for
+  a fortnight can be owed tens of thousands of events that one foreground refresh must not try
+  to pull; what waits is the deep end of the busiest brands, because the order is fair. At
+  most four unfinished windows are kept and past that the oldest goes — the one remaining way
+  to lose an event, and it takes a phone more than four whole windows behind. **Only the first
+  page can fail a sync**: everything after it is already pending, so a dropped connection on
+  page three is a slower catch-up and not a failed refresh. And **a first sync stops at its
+  first page**, because it is a baseline and history owes nothing — the same reason it is
+  stored read. A continuation the server refuses is spent, not retried for ever.
+- **A follow has a mode, and the mode is applied where a row is written, not where the feed is
+  drawn** (`FollowMode`, `Brand.apply`). *Everything*, *Sales only* or *Quiet* — the roadmap's
+  answer to following H&M without burying the feed in daily arrivals, and the replacement for
+  1.0's mute, which was a phone-only flag consulted when a push arrived in the foreground:
+  the push had been composed, sent and delivered regardless, and in the background iOS showed
+  it anyway. `FollowMode.admits` is the one rule, asked by `Notifier` before anything is sent
+  and by the phone for the feed — and what *Sales only* lets through is `UpdateKind.isSale`, so
+  a new sale kind is one case in one switch. The decisions:
+  - **The feed is filtered on the phone, by storing what the mode does not admit as already
+    read** (`RemoteSync.merge`, `SyncEngine.insert` and `refresh`). Not on the server, because
+    a quiet brand's own page is still its whole catalogue and a server that withheld its
+    events would freeze that page the moment it went quiet; and standalone has no server.
+    Not as a filter in the feed's body either, because every unread count, the rail's dot and
+    the brand page's UNREAD would each need the same rule — five copies of it — and the unread
+    queue would grow for ever, since nothing that is unread is ever pruned. Stored read, the
+    feed, the counts and the rail agree without knowing modes exist.
+  - **Changing the mode clears what it no longer admits from the unread queue**, which is
+    "mark all seen" for those kinds; nothing is deleted, and nothing is un-seen on the way back
+    to *Everything* — what happened while a brand was quiet is its history, not news.
+  - **The lists that are about news and not emptied by reading ask the mode themselves**: the
+    markdowns list and its badge (`BrandUpdate.isAdmittedByFollowMode`), and the feed's lock
+    signals — the rail's dot, the calendar's accent and the lock story (`Brand.isAnnouncingLock`)
+    — plus Upcoming, which skips a brand whose drops are not admitted. A date somebody typed is
+    kept whatever the mode; they asked for it by name. The brand page and the brands list still
+    say a storefront is locked, in muted ink: that is a fact about the shop.
+  - **A quiet brand is reachable**: it stays on the rail, in the brands list — labelled QUIET or
+    SALES ONLY, so a silenced brand does not read as one that stopped publishing — and its page
+    is its catalogue. It still counts as a follow for recommendations and Discover.
+  - **A watch ignores the mode**, on the lock screen and in the feed: a fired watch still
+    surfaces its row unread, because it is the one alert somebody asked for by name.
+  - **The server's mode is the mode.** In server mode `Brand.followModeRaw` mirrors
+    `GET /v1/follows`, the page changes it with `PATCH /v1/follows/:id` first and locally only
+    once that succeeds — a mode that changed only here would be the mute again. Only the follow
+    list carries a mode; nil from any other route means "not said", never "everything".
+  - **1.0's mute becomes *Quiet*, once.** The first sync of this build sends it before the
+    follow list is asked for and clears `isMuted` when the server has it; standalone does it
+    locally. Quiet and not Everything because the promise was silence, and breaking it is
+    worse than the one thing that changes — the brand also leaves the feed. `isMuted` stays as
+    a stored property only so the old value can be read.
+  - **No default is guessed.** A new follow is *Everything*, on every client. A heuristic that
+    filed a big catalogue under *Sales only* at follow time would be a filter somebody did not
+    set, which is indistinguishable from a broken follow — and product velocity alone does not
+    tell Kith, the roadmap's *Everything* brand, from H&M.
 - **A collection is not a product** (`CollectionCard`, `CollectionReleaseView`). It is the one update
   that is *about* other updates, and it was drawn as a garment: no photograph (a season page rarely
   has one), an empty size run, no price, and a tap onto a product page with nothing on it — so

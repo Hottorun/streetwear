@@ -330,11 +330,16 @@ bought it. The short form of the load-bearing ones:
 - There is no refresh button — `scenePhase == .active` and pull-to-refresh, on two very different
   throttles (60s server, 20min standalone).
 - A brand's first sync is a baseline, and only a sync that reached something may spend it.
+- A sync reads the feed to the end, a page at a time (`FeedPager`), and the server's pages are fair
+  between brands (`FeedPaging`) — one page per sync is how anything past the 200th event was lost.
+- A follow has a mode, and `FollowMode.admits` is the one rule: `Notifier` asks it before a push,
+  and the phone asks it where a row is written — what the mode does not admit is stored already
+  read, so no count or list needs to know. A watch ignores every mode.
 - Ordering: brands by `lastActivityAt` (stored, never by newest *unread*); a brand's output by
   `BrandUpdate.newestFirst`; one garment one row via `oncePerProduct`.
 - Only a price *drop* past 5% is an event; restock outranks it; a lock fires on the transition.
 - Push: one per brand per **cooldown**, `aps-environment` is load-bearing, one `threadID` for the
-  whole app.
+  whole app, and a follow's mode only ever takes away.
 - The buy bar opens a Shopify cart permalink only when **exactly one available variant is
   yours** by `SizeProfile.claims` (never `matches`) in the colourway on screen, and says
   "CHECK OUT", not "bag"; everything else gets the exact product page (`Checkout`).
@@ -825,12 +830,13 @@ the local path in the `else`. Adding a new one means adding both halves:
 
 | Operation | Server route |
 |---|---|
-| launch/refresh sync | `GET /v1/follows` + `GET /v1/feed` |
+| launch/refresh sync | `GET /v1/follows` + `GET /v1/feed`, then `?continuation=` until it comes back nil — five pages a sync, the rest kept for the next (`FeedPager`) |
 | catch up on a brand just followed | `GET /v1/brands/:id/feed` (merged as a baseline) |
 | find a brand | `GET /v1/brands?q=` (name **or** pasted URL) |
 | "check site" preview | `POST /v1/brands/checks`, then `GET /v1/brands/checks/:id` until it settles (creates nothing) |
 | add a brand nobody has | `POST /v1/brands/checks/:id/watch` — the server follows it, now or when the check finishes |
 | delete / unfollow | `DELETE /v1/follows/:id` |
+| follow mode (Everything / Sales only / Quiet) | `PATCH /v1/follows/:id` — the server first, the phone only once it took it; standalone, `Brand.followModeRaw` alone |
 | size and gender profile | `PATCH /v1/devices/me` |
 | APNs token / environment | `PATCH /v1/devices/me` |
 | stock watches | `POST` / `GET` / `DELETE /v1/watches` |

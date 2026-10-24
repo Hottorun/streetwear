@@ -16,6 +16,7 @@ extension RegisterDevice: @retroactive Content {}
 extension UpdateDevice: @retroactive Content {}
 extension DiscoverBrand: @retroactive Content {}
 extension FollowBrand: @retroactive Content {}
+extension UpdateFollow: @retroactive Content {}
 extension DeviceResponse: @retroactive Content {}
 extension BrandDTO: @retroactive Content {}
 extension FeedItem: @retroactive Content {}
@@ -55,7 +56,9 @@ extension BrandDTO {
     /// loaded, and the callers here are four routes with four different query shapes. An
     /// explicit parameter turns "somebody forgot a `.with`" from a crash on a production
     /// route into a compile error at the call site.
-    init(_ brand: BrandModel, sources: [SourceModel]) {
+    /// - Parameter followMode: the caller's own follow, for the one route that is about
+    ///   the caller's follows. Nil everywhere else, which the client reads as "not said".
+    init(_ brand: BrandModel, sources: [SourceModel], followMode: FollowMode? = nil) {
         self.init(
             id: brand.id,
             name: brand.name,
@@ -65,7 +68,8 @@ extension BrandDTO {
             currency: brand.currency,
             lockedForDrop: brand.lockedForDrop,
             logoURL: brand.logoURL,
-            sources: sources.map(BrandSourceDTO.init)
+            sources: sources.map(BrandSourceDTO.init),
+            followMode: followMode
         )
     }
 }

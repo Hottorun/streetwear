@@ -3477,7 +3477,7 @@ struct NotificationPolicyTests {
 /// Nothing exercised `?since=`, which is why it survived. These do.
 @Suite("Feed cursor")
 struct FeedCursorTests {
-    /// What the app actually puts on the wire — `StreetwAPI.feed(since:)`.
+    /// What the app actually puts on the wire — `StreetwAPI.feed(_:)`.
     private func clientFormatted(_ date: Date) -> String {
         ISO8601DateFormatter().string(from: date)
     }
@@ -4147,6 +4147,441 @@ struct UsageCountTests {
                 #expect(day.activeDevices == 1)
                 #expect(day.counts == ["tab.style": 2, "push.opened": 1])
             }
+        }
+    }
+}
+
+/// More happened between two syncs than one page holds.
+///
+/// `GET /v1/feed` answered newest first with at most 200 events, `nextCursor` was the newest
+/// of them, and the client asked once per sync and moved its cursor there — so everything
+/// older than the 200th event was behind the cursor before it was ever sent. Found by
+/// reading the code, which is why the first test here reproduces it before anything else.
+@Suite("Feed paging")
+struct FeedPagingTests {
+    private func brand(_ app: Application, slug: String) async throws -> UUID {
+        let brand = BrandModel(
+            name: slug, slug: slug, website: "https://\(slug)",
+            instagramHandle: nil, usesGeneratedName: false
+        )
+        try await brand.save(on: app.db)
+        return try brand.requireID()
+    }
+
+    /// Events one second apart, oldest first, ending `endingAgo` seconds before now — so the
+    /// order on the wire is the order written here, whatever the database's clock resolution.
+    @discardableResult
+    private func events(
+        _ app: Application,
+        brandID: UUID,
+        count: Int,
+        endingAgo: TimeInterval,
+        kind: UpdateKind = .product
+    ) async throws -> [UUID] {
+        var ids: [UUID] = []
+        for index in 0..<count {
+            let event = EventModel(brandID: brandID, productID: nil, kind: kind)
+            try await event.save(on: app.db)
+            event.createdAt = Date().addingTimeInterval(-endingAgo - Double(count - 1 - index))
+            try await event.save(on: app.db)
+            ids.append(try event.requireID())
+        }
+        return ids
+    }
+
+    private func follow(_ app: Application, _ brandIDs: [UUID], auth: HTTPHeaders) async throws {
+        for id in brandIDs {
+            try await app.testing().test(.POST, "v1/follows", headers: auth, beforeRequest: { req in
+                try req.content.encode(FollowBrand(brandID: id))
+            }, afterResponse: { _ in })
+        }
+    }
+
+    private func page(_ app: Application, auth: HTTPHeaders, query: String) async throws -> FeedResponse {
+        var response = FeedResponse(items: [])
+        try await app.testing().test(.GET, "v1/feed?\(query)", headers: auth) { res async throws in
+            #expect(res.status == .ok)
+            response = try res.content.decode(FeedResponse.self)
+        }
+        return response
+    }
+
+    private func since(_ date: Date) -> String {
+        "since=" + (ISO8601DateFormatter().string(from: date)
+            .addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? "")
+    }
+
+    /// Follows a read to its end, the way `FeedPager` does, and returns every page.
+    private func read(
+        _ app: Application, auth: HTTPHeaders, from cursor: Date? = nil, limit: Int = 200
+    ) async throws -> [FeedResponse] {
+        var pages = [try await page(
+            app, auth: auth, query: "limit=\(limit)" + (cursor.map { "&\(since($0))" } ?? "")
+        )]
+        while let token = pages.last?.continuation, pages.count < 50 {
+            pages.append(try await page(app, auth: auth, query: "limit=\(limit)&continuation=\(token)"))
+        }
+        return pages
+    }
+
+    /// The reproduction, as first written: one request, then the next sync from wherever
+    /// that one left the cursor — exactly what the shipped client does. It failed with 200 of
+    /// 251 delivered, and the one missing quiet-brand drop among the 51. It now follows the
+    /// continuation, which is the protocol a client that can page uses.
+    @Test("Every event between two syncs reaches the device, however many there are")
+    func nothingIsLostPastAPage() async throws {
+        try await withServer { app in
+            let quiet = try await brand(app, slug: "quiet.com")
+            let busy = try await brand(app, slug: "busy.com")
+            // The quiet brand's one drop lands first; then a busy brand writes more than a
+            // page on top of it before the phone next looks.
+            let early = try await events(app, brandID: quiet, count: 1, endingAgo: 600)
+            let late = try await events(app, brandID: busy, count: 250, endingAgo: 10)
+            let auth = try await deviceAuth(app)
+            try await follow(app, [quiet, busy], auth: auth)
+
+            let pages = try await read(app, auth: auth)
+            let delivered = pages.flatMap { $0.items.map(\.eventID) }
+
+            #expect(Set(delivered) == Set(early + late))
+            #expect(delivered.count == early.count + late.count, "nothing sent twice")
+            #expect(pages.count == 2)
+
+            // And the next sync, from the cursor the first page named, owes nothing.
+            let cursor = try #require(pages.first?.nextCursor)
+            let next = try await read(app, auth: auth, from: cursor)
+            #expect(Set(next.flatMap { $0.items.map(\.eventID) }).isSubset(of: Set(late)))
+        }
+    }
+
+    /// The build in the App Store asks once and cannot page, so its one page has to be the
+    /// right 200: the quiet brand's only drop rather than the busy brand's 201st restock.
+    /// What it loses now is the deep end of the busiest brand, which is the least valuable
+    /// row in the window rather than the most.
+    @Test("The one page the 1.0 app reads is fair between brands, and names the newest event")
+    func firstPageIsFair() async throws {
+        try await withServer { app in
+            let quiet = try await brand(app, slug: "quiet.com")
+            let busy = try await brand(app, slug: "busy.com")
+            let early = try await events(app, brandID: quiet, count: 1, endingAgo: 600)
+            let late = try await events(app, brandID: busy, count: 250, endingAgo: 10)
+            let auth = try await deviceAuth(app)
+            try await follow(app, [quiet, busy], auth: auth)
+
+            let first = try await page(app, auth: auth, query: "limit=200")
+            let ids = first.items.map(\.eventID)
+            #expect(ids.count == 200)
+            #expect(ids.contains(early[0]))
+            // Newest first within a brand, so what the busy brand gives up is its oldest.
+            #expect(Array(ids.filter { $0 != early[0] }) == Array(late.reversed().prefix(199)))
+            // `nextCursor` is still what the 1.0 app moves to: the newest event in the window.
+            let newest = try #require(try await EventModel.find(late.last, on: app.db)?.createdAt)
+            let cursor = try #require(first.nextCursor)
+            #expect(abs(cursor.timeIntervalSince(newest)) < 1)
+            #expect(first.continuation != nil)
+        }
+    }
+
+    /// The window is fixed when the read begins. Something written mid-read belongs to the
+    /// next read; slipping it into this one would shift every position after it.
+    @Test("An event written mid-read waits for the next read")
+    func windowIsFixed() async throws {
+        try await withServer { app in
+            let busy = try await brand(app, slug: "busy.com")
+            let before = try await events(app, brandID: busy, count: 250, endingAgo: 30)
+            let auth = try await deviceAuth(app)
+            try await follow(app, [busy], auth: auth)
+
+            let first = try await page(app, auth: auth, query: "limit=200")
+            let token = try #require(first.continuation)
+            let during = try await events(app, brandID: busy, count: 3, endingAgo: 0)
+            let rest = try await page(app, auth: auth, query: "limit=200&continuation=\(token)")
+
+            let read = first.items.map(\.eventID) + rest.items.map(\.eventID)
+            #expect(Set(read) == Set(before))
+            #expect(rest.continuation == nil)
+            #expect(rest.nextCursor == nil, "a continued page is not progress through the head")
+
+            let cursor = try #require(first.nextCursor)
+            let next = try await page(app, auth: auth, query: "limit=200&\(since(cursor))")
+            #expect(Set(during).isSubset(of: Set(next.items.map(\.eventID))))
+        }
+    }
+
+    /// Why the position is a keyset rather than an offset. An unfollow between two pages
+    /// removes a whole brand's rows, and an offset would slide the next brand's past the
+    /// reader unseen.
+    @Test("Unfollowing a brand mid-read skips nothing of the others")
+    func unfollowMidReadSkipsNothing() async throws {
+        try await withServer { app in
+            let a = try await brand(app, slug: "a.com")
+            let b = try await brand(app, slug: "b.com")
+            let c = try await brand(app, slug: "c.com")
+            let fromA = try await events(app, brandID: a, count: 150, endingAgo: 300)
+            let fromB = try await events(app, brandID: b, count: 150, endingAgo: 200)
+            let fromC = try await events(app, brandID: c, count: 150, endingAgo: 100)
+            let auth = try await deviceAuth(app)
+            try await follow(app, [a, b, c], auth: auth)
+
+            var pages = [try await page(app, auth: auth, query: "limit=100")]
+            try await app.testing().test(.DELETE, "v1/follows/\(b.uuidString)", headers: auth) { _ in }
+            while let token = pages.last?.continuation {
+                pages.append(try await page(app, auth: auth, query: "limit=100&continuation=\(token)"))
+            }
+
+            let delivered = Set(pages.flatMap { $0.items.map(\.eventID) })
+            #expect(Set(fromA + fromC).isSubset(of: delivered))
+            #expect(delivered.isSubset(of: Set(fromA + fromB + fromC)))
+        }
+    }
+
+    @Test("A continuation this server did not write is refused, not guessed at")
+    func foreignContinuationIsRefused() async throws {
+        try await withServer { app in
+            let busy = try await brand(app, slug: "busy.com")
+            try await events(app, brandID: busy, count: 1, endingAgo: 0)
+            let auth = try await deviceAuth(app)
+            try await follow(app, [busy], auth: auth)
+
+            try await app.testing().test(
+                .GET, "v1/feed?continuation=not-a-token", headers: auth
+            ) { res async throws in
+                #expect(res.status == .badRequest)
+            }
+        }
+    }
+
+    /// The order itself, with no database: rank first, then newest, so a page boundary can
+    /// fall anywhere and every brand's newest still comes before anybody's second.
+    @Test("The fair order interleaves brands by rank, newest first within a rank")
+    func fairOrder() {
+        let t0 = Date(timeIntervalSince1970: 1_780_000_000)
+        let a = UUID(), b = UUID()
+        let rows = [
+            FeedPaging.Row(id: UUID(), brandID: a, createdAt: t0.addingTimeInterval(1)),
+            FeedPaging.Row(id: UUID(), brandID: a, createdAt: t0.addingTimeInterval(2)),
+            FeedPaging.Row(id: UUID(), brandID: a, createdAt: t0.addingTimeInterval(3)),
+            FeedPaging.Row(id: UUID(), brandID: b, createdAt: t0),
+        ]
+        let order = FeedPaging.ordered(rows).map(\.id)
+        #expect(order == [rows[2].id, rows[3].id, rows[1].id, rows[0].id])
+
+        let first = FeedPaging.page(rows, after: nil, limit: 2)
+        #expect(first.ids == [rows[2].id, rows[3].id])
+        let second = FeedPaging.page(rows, after: first.next, limit: 2)
+        #expect(second.ids == [rows[1].id, rows[0].id])
+        #expect(second.next == nil)
+    }
+
+    @Test("A continuation survives the trip to the client and back, to the last bit")
+    func continuationRoundTrips() throws {
+        let sent = FeedContinuation(
+            since: Date(timeIntervalSince1970: 1_780_000_000.123456),
+            until: Date(timeIntervalSince1970: 1_780_086_400.654321),
+            after: .init(rank: 7, createdAt: Date(timeIntervalSince1970: 1_780_050_000.000789), id: UUID())
+        )
+        let token = sent.token
+        #expect(!token.contains("+") && !token.contains("/") && !token.contains("="))
+        #expect(FeedContinuation(token: token) == sent)
+    }
+}
+
+/// How much of a followed brand reaches somebody — see `FollowMode`. On the server because
+/// `Notifier` is what has to know it; 1.0's mute was a flag on the phone, consulted after
+/// the push had already been sent.
+@Suite("Follow modes")
+struct FollowModeTests {
+    private func brand(_ app: Application, slug: String = "hm.com") async throws -> UUID {
+        let brand = BrandModel(
+            name: slug, slug: slug, website: "https://\(slug)",
+            instagramHandle: nil, usesGeneratedName: false
+        )
+        try await brand.save(on: app.db)
+        return try brand.requireID()
+    }
+
+    private func follows(_ app: Application, auth: HTTPHeaders) async throws -> [BrandDTO] {
+        var brands: [BrandDTO] = []
+        try await app.testing().test(.GET, "v1/follows", headers: auth) { res async throws in
+            brands = try res.content.decode([BrandDTO].self)
+        }
+        return brands
+    }
+
+    private func follow(
+        _ app: Application, _ brandID: UUID, mode: FollowMode? = nil, auth: HTTPHeaders
+    ) async throws {
+        try await app.testing().test(.POST, "v1/follows", headers: auth, beforeRequest: { req in
+            try req.content.encode(FollowBrand(brandID: brandID, mode: mode))
+        }, afterResponse: { res async throws in
+            #expect(res.status == .created)
+        })
+    }
+
+    private func setMode(
+        _ app: Application, _ brandID: UUID, _ mode: FollowMode, auth: HTTPHeaders
+    ) async throws -> HTTPStatus {
+        var status = HTTPStatus.ok
+        try await app.testing().test(
+            .PATCH, "v1/follows/\(brandID.uuidString)", headers: auth,
+            beforeRequest: { req in try req.content.encode(UpdateFollow(mode: mode)) },
+            afterResponse: { res async throws in status = res.status }
+        )
+        return status
+    }
+
+    /// Every follow that exists today was made by somebody who could not choose, and every
+    /// follow the 1.0 app makes from now on sends no mode — both must read as what they got.
+    @Test("A follow made without a mode is Everything, and the follow list says so")
+    func defaultIsEverything() async throws {
+        try await withServer { app in
+            let brandID = try await brand(app)
+            let auth = try await deviceAuth(app)
+            try await follow(app, brandID, auth: auth)
+
+            let listed = try await follows(app, auth: auth)
+            #expect(listed.first?.followMode == .everything)
+        }
+    }
+
+    @Test("A mode is changed on the follow, and only on a brand you follow")
+    func patchChangesTheMode() async throws {
+        try await withServer { app in
+            let followed = try await brand(app)
+            let stranger = try await brand(app, slug: "zara.com")
+            let auth = try await deviceAuth(app)
+            try await follow(app, followed, auth: auth)
+
+            #expect(try await setMode(app, followed, .quiet, auth: auth) == .noContent)
+            #expect(try await follows(app, auth: auth).first?.followMode == .quiet)
+
+            // A setting, not a side effect: this must not start following anything.
+            #expect(try await setMode(app, stranger, .salesOnly, auth: auth) == .notFound)
+            #expect(try await follows(app, auth: auth).count == 1)
+        }
+    }
+
+    /// Following a brand you already follow — from a search result, a saved item — posts
+    /// again without a mode, and must not undo the one chosen on the brand's page.
+    @Test("Following again without a mode keeps the mode; with one, sets it")
+    func refollowKeepsTheMode() async throws {
+        try await withServer { app in
+            let brandID = try await brand(app)
+            let auth = try await deviceAuth(app)
+            try await follow(app, brandID, auth: auth)
+            _ = try await setMode(app, brandID, .quiet, auth: auth)
+
+            try await follow(app, brandID, auth: auth)
+            #expect(try await follows(app, auth: auth).first?.followMode == .quiet)
+
+            // A re-registration restores follows with the mode they had.
+            try await follow(app, brandID, mode: .salesOnly, auth: auth)
+            #expect(try await follows(app, auth: auth).first?.followMode == .salesOnly)
+            #expect(try await FollowModel.query(on: app.db).count() == 1)
+        }
+    }
+
+    /// Only the follow list carries a mode; a search result is about the brand, and a client
+    /// reading its nil as "everything" would reset a quiet brand by finding it.
+    @Test("Search hands over a brand without anybody's mode")
+    func searchCarriesNoMode() async throws {
+        try await withServer { app in
+            let brandID = try await brand(app)
+            let auth = try await deviceAuth(app)
+            try await follow(app, brandID, auth: auth)
+            _ = try await setMode(app, brandID, .quiet, auth: auth)
+
+            try await app.testing().test(.GET, "v1/brands?q=hm", headers: auth) { res async throws in
+                let found = try res.content.decode([BrandDTO].self)
+                #expect(found.count == 1)
+                #expect(found.first?.followMode == nil)
+            }
+        }
+    }
+
+    /// Two people follow the same brand. One asked for quiet; the other did not, and must
+    /// still hear about the drop — a mode is one person's, never the brand's.
+    @Test("A quiet follower hears nothing, and the brand's other followers still do")
+    func quietIsPerFollower() async throws {
+        try await withServer { app in
+            let brandID = try await brand(app)
+            var tokens: [String: UUID] = [:]
+            for (token, mode) in [("loud", FollowMode.everything), ("hush", .quiet)] {
+                let user = UserModel()
+                try await user.save(on: app.db)
+                let userID = try user.requireID()
+                try await DeviceModel(userID: userID, apnsToken: token, environment: "sandbox", locale: nil)
+                    .save(on: app.db)
+                try await FollowModel(userID: userID, brandID: brandID, mode: mode).save(on: app.db)
+                tokens[token] = userID
+            }
+            try await EventModel(brandID: brandID, productID: nil, kind: .product).save(on: app.db)
+
+            let sender = RecordingSender()
+            let result = await Notifier(app: app, sender: sender).dispatch()
+
+            #expect(result.sent == 1)
+            #expect(sender.sent.map(\.deviceToken) == ["loud"])
+        }
+    }
+
+    /// The mode only ever takes away. A markdown does not wake an *Everything* follower, so
+    /// it cannot wake a *Sales only* one either — what changes is that the drop no longer
+    /// does.
+    @Test("Sales only is not woken by a drop, a lock or a markdown")
+    func salesOnlyAdmitsNothingSuddenYet() throws {
+        let profile = SizeProfile()
+        let brandID = UUID()
+        for kind in UpdateKind.allCases {
+            let event = EventModel(brandID: brandID, productID: nil, kind: kind)
+            #expect(!Notifier.isRelevant(event, to: profile, mode: .salesOnly), "\(kind)")
+            #expect(!Notifier.isRelevant(event, to: profile, mode: .quiet), "\(kind)")
+            #expect(
+                Notifier.isRelevant(event, to: profile, mode: .everything) == kind.isSudden,
+                "Everything is exactly what it was before modes existed: \(kind)"
+            )
+        }
+    }
+
+    /// The exemption the whole design rests on. A watch is the one alert somebody asked for
+    /// by name; quieting the brand it belongs to must not swallow the restock it was set for.
+    @Test("A watch still fires for a brand followed quietly")
+    func watchIgnoresTheMode() async throws {
+        try await withServer { app in
+            let brandID = try await brand(app)
+            let product = ProductModel(
+                brandID: brandID, sourceID: nil,
+                item: FetchedItem(
+                    externalID: "shopify:1", title: "Nathan Cargo Pant",
+                    publishedAt: Date(), kind: .product
+                )
+            )
+            try await product.save(on: app.db)
+            let productID = try product.requireID()
+            try await VariantModel(
+                productID: productID,
+                info: VariantInfo(id: "m", title: "M", available: true, size: "M")
+            ).save(on: app.db)
+
+            let user = UserModel()
+            try await user.save(on: app.db)
+            let userID = try user.requireID()
+            try await DeviceModel(userID: userID, apnsToken: "token-a", environment: "sandbox", locale: nil)
+                .save(on: app.db)
+            try await FollowModel(userID: userID, brandID: brandID, mode: .quiet).save(on: app.db)
+            try await WatchModel(
+                userID: userID, brandID: brandID, productID: productID, size: "M", color: nil
+            ).save(on: app.db)
+            try await EventModel(brandID: brandID, productID: productID, kind: .restock, sizes: ["M"])
+                .save(on: app.db)
+            // And the same brand's ordinary noise, which the quiet follow must keep out.
+            try await EventModel(brandID: brandID, productID: nil, kind: .product).save(on: app.db)
+
+            let sender = RecordingSender()
+            let result = await Notifier(app: app, sender: sender).dispatch()
+
+            #expect(result.sent == 1)
+            #expect(sender.sent.first?.body == "Back in M — Nathan Cargo Pant")
         }
     }
 }
