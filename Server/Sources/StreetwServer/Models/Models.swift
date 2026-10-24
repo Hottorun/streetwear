@@ -318,12 +318,24 @@ final class FollowModel: Model, @unchecked Sendable {
     @Parent(key: "user_id") var user: UserModel
     @Parent(key: "brand_id") var brand: BrandModel
     @Timestamp(key: "created_at", on: .create) var createdAt: Date?
+    /// `FollowMode` raw value. A string rather than an enum column for the reason the wire
+    /// carries one: a mode a later deploy writes must still read on an earlier one, as
+    /// `.everything`. See `AddFollowMode`.
+    @Field(key: "mode") var modeRaw: String
 
-    init() {}
+    init() {
+        self.modeRaw = FollowMode.everything.rawValue
+    }
 
-    init(userID: UUID, brandID: UUID) {
+    init(userID: UUID, brandID: UUID, mode: FollowMode = .everything) {
         self.$user.id = userID
         self.$brand.id = brandID
+        self.modeRaw = mode.rawValue
+    }
+
+    var mode: FollowMode {
+        get { FollowMode(lenient: modeRaw) }
+        set { modeRaw = newValue.rawValue }
     }
 }
 

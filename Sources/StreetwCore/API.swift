@@ -108,9 +108,24 @@ public struct DiscoverBrand: Codable, Sendable {
 
 public struct FollowBrand: Codable, Sendable {
     public var brandID: UUID
+    /// How much of the brand should reach this person. Optional, and absent from every body
+    /// the 1.0 app sends — which the server reads as `.everything`, the only mode that build
+    /// can show. Sent when a follow is *restored* rather than made, so a re-registration
+    /// puts a quiet brand back quiet.
+    public var mode: FollowMode?
 
-    public init(brandID: UUID) {
+    public init(brandID: UUID, mode: FollowMode? = nil) {
         self.brandID = brandID
+        self.mode = mode
+    }
+}
+
+/// Changes how much of an already-followed brand reaches this person. See `FollowMode`.
+public struct UpdateFollow: Codable, Sendable {
+    public var mode: FollowMode
+
+    public init(mode: FollowMode) {
+        self.mode = mode
     }
 }
 
@@ -323,6 +338,12 @@ public struct BrandDTO: Codable, Sendable, Hashable, Identifiable {
     /// statements, and the one place a failing source is visible was blank in the mode the
     /// app actually ships in.
     public var sources: [BrandSourceDTO]
+    /// How the caller follows this brand — set by `GET /v1/follows` only, because it is a
+    /// fact about one person's follow and not about the brand. Every other route that hands
+    /// over a brand leaves it nil, and nil means "not said", never "everything": the client
+    /// keeps the mode it already holds rather than resetting a quiet brand because it
+    /// happened to reappear in a search result.
+    public var followMode: FollowMode?
 
     public init(
         id: UUID?,
@@ -333,7 +354,8 @@ public struct BrandDTO: Codable, Sendable, Hashable, Identifiable {
         currency: String? = nil,
         lockedForDrop: Bool = false,
         logoURL: String? = nil,
-        sources: [BrandSourceDTO] = []
+        sources: [BrandSourceDTO] = [],
+        followMode: FollowMode? = nil
     ) {
         self.id = id
         self.name = name
@@ -344,6 +366,7 @@ public struct BrandDTO: Codable, Sendable, Hashable, Identifiable {
         self.lockedForDrop = lockedForDrop
         self.logoURL = logoURL
         self.sources = sources
+        self.followMode = followMode
     }
 }
 

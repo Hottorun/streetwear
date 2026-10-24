@@ -498,9 +498,46 @@ func routes(_ app: Application) throws {
             guard try await BrandModel.find(body.brandID, on: req.db) != nil else {
                 throw Abort(.notFound, reason: "No brand with that id.")
             }
-            try await FollowModel(userID: device.$user.id, brandID: body.brandID).save(on: req.db)
+            try await FollowModel(
+                userID: device.$user.id,
+                brandID: body.brandID,
+                mode: body.mode ?? .everything
+            ).save(on: req.db)
+        } else if let existing, let mode = body.mode, existing.mode != mode {
+            // Only when a mode was *sent*. Following a brand you already follow — from a
+            // search result, a saved item, a recommendation — posts again with no mode, and
+            // reading a missing one as `.everything` would undo a choice made on the brand's
+            // page by tapping a button somewhere else.
+            existing.mode = mode
+            try await existing.save(on: req.db)
         }
         return .created
+    }
+
+    /// How much of a followed brand reaches the caller. See `FollowMode`.
+    ///
+    /// A route of its own rather than a field on `POST /v1/follows`, because changing how you
+    /// hear from a brand is not following it again: this refuses a brand you do not follow
+    /// rather than quietly starting to, which is the difference between a setting and a
+    /// side effect.
+    authed.patch("follows", ":brandID") { req async throws -> HTTPStatus in
+        let device = try await req.authenticatedDevice()
+        guard let brandID = req.parameters.get("brandID", as: UUID.self) else {
+            throw Abort(.badRequest)
+        }
+        let body = try req.content.decode(UpdateFollow.self)
+        guard let follow = try await FollowModel.query(on: req.db)
+            .filter(\.$user.$id == device.$user.id)
+            .filter(\.$brand.$id == brandID)
+            .first()
+        else { throw Abort(.notFound, reason: "You don't follow that brand.") }
+
+        // Guarded, like every write here that can change nothing.
+        if follow.mode != body.mode {
+            follow.mode = body.mode
+            try await follow.save(on: req.db)
+        }
+        return .noContent
     }
 
     authed.delete("follows", ":brandID") { req async throws -> HTTPStatus in
@@ -536,7 +573,9 @@ func routes(_ app: Application) throws {
             // since it does no polling and never discovered these itself.
             .with(\.$brand) { $0.with(\.$sources) }
             .all()
-        return follows.map { BrandDTO($0.brand, sources: $0.brand.sources) }
+        // With the mode, because this is the only list that is about the caller's follows
+        // and the phone decides the feed with it — see `FollowMode.admits`.
+        return follows.map { BrandDTO($0.brand, sources: $0.brand.sources, followMode: $0.mode) }
     }
 
     // MARK: Discover

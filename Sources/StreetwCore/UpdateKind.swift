@@ -73,6 +73,25 @@ public enum UpdateKind: String, Codable, Sendable, CaseIterable {
         }
     }
 
+    /// Whether an event of this kind is **sale news** — what a follow in *Sales only* mode
+    /// lets through (`FollowMode.admits`), on the feed and on the lock screen alike.
+    ///
+    /// A switch over every case rather than `self == .priceDrop`, so a kind added later has
+    /// to be decided here and cannot fall into the wrong answer by default. A brand-wide sale
+    /// or a sale banner is a `true`; anything that is about a garment arriving, coming back
+    /// or a storefront changing is not, however loud it is — somebody who asked for *sales*
+    /// from a shop with daily arrivals asked precisely not to hear about those.
+    ///
+    /// Nothing here decides what is worth a push. That is `isSudden`, and both must agree
+    /// before `Notifier` sends anything: a markdown passes this and is not sudden, so a
+    /// *Sales only* follow is quiet on the lock screen until a sale kind exists that is.
+    public var isSale: Bool {
+        switch self {
+        case .priceDrop: true
+        case .product, .restock, .collection, .post, .pageChange, .dropLock: false
+        }
+    }
+
     /// Where an event of this kind sits when a brand's spread is read as **news**.
     ///
     /// The feed leads each brand with what *happened* and demotes the garments to its

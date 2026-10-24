@@ -78,6 +78,29 @@ Part of the streetw guidance set; see `CLAUDE.md` for the index and the build ru
     of the API speaks keeps whole seconds and the window's bounds must round-trip exactly.
   The client's half — a budget of five pages per sync, the head first, unfinished windows kept
   as their tokens — is `FeedPager` in `StreetwCore`; see `docs/design-decisions.md`.
+- **A follow has a mode, and `Notifier` reads it** (`follows.mode`, `FollowMode`). *Everything*,
+  *Sales only* or *Quiet*; the rule between them is `FollowMode.admits(_:)`, and what *Sales
+  only* lets through is `UpdateKind.isSale` — one switch, so a new sale kind is one case. It
+  replaced 1.0's `Brand.isMuted`, a flag on the phone consulted when a push arrived in the
+  foreground, about a push this server had already composed and sent. Four details:
+  - **`NOT NULL DEFAULT 'everything'`**, not nullable. Every existing row was made by somebody
+    who could not choose and was getting everything, and every follow the 1.0 app makes sends
+    no mode. A nullable column is also a trap: `mode != 'quiet'` is NULL for a NULL row, so
+    the obvious filter would have silenced every follow older than the migration.
+  - **The mode only takes away.** `isRelevant` asks `isWorthWaking` *and* `admits`, so a
+    *Sales only* follow is never woken by a kind an *Everything* follow would not be — today
+    that means it is woken by nothing, because a markdown is not sudden. A quiet follow is
+    dropped before its devices are loaded.
+  - **A watch alert ignores every mode.** `notifyWatches` never asks: it is the one alert
+    somebody asked for by name, and quieting a brand must not swallow the restock a watch was
+    set for.
+  - **`POST /v1/follows` only changes a mode it was sent.** Following a brand you already
+    follow — from a search result, a saved item — posts again with none, and reading that as
+    *Everything* would undo the brand page's choice. `PATCH /v1/follows/:brandID` is how a
+    mode changes, and it refuses a brand you do not follow rather than starting to.
+  The feed is **not** filtered here: every event still goes to the phone, which stores the
+  ones the mode does not admit already read. A quiet brand's own page is still its catalogue,
+  and a server-side filter would have frozen it at the moment it went quiet.
 - **`/status` counts every table**, `users` included. It was the one table it didn't touch,
   which is exactly why a completely broken registration path still reported green.
 - **Only the *unexpected* is worth a buzz** (`Notifier.isWorthWaking`). A drop, a collection and

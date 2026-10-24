@@ -3984,3 +3984,203 @@ struct FeedPagingTests {
         #expect(FeedContinuation(token: token) == sent)
     }
 }
+
+/// How much of a followed brand reaches somebody — see `FollowMode`. On the server because
+/// `Notifier` is what has to know it; 1.0's mute was a flag on the phone, consulted after
+/// the push had already been sent.
+@Suite("Follow modes")
+struct FollowModeTests {
+    private func brand(_ app: Application, slug: String = "hm.com") async throws -> UUID {
+        let brand = BrandModel(
+            name: slug, slug: slug, website: "https://\(slug)",
+            instagramHandle: nil, usesGeneratedName: false
+        )
+        try await brand.save(on: app.db)
+        return try brand.requireID()
+    }
+
+    private func follows(_ app: Application, auth: HTTPHeaders) async throws -> [BrandDTO] {
+        var brands: [BrandDTO] = []
+        try await app.testing().test(.GET, "v1/follows", headers: auth) { res async throws in
+            brands = try res.content.decode([BrandDTO].self)
+        }
+        return brands
+    }
+
+    private func follow(
+        _ app: Application, _ brandID: UUID, mode: FollowMode? = nil, auth: HTTPHeaders
+    ) async throws {
+        try await app.testing().test(.POST, "v1/follows", headers: auth, beforeRequest: { req in
+            try req.content.encode(FollowBrand(brandID: brandID, mode: mode))
+        }, afterResponse: { res async throws in
+            #expect(res.status == .created)
+        })
+    }
+
+    private func setMode(
+        _ app: Application, _ brandID: UUID, _ mode: FollowMode, auth: HTTPHeaders
+    ) async throws -> HTTPStatus {
+        var status = HTTPStatus.ok
+        try await app.testing().test(
+            .PATCH, "v1/follows/\(brandID.uuidString)", headers: auth,
+            beforeRequest: { req in try req.content.encode(UpdateFollow(mode: mode)) },
+            afterResponse: { res async throws in status = res.status }
+        )
+        return status
+    }
+
+    /// Every follow that exists today was made by somebody who could not choose, and every
+    /// follow the 1.0 app makes from now on sends no mode — both must read as what they got.
+    @Test("A follow made without a mode is Everything, and the follow list says so")
+    func defaultIsEverything() async throws {
+        try await withServer { app in
+            let brandID = try await brand(app)
+            let auth = try await deviceAuth(app)
+            try await follow(app, brandID, auth: auth)
+
+            let listed = try await follows(app, auth: auth)
+            #expect(listed.first?.followMode == .everything)
+        }
+    }
+
+    @Test("A mode is changed on the follow, and only on a brand you follow")
+    func patchChangesTheMode() async throws {
+        try await withServer { app in
+            let followed = try await brand(app)
+            let stranger = try await brand(app, slug: "zara.com")
+            let auth = try await deviceAuth(app)
+            try await follow(app, followed, auth: auth)
+
+            #expect(try await setMode(app, followed, .quiet, auth: auth) == .noContent)
+            #expect(try await follows(app, auth: auth).first?.followMode == .quiet)
+
+            // A setting, not a side effect: this must not start following anything.
+            #expect(try await setMode(app, stranger, .salesOnly, auth: auth) == .notFound)
+            #expect(try await follows(app, auth: auth).count == 1)
+        }
+    }
+
+    /// Following a brand you already follow — from a search result, a saved item — posts
+    /// again without a mode, and must not undo the one chosen on the brand's page.
+    @Test("Following again without a mode keeps the mode; with one, sets it")
+    func refollowKeepsTheMode() async throws {
+        try await withServer { app in
+            let brandID = try await brand(app)
+            let auth = try await deviceAuth(app)
+            try await follow(app, brandID, auth: auth)
+            _ = try await setMode(app, brandID, .quiet, auth: auth)
+
+            try await follow(app, brandID, auth: auth)
+            #expect(try await follows(app, auth: auth).first?.followMode == .quiet)
+
+            // A re-registration restores follows with the mode they had.
+            try await follow(app, brandID, mode: .salesOnly, auth: auth)
+            #expect(try await follows(app, auth: auth).first?.followMode == .salesOnly)
+            #expect(try await FollowModel.query(on: app.db).count() == 1)
+        }
+    }
+
+    /// Only the follow list carries a mode; a search result is about the brand, and a client
+    /// reading its nil as "everything" would reset a quiet brand by finding it.
+    @Test("Search hands over a brand without anybody's mode")
+    func searchCarriesNoMode() async throws {
+        try await withServer { app in
+            let brandID = try await brand(app)
+            let auth = try await deviceAuth(app)
+            try await follow(app, brandID, auth: auth)
+            _ = try await setMode(app, brandID, .quiet, auth: auth)
+
+            try await app.testing().test(.GET, "v1/brands?q=hm", headers: auth) { res async throws in
+                let found = try res.content.decode([BrandDTO].self)
+                #expect(found.count == 1)
+                #expect(found.first?.followMode == nil)
+            }
+        }
+    }
+
+    /// Two people follow the same brand. One asked for quiet; the other did not, and must
+    /// still hear about the drop — a mode is one person's, never the brand's.
+    @Test("A quiet follower hears nothing, and the brand's other followers still do")
+    func quietIsPerFollower() async throws {
+        try await withServer { app in
+            let brandID = try await brand(app)
+            var tokens: [String: UUID] = [:]
+            for (token, mode) in [("loud", FollowMode.everything), ("hush", .quiet)] {
+                let user = UserModel()
+                try await user.save(on: app.db)
+                let userID = try user.requireID()
+                try await DeviceModel(userID: userID, apnsToken: token, environment: "sandbox", locale: nil)
+                    .save(on: app.db)
+                try await FollowModel(userID: userID, brandID: brandID, mode: mode).save(on: app.db)
+                tokens[token] = userID
+            }
+            try await EventModel(brandID: brandID, productID: nil, kind: .product).save(on: app.db)
+
+            let sender = RecordingSender()
+            let result = await Notifier(app: app, sender: sender).dispatch()
+
+            #expect(result.sent == 1)
+            #expect(sender.sent.map(\.deviceToken) == ["loud"])
+        }
+    }
+
+    /// The mode only ever takes away. A markdown does not wake an *Everything* follower, so
+    /// it cannot wake a *Sales only* one either — what changes is that the drop no longer
+    /// does.
+    @Test("Sales only is not woken by a drop, a lock or a markdown")
+    func salesOnlyAdmitsNothingSuddenYet() throws {
+        let profile = SizeProfile()
+        let brandID = UUID()
+        for kind in UpdateKind.allCases {
+            let event = EventModel(brandID: brandID, productID: nil, kind: kind)
+            #expect(!Notifier.isRelevant(event, to: profile, mode: .salesOnly), "\(kind)")
+            #expect(!Notifier.isRelevant(event, to: profile, mode: .quiet), "\(kind)")
+            #expect(
+                Notifier.isRelevant(event, to: profile, mode: .everything) == kind.isSudden,
+                "Everything is exactly what it was before modes existed: \(kind)"
+            )
+        }
+    }
+
+    /// The exemption the whole design rests on. A watch is the one alert somebody asked for
+    /// by name; quieting the brand it belongs to must not swallow the restock it was set for.
+    @Test("A watch still fires for a brand followed quietly")
+    func watchIgnoresTheMode() async throws {
+        try await withServer { app in
+            let brandID = try await brand(app)
+            let product = ProductModel(
+                brandID: brandID, sourceID: nil,
+                item: FetchedItem(
+                    externalID: "shopify:1", title: "Nathan Cargo Pant",
+                    publishedAt: Date(), kind: .product
+                )
+            )
+            try await product.save(on: app.db)
+            let productID = try product.requireID()
+            try await VariantModel(
+                productID: productID,
+                info: VariantInfo(id: "m", title: "M", available: true, size: "M")
+            ).save(on: app.db)
+
+            let user = UserModel()
+            try await user.save(on: app.db)
+            let userID = try user.requireID()
+            try await DeviceModel(userID: userID, apnsToken: "token-a", environment: "sandbox", locale: nil)
+                .save(on: app.db)
+            try await FollowModel(userID: userID, brandID: brandID, mode: .quiet).save(on: app.db)
+            try await WatchModel(
+                userID: userID, brandID: brandID, productID: productID, size: "M", color: nil
+            ).save(on: app.db)
+            try await EventModel(brandID: brandID, productID: productID, kind: .restock, sizes: ["M"])
+                .save(on: app.db)
+            // And the same brand's ordinary noise, which the quiet follow must keep out.
+            try await EventModel(brandID: brandID, productID: nil, kind: .product).save(on: app.db)
+
+            let sender = RecordingSender()
+            let result = await Notifier(app: app, sender: sender).dispatch()
+
+            #expect(result.sent == 1)
+            #expect(sender.sent.first?.body == "Back in M — Nathan Cargo Pant")
+        }
+    }
+}
