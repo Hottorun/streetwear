@@ -31,6 +31,8 @@ extension PollHintSync: @retroactive Content {}
 extension PollHintsResponse: @retroactive Content {}
 extension DiscoverCard: @retroactive Content {}
 extension DiscoverResponse: @retroactive Content {}
+extension UsageReport: @retroactive Content {}
+extension UsageReceipt: @retroactive Content {}
 
 extension BrandSourceDTO {
     init(_ source: SourceModel) {

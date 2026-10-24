@@ -13,6 +13,11 @@
 //   window entirely.
 // - **The server is the archive, the phone is the window.** These bounds are deliberately
 //   generous; the client keeps far less (400 per brand) and pages the rest from here.
+//
+// `usage_counts` is deliberately not swept. It is a dozen rows a day of totals that describe
+// nobody, so a year of it is a few thousand rows, and the history is the only thing it is
+// for — "did anybody use the Style tab before the redesign" is a question about last year.
+// `devices.active_on` needs no sweep either: it is one day per device, overwritten.
 
 import Fluent
 import Foundation

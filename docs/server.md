@@ -138,6 +138,37 @@ Part of the streetw guidance set; see `CLAUDE.md` for the index and the build ru
   at every `await` and two settles could otherwise create the same brand twice. And **a refused
   check creates nothing**, the same rule the discover route holds. The two 1.0 routes stay, using
   the same `BrandCatalog` helpers, because the build in the App Store calls them and waits.
+- **Usage counts are totals, and the only per-device fact is one overwritten day**
+  (`POST /v1/usage`, `UsageLedger`, `UsagePolicy`). 1.0 promised no analytics; the roadmap
+  needs to know which features are used before paying for AI ones, so this is the smallest
+  step from that promise and nothing past it. No third-party SDK. The phone keeps a tally per
+  UTC day per whitelisted event (`UsageEvent` — app opened, each tab, brand search, add-brand
+  check, push tapped, save, fit, follow) and reports it every few minutes and on the way out.
+  The server adds each tally to `usage_counts`, **one row per (day, event) shared by everybody,
+  with no `user_id` or `device_id` and never one** — so there is nothing to join a person back
+  onto. Five things are load-bearing:
+  - **Weekly actives come from `devices.active_on`**, the UTC day the device last reported,
+    overwritten. One person on five days is five daily actives and one weekly one, so a week
+    cannot be summed from days; it needs *some* per-device memory, and one date is the least
+    there can be. The first report of a day adds `active.day`, and the first of an ISO week adds
+    `active.week` on that week's Monday. A client cannot report itself active —
+    `UsagePolicy.accepted` refuses both names — so a reinstall or a buggy tally can inflate a
+    tab count but not the number of people.
+  - **Only the usage report stamps it.** Not the feed, not `PATCH /v1/devices/me`: a background
+    refresh and a push wake both make those, and a phone in a drawer is not somebody using the
+    app. The cost is that 1.0, which never reports, is invisible to it.
+  - **It must not be a write amplifier.** Its own budget (`RateLimits.usage`, 10 burst / 30 an
+    hour, against the app's one per five minutes), a 32KB body limit at the route, at most
+    `maxEntries` rows per report (longer is refused whole), counts up to `maxCount`, days no older
+    than a week. The table can only grow by about a dozen rows a day however many reports arrive.
+  - **An upsert, in raw SQL, one statement per row, in one transaction.** `ON CONFLICT (day,
+    event) DO UPDATE` is the same on Postgres and SQLite and is what lets two phones add to one
+    row at once; Postgres refuses a multi-row upsert that touches a row twice; and the phone
+    keeps what it sent until a reply, so half a report followed by a retry would double count.
+  - **Never pruned.** A year is a few thousand rows of totals describing nobody, and the history
+    is what they are for. `active_on` is overwritten and needs no sweep.
+  `GET /admin/usage?days=` reads it back: per-day totals and daily actives, calendar-week
+  actives, and devices active in the last seven days. The privacy policy names every event.
 - **`HTTPFetching`, not `HTTPClient`** — Vapor re-exports `AsyncHTTPClient.HTTPClient` and
   an unqualified collision in the server target is nastier than the wordier name.
 - **Don't name a test helper `withApp`.** VaporTesting exports a generic `withApp<T>` that
