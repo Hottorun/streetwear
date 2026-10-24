@@ -232,19 +232,28 @@ public enum BrandVectorBuilder {
     ///
     /// This is what lets the phone build a taste profile from things it has never sent
     /// anywhere: the saves stay local, and only the comparison crosses the boundary.
+    ///
+    /// - Parameter weights: how much each product counts, parallel to `products`. Nil is one
+    ///   each. This is how a board somebody is *in the mood for* leans the vector without
+    ///   being the only thing in it — see `TasteRule.weights` — and a weight of zero is a
+    ///   product that contributes nothing at all, to the vocabulary or to either
+    ///   distribution.
     public static func taste(
         from products: [ProductSummary],
+        weights: [Double]? = nil,
         comparedWith reference: [BrandVector]
     ) -> BrandVector {
-        guard !products.isEmpty else { return BrandVector() }
+        let weighed = zip(products, weights ?? Array(repeating: 1, count: products.count))
+            .filter { $0.1 > 0 }
+        guard !weighed.isEmpty else { return BrandVector() }
 
         // The reference vectors are already IDF-weighted, so rather than recompute
         // document frequencies the local side simply scores terms by raw frequency and
         // lets the cosine do the rest. Over-weighting a common term costs a little
         // precision; inventing a different weighting scheme would cost correctness.
         var counts: [String: Double] = [:]
-        for product in products {
-            for term in terms(in: product) { counts[term, default: 0] += 1 }
+        for (product, weight) in weighed {
+            for term in terms(in: product) { counts[term, default: 0] += weight }
         }
 
         // Keep only terms the reference set actually uses — anything else can never
@@ -253,15 +262,15 @@ public enum BrandVectorBuilder {
         if !known.isEmpty { counts = counts.filter { known.contains($0.key) } }
 
         return BrandVector(
-            categories: distribution(products.map {
-                GarmentClassifier.classify(
-                    title: $0.title, productType: $0.productType, tags: $0.tags
-                ).rawValue
+            categories: distribution(weighed.map { product, weight in
+                (GarmentClassifier.classify(
+                    title: product.title, productType: product.productType, tags: product.tags
+                ).rawValue, weight)
             }),
-            genders: distribution(products.map {
-                GenderClassifier.classify(
-                    title: $0.title, productType: $0.productType, tags: $0.tags
-                ).rawValue
+            genders: distribution(weighed.map { product, weight in
+                (GenderClassifier.classify(
+                    title: product.title, productType: product.productType, tags: product.tags
+                ).rawValue, weight)
             }),
             vocabulary: normalise(Array(counts.sorted { $0.value > $1.value }.prefix(vocabularyLimit))),
             pricePercentile: nil,
@@ -292,10 +301,14 @@ public enum BrandVectorBuilder {
     }
 
     private static func distribution(_ values: [String]) -> [String: Double] {
-        guard !values.isEmpty else { return [:] }
+        distribution(values.map { ($0, 1) })
+    }
+
+    private static func distribution(_ values: [(String, Double)]) -> [String: Double] {
         var counts: [String: Double] = [:]
-        for value in values { counts[value, default: 0] += 1 }
-        let total = Double(values.count)
+        for (value, weight) in values { counts[value, default: 0] += weight }
+        let total = counts.values.reduce(0, +)
+        guard total > 0 else { return [:] }
         return counts.mapValues { $0 / total }
     }
 
