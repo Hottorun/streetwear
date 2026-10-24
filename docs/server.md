@@ -123,6 +123,21 @@ Part of the streetw guidance set; see `CLAUDE.md` for the index and the build ru
   pushing `next_check_at` forward in the same statement, before any network call — so a
   second instance can't double-fetch a storefront and a crash mid-poll costs one lease.
   Postgres only; SQLite keeps the plain query.
+- **Discovery runs as a check, in a row, off the request** (`BrandChecks`, `brand_checks`). The
+  discover route said nothing until `BrandDiscovery.discover` had finished — thirteen requests at
+  the politeness interval for a site that is not on Shopify, 26.8s measured on subdued.com — and
+  the app gives up after thirty seconds of silence, so "can't be added" was often the app timing
+  out on a readable site. Four details are load-bearing. **A check is shared by domain** for
+  `reuseFor`, which is what lets the add reuse the preview instead of fetching the storefront a
+  second time. **It is a row, not memory**, because a deploy restarts the process: a row left
+  `checking` that nothing in this process is running reads as interrupted after `orphanAfter`, and
+  `resumeOrphans` re-runs it on boot when somebody is still waiting. **Slow is not interrupted**:
+  the first version timed checks out at five minutes, and a storefront tarpitting the caller made
+  one take twenty-four, so `running` — in memory, because it is a fact about this process — is
+  what says a check is alive. **Settles of one check are chained**, because the actor is re-entrant
+  at every `await` and two settles could otherwise create the same brand twice. And **a refused
+  check creates nothing**, the same rule the discover route holds. The two 1.0 routes stay, using
+  the same `BrandCatalog` helpers, because the build in the App Store calls them and waits.
 - **`HTTPFetching`, not `HTTPClient`** — Vapor re-exports `AsyncHTTPClient.HTTPClient` and
   an unqualified collision in the server target is nastier than the wordier name.
 - **Don't name a test helper `withApp`.** VaporTesting exports a generic `withApp<T>` that

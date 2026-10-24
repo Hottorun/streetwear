@@ -766,8 +766,8 @@ the local path in the `else`. Adding a new one means adding both halves:
 | launch/refresh sync | `GET /v1/follows` + `GET /v1/feed` |
 | catch up on a brand just followed | `GET /v1/brands/:id/feed` (merged as a baseline) |
 | find a brand | `GET /v1/brands?q=` (name **or** pasted URL) |
-| add a brand nobody has | `POST /v1/brands/discover` then `POST /v1/follows` |
-| "check site" preview | `GET /v1/brands/probe` (dry run — creates nothing) |
+| "check site" preview | `POST /v1/brands/checks`, then `GET /v1/brands/checks/:id` until it settles (creates nothing) |
+| add a brand nobody has | `POST /v1/brands/checks/:id/watch` — the server follows it, now or when the check finishes |
 | delete / unfollow | `DELETE /v1/follows/:id` |
 | size and gender profile | `PATCH /v1/devices/me` |
 | APNs token / environment | `PATCH /v1/devices/me` |
@@ -775,6 +775,12 @@ the local path in the `else`. Adding a new one means adding both halves:
 | poll hints from the drop calendar | `PUT /v1/poll-hints` (whole set; no-op standalone) |
 | recommendations | `GET /v1/brands/popular` |
 | the Discover feed | `GET /v1/discover` (no standalone equivalent — the phone only holds brands somebody already followed, which is the opposite of the question) |
+
+**Discovery is a check, not a request.** A site that is not on Shopify takes longer to read than
+the app's thirty-second timeout, so the screen starts a check, asks after it, and can say *watch
+it when ready* — which the server keeps with the app closed, and answers with a push. 1.0 still
+calls `GET /v1/brands/probe` and `POST /v1/brands/discover` and waits, so both stay. See
+`docs/server.md`.
 
 Two operations deliberately **do not** have a server half, and both fetch from the phone in
 either mode. `StockRefresh` re-reads one product's stock on the page where somebody is

@@ -343,4 +343,21 @@ struct WatchabilityTests {
             #expect(sources([kind]).canMonitor, "\(kind.rawValue) should count")
         }
     }
+
+    /// The add screen reads the server's answer through `BrandProbe`, and its copy of the
+    /// rule kept refusing a page watch after this one stopped — so a page-only shop was
+    /// accepted by the server and refused on the phone.
+    @Test("The wire's answer agrees with discovery's")
+    func probeAgreesWithDiscovery() {
+        for kinds in [[BrandSource.Kind.page], [.shopify, .page], [], [.instagram], [.sitemap]] {
+            let found = sources(kinds)
+            let probe = BrandProbe(
+                suggestedName: nil,
+                sources: found.sources.map {
+                    BrandProbe.Source(kind: $0.kind.rawValue, url: $0.url.absoluteString, isAutomatic: $0.kind.isAutomatic)
+                }
+            )
+            #expect(probe.canMonitor == found.canMonitor, "\(kinds.map(\.rawValue))")
+        }
+    }
 }

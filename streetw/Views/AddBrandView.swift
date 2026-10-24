@@ -343,7 +343,10 @@ struct NewBrandView: View {
     let onDone: () -> Void
 
     @State private var instagram = ""
-    @State private var probed: BrandProbe?
+    /// The server's look at this site — see `BrandCheck`. Started on appearance and asked
+    /// again until it settles, because a site that is not on Shopify can take longer to read
+    /// than one request is allowed to wait.
+    @State private var check: BrandCheck?
     @State private var discovered: DiscoveredSources?
     @State private var isProbing = true
     @State private var isSaving = false
@@ -358,6 +361,14 @@ struct NewBrandView: View {
     /// disabled. Three sentences about a shop, none of them about the shop. `search()` two
     /// screens back already gets this right, which is where the shape came from.
     @State private var probeError: String?
+
+    private var probed: BrandProbe? { check?.probe }
+
+    private var isChecking: Bool { isProbing || check?.status == .checking }
+
+    /// START WATCHING was pressed while the server was still looking. The server keeps the
+    /// request with this screen closed, so all that is left here is to say so.
+    private var isQueued: Bool { check?.status == .checking && check?.isWatching == true }
 
     private var watchable: [(label: String, url: String, isAutomatic: Bool)] {
         if let probed {
@@ -380,7 +391,12 @@ struct NewBrandView: View {
         return false
     }
 
-    private var canSave: Bool { !isProbing && canMonitor }
+    /// Pressable while the server is still looking: it then means "watch it as soon as you
+    /// know you can", which is the one thing worth doing with a minute to wait.
+    private var canSave: Bool {
+        if let check, check.status == .checking { return true }
+        return !isChecking && canMonitor
+    }
 
     /// What this brand will be called, read off its own site.
     ///
@@ -410,10 +426,18 @@ struct NewBrandView: View {
                         .truncationMode(.middle)
                 }
 
-                if isProbing {
-                    HStack(spacing: 10) {
-                        ProgressView()
-                        DataLabel(text: "CHECKING WHAT THIS SITE PUBLISHES")
+                if isChecking {
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack(spacing: 10) {
+                            ProgressView()
+                            DataLabel(text: "CHECKING WHAT THIS SITE PUBLISHES")
+                        }
+                        Text(isQueued
+                             ? "Dropwall will start watching as soon as the check finishes, and let you know."
+                             : "Shops that aren't on Shopify can take a few minutes. You don't have to wait — tap below and Dropwall will tell you.")
+                            .font(.editorial(14))
+                            .foregroundStyle(Color.muted)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                 } else if let probeError {
                     couldNotCheck(probeError)
@@ -425,7 +449,7 @@ struct NewBrandView: View {
 
                 VStack(alignment: .leading, spacing: 8) {
                     DataLabel(text: "NAME")
-                    Text(isProbing ? "…" : declaredName)
+                    Text(isChecking ? "…" : declaredName)
                         .font(.editorial(17))
                         .foregroundStyle(Color.ink)
                     Rule()
@@ -459,12 +483,14 @@ struct NewBrandView: View {
         }
         .scrollIndicators(.hidden)
         .safeAreaInset(edge: .bottom) {
-            Button { Task { await save() } } label: {
+            Button {
+                if isQueued { onDone() } else { Task { await save() } }
+            } label: {
                 Group {
                     if isSaving {
                         ProgressView().tint(.paper)
                     } else {
-                        Text("START WATCHING")
+                        Text(isQueued ? "DONE" : check?.status == .checking ? "WATCH WHEN READY" : "START WATCHING")
                             .font(.data(12, .semibold))
                             .tracking(1.1)
                     }
@@ -556,21 +582,54 @@ struct NewBrandView: View {
         }
     }
 
+    private var handle: String? {
+        let trimmed = instagram.trimmingCharacters(in: .whitespaces)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
     private func probe() async {
         isProbing = true
         probeError = nil
+        check = nil
         defer { isProbing = false }
 
-        if settings.isConfigured {
-            // The server does the fetching, so the phone never sidesteps the shared
-            // politeness budget.
-            do {
-                probed = try await remote.probe(url: draft.url)
-            } catch {
-                probeError = error.localizedDescription
-            }
-        } else {
+        guard settings.isConfigured else {
             discovered = await BrandDiscovery.discover(website: draft.url, instagramHandle: nil)
+            return
+        }
+
+        // The server does the fetching, so the phone never sidesteps the shared politeness
+        // budget.
+        do {
+            var current = try await remote.startCheck(url: draft.url)
+            check = current
+            isProbing = false
+            // Ends with the screen: `.task` cancels, and the sleep throws. Eased off the longer
+            // it runs — a storefront that tarpits can make a check take many minutes, and
+            // asking every two seconds for all of them buys nothing.
+            var interval: Double = 2
+            while current.status == .checking {
+                try await Task.sleep(for: .seconds(interval))
+                current = try await remote.check(id: current.id)
+                check = current
+                interval = min(interval * 1.5, 15)
+            }
+            switch current.status {
+            case .interrupted:
+                probeError = "The check stopped before it finished — most likely the server restarted."
+            case .ready where current.isWatching:
+                // Watched while it ran. Asking again is idempotent and waits for the server's
+                // own settle, so the brand arrives now rather than on the next foreground.
+                check = try await remote.watch(check: current.id, instagram: handle, sizes: sizes.profile)
+                await remote.sync(sizes: sizes.profile)
+                onDone()
+            default:
+                break
+            }
+        } catch is CancellationError {
+            return
+        } catch {
+            probeError = error.localizedDescription
         }
     }
 
@@ -578,17 +637,17 @@ struct NewBrandView: View {
         isSaving = true
         defer { isSaving = false }
 
-        let handle = instagram.trimmingCharacters(in: .whitespaces)
-
         if settings.isConfigured {
+            guard let check else { return }
             do {
-                _ = try await remote.addBrand(
-                    url: draft.url,
-                    instagram: handle.isEmpty ? nil : handle,
-                    sizes: sizes.profile
-                )
-                await remote.sync(sizes: sizes.profile)
-                onDone()
+                let watched = try await remote.watch(check: check.id, instagram: handle, sizes: sizes.profile)
+                self.check = watched
+                // While the check is still running the server holds the request and the
+                // screen says so (`isQueued`); with a brand, this is the add it always was.
+                if watched.brand != nil {
+                    await remote.sync(sizes: sizes.profile)
+                    onDone()
+                }
             } catch {
                 failure = error.localizedDescription
             }

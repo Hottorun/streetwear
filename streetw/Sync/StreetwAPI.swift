@@ -143,12 +143,19 @@ struct StreetwAPI: Sendable {
         try await send(path: "v1/brands/discover", method: "POST", body: body)
     }
 
-    func probe(url: String) async throws -> BrandProbe {
+    func startCheck(url: String) async throws -> BrandCheck {
+        try await send(path: "v1/brands/checks", method: "POST", body: StartBrandCheck(url: url))
+    }
+
+    func check(id: UUID) async throws -> BrandCheck {
+        try await send(path: "v1/brands/checks/\(id.uuidString)", method: "GET", body: Optional<Never>.none)
+    }
+
+    func watchCheck(id: UUID, instagram: String?) async throws -> BrandCheck {
         try await send(
-            path: "v1/brands/probe",
-            method: "GET",
-            body: Optional<Never>.none,
-            query: [URLQueryItem(name: "url", value: url)]
+            path: "v1/brands/checks/\(id.uuidString)/watch",
+            method: "POST",
+            body: WatchBrandCheck(instagram: instagram)
         )
     }
 

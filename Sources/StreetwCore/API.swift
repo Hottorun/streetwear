@@ -410,13 +410,93 @@ public struct BrandProbe: Codable, Sendable, Hashable {
     ///
     /// Derived rather than sent, so a server too old to know about it still gives an honest
     /// answer from the sources it did send, and the screen never has to guess.
+    ///
+    /// **The same rule as `DiscoveredSources.canMonitor`, page watch included.** This copy
+    /// still excluded a page watch after the server had stopped refusing one, so in the mode
+    /// the app ships in, a shop whose only source was its page — Hollister, Subdued — read
+    /// "Nothing to watch here" with START WATCHING disabled, for a site the server would
+    /// have accepted.
     public var canMonitor: Bool {
-        sources.contains { $0.isAutomatic && $0.kind != BrandSource.Kind.page.rawValue }
+        sources.contains(where: \.isAutomatic)
     }
 
     public init(suggestedName: String?, sources: [Source]) {
         self.suggestedName = suggestedName
         self.sources = sources
+    }
+}
+
+/// Ask the server to look at a site, without waiting for the answer.
+public struct StartBrandCheck: Codable, Sendable {
+    public var url: String
+
+    public init(url: String) {
+        self.url = url
+    }
+}
+
+/// "Watch this as soon as you know you can" — sent while the check is still running, or
+/// after it has finished.
+public struct WatchBrandCheck: Codable, Sendable {
+    public var instagram: String?
+
+    public init(instagram: String? = nil) {
+        self.instagram = instagram
+    }
+}
+
+/// Discovery, run off the request.
+///
+/// **Why the add-brand screen no longer waits on one response.** A site that is not on
+/// Shopify costs about thirteen requests at the politeness interval, and the server used to
+/// say nothing until all of them had finished — while the app gives up after thirty seconds
+/// of silence. subdued.com measured 26.8s from a fast connection, and the screen asked
+/// twice (the preview, then the add). So a check is started, answers at once, and is asked
+/// again until it settles; the add reuses the preview's result instead of repeating it.
+public struct BrandCheck: Codable, Sendable, Hashable, Identifiable {
+    public enum Status: String, Codable, Sendable {
+        case checking
+        /// Something on the site can be watched; `probe` says what.
+        case ready
+        /// Nothing answered — no catalogue, feed, sitemap or readable page.
+        case refused
+        /// The server stopped before the check finished, most likely a deploy. Says nothing
+        /// about the site, and is worth starting again.
+        case interrupted
+
+        /// Lenient on purpose, for the reason `BrandSourceDTO.kind` is a string: a status a
+        /// newer server learns must not fail to decode on an older client. Reading it as
+        /// interrupted offers a retry, which is the one honest thing to do with an answer
+        /// you cannot interpret.
+        public init(from decoder: any Decoder) throws {
+            let raw = try decoder.singleValueContainer().decode(String.self)
+            self = Status(rawValue: raw) ?? .interrupted
+        }
+    }
+
+    public var id: UUID
+    public var status: Status
+    /// What was found. Nil while checking, and when the check was interrupted.
+    public var probe: BrandProbe?
+    /// The catalogue's brand for this site, once there is one — because somebody already
+    /// added it, or because watching this check created it.
+    public var brand: BrandDTO?
+    /// Whether the caller has asked to watch it. A check is shared by everybody who asks
+    /// about the same shop, so this is the one field that is about *you*.
+    public var isWatching: Bool
+
+    public init(
+        id: UUID,
+        status: Status,
+        probe: BrandProbe? = nil,
+        brand: BrandDTO? = nil,
+        isWatching: Bool = false
+    ) {
+        self.id = id
+        self.status = status
+        self.probe = probe
+        self.brand = brand
+        self.isWatching = isWatching
     }
 }
 

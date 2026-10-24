@@ -76,6 +76,7 @@ func configure(_ app: Application) async throws {
     app.migrations.add(AddBrandNotifyLedger())
     app.migrations.add(CreatePollHints())
     app.migrations.add(AddProductMembers())
+    app.migrations.add(CreateBrandChecks())
     if Environment.get("AUTO_MIGRATE") != "false" {
         try await app.autoMigrate()
     }
@@ -144,6 +145,9 @@ func configure(_ app: Application) async throws {
     let reaper = Reaper(app: app)
     app.storage[ReaperKey.self] = reaper
 
+    let checks = BrandChecks(app: app)
+    app.storage[BrandChecksKey.self] = checks
+
     // Built lazily on first use and cached — nothing here needs it at boot, and doing the
     // pass during startup would delay the health check for a value no request has asked
     // for yet.
@@ -153,6 +157,8 @@ func configure(_ app: Application) async throws {
         let loop = PollLoop(poller: poller, notifier: notifier, reaper: reaper)
         app.storage[PollLoopKey.self] = loop
         await loop.start(logger: app.logger)
+        // Background work, so it runs where the poller does — never in a test app.
+        Task { await checks.resumeOrphans() }
     }
 
     try routes(app)

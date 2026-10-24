@@ -24,6 +24,7 @@ struct ReapResult: Sendable, Equatable {
     var events = 0
     var products = 0
     var pollHints = 0
+    var checks = 0
 }
 
 actor Reaper {
@@ -113,9 +114,25 @@ actor Reaper {
                     .delete()
             }
 
-            if result.events > 0 || result.products > 0 || result.pollHints > 0 {
+            // A brand check answers for its shop for minutes (`BrandChecks.reuseFor`), and a
+            // day is far past anything still waiting on one. Its watchers cascade with it.
+            let checkCutoff = Date().addingTimeInterval(-86_400)
+            result.checks = try await BrandCheckModel.query(on: app.db)
+                .filter(\.$createdAt < checkCutoff)
+                .count()
+            if result.checks > 0 {
+                try await BrandCheckModel.query(on: app.db)
+                    .filter(\.$createdAt < checkCutoff)
+                    .delete()
+                // Belt and braces, for the reason given for variants above.
+                try await sql.raw(
+                    "DELETE FROM brand_check_watchers WHERE check_id NOT IN (SELECT id FROM brand_checks)"
+                ).run()
+            }
+
+            if result.events > 0 || result.products > 0 || result.pollHints > 0 || result.checks > 0 {
                 app.logger.info(
-                    "retention: pruned \(result.events) events, \(result.products) products, \(result.pollHints) poll hints"
+                    "retention: pruned \(result.events) events, \(result.products) products, \(result.pollHints) poll hints, \(result.checks) brand checks"
                 )
             }
         } catch {

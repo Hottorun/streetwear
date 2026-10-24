@@ -368,6 +368,8 @@ func routes(_ app: Application) throws {
     /// Dry run: what would we watch here? Creates nothing. Exists so the client's
     /// "check site" preview doesn't have to fetch storefronts from the phone, which
     /// would sidestep the server's politeness budget entirely.
+    ///
+    /// Kept for 1.0, like `POST /v1/brands/discover` below; newer clients start a check.
     outbound.get("brands", "probe") { req async throws -> BrandProbe in
         guard let raw = try? req.query.get(String.self, at: "url"),
               BrandDiscovery.normalizedURL(raw) != nil else {
@@ -393,35 +395,17 @@ func routes(_ app: Application) throws {
 
     /// Probe a URL and, if it is watchable, create the shared brand. Runs outside the
     /// poll loop so a slow discovery can't stall routine checks.
+    ///
+    /// **Kept for 1.0, which calls it and waits.** Newer clients start a check instead
+    /// (`POST /v1/brands/checks`), because this says nothing until discovery has finished and
+    /// a site that is not on Shopify can take longer than the app's thirty-second timeout.
     outbound.post("brands", "discover") { req async throws -> BrandDTO in
         let body = try req.content.decode(DiscoverBrand.self)
         guard let base = BrandDiscovery.normalizedURL(body.url) else {
             throw Abort(.badRequest, reason: "Not a usable URL")
         }
-        let slug = base.host() ?? body.url
-
-        // **Matched on the registrable domain, not the exact host.**
-        //
-        // The slug is the hostname, and a brand is not one hostname — the rule the client
-        // already learned when saves from `usa.palaceskateboards.com` were attributed to
-        // nobody. Here the same fact makes *duplicate brands*: `stussy.com` and
-        // `www.stussy.com` are two slugs, so the catalogue ended up holding Stüssy twice,
-        // Palace twice (once as a sitemap and once as a Shopify catalog), Corteiz twice and
-        // Supreme twice. Both rows poll, both fill with products, and the person adding one
-        // has no way to tell which is the real one — they follow a brand and get half its
-        // drops.
-        //
-        // The catalogue is global, so this is the one place that can prevent it. Checked
-        // over loaded rows rather than in SQL because the comparison is
-        // `BrandDiscovery.registrableDomain`, which is Swift and shared with the client so
-        // the two cannot disagree about what counts as the same brand.
-        let domain = BrandDiscovery.registrableDomain(of: base.host() ?? slug)
-        let candidates = try await BrandModel.query(on: req.db).with(\.$sources).all()
-        if let existing = candidates.first(where: { brand in
-            guard let host = brand.website.flatMap({ URL(string: $0)?.host() }) ?? Optional(brand.slug)
-            else { return false }
-            return BrandDiscovery.registrableDomain(of: host) == domain
-        }) {
+        let domain = BrandDiscovery.registrableDomain(of: base.host() ?? body.url)
+        if let existing = try await BrandCatalog.existing(domain: domain, on: req.db) {
             return BrandDTO(existing, sources: existing.sources)
         }
 
@@ -449,39 +433,50 @@ func routes(_ app: Application) throws {
             )
         }
 
-        // **The caller does not get to name the brand.** `body.name` is ignored, and that is
-        // the point: the catalogue is *global*, so whatever the first person to add a shop
-        // typed becomes its name for everybody who ever follows it. A typo is permanent, and
-        // anything worse is a vandalism vector that costs one HTTP request — there is no
-        // second person to correct it and no review step between.
-        //
-        // The site's own account of itself is both more trustworthy and freely available:
-        // `/meta.json` is the merchant's own setting, `og:site_name` is what they publish to
-        // link previews, and the `<title>` is the same claim with marketing attached. See
-        // `BrandNaming.pick`. Where all three are silent the host is used, which is ugly and
-        // honest — and `usesGeneratedName` stays true so the first poll can still improve it
-        // from the storefront. An operator can override a bad one through
-        // `POST /admin/brands/:id/name`, which is behind the admin key.
-        let brand = BrandModel(
-            name: found.suggestedName ?? slug,
-            slug: slug,
-            website: base.absoluteString,
-            instagramHandle: BrandDiscovery.normalizedHandle(body.instagram),
-            usesGeneratedName: true
+        // `body.name` is ignored — see `BrandCatalog.create`.
+        let created = try await BrandCatalog.create(
+            base: base,
+            suggestedName: found.suggestedName,
+            logoURL: found.logoURL?.absoluteString,
+            instagram: body.instagram,
+            sources: found.sources.map { ($0.kind, $0.url.absoluteString) },
+            on: req.db
         )
-        brand.logoURL = found.logoURL?.absoluteString
-        try await brand.save(on: req.db)
+        return BrandDTO(created.brand, sources: created.sources)
+    }
 
-        let brandID = try brand.requireID()
-        // Collected as they are written rather than re-queried: these are the rows this
-        // request just created, and the response is about to name them.
-        var created: [SourceModel] = []
-        for source in found.sources where source.kind.isAutomatic {
-            let model = SourceModel(brandID: brandID, kind: source.kind, url: source.url.absoluteString)
-            try await model.save(on: req.db)
-            created.append(model)
+    /// Starts looking at a site and answers at once — or joins the look somebody already
+    /// started at the same shop. See `BrandChecks`.
+    outbound.post("brands", "checks") { req async throws -> BrandCheck in
+        let device = try await req.authenticatedDevice()
+        let body = try req.content.decode(StartBrandCheck.self)
+        guard let checks = req.application.brandChecks else { throw Abort(.serviceUnavailable) }
+        let check = try await checks.start(url: body.url)
+        return try await checks.response(for: check, userID: device.$user.id)
+    }
+
+    /// Asked every couple of seconds while a check runs, so it is on the standard budget
+    /// rather than the outbound one: it fetches nothing.
+    authed.get("brands", "checks", ":checkID") { req async throws -> BrandCheck in
+        let device = try await req.authenticatedDevice()
+        guard let id = req.parameters.get("checkID", as: UUID.self) else { throw Abort(.badRequest) }
+        guard let checks = req.application.brandChecks else { throw Abort(.serviceUnavailable) }
+        guard let check = try await BrandCheckModel.find(id, on: req.db) else {
+            throw Abort(.notFound, reason: "No check with that id.")
         }
-        return BrandDTO(brand, sources: created)
+        return try await checks.response(for: check, userID: device.$user.id)
+    }
+
+    /// Follow this shop now if the check found something to watch, or as soon as it does.
+    /// Outbound, because it is the call that can create a brand the poller then visits
+    /// every twenty minutes.
+    outbound.post("brands", "checks", ":checkID", "watch") { req async throws -> BrandCheck in
+        let device = try await req.authenticatedDevice()
+        guard let id = req.parameters.get("checkID", as: UUID.self) else { throw Abort(.badRequest) }
+        guard let checks = req.application.brandChecks else { throw Abort(.serviceUnavailable) }
+        let body = try req.content.decode(WatchBrandCheck.self)
+        let check = try await checks.watch(checkID: id, userID: device.$user.id, instagram: body.instagram)
+        return try await checks.response(for: check, userID: device.$user.id)
     }
 
     // MARK: Follows

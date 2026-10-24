@@ -190,19 +190,43 @@ final class RemoteSync {
         return brand
     }
 
-    /// Dry run via the server, so the phone never fetches storefronts itself.
+    /// Asks the server to look at a site, so the phone never fetches storefronts itself.
+    /// Answers at once; `check(id:)` follows it until it settles — see `BrandCheck`.
     ///
-    /// Registers first, because probing and searching now require a device token. Both are
+    /// Registers first, because checking and searching require a device token. Both are
     /// reachable from the add-brand screen, which somebody can open before the launch sync
     /// has finished — and a 401 swallowed by `try?` there leaves the search silently empty
     /// for the rest of the session, which is the exact failure `BrandSuggestions` already
     /// had once.
-    func probe(url: String) async throws -> BrandProbe {
+    func startCheck(url: String) async throws -> BrandCheck {
         // No sizes: this call has none to offer, and an empty profile is a destructive
         // statement rather than a silent one. See `ensureRegistered`.
         try await ensureRegistered()
         guard let api else { throw APIError.notConfigured }
-        return try await api.probe(url: url)
+        return try await api.startCheck(url: url)
+    }
+
+    func check(id: UUID) async throws -> BrandCheck {
+        guard let api else { throw APIError.notConfigured }
+        return try await api.check(id: id)
+    }
+
+    /// Follows a checked shop — at once if the check found something to watch, or on the
+    /// server as soon as it does, which then says so with a push.
+    ///
+    /// The follow is made server-side rather than here because the second case has to work
+    /// with this screen, or the whole app, closed. When it lands now, the brand is pulled in
+    /// and caught up exactly as `addBrand` does.
+    func watch(check id: UUID, instagram: String?, sizes: SizeProfile) async throws -> BrandCheck {
+        try await ensureRegistered(sizes: sizes)
+        guard let api else { throw APIError.notConfigured }
+        let check = try await api.watchCheck(id: id, instagram: instagram)
+        if let brand = check.brand, let brandID = brand.id {
+            mergeBrands([brand], isCompleteList: false)
+            try? context.save()
+            await catchUp(brandID: brandID)
+        }
+        return check
     }
 
     func searchBrands(_ query: String) async throws -> [BrandDTO] {

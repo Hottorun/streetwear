@@ -3422,3 +3422,330 @@ struct RateLimitTests {
         #expect(RateLimit.redact("abc123def456") == "abc123…")
     }
 }
+
+/// Holds every request until the test opens it, so a check is reliably still running at the
+/// moment somebody asks to watch it.
+final class GatedHTTP: HTTPFetching, @unchecked Sendable {
+    private let inner: any HTTPFetching
+    private let lock = NSLock()
+    private var isOpen = false
+    private var waiting: [CheckedContinuation<Void, Never>] = []
+
+    init(_ inner: any HTTPFetching) {
+        self.inner = inner
+    }
+
+    func open() {
+        let released = lock.withLock { () -> [CheckedContinuation<Void, Never>] in
+            isOpen = true
+            defer { waiting = [] }
+            return waiting
+        }
+        released.forEach { $0.resume() }
+    }
+
+    private func pass() async {
+        await withCheckedContinuation { continuation in
+            let go = lock.withLock { () -> Bool in
+                if isOpen { return true }
+                waiting.append(continuation)
+                return false
+            }
+            if go { continuation.resume() }
+        }
+    }
+
+    func get(_ url: URL, etag: String?) async throws -> HTTPResponse {
+        await pass()
+        return try await inner.get(url, etag: etag)
+    }
+
+    func post(_ url: URL, json body: Data, accept: String) async throws -> HTTPResponse {
+        await pass()
+        return try await inner.post(url, json: body, accept: accept)
+    }
+}
+
+@Suite("Brand checks")
+struct BrandCheckTests {
+    /// A Shopify storefront the stub answers for, whatever host is asked.
+    private func shopify() -> StubHTTP {
+        let http = StubHTTP()
+        http.stub("/products.json?limit=250&page=1", body: """
+        {"products":[{"id":1,"title":"Chore Coat","handle":"chore-coat","published_at":"2026-08-01T10:00:00Z",
+          "variants":[{"id":11,"title":"M","available":true,"price":"180.00"}]}]}
+        """)
+        http.stub("/meta.json", body: #"{"name":"Subdued","currency":"EUR"}"#)
+        return http
+    }
+
+    private func register(_ app: Application, token: String? = nil) async throws -> HTTPHeaders {
+        var bearer = ""
+        try await app.testing().test(.POST, "v1/devices", beforeRequest: { req in
+            try req.content.encode(RegisterDevice(apnsToken: token, environment: "sandbox"))
+        }, afterResponse: { res async throws in
+            bearer = try res.content.decode(DeviceResponse.self).token
+        })
+        return HTTPHeaders([("Authorization", "Bearer \(bearer)")])
+    }
+
+    private func start(_ app: Application, _ url: String, _ auth: HTTPHeaders) async throws -> BrandCheck {
+        var check: BrandCheck?
+        try await app.testing().test(.POST, "v1/brands/checks", headers: auth, beforeRequest: { req in
+            try req.content.encode(StartBrandCheck(url: url))
+        }, afterResponse: { res async throws in
+            #expect(res.status == .ok)
+            check = try res.content.decode(BrandCheck.self)
+        })
+        return try #require(check)
+    }
+
+    private func get(_ app: Application, _ id: UUID, _ auth: HTTPHeaders) async throws -> BrandCheck {
+        var check: BrandCheck?
+        try await app.testing().test(.GET, "v1/brands/checks/\(id)", headers: auth) { res async throws in
+            #expect(res.status == .ok)
+            check = try res.content.decode(BrandCheck.self)
+        }
+        return try #require(check)
+    }
+
+    private func watch(_ app: Application, _ id: UUID, _ auth: HTTPHeaders) async throws -> BrandCheck {
+        var check: BrandCheck?
+        try await app.testing().test(.POST, "v1/brands/checks/\(id)/watch", headers: auth, beforeRequest: { req in
+            try req.content.encode(WatchBrandCheck())
+        }, afterResponse: { res async throws in
+            #expect(res.status == .ok)
+            check = try res.content.decode(BrandCheck.self)
+        })
+        return try #require(check)
+    }
+
+    /// Asks until the check has finished — slowly, because this is on the standard budget.
+    private func settled(_ app: Application, _ id: UUID, _ auth: HTTPHeaders) async throws -> BrandCheck {
+        for _ in 0..<50 {
+            let check = try await get(app, id, auth)
+            if check.status != .checking { return check }
+            try await Task.sleep(for: .milliseconds(100))
+        }
+        Issue.record("the check never finished")
+        return try await get(app, id, auth)
+    }
+
+    /// Waits for something the check does after it has reported its status.
+    private func eventually(_ condition: () async throws -> Bool) async throws {
+        for _ in 0..<50 {
+            if try await condition() { return }
+            try await Task.sleep(for: .milliseconds(100))
+        }
+        Issue.record("the condition never became true")
+    }
+
+    /// The whole point: the response comes back before the storefront has been read, so
+    /// the app's thirty-second timeout can no longer be what decides whether a site works.
+    @Test("A check answers at once, and finishes on its own")
+    func answersAtOnce() async throws {
+        try await withServer { app in
+            let gate = GatedHTTP(shopify())
+            app.storage[FetcherKey.self] = gate
+            let auth = try await register(app)
+
+            let started = try await start(app, "https://subdued.com", auth)
+            #expect(started.status == .checking)
+            #expect(started.probe == nil)
+            // Nothing is created by looking.
+            #expect(try await BrandModel.query(on: app.db).count() == 0)
+
+            gate.open()
+            let done = try await settled(app, started.id, auth)
+            #expect(done.status == .ready)
+            #expect(done.probe?.canMonitor == true)
+            #expect(done.probe?.suggestedName == "Subdued")
+            #expect(done.brand == nil)
+            #expect(!done.isWatching)
+            #expect(try await BrandModel.query(on: app.db).count() == 0)
+        }
+    }
+
+    /// The add used to repeat the preview's whole discovery. The second ask — including
+    /// under the other hostname — is the same check.
+    @Test("Asking about the same shop again joins the check")
+    func sameShopSharesOneCheck() async throws {
+        try await withServer { app in
+            let gate = GatedHTTP(shopify())
+            app.storage[FetcherKey.self] = gate
+            let auth = try await register(app)
+
+            let first = try await start(app, "https://subdued.com", auth)
+            let second = try await start(app, "https://www.subdued.com/eu_en", auth)
+            #expect(first.id == second.id)
+
+            gate.open()
+            _ = try await settled(app, first.id, auth)
+            let third = try await start(app, "subdued.com", auth)
+            #expect(third.id == first.id, "a just-finished check answers for its shop")
+            #expect(try await BrandCheckModel.query(on: app.db).count() == 1)
+        }
+    }
+
+    @Test("Watching a finished check follows the shop at once")
+    func watchingAFinishedCheck() async throws {
+        try await withServer { app in
+            app.storage[FetcherKey.self] = shopify()
+            let auth = try await register(app)
+
+            let started = try await start(app, "https://subdued.com", auth)
+            _ = try await settled(app, started.id, auth)
+            let watched = try await watch(app, started.id, auth)
+
+            #expect(watched.isWatching)
+            let brand = try #require(watched.brand)
+            #expect(brand.name == "Subdued")
+            #expect(!brand.sources.isEmpty)
+            #expect(try await FollowModel.query(on: app.db).count() == 1)
+
+            // A second tap neither adds a brand nor follows twice.
+            _ = try await watch(app, started.id, auth)
+            #expect(try await BrandModel.query(on: app.db).count() == 1)
+            #expect(try await FollowModel.query(on: app.db).count() == 1)
+        }
+    }
+
+    /// Somebody who taps START WATCHING and walks away must still end up following the
+    /// shop, and be told — the screen that would have said so is gone.
+    @Test("Watching a running check follows the shop when it finishes, and says so")
+    func watchingARunningCheck() async throws {
+        try await withServer { app in
+            let gate = GatedHTTP(shopify())
+            app.storage[FetcherKey.self] = gate
+            let sender = RecordingSender()
+            app.storage[NotifierKey.self] = Notifier(app: app, sender: sender)
+            let auth = try await register(app, token: "token-a")
+
+            let started = try await start(app, "https://subdued.com", auth)
+            let queued = try await watch(app, started.id, auth)
+            #expect(queued.status == .checking)
+            #expect(queued.isWatching)
+            #expect(queued.brand == nil)
+
+            gate.open()
+            try await eventually { try await FollowModel.query(on: app.db).count() == 1 }
+            try await eventually { !sender.sent.isEmpty }
+
+            let push = try #require(sender.sent.first)
+            #expect(push.title == "Now watching Subdued")
+            #expect(push.deviceToken == "token-a")
+            let brand = try #require(try await BrandModel.query(on: app.db).first())
+            #expect(push.brandID == brand.id)
+            #expect(sender.sent.count == 1)
+        }
+    }
+
+    /// The same rule `POST /v1/brands/discover` holds: a brand row that reports no error and
+    /// delivers nothing forever is worse than a refusal.
+    @Test("A site nothing could read is refused, and the waiting are told")
+    func refusedSitesAreNotAdded() async throws {
+        try await withServer { app in
+            let gate = GatedHTTP(StubHTTP())
+            app.storage[FetcherKey.self] = gate
+            let sender = RecordingSender()
+            app.storage[NotifierKey.self] = Notifier(app: app, sender: sender)
+            let auth = try await register(app, token: "token-a")
+
+            let started = try await start(app, "https://nothing-here.example", auth)
+            _ = try await watch(app, started.id, auth)
+            gate.open()
+
+            let done = try await settled(app, started.id, auth)
+            #expect(done.status == .refused)
+            #expect(done.brand == nil)
+            try await eventually { !sender.sent.isEmpty }
+            #expect(sender.sent.first?.title == "Couldn't watch nothing-here.example")
+            // The probe's sentinel, which the app opens nowhere.
+            #expect(sender.sent.first?.brandID == Notifier.probeBrandID)
+            #expect(try await BrandModel.query(on: app.db).count() == 0)
+            #expect(try await FollowModel.query(on: app.db).count() == 0)
+        }
+    }
+
+    @Test("A shop the catalogue already has is ready without fetching anything")
+    func existingBrandsNeedNoFetch() async throws {
+        try await withServer { app in
+            let brand = BrandModel(
+                name: "Stüssy", slug: "stussy.com", website: "https://stussy.com",
+                instagramHandle: nil, usesGeneratedName: false
+            )
+            try await brand.save(on: app.db)
+            try await SourceModel(brandID: try brand.requireID(), kind: .shopify, url: "https://stussy.com")
+                .save(on: app.db)
+            // Every request would hang: the answer must not need one.
+            app.storage[FetcherKey.self] = GatedHTTP(StubHTTP())
+            let auth = try await register(app)
+
+            let started = try await start(app, "https://www.stussy.com", auth)
+            #expect(started.status == .ready)
+            #expect(started.brand?.id == brand.id)
+            #expect(started.probe?.canMonitor == true)
+
+            _ = try await watch(app, started.id, auth)
+            #expect(try await BrandModel.query(on: app.db).count() == 1)
+            #expect(try await FollowModel.query(on: app.db).count() == 1)
+        }
+    }
+
+    /// A deploy restarts the process; a check it interrupted must not spin forever on
+    /// somebody's screen. But a check that is merely *slow* must not be called interrupted —
+    /// a tarpitting storefront made one take twenty-four minutes.
+    @Test("Only a check nothing is running reads as interrupted")
+    func orphanedChecksAreInterrupted() {
+        let check = BrandCheckModel(domain: "subdued.com", url: "https://subdued.com", status: .checking)
+        check.createdAt = Date()
+        let muchLater = Date().addingTimeInterval(3600)
+
+        #expect(BrandChecks.status(of: check, isRunning: true, now: muchLater) == .checking)
+        #expect(BrandChecks.status(of: check, isRunning: false) == .checking, "a fresh row gets its grace")
+        #expect(BrandChecks.status(of: check, isRunning: false, now: muchLater) == .interrupted)
+
+        check.status = BrandCheck.Status.ready.rawValue
+        #expect(BrandChecks.status(of: check, isRunning: false, now: muchLater) == .ready)
+    }
+
+    /// What the row buys over memory: the person who tapped START WATCHING and left is
+    /// still waiting after a deploy, and the next boot finishes the job.
+    @Test("A restart's unfinished check is run again for whoever is waiting")
+    func orphansResume() async throws {
+        try await withServer { app in
+            app.storage[FetcherKey.self] = shopify()
+            let user = UserModel()
+            try await user.save(on: app.db)
+            let check = BrandCheckModel(domain: "subdued.com", url: "https://subdued.com", status: .checking)
+            try await check.save(on: app.db)
+            try await BrandCheckWatcherModel(checkID: try check.requireID(), userID: try user.requireID(), instagram: nil)
+                .save(on: app.db)
+
+            await app.brandChecks?.resumeOrphans()
+            try await eventually { try await FollowModel.query(on: app.db).count() == 1 }
+            let resumed = try #require(try await BrandCheckModel.find(check.id, on: app.db))
+            #expect(resumed.status == BrandCheck.Status.ready.rawValue)
+        }
+    }
+
+    @Test("Checks refuse anonymous callers, and are pruned after a day")
+    func anonymousAndRetention() async throws {
+        try await withServer { app in
+            try await app.testing().test(.POST, "v1/brands/checks", beforeRequest: { req in
+                try req.content.encode(StartBrandCheck(url: "https://kith.com"))
+            }, afterResponse: { res async throws in
+                #expect(res.status == .unauthorized)
+            })
+
+            let check = BrandCheckModel(domain: "kith.com", url: "https://kith.com", status: .ready)
+            try await check.save(on: app.db)
+            check.createdAt = Date().addingTimeInterval(-2 * 86_400)
+            try await check.save(on: app.db)
+
+            let result = await Reaper(app: app).sweep()
+            #expect(result.checks == 1)
+            #expect(try await BrandCheckModel.query(on: app.db).count() == 0)
+        }
+    }
+}

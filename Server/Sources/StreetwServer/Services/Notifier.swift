@@ -275,6 +275,46 @@ actor Notifier {
     /// than deep-linking somewhere that doesn't exist.
     static let probeBrandID = UUID(uuidString: "00000000-0000-0000-0000-000000000000")!
 
+    /// Tells one person how a request of theirs turned out — today, only that a shop they
+    /// asked to watch has been checked (`BrandChecks`).
+    ///
+    /// Outside the event ledger and the cooldown on purpose: it is not news about a brand,
+    /// it is the answer to something this person asked a minute ago, and it is sent once
+    /// because the watcher row is what records that it was. A nil brand sends the probe's
+    /// sentinel, which the app opens nowhere — a refused shop has no page to land on.
+    func tell(userID: UUID, title: String, body: String, brandID: UUID?, collapseID: String) async {
+        guard let sender else { return }
+        let devices: [DeviceModel]
+        do {
+            devices = try await DeviceModel.query(on: app.db)
+                .filter(\.$user.$id == userID)
+                .filter(\.$apnsToken != nil)
+                .all()
+        } catch {
+            app.logger.error("notifier: could not load devices for a reply: \(error)")
+            return
+        }
+        for device in devices {
+            guard let token = device.apnsToken else { continue }
+            let message = PushMessage(
+                deviceToken: token,
+                environment: device.environment,
+                title: title,
+                body: body,
+                brandID: brandID ?? Self.probeBrandID,
+                collapseID: collapseID
+            )
+            do {
+                try await sender.send(message)
+            } catch PushDeliveryError.invalidToken {
+                device.apnsToken = nil
+                try? await device.save(on: app.db)
+            } catch {
+                app.logger.warning("notifier: reply not delivered: \(error)")
+            }
+        }
+    }
+
     /// One fan-out pass over everything not yet notified.
     @discardableResult
     func dispatch(limit: Int = 500) async -> NotifyResult {

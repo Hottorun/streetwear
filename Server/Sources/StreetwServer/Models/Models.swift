@@ -403,3 +403,72 @@ final class PollHintModel: Model, @unchecked Sendable {
 
     var asPollHint: PollHint { PollHint(brandID: $brand.id, releaseAt: releaseAt) }
 }
+
+/// One look at a site, run off the request — see `BrandChecks`.
+///
+/// Not part of the catalogue: a check is a short-lived record of *asking*, pruned within a
+/// day. It is shared by everybody who asks about the same shop in that time, which is what
+/// lets the add reuse the preview's answer rather than fetching the storefront again.
+///
+/// **In the database rather than in memory**, because a deploy restarts the process: a check
+/// held in memory would vanish mid-flight, and the phone asking about it would get a 404 it
+/// could not tell apart from a bad id. A row left `checking` by a restart is read back as
+/// interrupted (`BrandChecks.orphanAfter`), and re-run if somebody is still waiting on it.
+final class BrandCheckModel: Model, @unchecked Sendable {
+    static let schema = "brand_checks"
+
+    @ID(key: .id) var id: UUID?
+    /// `BrandDiscovery.registrableDomain`, so `www.` and the apex share one check — the same
+    /// rule that stops them becoming two brands.
+    @Field(key: "domain") var domain: String
+    @Field(key: "url") var url: String
+    /// A `BrandCheck.Status` raw value.
+    @Field(key: "status") var status: String
+    /// The finished `BrandProbe`, JSON-encoded. Text rather than an array or JSONB column,
+    /// so there is nothing here for the Postgres/SQLite difference in `docs/server.md` to
+    /// bite on.
+    @OptionalField(key: "probe") var probe: String?
+    @OptionalField(key: "logo_url") var logoURL: String?
+    /// The catalogue brand this check is about, once there is one.
+    @OptionalParent(key: "brand_id") var brand: BrandModel?
+    @Timestamp(key: "created_at", on: .create) var createdAt: Date?
+    @OptionalField(key: "finished_at") var finishedAt: Date?
+
+    @Children(for: \.$check) var watchers: [BrandCheckWatcherModel]
+
+    init() {}
+
+    init(domain: String, url: String, status: BrandCheck.Status) {
+        self.domain = domain
+        self.url = url
+        self.status = status.rawValue
+    }
+}
+
+/// Somebody who asked to watch a check's shop before — or after — the check finished.
+///
+/// Personal, and pointing at a check the way `FollowModel` points at a brand. Settled into
+/// a follow the moment the check finds something to watch; the row stays until the check is
+/// pruned, so a second tap does not follow twice or notify twice.
+final class BrandCheckWatcherModel: Model, @unchecked Sendable {
+    static let schema = "brand_check_watchers"
+
+    @ID(key: .id) var id: UUID?
+    @Parent(key: "check_id") var check: BrandCheckModel
+    @Parent(key: "user_id") var user: UserModel
+    /// Offered on the add screen. Only used if this check is the one that creates the
+    /// brand — an existing brand keeps the handle it has, exactly as `POST
+    /// /v1/brands/discover` always treated it.
+    @OptionalField(key: "instagram") var instagram: String?
+    /// When this watcher was turned into a follow. The ledger, so settling twice is a no-op.
+    @OptionalField(key: "settled_at") var settledAt: Date?
+    @Timestamp(key: "created_at", on: .create) var createdAt: Date?
+
+    init() {}
+
+    init(checkID: UUID, userID: UUID, instagram: String?) {
+        self.$check.id = checkID
+        self.$user.id = userID
+        self.instagram = instagram
+    }
+}

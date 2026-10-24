@@ -20,6 +20,9 @@ extension DeviceResponse: @retroactive Content {}
 extension BrandDTO: @retroactive Content {}
 extension FeedItem: @retroactive Content {}
 extension BrandProbe: @retroactive Content {}
+extension StartBrandCheck: @retroactive Content {}
+extension WatchBrandCheck: @retroactive Content {}
+extension BrandCheck: @retroactive Content {}
 extension FeedResponse: @retroactive Content {}
 extension StatusResponse: @retroactive Content {}
 extension DeliveryStatus: @retroactive Content {}
