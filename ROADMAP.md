@@ -2,16 +2,30 @@
 
 ## Positioning
 
-A calm, private archive of the clothes you care about, that also happens to know when they drop.
-The differentiator is the combination: drop apps are utilitarian and loud, save apps don't track
-unreleased items. Nobody has done both.
+Dropwall knows your shops and your style. Ask it for something — "a black suit under €400" — and
+it searches the shops you follow first, ranked by your taste, then brands like them, then the open
+web if you ask for more. Leave it alone and it tells you when those shops drop, restock or go on
+sale.
 
-Two modes, kept deliberately distinct:
+So a follow does two jobs: it is what gets watched, and it is where the AI shops for you. That
+combination is the product. Shopping assistants don't know when anything drops, and drop apps
+can't find you anything. The watching engine is the part that is hard to copy and the part that
+already works; AI takes over the jobs that used to need hand-written rules — understanding a
+garment, matching a description, judging an outfit.
 
-- **Hype feed** — time-sensitive, ephemeral, countdowns, urgency affordances allowed.
+It is for anyone and any kind of clothing. Streetwear was the starting point, not the boundary:
+menswear and womenswear are equal, and fast fashion is followed too — usually to track prices, or
+to tell the AI what you like.
+
+Two registers, kept deliberately distinct:
+
+- **Feed** — time-sensitive: drops, restocks, sales, countdowns. Urgency affordances allowed.
 - **Collection** — permanent, private, no badges, no counts, no "new" dots.
 
 ## Decided
+
+Planned on 2026-10-24, after 1.0 reached the App Store. Each decision carries its reason, because
+most of them read as arbitrary restraint without it.
 
 - **Server-backed.** A small backend polls sources on a schedule and pushes via APNs. iOS
   `BGAppRefreshTask` is opportunistic — a few system-chosen wakeups a day — and drops resolve in
@@ -19,6 +33,78 @@ Two modes, kept deliberately distinct:
 - **Instagram is never scraped.** Link-out only. The `BrandSource.Kind.instagram` slot stays
   adapter-less; if a best-effort third-party "teased something" flag is ever added it goes there,
   and everything else keeps working when it breaks.
+- **AI is Claude, called from the server only, behind an interface that can be swapped.** One
+  provider, because two means two bills, two ways to fail and two sets of prompts drifting apart.
+  Anthropic's API directly rather than Bedrock: one key, new models first, and Bedrock does not
+  need AWS hosting anyway, so the swap stays small if it is ever wanted. Never from the phone — a
+  key shipped inside an app is a public key. Apple Intelligence is not good enough for these jobs
+  yet.
+- **Personal data leaves the phone one request at a time, and only after opting in.** 1.0 promises
+  that saves, boards, fits, the style statement and the taste vector never leave the device, and
+  every AI feature breaks that promise. So: only what the request needs, nothing kept once it is
+  answered, an opt-in on first use, and everything that works today keeps working with AI off.
+  The one standing exception is **daily picks**, which has to remember taste between visits: a
+  numeric taste summary — not the saves, not the photographs — under its own opt-in, deletable.
+  The privacy policy and the App Store privacy label are rewritten **before** any of it ships.
+- **No auto-buy agent.** It would hold card details and logins for every shop, break nearly every
+  store's terms, have to beat the bot protection shops put on drops specifically, and its failure
+  is spending somebody's money on the wrong size. One-tap checkout (Phase 0) gets almost all of
+  the speed with a person still deciding.
+- **No getting around bot protection.** Bershka refuses every request at Akamai, robots.txt
+  included. Getting past that means renting residential proxies — other people's connections,
+  often without their real consent — and faking browsers through them. It would cost more per
+  month than the whole server, break every few weeks, and copying a catalogue past a deliberate
+  block is where scraping turns legally risky, especially in the EU, where a catalogue can be
+  protected as a database. KERN AG's name is on the app. Such a shop is labelled "blocks
+  automated watching"; saving from Safari through the share sheet still works, because the
+  person's own browser gets in.
+- **AI is paid for with credits that never expire.** Apple must sell a digital feature through
+  in-app purchase, keeps 15–30% of it (15% under the Small Business Program), and only Apple can
+  refund — so "pay exactly what you used and get the rest back" cannot be built, and an exact cost
+  per action would be a different price every time. Instead: a fixed number of credits per action,
+  packs that never expire (nothing is wasted, so nothing needs refunding), a small free monthly
+  allowance, and usage shown in the app. **Prices come from measured costs, not guesses:** AI
+  launches with a generous allowance for signed-in users while the server records what every
+  action really cost.
+- **Stay on Railway.** Checked on 2026-10-24 against each provider's own pricing page; the totals
+  are estimates. Railway is ~$16–20/mo today and ~$77–97 at ten times the users. AWS (Fargate, a
+  load balancer and RDS) is ~$74–87 today; the cheapest managed alternative, DigitalOcean, ~$25.
+  The only real saving is a self-managed Hetzner box at 10×, about $40/mo, bought by running the
+  database, its backups and its upgrades yourself. Two Railway limits are already in Phase 3.
+- **A profile is a person; a mood is a board.** "For my partner" needs their own sizes, gender
+  filter, follows and alerts. "Suits versus streetwear" is the same person in another mood, and
+  needs only a different source of taste. One concept for both would serve both badly. Profiles
+  share the account, the credits and the location; their alerts arrive labelled ("For Anna: …").
+- **A follow has a mode:** *Everything*, *Sales and price drops only*, or *Quiet* — no feed and no
+  alerts, but it still shapes taste and search. Following H&M the way you follow Kith would bury
+  the feed in daily arrivals. The mode lives on the server, because `Notifier` has to know it,
+  and it replaces `Brand.isMuted`, which is phone-only and drops pushes the server already sent.
+- **Location is a setting, and the data is region-aware from the first row.** Big retailers run a
+  shop per country — Victoria's Secret UK is a different company from the US one. So every stored
+  price carries its country and currency, a brand maps to its storefront per country, and a
+  country's storefront is only polled if somebody there follows the brand. Countries are switched
+  on one at a time as users appear, because each one multiplies the polling of every brand
+  followed there.
+
+### Rules from 1.0 that change on purpose
+
+Each of these contradicts something in `docs/design-decisions.md` or `docs/ucp.md`. Each is a
+deliberate change, to be written into that doc with its reason when it is built — never a quiet
+exception.
+
+- **A price drop on something you saved or watch sends a push.** Today `UpdateKind.isSudden` *is*
+  `Notifier.isWorthWaking`, and a price drop is not sudden. A markdown on something you chose to
+  keep is news about you. A brand-wide markdown still is not, which is why that alert is opt-in
+  per brand.
+- **The feed stops being grouped by brand.** One card per event, newest first. The grouping is
+  what produces the headers, the counts and the "›" links. The rule it protected — one busy brand
+  must not flood the feed — survives, because the *event* stays the unit: a 24-piece drop is one
+  card.
+- **The brand rail leaves the head of the feed.** It replaced a Brands tab; brands become a feed
+  filter plus a list under You › Following.
+- **Unread becomes "since you were last here".** No per-brand checkmarks, dots or counts to
+  manage. Push is what finds you.
+- **UCP stays read-only for now.** See *Later*.
 
 ### Explicitly out of scope
 
@@ -27,8 +113,212 @@ Two modes, kept deliberately distinct:
 | Resale price pull-in (StockX/GOAT) | No public API; third-party resellers are expensive and unstable |
 | Raffle autofill | Even single-entry is substantial work and bot-adjacent; not needed now |
 | Social / community feed | Different product, cold-start problem, fights the calm-archive positioning |
+| Auto-buy agent | See *Decided*; one-tap checkout instead |
+| Getting around bot protection | See *Decided*; a blocked shop is labelled, not broken into |
+| Billing exact AI cost, refunding unused balance | Impossible through in-app purchase; credits never expire instead |
 
-## Phase 1 — make the existing app trustworthy ✅
+## The plan
+
+Each phase is its own App Store update. AI comes last on purpose: it is only as good as the
+catalogue it searches — today the newest ~250 products per Shopify brand and 60 per sitemap brand
+— it needs accounts before it can be paid for, and it lands in a Shop tab that does not exist yet.
+Phases 2 and 3 can overlap.
+
+### Phase 0 — fixes and quick wins, no AI
+
+Mostly things that hurt people using 1.0 today.
+
+- [x] **Discovery as a background job.** A non-Shopify site costs ~13 requests at 2s spacing, the
+      server answers nothing until it has finished, and the app gives up after 30s of silence.
+      Measured against subdued.com: 26.8s from a fast connection — and the app runs it twice, the
+      probe and then the add. Hollister follows eight redirect loops and certainly overruns. Many
+      "this site failed" reports are probably this rather than the site.
+      *Done:* `POST /v1/brands/checks` answers in ~0.1s and the screen asks after it; the add
+      reuses the preview's check; START WATCHING works while it runs and the server follows the
+      shop and pushes when it finishes. Checked live: Subdued and Hollister both settle in ~21s.
+      The 1.0 routes stay for the build in the App Store. See `docs/server.md`.
+      *Found on the way, and the bigger half of "Hollister and Subdued fail":* the add screen's
+      copy of the watchability rule (`BrandProbe.canMonitor`) still refused a page watch after the
+      server had stopped refusing one, so a page-only shop read "Nothing to watch here" with the
+      button disabled. Fixed, with a test that the two rules agree.
+- [ ] **A generic `<title>` becomes a brand's global name.** Hollister's check suggests "Clothing
+      for Women & Men" — the first segment of its title. `BrandNaming` refuses "Home" and
+      "Official Site" but not this, and a page-watch brand has no `/meta.json` to correct it later.
+- [ ] **The sitemaps real retailers publish.** Hollister, Subdued and victoriassecret.com list
+      theirs only in robots.txt, at non-standard paths. Read the `Sitemap:` lines; follow nested
+      indexes (VS is two levels deep, and the three-child cap picks nl/at/au before en/us); treat
+      a URL seen for the first time as new rather than trusting `<lastmod>`, which only one of the
+      three carries usefully; and decide what is a product from the page's data rather than URL
+      patterns, which missed two of the three shapes.
+- [ ] **Robots.txt on every redirect hop.** Only the first URL is checked today, and redirects are
+      followed unspaced — into disallowed paths included.
+- [ ] **Product details from the page.** Read schema.org `Product` JSON-LD — name, price,
+      availability, images, SKU — once per new product. It was on every product page that could be
+      loaded. Replaces the slug-and-one-photograph sitemap row; this was *Still open* since 1.0.
+- [ ] **Sizes read by garment type, plus womenswear and tailoring.** A US dress size 4–18 and
+      "UK 10" are read as shoe sizes today, "EU 38" too, and "40R" and "34B" are not understood at
+      all — so a woman who has entered a shoe size can have dresses wrongly hidden or wrongly
+      matched. That is a live bug. The `GarmentSlot` decides which ladder a number belongs to; add
+      women's numeric sizes (US/UK/EU/IT, canonicalised the way shoes are) and men's suit sizes.
+      A string that still cannot be placed stays `.other` and is never hidden.
+- [ ] **Events past 200 between two syncs are lost.** `/v1/feed` pages newest first,
+      `nextCursor` is the *newest* event, and the client asks once with `limit 200`, so the
+      overflow is never delivered — and one busy brand can fill the page. Found by reading the
+      code; reproduce it in a test before fixing. Needs per-brand fairness too.
+- [ ] **Sales.**
+      - Read `compare_at_price`, so a product that goes live already discounted counts.
+      - A price drop on a saved or watched item pushes (see *Rules that change*).
+      - "Sale is live" for a whole brand: one push when a large share of a catalogue is marked
+        down in one pass, opt-in per brand.
+      - Sale banners. "25% off everything with code AUTUMN" lives in the homepage announcement
+        bar and in the cart, never in a product price. Read the homepage every 30–60 minutes,
+        match sale wording, and alert once per sale per brand with the percentage and the code.
+        Pattern matching only, until Phase 4 can read the end date and the fine print.
+- [ ] **Follow modes** (see *Decided*), on the server, replacing `Brand.isMuted`.
+- [ ] **The product photograph as the cover on the saved wall.** `ProductShot` already finds the
+      photograph with nobody in it, and deliberately uses it only for measuring. On the wall and
+      the saved item's page it becomes the cover and leads the gallery, with "Set as cover" to
+      override it. The feed and Discover keep the brand's own first photograph, because there the
+      styling is part of the announcement.
+- [ ] **Multi-select, and one item on several boards.** There is no multi-select anywhere, and
+      `SavedItem.board` is to-one although boards are "filters, not folders". Make it
+      many-to-many — a migration that must not lose a single assignment — then a select mode on
+      the wall and on boards: add to or remove from boards, switch Inspiration/Wardrobe, delete,
+      start a fit, leave out of taste.
+- [ ] **Leaving things out of your taste.** Per board: counts (the default), doesn't count, or
+      *inspire me from this* — the mood. Per item: "don't use for my taste". Ignored by everything
+      that infers taste — Your taste, picks, Shop ranking, brand suggestions — while a wardrobe
+      item can still go into a fit, because it is still owned.
+- [ ] **Checkout links.** Shopify: `/cart/<variant_id>:1` with your size already in the cart.
+      Everywhere else: the exact product page, opening the shop's own app when it is installed
+      (already signed in, payment saved) and Safari otherwise, with the size preselected where the
+      platform's URLs allow it and named in the alert where they don't.
+- [ ] **Anonymous usage counts, on our own server.** Tab opened, search run, alert tapped, saves.
+      No third-party SDK: the smallest step from 1.0's "no analytics" promise, and needed before
+      choosing which AI features are worth paying for. The privacy policy names it.
+- [ ] **The Discover card's description is centred** while everything around it is leading-aligned
+      (`DiscoverCardView.swift:602-617`), probably a missing `.multilineTextAlignment(.leading)`
+      inside a `Button`.
+- [ ] **`docs/ucp.md` ranks UCP below the sitemap; `BrandDiscovery` tries it first.** Decide which
+      is intended and make them agree.
+
+### Phase 1 — the redesign
+
+Prototype the new feed and Shop tab on the demo catalogue first, beside the current app, before
+rebuilding anything.
+
+- [ ] **Three tabs and a You button.** *Feed* — what happened at your shops. *Shop* — Discover with
+      the AI search on top and daily picks when the field is empty. *Saved* — Inspiration,
+      Wardrobe and **Fits**. Your avatar, top right on every tab, opens *You*: taste, sizes,
+      location, following, profiles, credits, sign-in, settings. The Style tab goes: kept and
+      suggested fits move to Saved › Fits, "what's missing" drives Shop's picks, "your taste"
+      moves to You. Today a fit can be started from three tabs and two detail pages and lands in
+      one of two editors; it should start in one place and land in one.
+- [ ] **One picture per event.** Photograph, brand, one label — "NEW", "BACK IN YOUR SIZE",
+      "−30%", "SALE 25% OFF · CODE AUTUMN", "DROPS FRIDAY" — and the price. A drop of many pieces
+      is one card with a few photographs and "24 pieces". Today's first screen shows five counters
+      and markers and three lines of links before its one photograph, whose name and price sit
+      under the tab bar.
+- [ ] **"Since you were last here"**, a line rather than per-brand unread state.
+- [ ] **One filter row** — All · Drops · Restocks · Sales · Upcoming · Brand ▾ — replacing the
+      brand rail and the two unlabelled icons (the calendar, and markdowns with its system badge).
+- [ ] **Onboarding and App Store copy for all of fashion.** The starter pack and the listing say
+      streetwear.
+
+### Phase 2 — accounts and paying
+
+- [ ] **Sign in with Apple, optional until it is needed.** StoreKit cannot restore consumable
+      purchases, so a credit balance must live on the server under an identity that survives a
+      reinstall — and today every reinstall is a new user. Required only for credits and profiles.
+      Existing follows, sizes and watches move onto the account at first sign-in, and accounts can
+      be deleted in the app, as Apple requires. Planned in `BACKEND.md` from the start.
+- [ ] **Profiles**, each with its own sizes, gender filter, follows, saves and taste — one server
+      user per profile under the account. Alerts are labelled, and each profile can turn its own
+      off.
+- [ ] **The location setting** and the region-aware price model (see *Decided*), defaulting to the
+      phone's region.
+- [ ] **Cost metering and credits.** Every AI action records its real cost; consumable packs via
+      StoreKit; usage shown ("this month: 23 searches"); prices set after a few weeks of
+      measurement.
+- [ ] **The new privacy policy and App Store privacy label**, before any of the above ships.
+
+### Phase 3 — the catalogue and search behind the AI
+
+- [ ] **Railway Pro, and a Postgres with pgvector.** Hobby caps a volume at 5 GB, which the full
+      scan will pass. The default Postgres has no pgvector and Railway does not plan to add it, so
+      this is the pgvector template plus a dump and restore — a planned migration with a new
+      `DATABASE_URL`, not a toggle. Turn on daily snapshots, and keep the server on the private
+      database URL; over the public one, the traffic is billed as egress.
+- [ ] **Catalogues at two speeds.** The fast "what's new" poll stays as it is. A daily full scan
+      stores every product with its price and stock; for Shopify a 5,000-product shop is ~20
+      requests. Today a Shopify brand's baseline is its newest 2,500 and only the newest ~250 are
+      re-read, so older stock — exactly what goes on sale — is invisible to sale alerts and would
+      be invisible to search. A huge non-Shopify retailer cannot be scanned honestly (20,000 pages
+      at 2s is ~11 hours per brand), so there new products are enriched once, and price tracking
+      is **per item**: whatever somebody has saved or watches has its own page re-checked.
+      Brand-wide sale detection is not available for those.
+- [ ] **Product search.** None exists — the only search is `ILIKE` on brand names. Postgres
+      full-text plus pgvector embeddings of each product's text and photograph, built once per
+      product. The same index serves "more like this", Shop's ranking, daily picks and the scan.
+
+### Phase 4 — AI
+
+- [ ] **The provider layer** — Claude behind a small server-side interface, recording the cost of
+      every action.
+- [ ] **Search in Shop.** "Black suit under €400": followed shops first, ranked by taste, then
+      similar brands. Narrowed with chips or short replies — "cheaper", "more formal", "no wool" —
+      each search keeping a short thread. **Show me more** goes to the open web through Claude's
+      web search, and a result from a shop we can watch offers to follow it.
+- [ ] **More like this**, on every product and saved item.
+- [ ] **Daily picks.** Free, because nobody asked for them. Ranked by similarity to the taste
+      summary with no model call per person; the model writes a short reason for the top few
+      ("goes with your black chore jacket"), cached. They fill Shop when the field is empty, with
+      an optional daily push, off by default. Only things in your size, in stock in your country,
+      and never anything already seen, saved or dismissed.
+- [ ] **Clothes scan.** One camera button, on Saved's "+" and in Shop's search field. On-device
+      cutout, then Claude reads type, colour, material, pattern and style, and you choose: *add to
+      my wardrobe* (a saved item with your own photograph — every save has a product behind it
+      today, so a small model change), *does it go with my wardrobe* (a verdict and two or three
+      fits — the in-store use), or *find this or something like it*. Two credits; only that one
+      photograph is sent.
+- [ ] **Fit judging and suggestions that look at the photographs.** Nothing does today, so a
+      suggestion can pair two things that clash.
+- [ ] **AI reading where rules can't**: sale banners (end date, fine print), and product pages with
+      no structured data — new products only, never every poll.
+
+### Later
+
+- **A UCP cart, handed over to finish.** The sanctioned version of auto-buy: for a shop that
+  publishes UCP, build the cart with your size through the protocol and hand over the shop's own
+  checkout. The app never holds a payment detail or completes a purchase, which is Supreme's own
+  line — "checkouts are for humans". Needs `docs/ucp.md`'s *read-only by construction* rule changed
+  on purpose, and a check that the spec's cart response carries a checkout link. Meanwhile, count
+  how many followed brands publish UCP; discovery already looks.
+- **A full chat**, grown out of search's follow-ups once people use them.
+- **Affiliate and partner product feeds**, for retailers that block bots — the only honest route to
+  an Inditex-sized catalogue, and a commission on purchases besides. A business question before it
+  is a code one; which networks carry which brands is unchecked.
+- **More countries**, one at a time.
+- **Bra sizes.**
+- **Widget and Live Activity** for countdowns, carried over from 1.0.
+- **Self-managed hosting**, only once the Railway bill is large enough for ~$40/mo to matter.
+
+## Known gaps
+
+- Vision's image classifier cannot initialise in the Simulator ("Failed to create espresso
+  context"), so categories only populate on a real device. The colour path works in both, and the
+  text vocabulary covers the gap — but simulator screenshots understate what the profile knows.
+- `TODO.md` holds the review of 2026-09-07. Everything in it is closed except the five items under
+  *Needs reproduction*.
+
+## Shipped in 1.0
+
+Kept as written at the time, because it is the record of why things are the way they are. Two
+entries have since been overtaken: push is live (CLAUDE.md, *Push, and why it was silent for
+months*), and the server address can no longer be cleared to mean standalone (CLAUDE.md, *The
+server address is not a setting*).
+
+### Phase 1 — make the existing app trustworthy ✅
 
 Done. Measured against Kith and Billionaire Boys Club.
 
@@ -61,14 +351,14 @@ Done. Measured against Kith and Billionaire Boys Club.
       Verified: 3,931 fetched → 800 stored.
 - [x] **Surface `source.lastError`** including failure count and backoff state.
 
-### Keep the adapter layer portable
+#### Keep the adapter layer portable
 
 `streetw/Sources/` must stay free of SwiftData, SwiftUI and UIKit so it can be lifted into the
 server target unchanged. `UpdateKind` and `VariantInfo` were extracted out of the `@Model`
 `BrandUpdate` for exactly this reason — `BrandUpdate.Kind` is now just a typealias. The layer
 compiles standalone with no shim; keep it that way.
 
-## Phase 2 — the backend ✅
+### Phase 2 — the backend ✅
 
 Done. See `BACKEND.md` for the reasoning and `Server/README.md` for how to run it.
 
@@ -165,7 +455,7 @@ APNs key in its environment, and the app target needs the Push Notifications cap
       retention manufacturing a fake release. The phone already keeps far less (400 per
       brand, never dropping saved or unread) and pages the rest from here.
 
-## Phase 3 — alerts and the round app
+### Phase 3 — alerts and the round app
 
 - [x] **A visual identity.** The app was stock SwiftUI forms; it now has a design system
       (`streetw/Views/DesignSystem.swift`): an achromatic gallery palette where photographs
@@ -188,10 +478,12 @@ APNs key in its environment, and the app target needs the Push Notifications cap
       storefront declares only a favicon. Falls back to initials, which is not a rare
       path — BBC declares only an SVG. `/favicon.ico` is a guess rather than a floor:
       Shopify 404s it.
-- [ ] Push: new drop · restocked in your size · storefront locked (drop imminent)
-- [ ] **Shock-drop alerts** — mostly built already: `PageWatchSource` plus the `dropLock` signal
+- [x] Push: new drop · restocked in your size · storefront locked (drop imminent).
+      *Since shipped:* a new drop, a collection and a lock push (`UpdateKind.isSudden`); a
+      restock reaches push through a stock watch.
+- [x] **Shock-drop alerts** — mostly built already: `PageWatchSource` plus the `dropLock` signal
       (401/403 or redirect to `/password`) is exactly the unannounced-release detector. It only
-      needs push behind it.
+      needs push behind it. *Since shipped,* as the lock push above.
 - [x] **Drop calendar.** Built without inventing data, which is the whole difficulty:
       nobody publishes a machine-readable release calendar, and the ones that exist are
       hand-edited by people. So it shows three clearly-labelled kinds of claim — a
@@ -218,7 +510,7 @@ APNs key in its environment, and the app target needs the Push Notifications cap
       thing shared from kith.com is findable as "kith" before that brand is even
       followed. Filtered in memory rather than as a `#Predicate`, because the fields
       worth searching live across a relationship and in arrays.
-- [ ] Widget + Live Activity for countdowns
+- [ ] Widget + Live Activity for countdowns — *moved to Later.*
 - [x] **Announced release times, where a page actually states one.** The obvious approach
       — hunt for a countdown — does not work: on the storefronts that use them the target
       lives in JavaScript, and the ISO timestamps that *are* in the markup are blog dates,
@@ -230,7 +522,7 @@ APNs key in its environment, and the app target needs the Push Notifications cap
       than one that stays quiet. A locked storefront that also names a time is now the
       strongest entry the calendar can hold: observed *and* exact.
 
-## Phase 4 — the collection, properly ✅
+### Phase 4 — the collection, properly ✅
 
 - [x] **Split `UpdateCard`.** Done early, because the restyle forced the issue: `FeedLead`
       and `FeedTile` carry time, price, stock and the accent, while `CollectionTile`
@@ -276,9 +568,9 @@ APNs key in its environment, and the app target needs the Push Notifications cap
       Only *saved* items are analysed; running this over a 250-item catalogue sweep would
       burn battery describing things nobody kept.
 
-## Known gaps not yet scheduled
+### Known gaps not yet scheduled
 
-### Closed
+#### Closed
 
 - [x] **Real image dimensions for the collection wall.** `ImageTagger` already decodes
       each saved image, so the aspect comes free; the wall lays tiles out at the shape of
@@ -312,14 +604,14 @@ APNs key in its environment, and the app target needs the Push Notifications cap
       would resurface the whole catalogue every poll. It cannot supply a price or a
       photograph; titles come from the slug.
 
-### Still open
+#### Still open at 1.0
 
 - Enriching sitemap-discovered products through `PageMetadataParser`, so those cards get a
   title and photograph instead of a slug. One fetch per new product, so it belongs behind
-  the politeness budget rather than inside the adapter.
-- Vision's image classifier cannot initialise in the Simulator ("Failed to create espresso
-  context"), so categories only populate on a real device. The colour path works in both,
-  and the text vocabulary covers the gap — but it means simulator screenshots understate
-  what the profile knows.
+  the politeness budget rather than inside the adapter. *Now Phase 0, reading JSON-LD,
+  which `PageMetadataParser` does not.*
+- Vision's image classifier cannot initialise in the Simulator. *Still true; see Known gaps.*
 - Silhouette (oversized / boxy / cropped) is still read from text only. Vision's taxonomy
   doesn't carry fit, so this would need aspect-ratio heuristics or a trained model.
+  *Since closed: `Silhouette` measures it from the cutout's outline — see
+  `docs/collection.md`.*
