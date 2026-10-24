@@ -1046,7 +1046,12 @@ struct PollerResilienceTests {
     /// be stored with a hash for a name. Dedupe is on `externalID` and the merge only
     /// ever *refreshed* stock and price, so nothing revisited the title — a feed said
     /// "E7Anvz3I1Psy" for as long as the product existed.
-    @Test("A product stored under a randomised handle takes its real name later")
+    ///
+    /// Re-pointed rather than deleted. The name used to arrive on a later poll, when the
+    /// sitemap re-offered the row with an `<image:title>`; a sitemap now offers only URLs its
+    /// memory has not seen, so the row is never re-offered. What revisits it instead is its
+    /// own page (`Poller.enrich`), which carries the name, the photographs and the price.
+    @Test("A product stored under a randomised handle takes its real name from its page")
     func provisionalTitleIsUpgraded() async throws {
         try await withServer { app in
             let http = StubHTTP()
@@ -1060,46 +1065,27 @@ struct PollerResilienceTests {
             )
             try await source.save(on: app.db)
 
-            // `lastmod` advances on the second poll, because `since` filtering is how
-            // every adapter avoids resurfacing a catalogue — a row is only revisited when
-            // the storefront says it moved, which is exactly when its name can change.
-            func sitemap(withImage: Bool, modified: Date) -> String {
-                let image = withImage ? """
-                    <image:image>
-                      <image:loc>https://cdn.example.com/avirex-1.png</image:loc>
-                      <image:title>PALACE AVIREX JACKET BLACK</image:title>
-                    </image:image>
-                """ : ""
-                return """
+            http.stub("/sitemap.xml", body: """
                 <?xml version="1.0" encoding="UTF-8"?>
-                <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"
-                        xmlns:image="http://www.google.com/schemas/sitemap-image/1.1">
-                  <url>
-                    <loc>https://example.com/products/e7anvz3i1psy</loc>
-                    <lastmod>\(ISO8601DateFormatter().string(from: modified))</lastmod>
-                    \(image)
-                  </url>
+                <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+                  <url><loc>https://example.com/products/e7anvz3i1psy</loc></url>
                 </urlset>
-                """
-            }
+                """)
+            http.stub("/products/e7anvz3i1psy", body: """
+                <script type="application/ld+json">
+                {"@type": "Product", "name": "PALACE AVIREX JACKET BLACK",
+                 "image": ["https://cdn.example.com/avirex-1.png", "https://cdn.example.com/avirex-2.png"],
+                 "offers": {"@type": "Offer", "price": "498.00", "priceCurrency": "GBP",
+                            "availability": "https://schema.org/InStock"}}
+                </script>
+                """)
 
-            http.stub("/sitemap.xml", body: sitemap(withImage: false, modified: Date()))
-            let poller = Poller(app: app, http: http)
-            await poller.tick()
+            await Poller(app: app, http: http).tick()
 
-            var product = try #require(try await ProductModel.query(on: app.db).first())
-            #expect(product.title == "New arrival", "a hash is never printed as a name")
-            #expect(product.imageURLs.isEmpty)
-
-            source.nextCheckAt = Date().addingTimeInterval(-1)
-            try await source.save(on: app.db)
-            http.stub("/sitemap.xml", body: sitemap(withImage: true, modified: Date().addingTimeInterval(600)))
-
-            await poller.tick()
-
-            product = try #require(try await ProductModel.query(on: app.db).first())
-            #expect(product.title == "PALACE AVIREX JACKET BLACK")
-            #expect(product.imageURLs == ["https://cdn.example.com/avirex-1.png"])
+            let product = try #require(try await ProductModel.query(on: app.db).first())
+            #expect(product.title == "PALACE AVIREX JACKET BLACK", "a hash is never printed as a name")
+            #expect(product.imageURLs == ["https://cdn.example.com/avirex-1.png", "https://cdn.example.com/avirex-2.png"])
+            #expect(product.priceAmount == 498)
             // Renaming a product is not news — it is the same drop, better described.
             #expect(try await EventModel.query(on: app.db).count() == 0)
         }

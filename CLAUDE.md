@@ -251,8 +251,29 @@ Adapters live in `streetw/Sources/` and are resolved through `SourceAdapters.ada
   one can tell a drop from a rail. See `docs/design-decisions.md`.
 - `FeedSource` — one `XMLParser` delegate handling both RSS `<item>` and Atom `<entry>`.
 - `SitemapSource` — `/sitemap.xml` for brands that are neither Shopify nor feed-publishing.
-  Uses `<lastmod>` as `published_at`, so `since` filtering needs no extra state. Skips
-  entries with no `lastmod`: assuming "now" would resurface the whole catalogue every poll.
+  **What is new is what the source has not seen, never what `<lastmod>` says**: Hollister's
+  2,123 products carry no `lastmod`, Victoria's Secret stamps one instant on 17,134, and only
+  Subdued's dates mean anything. The adapter keeps its own memory in `BrandSource.fingerprint`
+  (`SitemapMemory` — 32-bit FNV digests of every product URL plus each child file's ETag), the
+  first read is a baseline (`FetchResult.isBaseline`, which the callers OR with their own so a
+  source baselined before the memory existed stays quiet), later reads offer only unseen URLs —
+  at most 250, the rest held for the next read, and a sitemap that has plainly been *rebuilt*
+  (more than half unseen) is a silent re-baseline. **robots.txt `Sitemap:` lines first** — all
+  three retailers publish theirs only there. Indexes are followed up to three levels and four
+  child fetches, and `SitemapChoice` picks children: product-named files win, other-named files
+  (categories, pages, `product_cat`) are never read, siblings that differ by locale or by a
+  non-paging query are *storefronts* and one is chosen (`LocalePreference`: the typed URL's host
+  and path, else en-US), and what remains are parts of one catalogue, all read. Discovery pins the
+  source to the chosen storefront's URL. What is a product comes from the file's name, the path,
+  or a photograph; an entry with none is *tentative* (`FetchedItem.isTentative`) and only its page
+  can confirm it. A page that sits above another listed page is its parent, not a product
+  (Victoria's Secret lists each garment once bare and once per colourway). Never read more often
+  than `SitemapSource.minimumInterval` (an hour), on both ends — sitemaps are regenerated on a
+  schedule, and Subdued's is 7.2 MB a read. **Price, stock and sizes come from each new
+  product's own page, once** — `ProductPage` reads its schema.org `Product` JSON-LD (Open Graph
+  only when it prints a price; Hollister's *homepage* says `og:type` `product`). On the server
+  `Poller.enrich` reads a few per pass and holds the product's event until it has (see
+  `docs/server.md`); standalone, `SyncEngine.readProductPages` fills in the row in place.
   **`<image:title>` is the product's name and `<image:loc>` its lead photograph** — read
   both, because the slug is not always a name: Palace randomises its handles until a drop
   is live, so `/products/e7anvz3i1psy` yielded a feed of hashes over empty tiles while the
@@ -260,7 +281,8 @@ Adapters live in `streetw/Sources/` and are resolved through `SourceAdapters.ada
   `<loc>`, so the parser must know which one it is inside or every link points at a CDN.
   A slug that still reads as a hash becomes `SitemapSource.unnamed` rather than being
   printed, and both merge paths upgrade a provisional title when a real one arrives later
-  (`isProvisional`) — dedupe is on `externalID`, so nothing else would ever revisit it.
+  (`isProvisional`) — dedupe is on `externalID`, so nothing else would ever revisit it. Since the
+  memory, a seen URL is never re-offered, so in practice the real name arrives with the page read.
 - `UCPSource` — the Universal Commerce Protocol endpoint a storefront advertises **for
   machines**, when it has switched its JSON catalogue off. See *Reading a storefront that
   has closed its catalogue* below.

@@ -308,6 +308,12 @@ final class BrandUpdate {
     /// whenever enrichment learns something new.
     var enrichmentVersion: Int = 0
 
+    /// When a sitemap product's own page was read for its price, stock and sizes — the
+    /// standalone half of the server's `Poller.enrich`, see `ProductPage`. Nil is "not yet",
+    /// and it is stamped whatever the page said, so a page that cannot be read is not asked
+    /// again on every sync. Only rows keyed `sitemap:` are ever read.
+    var pageReadAt: Date?
+
     /// The sticker, when there is one. Read as a file each time rather than cached here:
     /// `UIImage(contentsOfFile:)` is lazily decoded and the canvas draws at most a dozen.
     var cutoutURL: URL? {

@@ -126,6 +126,12 @@ final class ProductModel: Model, @unchecked Sendable {
     @Field(key: "published_at") var publishedAt: Date
     @Timestamp(key: "first_seen_at", on: .create) var firstSeenAt: Date?
     @Field(key: "last_seen_at") var lastSeenAt: Date
+    /// When this product's own page was last read for its details (`ProductPage`), or nil
+    /// if it never has been. Stamped even when the page had nothing to say, so a page that
+    /// cannot be read is not asked again every pass. Only sitemap products are ever read.
+    @OptionalField(key: "enriched_at") var enrichedAt: Date?
+    /// What this product is owed once its page has been read — see `PendingAnnouncement`.
+    @OptionalField(key: "pending_announcement") var pendingAnnouncement: String?
 
     @Children(for: \.$product) var variants: [VariantModel]
 
@@ -149,6 +155,22 @@ final class ProductModel: Model, @unchecked Sendable {
         self.publishedAt = item.publishedAt
         self.lastSeenAt = Date()
     }
+}
+
+/// The event a new sitemap product is waiting to be announced with.
+///
+/// **A sitemap product is announced from its page, not from the sitemap.** The sitemap has
+/// a URL and at best a photograph; the page has the name, the price and the size run. An
+/// event written at first sight went out as a push saying "New arrival" and a card with no
+/// price — and the phone keeps the copy it was sent, so reading the page a minute later
+/// fixed the server's row and nobody's screen. So the row is stored, the event is held,
+/// and `Poller.enrich` writes it once the page has been read, usually in the same pass.
+enum PendingAnnouncement: String {
+    /// Surely a product: announced once the page is read, whatever it says.
+    case announce
+    /// Only the page can say — `FetchedItem.isTentative`. Announced if it shows a product,
+    /// and the row deleted if it does not, since a category page is not a catalogue entry.
+    case confirm
 }
 
 /// Per-variant stock is the whole reason restock alerts can name a size.
