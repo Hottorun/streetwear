@@ -27,15 +27,38 @@ public struct SizePayload: Codable, Sendable, Hashable {
     ///
     /// Optional, so a server that predates it still decodes this body.
     public var waist: [String]?
+    /// Women's dress sizes, as US tokens — the same canonical form `shoe` travels in, so
+    /// `dressScale` stays on the phone. The waist's lesson applied up front: a ladder the
+    /// app holds and the payload does not carry is a ladder the server targets alerts
+    /// without, while the screen goes on looking right.
+    ///
+    /// Optional, because the 1.0 app has no dress ladder and sends nothing; absent reads
+    /// as empty, and an empty ladder filters nothing.
+    public var dress: [String]?
+    /// Jacket chests in inches. Optional for the same reason.
+    public var suit: [String]?
+    /// Jacket lengths, "S", "R" or "L". Optional for the same reason.
+    public var suitLength: [String]?
     /// Which genders the user wants pushed. Held server-side for the same reason the
     /// sizes are: the server decides whether a drop is news for this person, and it can
     /// only do that if it knows. Optional for back-compatibility.
     public var gender: String?
 
-    public init(apparel: [String], shoe: [String], waist: [String]? = nil, gender: String? = nil) {
+    public init(
+        apparel: [String],
+        shoe: [String],
+        waist: [String]? = nil,
+        dress: [String]? = nil,
+        suit: [String]? = nil,
+        suitLength: [String]? = nil,
+        gender: String? = nil
+    ) {
         self.apparel = apparel
         self.shoe = shoe
         self.waist = waist
+        self.dress = dress
+        self.suit = suit
+        self.suitLength = suitLength
         self.gender = gender
     }
 
@@ -43,6 +66,9 @@ public struct SizePayload: Codable, Sendable, Hashable {
         self.apparel = Array(profile.apparel)
         self.shoe = Array(profile.shoe)
         self.waist = Array(profile.waist)
+        self.dress = Array(profile.dress)
+        self.suit = Array(profile.suit)
+        self.suitLength = Array(profile.suitLength)
         self.gender = profile.gender.rawValue
     }
 
@@ -55,6 +81,10 @@ public struct SizePayload: Codable, Sendable, Hashable {
         // waist to send — so both leave the ladder empty, and an empty ladder filters
         // nothing rather than hiding everything.
         profile.waist = Set((waist ?? []).compactMap { SizeNormalizer.normalize($0)?.token })
+        // Strictly: a token that is not on the ladder is dropped, not kept as `.other`.
+        profile.dress = Set((dress ?? []).compactMap(SizeProfile.dressToken))
+        profile.suit = Set((suit ?? []).compactMap(SizeProfile.suitToken))
+        profile.suitLength = Set((suitLength ?? []).compactMap(SizeProfile.suitLengthToken))
         profile.gender = gender.flatMap(GenderPreference.init(rawValue:)) ?? .everything
         return profile
     }

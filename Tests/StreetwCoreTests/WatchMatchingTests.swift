@@ -23,16 +23,16 @@ struct WatchMatchingTests {
     func bothPins() {
         let target = WatchTarget(size: "M", color: "Black")
 
-        #expect(target.matches(variant("M", "Black")))
-        #expect(!target.matches(variant("L", "Black")))
-        #expect(!target.matches(variant("M", "Sand")))
+        #expect(target.matches(variant("M", "Black"), in: .unknown))
+        #expect(!target.matches(variant("L", "Black"), in: .unknown))
+        #expect(!target.matches(variant("M", "Sand"), in: .unknown))
     }
 
     @Test("An absent pin matches anything on that axis")
     func absentPins() {
-        #expect(WatchTarget(size: "M").matches(variant("M", "Sand")))
-        #expect(WatchTarget(color: "Black").matches(variant("XL", "Black")))
-        #expect(WatchTarget().matches(variant("XL", "Sand")))
+        #expect(WatchTarget(size: "M").matches(variant("M", "Sand"), in: .unknown))
+        #expect(WatchTarget(color: "Black").matches(variant("XL", "Black"), in: .unknown))
+        #expect(WatchTarget().matches(variant("XL", "Sand"), in: .unknown))
     }
 
     /// An empty string is what a UI hands over for "no selection", and treating it as a
@@ -42,17 +42,17 @@ struct WatchMatchingTests {
         let target = WatchTarget(size: "", color: "")
         #expect(target.isAnySize)
         #expect(target.isAnyColor)
-        #expect(target.matches(variant("M", "Black")))
+        #expect(target.matches(variant("M", "Black"), in: .unknown))
     }
 
     /// Sizes go through the normaliser, so a watch survives the catalogue changing how it
     /// spells the same size — which storefronts do, between "M" and "Medium".
     @Test("Size pins are normalised, not compared as text")
     func sizesNormalise() {
-        #expect(WatchTarget(size: "M").matches(variant("Medium")))
-        #expect(WatchTarget(size: "medium").matches(variant("M")))
-        #expect(WatchTarget(size: "9.5").matches(variant("US 9.5")))
-        #expect(WatchTarget(size: "9").matches(variant("9.0")))
+        #expect(WatchTarget(size: "M").matches(variant("Medium"), in: .unknown))
+        #expect(WatchTarget(size: "medium").matches(variant("M"), in: .unknown))
+        #expect(WatchTarget(size: "9.5").matches(variant("US 9.5"), in: .unknown))
+        #expect(WatchTarget(size: "9").matches(variant("9.0"), in: .unknown))
     }
 
     /// Colourway names are brand vocabulary with no canonical form, so they are compared
@@ -60,20 +60,20 @@ struct WatchMatchingTests {
     /// "Black" — they are different products on the shelf.
     @Test("Colour pins are case-insensitive but not fuzzy")
     func coloursAreLiteral() {
-        #expect(WatchTarget(color: "black").matches(variant("M", "BLACK")))
-        #expect(!WatchTarget(color: "Black").matches(variant("M", "Vintage Black")))
+        #expect(WatchTarget(color: "black").matches(variant("M", "BLACK"), in: .unknown))
+        #expect(!WatchTarget(color: "Black").matches(variant("M", "Vintage Black"), in: .unknown))
     }
 
     @Test("A watch is satisfied only by a variant that is both matching and buyable")
     func satisfaction() {
         let target = WatchTarget(size: "M", color: "Black")
 
-        #expect(!target.isSatisfied(by: [variant("M", "Black", available: false)]))
-        #expect(!target.isSatisfied(by: [variant("L", "Black", available: true)]))
+        #expect(!target.isSatisfied(by: [variant("M", "Black", available: false)], in: .unknown))
+        #expect(!target.isSatisfied(by: [variant("L", "Black", available: true)], in: .unknown))
         #expect(target.isSatisfied(by: [
             variant("M", "Black", available: false),
             variant("M", "Black", available: true)
-        ]))
+        ], in: .unknown))
     }
 
     @Test("Only the matching, buyable sizes are named in an alert")
@@ -84,7 +84,7 @@ struct WatchMatchingTests {
             variant("M", "Black", available: false),
             variant("L", "Black", available: true),
             variant("XL", "Sand", available: true)
-        ])
+        ], context: .unknown)
 
         #expect(sizes == ["S", "L"])
     }
@@ -94,7 +94,7 @@ struct WatchMatchingTests {
         let target = WatchTarget()
         let sizes = target.availableSizes(in: [
             VariantInfo(id: "1", title: "Default Title", available: true, size: "Default Title")
-        ])
+        ], context: .unknown)
         #expect(sizes.isEmpty)
     }
 

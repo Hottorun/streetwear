@@ -1178,6 +1178,200 @@ struct DeviceUpdateTests {
     }
 }
 
+@Suite("Sizes by garment")
+struct GarmentSizeTests {
+    /// A profile with every ladder filled, none of it at a default.
+    private var everyLadder: SizeProfile {
+        var profile = SizeProfile()
+        profile.apparel = ["M", "L"]
+        profile.shoe = ["9.5"]
+        profile.waist = ["32"]
+        profile.dress = ["6", "8"]
+        profile.suit = ["40"]
+        profile.suitLength = ["R"]
+        profile.gender = .womens
+        return profile
+    }
+
+    private func expectSameLadders(_ stored: SizeProfile, _ sent: SizeProfile) {
+        #expect(stored.apparel == sent.apparel)
+        #expect(stored.shoe == sent.shoe)
+        #expect(stored.waist == sent.waist)
+        #expect(stored.dress == sent.dress)
+        #expect(stored.suit == sent.suit)
+        #expect(stored.suitLength == sent.suitLength)
+        #expect(stored.gender == sent.gender)
+    }
+
+    /// `UserModel.sizeProfile` is discrete columns, so a ladder with no column round-trips
+    /// through the accessor and is silently dropped — which is how gender was lost, and then
+    /// the waist. Both routes that write a profile, read back from the row.
+    @Test("Every ladder survives registration and an update, read back from the row")
+    func everyLadderPersists() async throws {
+        try await withServer { app in
+            let sent = everyLadder
+            var token = ""
+            try await app.testing().test(.POST, "v1/devices", beforeRequest: { req in
+                try req.content.encode(RegisterDevice(sizes: SizePayload(sent)))
+            }, afterResponse: { res async throws in
+                token = try res.content.decode(DeviceResponse.self).token
+            })
+            let device = try #require(
+                try await DeviceModel.query(on: app.db).filter(\.$authToken == token).first()
+            )
+            let userID = device.$user.id
+            expectSameLadders(try #require(try await UserModel.find(userID, on: app.db)).sizeProfile, sent)
+
+            var changed = sent
+            changed.dress = ["10"]
+            changed.suit = ["42", "44"]
+            changed.suitLength = ["L"]
+            try await app.testing().test(
+                .PATCH, "v1/devices/me",
+                headers: HTTPHeaders([("Authorization", "Bearer \(token)")]),
+                beforeRequest: { req in
+                    try req.content.encode(UpdateDevice(sizes: SizePayload(changed)))
+                }, afterResponse: { res async throws in
+                    #expect(res.status == .noContent)
+                }
+            )
+            expectSameLadders(try #require(try await UserModel.find(userID, on: app.db)).sizeProfile, changed)
+        }
+    }
+
+    /// The 1.0 app sends no dress or suit fields. Its update must still land, and leave the
+    /// new ladders empty rather than failing to decode.
+    @Test("An update from the 1.0 app still lands")
+    func olderClientUpdate() async throws {
+        try await withServer { app in
+            let auth = try await deviceAuth(app)
+            let body = #"{"sizes":{"apparel":["M"],"shoe":["9"],"waist":["32"],"gender":"mens"}}"#
+            try await app.testing().test(.PATCH, "v1/devices/me", headers: auth, beforeRequest: { req in
+                req.headers.contentType = .json
+                req.body = ByteBuffer(string: body)
+            }, afterResponse: { res async throws in
+                #expect(res.status == .noContent)
+            })
+            let user = try #require(try await UserModel.query(on: app.db).first())
+            #expect(user.apparelSizes == ["M"])
+            #expect(user.dressSizes.isEmpty)
+            #expect(user.suitSizes.isEmpty)
+            #expect(user.suitLengths.isEmpty)
+        }
+    }
+
+    /// The next field somebody adds to `SizeProfile` fails here until it has a column and a
+    /// line in both halves of the accessor — or is named display-only, which is a decision
+    /// rather than an omission.
+    @Test("Every field of a size profile is stored or deliberately display-only")
+    func noFieldIsSilentlyDropped() {
+        let stored: Set<String> = ["apparel", "shoe", "waist", "dress", "suit", "suitLength", "gender"]
+        let displayOnly: Set<String> = ["shoeScale", "dressScale", "suitScale"]
+        let fields = Set(Mirror(reflecting: SizeProfile()).children.compactMap(\.label))
+        #expect(fields == stored.union(displayOnly), "a SizeProfile field needs a UserModel column")
+
+        let user = UserModel()
+        user.sizeProfile = everyLadder
+        expectSameLadders(user.sizeProfile, everyLadder)
+    }
+
+    /// The live bug, on the wire. "UK 10" on a dress was read as a UK 10 shoe — a US 11 —
+    /// so the feed told somebody with an 11 shoe that the dress was in their size, and told
+    /// the woman who wears a UK 10 that it was not.
+    @Test("The feed calls a dress somebody's size by their dress size, not their shoe size")
+    func feedReadsDressSizes() async throws {
+        try await withServer { app in
+            let brand = BrandModel(
+                name: "Reformation", slug: "thereformation.com", website: "https://thereformation.com",
+                instagramHandle: nil, usesGeneratedName: false
+            )
+            try await brand.save(on: app.db)
+            let brandID = try brand.requireID()
+            let product = ProductModel(
+                brandID: brandID,
+                sourceID: nil,
+                item: FetchedItem(
+                    externalID: "shopify:2", title: "Silk Slip Dress", publishedAt: Date(), kind: .product
+                )
+            )
+            try await product.save(on: app.db)
+            let productID = try product.requireID()
+            for (size, available) in [("UK 8", false), ("UK 10", true), ("UK 12", false)] {
+                try await VariantModel(
+                    productID: productID,
+                    info: VariantInfo(id: size, title: size, available: available, size: size)
+                ).save(on: app.db)
+            }
+            try await EventModel(brandID: brandID, productID: productID, kind: .product).save(on: app.db)
+
+            func inMySize(_ sizes: SizePayload) async throws -> Bool {
+                let auth = try await deviceAuth(app)
+                try await app.testing().test(.PATCH, "v1/devices/me", headers: auth, beforeRequest: { req in
+                    try req.content.encode(UpdateDevice(sizes: sizes))
+                }, afterResponse: { _ in })
+                try await app.testing().test(.POST, "v1/follows", headers: auth, beforeRequest: { req in
+                    try req.content.encode(FollowBrand(brandID: brandID))
+                }, afterResponse: { _ in })
+                var answer = false
+                try await app.testing().test(.GET, "v1/feed", headers: auth) { res async throws in
+                    let item = try #require(try res.content.decode(FeedResponse.self).items.first)
+                    answer = item.availableInMySize
+                }
+                return answer
+            }
+
+            #expect(try await inMySize(SizePayload(apparel: [], shoe: [], dress: ["6"])))
+            #expect(!(try await inMySize(SizePayload(apparel: [], shoe: ["11"]))))
+        }
+    }
+
+    /// Converting "EU 41" and "EU 41.5" lands both on a US 8, so a watch on the half size
+    /// fired when the whole size came back — an alert for a size nobody asked about.
+    @Test("A watch on a half size does not fire when the size below it comes back")
+    func watchKeepsHalfSizesApart() async throws {
+        try await withServer { app in
+            let brand = BrandModel(
+                name: "Asics", slug: "asics.com", website: "https://asics.com",
+                instagramHandle: nil, usesGeneratedName: false
+            )
+            try await brand.save(on: app.db)
+            let brandID = try brand.requireID()
+            let product = ProductModel(
+                brandID: brandID,
+                sourceID: nil,
+                item: FetchedItem(
+                    externalID: "shopify:3", title: "Gel Runner Sneaker", publishedAt: Date(), kind: .product
+                )
+            )
+            try await product.save(on: app.db)
+            let productID = try product.requireID()
+            for (size, available) in [("EU 41", true), ("EU 41.5", false)] {
+                try await VariantModel(
+                    productID: productID,
+                    info: VariantInfo(id: size, title: size, available: available, size: size)
+                ).save(on: app.db)
+            }
+            let user = UserModel()
+            try await user.save(on: app.db)
+            let userID = try user.requireID()
+            try await DeviceModel(userID: userID, apnsToken: "token-a", environment: "sandbox", locale: nil)
+                .save(on: app.db)
+            try await FollowModel(userID: userID, brandID: brandID).save(on: app.db)
+            let watch = WatchModel(userID: userID, brandID: brandID, productID: productID, size: "EU 41.5", color: nil)
+            try await watch.save(on: app.db)
+            try await EventModel(brandID: brandID, productID: productID, kind: .restock, sizes: ["EU 41"])
+                .save(on: app.db)
+
+            let sender = RecordingSender()
+            _ = await Notifier(app: app, sender: sender).dispatch()
+
+            let reloaded = try #require(try await WatchModel.find(watch.requireID(), on: app.db))
+            #expect(reloaded.firedAt == nil)
+            #expect(!sender.sent.contains { $0.body.contains("EU 41") })
+        }
+    }
+}
+
 @Suite("Database TLS")
 struct DatabaseTLSTests {
     /// Regression: `.prefer` with default verification fails outright against managed

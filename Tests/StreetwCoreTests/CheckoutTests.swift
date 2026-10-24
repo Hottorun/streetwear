@@ -43,7 +43,7 @@ struct CheckoutTests {
     func uniqueSizeIsACartPermalink() {
         let link = Checkout.link(
             to: page, productExternalID: "shopify:9001",
-            variants: run, profile: profile(apparel: ["M"])
+            variants: run, profile: profile(apparel: ["M"]), context: .unknown
         )
         #expect(link.action == .checkout)
         #expect(link.url.absoluteString == "https://kith.com/cart/102:1")
@@ -58,7 +58,7 @@ struct CheckoutTests {
         let regional = URL(string: "https://usa.palaceskateboards.com/products/tri-ferg-hood")!
         let link = Checkout.link(
             to: regional, productExternalID: "shopify:1",
-            variants: run, profile: profile(apparel: ["L"])
+            variants: run, profile: profile(apparel: ["L"]), context: .unknown
         )
         #expect(link.url.absoluteString == "https://usa.palaceskateboards.com/cart/103:1")
     }
@@ -68,7 +68,7 @@ struct CheckoutTests {
         let plain = URL(string: "http://kith.com/products/nylon-maverick-pant")!
         let link = Checkout.link(
             to: plain, productExternalID: "shopify:1",
-            variants: run, profile: profile(apparel: ["S"])
+            variants: run, profile: profile(apparel: ["S"]), context: .unknown
         )
         #expect(link.url.scheme == "https")
     }
@@ -79,7 +79,7 @@ struct CheckoutTests {
     func ambiguousSizesOpenThePage() {
         let link = Checkout.link(
             to: page, productExternalID: "shopify:1",
-            variants: run, profile: profile(apparel: ["M", "L"])
+            variants: run, profile: profile(apparel: ["M", "L"]), context: .unknown
         )
         #expect(link.action == .productPage)
         #expect(link.url == page)
@@ -91,7 +91,7 @@ struct CheckoutTests {
     func soldOutSiblingDoesNotBlock() {
         let link = Checkout.link(
             to: page, productExternalID: "shopify:1",
-            variants: run, profile: profile(apparel: ["M", "XL"])
+            variants: run, profile: profile(apparel: ["M", "XL"]), context: .unknown
         )
         #expect(link.action == .checkout)
         #expect(link.variantID == "102")
@@ -103,7 +103,7 @@ struct CheckoutTests {
     func soldOutSizeIsPreselected() {
         let link = Checkout.link(
             to: page, productExternalID: "shopify:1",
-            variants: run, profile: profile(apparel: ["XL"])
+            variants: run, profile: profile(apparel: ["XL"]), context: .unknown
         )
         #expect(link.action == .productPage)
         #expect(link.url.absoluteString == "https://kith.com/products/nylon-maverick-pant?variant=104")
@@ -116,7 +116,7 @@ struct CheckoutTests {
     func noProfileNoCheckout() {
         let link = Checkout.link(
             to: page, productExternalID: "shopify:1",
-            variants: run, profile: SizeProfile()
+            variants: run, profile: SizeProfile(), context: .unknown
         )
         #expect(link.action == .productPage)
         #expect(link.url == page)
@@ -129,7 +129,7 @@ struct CheckoutTests {
         let odd = [variant("201", size: "44"), variant("202", size: "46")]
         let link = Checkout.link(
             to: page, productExternalID: "shopify:1",
-            variants: odd, profile: profile(apparel: ["M"], shoe: ["9"])
+            variants: odd, profile: profile(apparel: ["M"], shoe: ["9"]), context: .unknown
         )
         #expect(link.action == .productPage)
         #expect(link.variantID == nil)
@@ -142,7 +142,7 @@ struct CheckoutTests {
         ]
         let link = Checkout.link(
             to: page, productExternalID: "shopify:1",
-            variants: shoes, profile: profile(shoe: ["9.5"])
+            variants: shoes, profile: profile(shoe: ["9.5"]), context: .unknown
         )
         #expect(link.url.absoluteString == "https://kith.com/cart/302:1")
         #expect(link.size == "9.5")
@@ -158,13 +158,13 @@ struct CheckoutTests {
         ]
         let unchosen = Checkout.link(
             to: page, productExternalID: "shopify:1",
-            variants: both, profile: profile(apparel: ["M"])
+            variants: both, profile: profile(apparel: ["M"]), context: .unknown
         )
         #expect(unchosen.action == .productPage)
 
         let sand = Checkout.link(
             to: page, productExternalID: "shopify:1",
-            variants: both, profile: profile(apparel: ["M"]), colorway: "sand"
+            variants: both, profile: profile(apparel: ["M"]), context: .unknown, colorway: "sand"
         )
         #expect(sand.url.absoluteString == "https://kith.com/cart/402:1")
     }
@@ -174,7 +174,7 @@ struct CheckoutTests {
         let cap = [variant("501", size: nil)]
         let link = Checkout.link(
             to: page, productExternalID: "shopify:1",
-            variants: cap, profile: SizeProfile()
+            variants: cap, profile: SizeProfile(), context: .unknown
         )
         #expect(link.action == .checkout)
         #expect(link.url.absoluteString == "https://kith.com/cart/501:1")
@@ -186,7 +186,7 @@ struct CheckoutTests {
         let beanie = [variant("601", size: "OS")]
         let link = Checkout.link(
             to: page, productExternalID: "shopify:1",
-            variants: beanie, profile: profile(apparel: ["M"])
+            variants: beanie, profile: profile(apparel: ["M"]), context: .unknown
         )
         #expect(link.action == .checkout)
         #expect(link.size == nil)
@@ -200,13 +200,13 @@ struct CheckoutTests {
             VariantInfo(id: "70\(index)", title: colour, available: true, color: colour)
         }
         let unchosen = Checkout.link(
-            to: page, productExternalID: "shopify:1", variants: bag, profile: SizeProfile()
+            to: page, productExternalID: "shopify:1", variants: bag, profile: SizeProfile(), context: .unknown
         )
         #expect(unchosen.action == .productPage)
 
         let olive = Checkout.link(
             to: page, productExternalID: "shopify:1",
-            variants: bag, profile: SizeProfile(), colorway: "Olive"
+            variants: bag, profile: SizeProfile(), context: .unknown, colorway: "Olive"
         )
         #expect(olive.url.absoluteString == "https://kith.com/cart/701:1")
         #expect(olive.size == nil)
@@ -219,7 +219,7 @@ struct CheckoutTests {
         for key in ["ucp:gid://shopify/Product/1", "sitemap:https://x.com/p/1", "feed:abc", nil] {
             let link = Checkout.link(
                 to: page, productExternalID: key,
-                variants: run, profile: profile(apparel: ["M"])
+                variants: run, profile: profile(apparel: ["M"]), context: .unknown
             )
             #expect(link.action == .productPage)
             #expect(link.url == page)
@@ -239,7 +239,7 @@ struct CheckoutTests {
         for one in hostile {
             let link = Checkout.link(
                 to: page, productExternalID: "shopify:1",
-                variants: [one], profile: profile(apparel: ["M"])
+                variants: [one], profile: profile(apparel: ["M"]), context: .unknown
             )
             #expect(link.action == .productPage)
             #expect(link.url == page)
@@ -253,10 +253,25 @@ struct CheckoutTests {
         let home = URL(string: "https://kith.com/")!
         let link = Checkout.link(
             to: home, productExternalID: "shopify:1",
-            variants: run, profile: profile(apparel: ["M"])
+            variants: run, profile: profile(apparel: ["M"]), context: .unknown
         )
         #expect(link.url == home)
         #expect(link.action == .productPage)
+    }
+
+    /// The checkout reads sizes on the garment's own ladder. Without the context a dress
+    /// printed "10" was claimed as a US shoe 10, and the bar would have put the wrong
+    /// garment in somebody's checkout in one tap.
+    @Test("A dress size is not mistaken for your shoe size at checkout")
+    func checkoutReadsTheGarmentsLadder() {
+        let dresses = [variant("201", size: "8"), variant("202", size: "10"), variant("203", size: "12")]
+        let dress = SizeContext.of(slot: .unknown, gender: .womens, title: "Slip Dress")
+        let link = Checkout.link(
+            to: page, productExternalID: "shopify:1",
+            variants: dresses, profile: profile(shoe: ["10"]), context: dress
+        )
+        #expect(link.action == .productPage)
+        #expect(link.variantID == nil)
     }
 
     /// A market or currency parameter belongs to the shop; an old `variant` does not.

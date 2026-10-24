@@ -77,8 +77,9 @@ extension FeedItem {
         guard let eventID = event.id, let createdAt = event.createdAt else { return nil }
 
         let product = event.product
-        let variants = product?.variants ?? []
-        let mine = event.sizes.filter { profile.matches($0) }
+        let variants = (product?.variants ?? []).map(\.asVariantInfo)
+        let context = product?.sizeContext(sizes: variants.map(\.displaySize) + event.sizes) ?? .unknown
+        let mine = event.sizes.filter { profile.matches($0, in: context) }
 
         self.init(
             eventID: eventID,
@@ -99,11 +100,11 @@ extension FeedItem {
             restockedSizes: profile.isEmpty ? event.sizes : mine,
             availableInMySize: variants.isEmpty
                 ? false
-                : variants.contains { $0.available && profile.claims($0.asVariantInfo) },
+                : variants.contains { $0.available && profile.claims($0, in: context) },
             // Sent in full so the client's size run, colourway swatches and restock
             // watcher have something to work with. Withholding these is what made the
             // whole size feature inert in the app's default server-backed mode.
-            variants: variants.map(\.asVariantInfo),
+            variants: variants,
             gender: product?.gender.rawValue,
             // Shipped alongside the verdict rather than instead of it: the server decides
             // gender so both platforms agree, but the client re-derives whenever its own
@@ -214,5 +215,17 @@ extension ProductModel {
             // distinction when the visible title doesn't.
             handle: linkURL.flatMap { URL(string: $0)?.lastPathComponent }
         )
+    }
+
+    /// What this garment's sizes are printed on, so a "38" is read on the ladder the phone
+    /// reads it on. See `SizeContext`.
+    ///
+    /// - Parameter sizes: the run to read. Passed in rather than read off `$variants`, for
+    ///   the reason `DiscoverCard.init` takes its variants that way: the `@Children`
+    ///   accessor traps when the relation was not eager loaded, and the notifier holds
+    ///   events whose products were loaded without them.
+    func sizeContext(sizes: [String]) -> SizeContext {
+        guard SizeContext.matters(for: sizes) else { return .unknown }
+        return SizeContext.of(gender: gender, title: title, productType: productType, tags: tags, sizes: sizes)
     }
 }

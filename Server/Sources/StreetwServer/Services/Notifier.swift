@@ -494,8 +494,9 @@ actor Notifier {
 
             for watch in watches {
                 let variants = watch.product.variants.map(\.asVariantInfo)
-                let back = watch.target.availableSizes(in: variants)
-                guard watch.target.isSatisfied(by: variants) else { continue }
+                let context = watch.product.sizeContext(sizes: variants.map(\.displaySize))
+                let back = watch.target.availableSizes(in: variants, context: context)
+                guard watch.target.isSatisfied(by: variants, in: context) else { continue }
 
                 // Stamped whether or not a device is reachable, for the same reason
                 // `events.notified_at` is: a user with no token must not accumulate a
@@ -681,7 +682,10 @@ actor Notifier {
 
         guard kind == .restock else { return true }
         guard !profile.isEmpty, !event.sizes.isEmpty else { return true }
-        return event.sizes.contains { profile.matches($0) }
+        // The run is the event's own sizes, never `product.$variants`: the products here
+        // were loaded without them, and that accessor traps rather than returning nothing.
+        let context = event.product?.sizeContext(sizes: event.sizes) ?? .unknown
+        return event.sizes.contains { profile.matches($0, in: context) }
     }
 
     /// The notification text for one brand's batch. `nil` when there is nothing to say.

@@ -122,7 +122,9 @@ Changing these silently will break intended behavior:
   default, deliberately, because an unmarked size costs a glance at the run and a wrongly marked
   one costs the accent all its meaning. One-size is shown and not claimed: it fits everybody,
   which is not a fact about this reader. `Notifier` keeps `matches`, because waking somebody is
-  the place where a false positive really is cheaper than a miss.
+  the place where a false positive really is cheaper than a miss. Both questions are asked **in the
+  product's `SizeContext`** — a "38" on a dress is a dress size, not a shoe — and both take it with
+  no default; see *Sizing* in `CLAUDE.md`.
 - **A count is subject to the same filter as the list it counts.** `Brand.unseenCount` counts
   everything unseen and no screen means that: the feed cleared to "all caught up" under a Menswear
   setting while the brands list still claimed 40 unread and the brand page still printed UNREAD in

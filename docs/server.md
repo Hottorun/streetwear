@@ -10,11 +10,19 @@ Part of the streetw guidance set; see `CLAUDE.md` for the index and the build ru
   design. (`watches` points *at* a product without owning it, exactly as `follows` points at a
   brand, and `poll_hints` at a brand's *schedule* without owning that either — a hint changes
   cadence and is never read back to anybody but the device that wrote it.)
-- **`UserModel.sizeProfile` is three discrete columns, not an encoded blob.** A new field on
+- **`UserModel.sizeProfile` is discrete columns, not an encoded blob.** A new field on
   `SizeProfile` is therefore *not* automatically persisted: it round-trips through the accessor
   and is silently dropped on write. Adding one means a column, a migration, and a line in both
   halves of the accessor. `gender` was lost this way and only surfaced because a test asserted on
-  a push that should have been filtered.
+  a push that should have been filtered; the waist was lost the same way through `SizePayload`.
+  `noFieldIsSilentlyDropped` now lists every `SizeProfile` field as stored or display-only and fails
+  on one that is neither — the display scales (`shoeScale`, `dressScale`, `suitScale`) have no
+  column on purpose, because they never change what is matched. `AddUserDressAndSuitSizes` adds
+  three `TEXT[]` columns with one `update()` each, and spells the empty default per dialect: `{}` is
+  Postgres's empty array, and SQLite stores JSON, where `{}` is not an array.
+- **The notifier reads a size on the product's ladder** (`ProductModel.sizeContext(sizes:)`), with
+  the run passed in rather than read off `$variants` — the restock path loads products without
+  their variants, and that accessor traps.
 - **`next_check_at` is the schedule**, held in the row rather than in memory, so restarts
   resume and a second instance can later use `FOR UPDATE SKIP LOCKED`.
 - **A weekly brand is not a dormant brand, it is a punctual one.** `quietForAWeek` put a

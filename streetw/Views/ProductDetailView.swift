@@ -55,7 +55,7 @@ struct ProductDetailView: View {
         // times over to draw one page.
         let variants = visibleVariants
         let colorways = self.colorways
-        let entries = SizeRun.entries(for: variants, profile: sizes.profile)
+        let entries = SizeRun.entries(for: variants, in: update.sizeContext, profile: sizes.profile)
         let isSoldOut = variants.isEmpty ? update.isAvailable == false : !variants.contains { $0.available }
         let checkout = update.checkoutLink(profile: sizes.profile, colorway: selectedColorway)
 
@@ -252,6 +252,7 @@ extension BrandUpdate {
             productExternalID: productExternalID ?? externalID,
             variants: variants,
             profile: profile,
+            context: sizeContext,
             colorway: colorway
         )
     }

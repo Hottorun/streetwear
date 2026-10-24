@@ -984,9 +984,11 @@ private struct BrandSpread: View {
         var mine: [String] = []
         var others: [String] = []
         for item in items {
+            // Each garment's own: "8" is a shoe on one item in a story and a dress on another.
+            let context = item.sizeContext
             for size in item.restockedSizes where size != "Default Title" && !size.isEmpty {
                 guard seen.insert(size).inserted else { continue }
-                if profile.claims(size) { mine.append(size) } else { others.append(size) }
+                if profile.claims(size, in: context) { mine.append(size) } else { others.append(size) }
             }
         }
         let shown = (mine + others).prefix(4)

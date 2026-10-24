@@ -91,7 +91,7 @@ struct SaveDetailView: View {
     private func stock() -> Stock {
         let variants = visibleVariants
         return Stock(
-            entries: SizeRun.entries(for: variants, profile: sizes.profile),
+            entries: SizeRun.entries(for: variants, in: update?.sizeContext ?? .unknown, profile: sizes.profile),
             isSoldOut: variants.isEmpty
                 ? update?.isAvailable == false
                 : !variants.contains { $0.available }

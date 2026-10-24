@@ -426,13 +426,67 @@ verdict*, because nothing would ever revisit it.
 
 ### Sizing
 
+- **A number is read on the ladder of the garment it is printed on.** A "38" is an EU shoe on a
+  sneaker, a waist on trousers and a French 38 (a US 6) on a dress. Read without knowing which, a
+  US dress 4–18 was taken for a US shoe, "UK 10" for a UK shoe, a bare 34 for a waist and "EU 48"
+  on a suit for a size 14 sneaker — so a woman who had entered a shoe size had dresses ruled as
+  hers by a ladder that had nothing to do with her. `SizeContext` (built once per product from the
+  `GarmentSlot`, the product's gender and its dress/tailoring words, which the slot does not place)
+  decides; `SizeProfile.matches`/`claims` and `WatchTarget` take it **with no default**, so a new
+  call site cannot forget it. `BrandUpdate.sizeContext`, `DiscoverCard.sizeContext` and
+  `ProductModel.sizeContext(sizes:)` build it. A product nothing places is `.unknown`, which runs
+  the old rules **unchanged** — they are what kept that ignorance from hiding anything. Letters and
+  one-size are read before the context and identically everywhere, which is why
+  `SizeContext.matters` lets a run with no numbers skip the classifiers. Bras are band-and-cup, a
+  later ladder: a bra word makes the context `.unknown`, so "34B" stays `.other`.
 - **Shoe sizes are stored canonically in US**, everywhere — the profile, the wire, every
   comparison. `SizeProfile.shoeScale` is a *display* preference, so switching to EU rewrites
-  nothing and needs no re-send.
+  nothing and needs no re-send. Dress sizes are US too (`dressScale`), and suits chest inches
+  (`suitScale`); no scale ever leaves the phone.
 - **A region code is the whole difference between a UK 9 and a US 9**, which are a full size apart.
   Both codes used to be stripped and the remainder read as US. Only a size that *names* its scale
-  is converted; a bare "44" stays `.other` and is never hidden, because it is as likely a waist or
-  an EU jacket.
+  is converted, except where the garment leaves one reading: a bare 44 on a sneaker can only be
+  European. On a product nothing places, a bare "44" stays `.other` and is never hidden, because
+  it is as likely a waist or an EU jacket.
+- **Women's dress sizes are fixed offsets: UK = US + 4, EU (FR) = US + 32, IT = US + 36**, even
+  sizes only (odd US numbers are juniors'), US 00–28 — "00" is a rung of its own (UK 2), carried
+  as −2, because read as a number it collapsed into the 0 beside it. A converted dress size
+  matches within **one rung** (2), the dress ladder's half-size rule: German shops label their own
+  ladder "EUR" one rung below French, and plenty of US brands print UK 10 as a US 8. A bare number on a women's garment
+  is US up to 28 and French from 30 — the ranges do not meet. **Known gap:** a UK shop printing
+  bare UK numbers reads two rungs off, the same US-default assumption the shoe ladder makes; the
+  storefront's market is the fix and arrives with region-aware data.
+- **Suits are chest inches; EU and IT jackets are the chest plus ten**, on every table, so a
+  converted chest gets **no** tolerance — a jacket two inches off does not button. A length suffix
+  ("40R", "42 Long") is tailoring's own notation and always means inches. The profile holds chests
+  (`suit`) and lengths (`suitLength`) separately, because a length is a height and a chest a build:
+  a length narrows only when both the run and the profile name one, and a run with none ("EU 50")
+  is one jacket per chest. A length with no chest is not a profile (`isEmpty`). On trousers a
+  length is the leg and is dropped, like an inseam.
+- **The cut decides where the ladders meet.** Women's and men's European numbers overlap at 44–60:
+  the product's gender settles it, and a garment naming itself tailoring settles it for the suit.
+  A men's garment never reads the dress ladder (a men's "EU 38" is a collar). Unlabelled bare
+  numbers on a top stay `.other` — a 40 is a chest, a French 40 and an Italian 40 at once —
+  unless the run can only be the US dress ladder (`SizeContext.isDressRun`: every bare number
+  even, 00–28, at least one below 20, at least two of them). Plenty of womenswear tags nothing —
+  every Staud product classifies `.unknown` — and without this only its dresses, which name
+  themselves, were readable. A Japanese 0–5 run has odd numbers, a waist run starts at 20, and
+  a European or chest run passes 28; on trousers a dress run wins over the waist reading, so a
+  plus run of 14–22 is one ladder rather than three dress sizes and two waists.
+- **A man's bare numbers are read whole or not at all.** European sizes run 42–56 and chests
+  34–48, so a bare 44 is an XS in Milan and an XL in London. A run is printed in one system, so
+  `SizeContext.runScale` reads it off the run's ends (a 36 means inches, a 52 European) and leaves
+  every bare number `.other` when they do not say. Reading numbers one at a time would make the
+  ends of a run readable and not the middle — YoungLA's half-readable run again.
+- **A size run prints the label, a profile compares the token.** `NormalizedSize.label` is the size
+  as the shop printed it ("44" for EU 44); `token` is canonical. `SizeRun` printed and collapsed on
+  the token, so a European run read in US numbers nobody in that shop uses, and "EU 41"/"EU 41.5",
+  which convert to one US 8, collapsed into one entry. `WatchTarget` compares labels too — both
+  sides are sizes of one product, and comparing tokens fired a watch on the 41.5 when the 41 came
+  back.
+- **New ladders canonicalise strictly.** `SizePayload.asProfile` keeps the older ladders' `.other`
+  tokens (that is how a bare "44" reached a shoe ladder), but `dressToken`/`suitToken` drop anything
+  that is not on the ladder.
 - **Bottoms have their own ladder, and it is not apparel.** A 32 is not an M, no table converts
   between them, and a person wears one of each — so `SizeKind.waist` is its own case. Without it
   every pair of trousers normalised to `.other`: never hidden, and never *matched* either, so on
@@ -440,13 +494,18 @@ verdict*, because nothing would ever revisit it.
   Two bands, and the difference is the whole care taken: a string that **names** itself a waist
   ("W34", "34W", "waist 34", "32x30") is read across the full human range, while a **bare** number
   is only a waist up to 37, because from 38 up it collides with the EU shoe ladder and guessing
-  would *hide* a product. Note `w` is also the women's-shoe marker: "W 9" falls out of the waist
-  reader by range and lands on the shoe ladder, and there is a test pinning that.
+  would *hide* a product — on a product nothing places. On trousers no shoe collides, so there a
+  bare number is a waist across the full range. Note `w` is also the women's-shoe marker: "W 9"
+  falls out of the waist reader by range and lands on the shoe ladder, and there is a test pinning
+  that.
 - **Each ladder filters only once it has been filled in.** They are separate questions — a shoe size
   says nothing about a waist — and the profile-wide `isEmpty` guard could not express it: somebody
   who had entered shoe sizes and nothing else had *every garment in the app* hidden, because an
   empty `apparel` set matched no letter. Adding a third ladder made that three times as likely to
-  be reached. Adding a fourth means adding the `isEmpty ||` to its case too.
+  be reached. There are five now (apparel, shoe, waist, dress, suit); adding a sixth means adding
+  the `isEmpty ||` to its case too, a column on `UserModel` (see `docs/server.md`), and a field on
+  `SizePayload` — the server test `noFieldIsSilentlyDropped` fails until it is stored or named
+  display-only.
 - **A size spelled out in full is the same size.** YoungLA writes its entire catalogue as
   `XXSmall, XSmall, Small, Medium, Large, XLarge, XXLarge`, and the word table held only the three
   bare words — so every extremity fell through to `.other`: never hidden, per the rule below, but
@@ -455,9 +514,9 @@ verdict*, because nothing would ever revisit it.
   shorthand for one) onto the short form before the lookup. The prefix must be X's and nothing
   else: "petite small" is not an S, and folding it into one would put the wrong garment in a
   size-filtered feed, which is the failure this whole layer exists to prevent.
-- **A converted size matches within half a size.** Brand tables genuinely disagree by that much, so
-  demanding an exact hit after a conversion would hide real results. Native US sizes get no
-  tolerance, or the profile silently widens by a size.
+- **A converted shoe size matches within half a size.** Brand tables genuinely disagree by that
+  much, so demanding an exact hit after a conversion would hide real results. Native US sizes get
+  no tolerance, or the profile silently widens by a size. (Dresses: one rung. Suits: none.)
 - **One-size items always match.** The toggle that could exclude them bought nothing and hid most
   of the accessories in the feed. `UserModel.includeOneSize` survives only because the column is
   `NOT NULL` in an applied schema.
@@ -872,7 +931,7 @@ device id ever — the one per-device usage fact is `devices.active_on`, overwri
 **Read `docs/server.md` before touching the poller, the schema, migrations or `Notifier`.** The
 traps that cost the most: a `[String]` column must be `TEXT[]` on Postgres and **cannot reproduce on
 SQLite**; a failed poll must still advance `next_check_at`; the poll claim is a lease
-(`FOR UPDATE SKIP LOCKED`); `UserModel.sizeProfile` is three discrete columns, so a new
+(`FOR UPDATE SKIP LOCKED`); `UserModel.sizeProfile` is discrete columns, so a new
 `SizeProfile` field is silently dropped without a migration; retention prunes events before
 products; `Poller.refresh` guards every write, because rewrites — not rows — are what fill the
 volume; and only the *unexpected* is worth a buzz (`Notifier.isWorthWaking`), one push per brand per

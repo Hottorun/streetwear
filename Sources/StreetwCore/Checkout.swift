@@ -67,6 +67,9 @@ public enum Checkout {
     ///     says this is a Shopify product, and therefore that `variants` carry Shopify ids.
     ///     Pass the event's `externalID` when there is no product key; a standalone row is
     ///     keyed `shopify:<id>` there.
+    ///   - context: what the garment is, which decides how its sizes read — a "10" on a dress
+    ///     is not the reader's shoe size. No default, for the reason `SizeProfile.claims` has
+    ///     none: a caller that forgot it would put the wrong size in somebody's checkout.
     ///   - colorway: the colourway selected on the page, if any. Narrows the variants before
     ///     anything else, because "my size" in black and "my size" in sand are different
     ///     garments in the checkout.
@@ -75,6 +78,7 @@ public enum Checkout {
         productExternalID: String?,
         variants: [VariantInfo],
         profile: SizeProfile,
+        context: SizeContext,
         colorway: String? = nil
     ) -> CheckoutLink {
         let plain = CheckoutLink(url: productURL, action: .productPage)
@@ -90,7 +94,7 @@ public enum Checkout {
 
         // Which variants are *this reader's*: one they told us they wear, or one with no size
         // to choose at all. Never one we merely failed to rule out.
-        let yours = inColour.filter { hasNoSizeChoice($0) || profile.claims($0) }
+        let yours = inColour.filter { hasNoSizeChoice($0) || profile.claims($0, in: context) }
         let buyable = yours.filter(\.available)
 
         if buyable.count == 1, let variant = buyable.first,
