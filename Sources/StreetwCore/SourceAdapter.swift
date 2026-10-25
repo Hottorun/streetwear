@@ -36,6 +36,20 @@ public struct FetchedItem: Sendable, Hashable {
     /// what makes a *price drop* detectable, which is the one silent product edit worth
     /// telling someone about.
     public var priceAmount: Double?
+    /// What the brand says this cost before it was marked down — Shopify's
+    /// `compare_at_price` — when that is meaningfully above `priceAmount`.
+    ///
+    /// **The brand's own word for a markdown, and the only one a first sighting can have.**
+    /// A markdown used to be detectable only as a fall between two polls, so a product the
+    /// poller met already discounted — last season's stock moved onto the sale rail, which
+    /// is exactly what a sale *is* — was never a markdown at all: no "−30%", nothing in
+    /// the markdowns list, nothing to rank it by. Nil when the source publishes no such
+    /// price, which is every source but Shopify, and when it publishes one that is not a
+    /// real cut (`PriceChange.isDrop`) — storefronts leave compare-at equal to the price,
+    /// or below it, and a "was" that is not more than the price is not a claim.
+    public var originalPriceAmount: Double?
+    /// The same, formatted in the shop's currency for display.
+    public var originalPriceText: String?
     /// An announced start time, when the page explicitly labels one. Nil is the normal
     /// case — most storefronts never publish a machine-readable release time.
     public var releaseDate: Date?
@@ -79,6 +93,8 @@ public struct FetchedItem: Sendable, Hashable {
         kind: UpdateKind,
         priceText: String? = nil,
         priceAmount: Double? = nil,
+        originalPriceAmount: Double? = nil,
+        originalPriceText: String? = nil,
         releaseDate: Date? = nil,
         isAvailable: Bool? = nil,
         tags: [String] = [],
@@ -97,6 +113,8 @@ public struct FetchedItem: Sendable, Hashable {
         self.kind = kind
         self.priceText = priceText
         self.priceAmount = priceAmount
+        self.originalPriceAmount = originalPriceAmount
+        self.originalPriceText = originalPriceText
         self.releaseDate = releaseDate
         self.isAvailable = isAvailable
         self.tags = tags

@@ -68,10 +68,19 @@ public enum Reshelving {
     /// so a source with no variant data reports nil and is treated as buyable. That is the
     /// right default: the only thing we would be doing with a firmer reading is hiding
     /// something on a guess.
+    ///
+    /// **A re-shelved product the brand has marked down is a `.priceDrop`**, measured from
+    /// the brand's own original (`FetchedItem.originalPriceAmount`). Moving old stock onto
+    /// the sale rail is the commonest re-shelving there is, and it is a markdown rather than
+    /// a restock: nothing came back, it got cheaper. Before compare-at was read it could
+    /// never be one — a markdown was only ever a fall between two polls, and this product had
+    /// no earlier poll. A *launch* that happens to be discounted keeps its kind: it is a
+    /// drop, which is the louder news, and its card still says how much is off.
     public static func firstSighting(of item: FetchedItem) -> UpdateKind? {
         guard isReshelved(createdAt: item.createdAt, publishedAt: item.publishedAt) else {
             return item.kind
         }
-        return item.isAvailable == false ? nil : .restock
+        guard item.isAvailable != false else { return nil }
+        return PriceChange.isDrop(from: item.originalPriceAmount, to: item.priceAmount) ? .priceDrop : .restock
     }
 }
