@@ -28,6 +28,17 @@ final class BrandModel: Model, @unchecked Sendable {
     /// When this brand last interrupted anybody. The rate limit that turns a drop from a
     /// trickle of pushes into one alert and one follow-up — see `Notifier.cooldown`.
     @OptionalField(key: "last_notified_at") var lastNotifiedAt: Date?
+    /// When this brand's prices were first measured for a sale, and when the sale now
+    /// running started — `CatalogueSale.State`, written only on a transition.
+    @OptionalField(key: "sale_measured_at") var saleMeasuredAt: Date?
+    @OptionalField(key: "sale_since") var saleSince: Date?
+    /// When the announcement bar is next due a read; nil until it has been read once, which
+    /// makes that read a baseline. See `SaleBanners`.
+    @OptionalField(key: "banner_check_at") var bannerCheckAt: Date?
+    /// The offer last announced from the bar, and when it was last seen there —
+    /// `SaleBannerLedger`.
+    @OptionalField(key: "sale_banner") var saleBanner: String?
+    @OptionalField(key: "sale_banner_seen_at") var saleBannerSeenAt: Date?
     @Timestamp(key: "created_at", on: .create) var createdAt: Date?
 
     @Children(for: \.$brand) var sources: [SourceModel]
@@ -116,6 +127,11 @@ final class ProductModel: Model, @unchecked Sendable {
     /// The numeric price, so a markdown is detectable. `price_text` is formatted for
     /// display and two different strings say nothing about direction.
     @OptionalField(key: "price_amount") var priceAmount: Double?
+    /// What the brand says it cost before it was marked down — `compare_at_price`. Beside
+    /// the price rather than on an event, because it describes the product as it is now.
+    /// See `AddProductOriginalPrice`.
+    @OptionalField(key: "original_price_text") var originalPriceText: String?
+    @OptionalField(key: "original_price_amount") var originalPriceAmount: Double?
     @OptionalField(key: "is_available") var isAvailable: Bool?
     @Field(key: "tags") var tags: [String]
     @OptionalField(key: "product_type") var productType: String?
@@ -148,6 +164,8 @@ final class ProductModel: Model, @unchecked Sendable {
         self.kind = item.kind.rawValue
         self.priceText = item.priceText
         self.priceAmount = item.priceAmount
+        self.originalPriceText = item.originalPriceText
+        self.originalPriceAmount = item.originalPriceAmount
         self.isAvailable = item.isAvailable
         self.tags = item.tags
         self.productType = item.productType
@@ -238,6 +256,11 @@ final class EventModel: Model, @unchecked Sendable {
     /// true when it fired.
     @OptionalField(key: "previous_price_text") var previousPriceText: String?
     @OptionalField(key: "previous_price_amount") var previousPriceAmount: Double?
+    /// The event's own words, for a kind with no product to take them from — a `.sale`
+    /// ("25% OFF EVERYTHING · CODE AUTUMN", and the bar's message as written). Nil for every
+    /// other kind, which is drawn from its product.
+    @OptionalField(key: "title") var title: String?
+    @OptionalField(key: "summary") var summary: String?
 
     init() {}
 
@@ -247,7 +270,9 @@ final class EventModel: Model, @unchecked Sendable {
         kind: UpdateKind,
         sizes: [String] = [],
         previousPriceText: String? = nil,
-        previousPriceAmount: Double? = nil
+        previousPriceAmount: Double? = nil,
+        title: String? = nil,
+        summary: String? = nil
     ) {
         self.$brand.id = brandID
         self.$product.id = productID
@@ -255,6 +280,8 @@ final class EventModel: Model, @unchecked Sendable {
         self.sizes = sizes
         self.previousPriceText = previousPriceText
         self.previousPriceAmount = previousPriceAmount
+        self.title = title
+        self.summary = summary
     }
 }
 

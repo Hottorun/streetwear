@@ -154,6 +154,9 @@ actor Poller {
         // After the polls and inside the same pass, so a product found a moment ago is read
         // and announced before `PollLoop` hands the pass to the notifier.
         await enrich()
+        // And the announcement bars that are due, on the same politeness budget — a homepage
+        // is a request to a storefront like any other. See `SaleBanners`.
+        await SaleBanners(app: app, http: http).checkDue()
         return polled
     }
 
@@ -324,6 +327,8 @@ actor Poller {
             kind: UpdateKind(rawValue: product.kind) ?? .product,
             priceText: product.priceText,
             priceAmount: product.priceAmount,
+            originalPriceAmount: product.originalPriceAmount,
+            originalPriceText: product.originalPriceText,
             isAvailable: product.isAvailable,
             tags: product.tags,
             productType: product.productType,
@@ -540,7 +545,7 @@ actor Poller {
             if !result.notModified {
                 hadEvent = try await merge(
                     result.items,
-                    brandID: brandID,
+                    brand: brand,
                     sourceID: sourceID,
                     isBaseline: isFirstPoll || result.isBaseline,
                     kind: kind
@@ -692,7 +697,7 @@ actor Poller {
     ///   back for its page to be read — see `PendingAnnouncement` and `enrich`.
     private func merge(
         _ items: [FetchedItem],
-        brandID: UUID,
+        brand: BrandModel,
         sourceID: UUID,
         isBaseline: Bool,
         kind: BrandSource.Kind
@@ -700,8 +705,12 @@ actor Poller {
         // A tentative item is a guess only its page can settle, and a baseline settles
         // nothing — storing one would leave a category page in the catalogue for good.
         let items = isBaseline ? items.filter { !$0.isTentative } : items
-        guard !items.isEmpty else { return false }
+        guard !items.isEmpty, let brandID = brand.id else { return false }
         let db = app.db
+        // How much of what this pass read is marked down — counted before `refresh`
+        // overwrites the stored price, which is the "previous" half of a cut. See
+        // `CatalogueSale`.
+        var reading = CatalogueSale.Reading()
         let holdsAnnouncements = kind == .sitemap && !isBaseline
 
         let existing = try await ProductModel.query(on: db)
@@ -715,10 +724,12 @@ actor Poller {
 
         for item in items {
             if let product = byExternalID[item.externalID] {
+                reading.count(now: item.priceAmount, original: item.originalPriceAmount, previous: product.priceAmount)
                 if try await refresh(product, with: item, brandID: brandID, isBaseline: isBaseline) {
                     producedEvent = true
                 }
             } else {
+                reading.count(now: item.priceAmount, original: item.originalPriceAmount, previous: nil)
                 let product = ProductModel(brandID: brandID, sourceID: sourceID, item: item)
                 if holdsAnnouncements {
                     product.pendingAnnouncement = (item.isTentative
@@ -738,14 +749,46 @@ actor Poller {
                     // the other reason there may be no event here. A held announcement is
                     // the third: `enrich` writes it once the page has been read.
                     if !isBaseline, !holdsAnnouncements, let kind = Reshelving.firstSighting(of: item) {
-                        try await EventModel(brandID: brandID, productID: productID, kind: kind)
-                            .save(on: db)
+                        // A markdown met for the first time has no earlier poll to have
+                        // fallen from, so what it fell from is the brand's own original.
+                        let isMarkdown = kind == .priceDrop
+                        try await EventModel(
+                            brandID: brandID,
+                            productID: productID,
+                            kind: kind,
+                            previousPriceText: isMarkdown ? item.originalPriceText : nil,
+                            previousPriceAmount: isMarkdown ? item.originalPriceAmount : nil
+                        ).save(on: db)
                         producedEvent = true
                     }
                 }
             }
         }
+        if try await settleSale(reading, of: brand, isBaseline: isBaseline) { producedEvent = true }
         return producedEvent
+    }
+
+    /// Whether this pass put the brand on sale, and if it did, the one event that says so.
+    ///
+    /// The state is written only on a transition — `CatalogueSale.decide` answers
+    /// `.unchanged` for every pass in between — because the brand row is read on every poll
+    /// and rewriting it each time is the volume problem `refresh` guards against.
+    private func settleSale(_ reading: CatalogueSale.Reading, of brand: BrandModel, isBaseline: Bool) async throws -> Bool {
+        guard let brandID = brand.id else { return false }
+        let state = CatalogueSale.State(measuredAt: brand.saleMeasuredAt, since: brand.saleSince)
+        let next: CatalogueSale.State
+        let started: Bool
+        switch CatalogueSale.decide(reading, state: state, isBaseline: isBaseline) {
+        case .unchanged: return false
+        case .record(let recorded): (next, started) = (recorded, false)
+        case .started(let recorded): (next, started) = (recorded, true)
+        }
+        brand.saleMeasuredAt = next.measuredAt
+        brand.saleSince = next.since
+        try await brand.save(on: app.db)
+        guard started else { return false }
+        let said = CatalogueSale.announcement(for: reading)
+        return try await SaleEvents.announce(on: app.db, brandID: brandID, title: said.title, summary: said.summary)
     }
 
     private func insertVariants(_ variants: [VariantInfo], productID: UUID) async throws {
@@ -839,6 +882,17 @@ actor Poller {
         product.isAvailable = isAvailable
         product.priceText = priceText
         product.priceAmount = priceAmount
+        // The brand's original follows the price it belongs to. A source that publishes a
+        // price says every time whether it is marked down — compare-at comes back null once
+        // a sale ends, which must clear it — and one that publishes no price says nothing
+        // about either.
+        let originalText = item.priceAmount == nil ? product.originalPriceText : item.originalPriceText
+        let originalAmount = item.priceAmount == nil ? product.originalPriceAmount : item.originalPriceAmount
+        if product.originalPriceText != originalText || product.originalPriceAmount != originalAmount {
+            product.originalPriceText = originalText
+            product.originalPriceAmount = originalAmount
+            changed = true
+        }
 
         // **`last_seen_at` is coarsened to a day, and that is the whole point of it.**
         //
