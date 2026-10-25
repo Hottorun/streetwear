@@ -210,7 +210,7 @@ struct SavedView: View {
                     .presentationDetents([.medium, .large])
             }
             .sheet(item: $fitStart) { start in
-                FitCanvas(fit: nil, starting: start.items, board: start.board)
+                FitCanvas(fit: nil, starting: .pieces(start.items), board: start.board)
             }
             // Analysing here rather than at save time: this is the one screen whose
             // whole content is saved items, so the work is done where its results are

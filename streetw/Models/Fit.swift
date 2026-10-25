@@ -902,7 +902,7 @@ enum FitSuggestions {
                 // a full-zip hoodie over bare skin while `Outfit.score` charged −0.12 for
                 // exactly that — a penalty on proposals the engine had no way to avoid.
                 // `Outfit.swift` says in as many words that both build sites need this guard;
-                // `FitStudio.best` had it and this did not.
+                // The studio's `best` had it and this did not; `FitProposal.best` still does.
                 //
                 // Skipped from the *gate*, not from the judging: two tops still have to agree
                 // on colour, and a clashing layer is refused above like any other pair.
