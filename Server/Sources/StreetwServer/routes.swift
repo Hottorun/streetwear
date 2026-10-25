@@ -947,6 +947,11 @@ func routes(_ app: Application) throws {
     /// The 1.0 app sends `since` and never `continuation`, and moves its cursor to
     /// `nextCursor` exactly as it always has; the only thing that changed for it is *which*
     /// 200 events the one page holds. See `FeedPaging`.
+    ///
+    /// `?kinds=` names the kinds the client can draw, and only those are in the window —
+    /// 1.0 names none and gets the seven it shipped with (`FeedKinds`). A continued read
+    /// keeps the kinds its first page was asked for, carried in the token, so a read is one
+    /// window from its first page to its last even across an app update.
     authed.get("feed") { req async throws -> FeedResponse in
         let device = try await req.authenticatedDevice()
         let user = try await device.$user.get(on: req.db)
@@ -962,6 +967,8 @@ func routes(_ app: Application) throws {
         let since = resumed?.since
             ?? (try? req.query.get(Date.self, at: "since"))
             ?? Date().addingTimeInterval(-7 * 86_400)
+        let kinds = resumed.map { $0.kinds ?? FeedKinds.legacy.map(\.rawValue) }
+            ?? FeedKinds.accepted(try? req.query.get(String.self, at: FeedKinds.parameter))
 
         let followed = try await FollowModel.query(on: req.db)
             .filter(\.$user.$id == device.$user.id)
@@ -980,6 +987,7 @@ func routes(_ app: Application) throws {
         let window = try await EventModel.query(on: req.db)
             .filter(\.$brand.$id ~~ followed)
             .filter(\.$createdAt > since)
+            .filter(\.$kind ~~ kinds)
             .field(\.$id)
             .field(\.$brand.$id)
             .field(\.$createdAt)
@@ -1015,7 +1023,7 @@ func routes(_ app: Application) throws {
             // is exactly what `brands/:id/feed` says for the same reason.
             nextCursor: resumed == nil ? until : nil,
             continuation: page.next.map {
-                FeedContinuation(since: since, until: until, after: $0).token
+                FeedContinuation(since: since, until: until, after: $0, kinds: kinds).token
             }
         )
     }
@@ -1051,10 +1059,13 @@ func routes(_ app: Application) throws {
         let limit = min((try? req.query.get(Int.self, at: "limit")) ?? 60, 200)
         let since = (try? req.query.get(Date.self, at: "since"))
             ?? Date().addingTimeInterval(-catchUpWindow)
+        // The same contract as `/v1/feed`: nothing the client did not name.
+        let kinds = FeedKinds.accepted(try? req.query.get(String.self, at: FeedKinds.parameter))
 
         let events = try await EventModel.query(on: req.db)
             .filter(\.$brand.$id == brandID)
             .filter(\.$createdAt > since)
+            .filter(\.$kind ~~ kinds)
             .sort(\.$createdAt, .descending)
             .limit(limit)
             .with(\.$brand)

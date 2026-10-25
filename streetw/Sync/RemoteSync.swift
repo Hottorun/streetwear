@@ -656,6 +656,8 @@ final class RemoteSync {
             // variant data in hand and a push can be missed, denied or throttled. Firing
             // is edge-triggered, so the two paths can't produce two alerts.
             await WatchNotifier.run(in: context)
+            // A markdown on something saved, which the server cannot know about.
+            await PriceAlerts.run(in: context, serverPushesWatches: true)
 
             lastSyncedAt = Date()
         } catch {
@@ -878,6 +880,10 @@ final class RemoteSync {
                 continue
             }
             guard let brand = byRemoteID[item.brandID] else { continue }
+            // A kind this build has never heard of is left out rather than drawn as a
+            // product, which is what 1.0 does with one. The server only sends the kinds this
+            // build names (`FeedKinds`), so this is the belt to that brace.
+            guard let kind = item.knownKind else { continue }
 
             let update = BrandUpdate(
                 externalID: externalID,
@@ -887,8 +893,9 @@ final class RemoteSync {
                 linkURL: item.linkURL.flatMap(URL.init(string:)),
                 imageURLStrings: item.imageURLs,
                 publishedAt: item.createdAt,
-                kind: item.updateKind,
+                kind: kind,
                 priceText: item.priceText,
+                priceAmount: item.priceAmount,
                 isAvailable: item.isAvailable,
                 tags: item.tags ?? [],
                 productType: item.productType
@@ -899,6 +906,12 @@ final class RemoteSync {
             // against another, which is the whole ordering of the markdowns list.
             update.previousPriceText = item.previousPriceText
             update.previousPriceAmount = item.previousPriceAmount
+            // The brand's own "was", so a markdown says "−33%" from the tag and a product
+            // that went live already discounted says it at all.
+            update.originalPriceText = item.originalPriceText
+            update.originalPriceAmount = item.originalPriceAmount
+            // History is not news about anything saved either: the alert ledger is spent.
+            if asBaseline { update.priceAlertedAmount = item.priceAmount }
             // What the garment is, beside what happened to it — so a link shared from
             // Safari can find the card the feed already drew for the same product.
             update.productExternalID = item.productExternalID
@@ -923,7 +936,7 @@ final class RemoteSync {
             // still stored — the brand page is its catalogue, whatever reaches the feed — and
             // it arrives read, so the feed, the counts and the rail never need to know the
             // mode exists. See `Brand.apply`.
-            update.isSeen = asBaseline || !brand.followMode.admits(item.updateKind)
+            update.isSeen = asBaseline || !brand.followMode.admits(kind)
             context.insert(update)
             // What the feed orders brands by, kept as a stored fact so the feed never has
             // to walk the store to work it out — see `Brand.lastActivityAt`.
@@ -996,6 +1009,19 @@ final class RemoteSync {
         // to the word match, which is what printed the wrong garments in the first place.
         if update.memberExternalIDs.isEmpty, let members = item.memberExternalIDs, !members.isEmpty {
             update.memberExternalIDs = members
+            changed = true
+        }
+        // A markdown stored before the feed carried the brand's own original can only say
+        // the poll's "was".
+        // And one stored before the feed carried the current price as a number has no
+        // measurable cut at all.
+        if update.priceAmount == nil, let amount = item.priceAmount {
+            update.priceAmount = amount
+            changed = true
+        }
+        if update.originalPriceAmount == nil, let original = item.originalPriceAmount {
+            update.originalPriceAmount = original
+            update.originalPriceText = item.originalPriceText
             changed = true
         }
         guard changed else { return }

@@ -15,8 +15,8 @@ struct FollowModeTests {
             #expect(!FollowMode.quiet.admits(kind))
             #expect(FollowMode.salesOnly.admits(kind) == kind.isSale)
         }
-        // Today that is the markdown and nothing else — the case another kind joins.
-        #expect(UpdateKind.allCases.filter(\.isSale) == [.priceDrop])
+        // The markdown and the brand-wide sale — the case a later sale kind joins.
+        #expect(UpdateKind.allCases.filter(\.isSale) == [.priceDrop, .sale])
     }
 
     /// A newer server may know a mode this build does not. It must not take the follow list

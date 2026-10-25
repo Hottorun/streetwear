@@ -65,6 +65,9 @@ final class SyncEngine {
         // After the save, so a watch that fires sees committed variant data — and after
         // pruning, so it can't fire on a product that is about to be dropped.
         await WatchNotifier.run(in: context)
+        // A markdown on something saved or watched. With no server, this is the only path
+        // either can be told by.
+        await PriceAlerts.run(in: context, serverPushesWatches: false)
     }
 
     func sync(brand: Brand) async {
@@ -275,12 +278,21 @@ final class SyncEngine {
                 // keeps out of the feed is stored read, the same rule `RemoteSync.merge`
                 // applies — see `Brand.apply`.
                 let admitted = news.map(brand.followMode.admits) ?? false
-                insert(item, into: brand, as: news, markSeen: isFirstSync || !admitted)
+                insert(item, into: brand, as: news, markSeen: isFirstSync || !admitted, isHistory: isFirstSync)
             }
         }
     }
 
-    private func insert(_ item: FetchedItem, into brand: Brand, as kind: UpdateKind?, markSeen: Bool) {
+    /// - Parameter isHistory: a first sync's batch, which is context rather than news — and
+    ///   so not a markdown worth an alert either, which `markSeen` cannot say on its own: a
+    ///   quiet brand's rows are stored read too, and a watch or a save ignores the mode.
+    private func insert(
+        _ item: FetchedItem,
+        into brand: Brand,
+        as kind: UpdateKind?,
+        markSeen: Bool,
+        isHistory: Bool
+    ) {
         let update = BrandUpdate(
             externalID: item.externalID,
             brand: brand,
@@ -298,6 +310,15 @@ final class SyncEngine {
             variants: item.variants
         )
         update.releaseDate = item.releaseDate
+        update.originalPriceAmount = item.originalPriceAmount
+        update.originalPriceText = item.originalPriceText
+        // A markdown met for the first time has no earlier sync to have fallen from, so what
+        // it fell from is the brand's own original — the same rule the server's poller keeps.
+        if kind == .priceDrop {
+            update.previousPriceText = item.originalPriceText
+            update.previousPriceAmount = item.originalPriceAmount
+        }
+        if isHistory { update.priceAlertedAmount = item.priceAmount }
         // What the storefront says is in this collection, when it said anything. Empty for
         // every other kind — see `BrandUpdate.memberExternalIDs`.
         update.memberExternalIDs = item.memberExternalIDs
@@ -385,6 +406,13 @@ final class SyncEngine {
         // `readProductPages`. The same rule the server's `Poller.refresh` keeps.
         if !item.variants.isEmpty { update.variants = item.variants }
         update.isAvailable = item.isAvailable ?? update.isAvailable
+        // The brand's original follows the price it belongs to: a source that publishes a
+        // price says every time whether it is marked down, so a null compare-at clears it,
+        // and one that publishes no price says nothing about either.
+        if item.priceAmount != nil, update.originalPriceAmount != item.originalPriceAmount {
+            update.originalPriceAmount = item.originalPriceAmount
+            update.originalPriceText = item.originalPriceText
+        }
         update.priceAmount = item.priceAmount ?? update.priceAmount
         update.priceText = item.priceText ?? update.priceText
         if update.imageURLStrings.isEmpty { update.imageURLStrings = item.imageURLStrings }

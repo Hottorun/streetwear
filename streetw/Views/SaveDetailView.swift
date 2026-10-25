@@ -302,11 +302,16 @@ struct SaveDetailView: View {
                 }
                 // A markdown since you kept it is worth knowing on this page more than on
                 // any other — it is the answer to "should I finally buy this".
-                if let was = update?.previousPriceText, update?.kind == .priceDrop {
+                if let was = update?.wasPriceText {
                     Text(was)
                         .font(.data(12))
                         .foregroundStyle(Color.muted)
                         .strikethrough(color: .muted)
+                    if let off = update?.percentOffText {
+                        Text(off)
+                            .font(.data(12, .medium))
+                            .foregroundStyle(Color.ink)
+                    }
                 }
                 Spacer(minLength: 0)
             }

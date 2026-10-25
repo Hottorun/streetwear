@@ -785,6 +785,11 @@ private struct BrandSpread: View {
         /// few minutes, and an accent on every headline makes the one that matters invisible
         /// — the same argument the drop calendar's watch line settles the same way.
         var color: Color { kind == .dropLock ? .signal : .ink }
+
+        /// Whether the headline opens the list it counts. A sale's evidence is its own
+        /// words — "25% OFF EVERYTHING · CODE AUTUMN" under the headline — and a page of the
+        /// rows that said it would be the same sentence again with no garment in it.
+        var opensItsList: Bool { total > 0 && kind != .sale }
     }
 
     private func layout(profile: SizeProfile) -> Layout {
@@ -917,14 +922,15 @@ private struct BrandSpread: View {
                 // four, per the rule that every count on a spread opens the list it
                 // counts. What goes is the evidence row, because a markdown is a claim
                 // about a *number* and the tile was never the thing that carried it.
-                shown: bucket.kind == .priceDrop
+                //
+                // A sale is the same and more so: it is about the brand, there is no garment
+                // in it to tile, and the sale's own words are the detail below.
+                shown: bucket.kind == .priceDrop || bucket.kind == .sale
                     ? []
                     : Array(bucket.items.prefix(storyLimit)),
                 // Read off `byKind` rather than off the bucket, so the sizes still name the
                 // garment that became the lead.
-                detail: bucket.kind == .restock
-                    ? Self.returnedSizes(byKind[.restock] ?? [], profile: profile)
-                    : nil
+                detail: Self.detail(for: bucket.kind, byKind: byKind, profile: profile)
             )
         }
 
@@ -976,6 +982,20 @@ private struct BrandSpread: View {
             return release.isSubset(of: post) || post.isSubset(of: release)
         }
         return post.subtracting(release).count <= 1 || release.subtracting(post).isEmpty
+    }
+
+    /// The line under a story's headline: the sizes that came back, or what the sale is —
+    /// the newest one's words, which carry the percentage and the code. Nil otherwise.
+    private static func detail(
+        for kind: UpdateKind,
+        byKind: [UpdateKind: [BrandUpdate]],
+        profile: SizeProfile
+    ) -> String? {
+        switch kind {
+        case .restock: returnedSizes(byKind[.restock] ?? [], profile: profile)
+        case .sale: byKind[.sale]?.first?.title.uppercased()
+        default: nil
+        }
     }
 
     /// What came back, the reader's own sizes first.
@@ -1086,7 +1106,7 @@ private struct BrandSpread: View {
                     .font(.editorial(19))
                     .foregroundStyle(story.color)
                     .fixedSize(horizontal: false, vertical: true)
-                if story.total > 0 {
+                if story.opensItsList {
                     Image(systemName: "chevron.right")
                         .font(.system(size: 11, weight: .semibold))
                         .foregroundStyle(Color.muted)
@@ -1098,7 +1118,7 @@ private struct BrandSpread: View {
             }
         }
 
-        if story.total > 0 {
+        if story.opensItsList {
             NavigationLink(value: BrandFeedRoute(brand: group.brand, kind: story.kind)) {
                 text
             }

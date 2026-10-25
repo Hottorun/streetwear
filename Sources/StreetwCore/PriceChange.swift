@@ -27,4 +27,40 @@ public enum PriceChange {
         guard isDrop(from: old, to: new), let old, let new else { return nil }
         return Int(((old - new) / old * 100).rounded())
     }
+
+    /// What a markdown is measured *from*: the larger of the brand's own original price and
+    /// the price the last poll saw, of the two that are a real cut to `now`.
+    ///
+    /// **The brand's original wins when it is higher**, because "−33%" from the price on the
+    /// tag is the claim a shopper can check on the storefront itself, and the poll-to-poll
+    /// fall is often only the last step of a markdown taken in two — 180, then 150 for a
+    /// week, then 120 reads "−20%" against the poll and "−33%" against the brand. The poll's
+    /// price stays the answer for every storefront that publishes no original, which is all
+    /// of them but Shopify.
+    public static func base(previous: Double?, original: Double?, now: Double?) -> Double? {
+        [previous, original]
+            .compactMap { $0 }
+            .filter { isDrop(from: $0, to: now) }
+            .max()
+    }
+
+    /// What a price-drop alert says: "Down 33% to €120 — Nathan Cargo Pant".
+    ///
+    /// Here rather than in either sender, because two send it — the server for something
+    /// watched, the phone for something saved — and the same markdown must read the same
+    /// whichever path delivered it, the rule `WatchNotifier` keeps with the server's restock
+    /// copy.
+    public static func alert(title: String, priceText: String?, percent: Int?) -> String {
+        switch (percent, priceText) {
+        case let (percent?, price?): "Down \(percent)% to \(price) — \(title)"
+        case let (percent?, nil): "Down \(percent)% — \(title)"
+        case let (nil, price?): "Now \(price) — \(title)"
+        case (nil, nil): "Price drop — \(title)"
+        }
+    }
+
+    /// The same cut as a whole-number percentage, measured from `base`.
+    public static func percentOff(previous: Double?, original: Double?, now: Double?) -> Int? {
+        dropPercentage(from: base(previous: previous, original: original, now: now), to: now)
+    }
 }

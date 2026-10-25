@@ -164,11 +164,18 @@ struct ProductDetailView: View {
                         .font(.data(15, .medium))
                         .foregroundStyle(Color.ink)
                 }
-                if let was = update.previousPriceText, update.kind == .priceDrop {
+                // Any kind, not only a markdown event: a product that went live discounted is
+                // announced as a drop and still carries the brand's own "was".
+                if let was = update.wasPriceText {
                     Text(was)
                         .font(.data(12))
                         .foregroundStyle(Color.muted)
                         .strikethrough(color: .muted)
+                    if let off = update.percentOffText {
+                        Text(off)
+                            .font(.data(12, .medium))
+                            .foregroundStyle(Color.ink)
+                    }
                 }
                 Spacer(minLength: 0)
                 DataLabel(text: Stamp.short(update.publishedAt).uppercased())

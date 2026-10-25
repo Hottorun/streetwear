@@ -82,6 +82,8 @@ func configure(_ app: Application) async throws {
     app.migrations.add(AddUserDressAndSuitSizes())
     app.migrations.add(AddFollowMode())
     app.migrations.add(AddProductEnrichment())
+    app.migrations.add(AddProductOriginalPrice())
+    app.migrations.add(AddSaleLedgers())
     if Environment.get("AUTO_MIGRATE") != "false" {
         try await app.autoMigrate()
     }

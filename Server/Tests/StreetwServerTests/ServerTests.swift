@@ -4513,14 +4513,16 @@ struct FollowModeTests {
 
     /// The mode only ever takes away. A markdown does not wake an *Everything* follower, so
     /// it cannot wake a *Sales only* one either — what changes is that the drop no longer
-    /// does.
-    @Test("Sales only is not woken by a drop, a lock or a markdown")
-    func salesOnlyAdmitsNothingSuddenYet() throws {
+    /// does. The brand-wide sale is the one kind that is both sale news and sudden, so it is
+    /// the only thing that wakes a *Sales only* follow; this test pinned "nothing" until it
+    /// existed.
+    @Test("Sales only is woken by a sale and by nothing else")
+    func salesOnlyIsWokenOnlyByASale() throws {
         let profile = SizeProfile()
         let brandID = UUID()
         for kind in UpdateKind.allCases {
             let event = EventModel(brandID: brandID, productID: nil, kind: kind)
-            #expect(!Notifier.isRelevant(event, to: profile, mode: .salesOnly), "\(kind)")
+            #expect(Notifier.isRelevant(event, to: profile, mode: .salesOnly) == (kind == .sale), "\(kind)")
             #expect(!Notifier.isRelevant(event, to: profile, mode: .quiet), "\(kind)")
             #expect(
                 Notifier.isRelevant(event, to: profile, mode: .everything) == kind.isSudden,

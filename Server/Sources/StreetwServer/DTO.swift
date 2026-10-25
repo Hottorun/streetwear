@@ -91,13 +91,19 @@ extension FeedItem {
             createdAt: createdAt,
             brandID: event.$brand.id,
             brandName: event.brand.name,
-            title: product?.title ?? event.brand.name,
-            summary: product?.summary,
-            linkURL: product?.linkURL,
+            // An event's own words first: a `.sale` has no product to be named after. Its
+            // link is the shop, which is where a sale is.
+            title: event.title ?? product?.title ?? event.brand.name,
+            summary: event.summary ?? product?.summary,
+            linkURL: product?.linkURL ?? (event.title == nil ? nil : event.brand.website),
             imageURLs: product?.imageURLs ?? [],
             priceText: product?.priceText,
+            priceAmount: product?.priceAmount,
             previousPriceText: event.previousPriceText,
             previousPriceAmount: event.previousPriceAmount,
+            // The product's own, beside its price — both what is true now.
+            originalPriceText: product?.originalPriceText,
+            originalPriceAmount: product?.originalPriceAmount,
             isAvailable: product?.isAvailable,
             // Fall back to every returned size when no profile is set, so the card can
             // still say "Back in M, L".

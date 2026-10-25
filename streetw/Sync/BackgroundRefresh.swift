@@ -218,6 +218,12 @@ enum PushDestination: Equatable {
             self = .update(externalID: "event:\(event)")
             return
         }
+        // A local alert names its row outright — `PriceAlerts` — because a standalone row is
+        // keyed by its product, not by a server event.
+        if let row = userInfo["externalID"] as? String, !row.isEmpty {
+            self = .update(externalID: row)
+            return
+        }
         if let brand = userInfo["brandID"] as? String,
            let id = UUID(uuidString: brand),
            id != Self.probeBrandID {

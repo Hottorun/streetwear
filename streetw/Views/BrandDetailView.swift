@@ -649,8 +649,8 @@ extension FollowMode {
     /// follows from it — nothing is ever pushed that the feed would not have shown.
     var detail: String {
         switch self {
-        case .everything: "DROPS, RESTOCKS AND PRICE CUTS · ALERTS FOR DROPS"
-        case .salesOnly: "ONLY PRICE CUTS REACH YOUR FEED"
+        case .everything: "DROPS, RESTOCKS, SALES AND PRICE CUTS · ALERTS FOR DROPS AND SALES"
+        case .salesOnly: "ONLY SALES AND PRICE CUTS · ALERTS WHEN A SALE STARTS"
         case .quiet: "NOTHING IN YOUR FEED, NO ALERTS · STILL SHAPES YOUR TASTE"
         }
     }
@@ -717,7 +717,7 @@ private struct CatalogueTile: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
 
             if let price = update.priceText {
-                Text(price)
+                Text([price, update.percentOffText].compactMap { $0 }.joined(separator: " "))
                     .font(.data(12, .medium))
                     .foregroundStyle(Color.ink)
             }

@@ -203,8 +203,9 @@ private struct MarkdownTile: View {
                         .foregroundStyle(Color.ink)
                 }
                 // The old price struck through, which is the whole claim being made and
-                // the only way to check it.
-                if let was = update.previousPriceText {
+                // the only way to check it — the brand's own tag where it published one, so
+                // the strike and the badge above measure from the same number.
+                if let was = update.wasPriceText {
                     Text(was)
                         .font(.data(11))
                         .strikethrough(true, color: .muted)

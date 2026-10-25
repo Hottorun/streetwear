@@ -115,6 +115,9 @@ struct FeedContinuation: Codable, Sendable, Equatable {
     /// Inclusive upper bound — the newest event the first page could see.
     var until: Date
     var after: FeedPaging.Position
+    /// The kinds the read was begun with (`FeedKinds`). Nil in a token written before kinds
+    /// were filtered, which was a read of every kind 1.0 knows.
+    var kinds: [String]?
 
     var token: String {
         let data = (try? JSONEncoder().encode(self)) ?? Data()
@@ -124,10 +127,11 @@ struct FeedContinuation: Codable, Sendable, Equatable {
             .replacingOccurrences(of: "=", with: "")
     }
 
-    init(since: Date, until: Date, after: FeedPaging.Position) {
+    init(since: Date, until: Date, after: FeedPaging.Position, kinds: [String]? = nil) {
         self.since = since
         self.until = until
         self.after = after
+        self.kinds = kinds
     }
 
     /// Nil for anything this server did not write — a 400 rather than a guess at a window.

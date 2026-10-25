@@ -232,7 +232,12 @@ struct StreetwAPI: Sendable {
 
     /// One page of the feed — the head of a read, or the rest of one. See `FeedPager`.
     func feed(_ request: FeedPager.Request, limit: Int = 200) async throws -> FeedResponse {
-        var query = [URLQueryItem(name: "limit", value: String(limit))]
+        // Every kind this build can draw. Without it the server sends only what 1.0 knows,
+        // which is the point of it — see `FeedKinds`.
+        var query = [
+            URLQueryItem(name: "limit", value: String(limit)),
+            URLQueryItem(name: FeedKinds.parameter, value: FeedKinds.understood)
+        ]
         switch request {
         case .head(let since):
             if let since {
@@ -268,7 +273,10 @@ struct StreetwAPI: Sendable {
             path: "v1/brands/\(brandID.uuidString)/feed",
             method: "GET",
             body: Optional<Never>.none,
-            query: [URLQueryItem(name: "limit", value: String(limit))]
+            query: [
+                URLQueryItem(name: "limit", value: String(limit)),
+                URLQueryItem(name: FeedKinds.parameter, value: FeedKinds.understood)
+            ]
         )
     }
 
