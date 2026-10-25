@@ -60,6 +60,11 @@ struct StyleView: View {
         /// cost this whole memo exists to avoid, and is what `FitCanvas.traySlots` had to
         /// be rescued from.
         var gaps: Set<GarmentSlot> = []
+        /// How many saves the reading leaves out, so a reading of twenty built from a wall of
+        /// twenty-three says why.
+        var leftOut = 0
+        /// The board everything is leaning towards, if one is.
+        var mood: String?
     }
 
     /// Once per *change*, not once per `body` — which are very different numbers.
@@ -115,13 +120,20 @@ struct StyleView: View {
             /// the first build, so without them in the key the row would keep the version
             /// computed before they landed.
             var candidates: [PersistentIdentifier]
+            /// What counts towards taste. Leaving something out changes no count and no
+            /// photograph stamp, so without this the reading would go on including it until
+            /// something unrelated changed.
+            var taste: TasteScope
         }
 
+        /// - Parameter taste: who the reading may learn from — see `TasteScope` for which of
+        ///   the four builds below reads which set, and why the wardrobe is never filtered.
         func reading(
             for saves: [SavedItem],
             candidates: [BrandUpdate],
             statement: StyleStatement,
-            kept: [Fit]
+            kept: [Fit],
+            taste: TasteScope
         ) -> Reading {
             let keptKeys = kept.compactMap(\.wardrobeKey)
             let fingerprint = Fingerprint(
@@ -129,22 +141,27 @@ struct StyleView: View {
                 digest: Self.digest(of: saves),
                 statement: statement,
                 kept: keptKeys,
-                candidates: candidates.map(\.persistentModelID)
+                candidates: candidates.map(\.persistentModelID),
+                taste: taste
             )
             if fingerprint == key { return value }
 
             let owned = saves.filter { $0.type == .wardrobe && $0.update != nil }
+            let fitPool = taste.fitPool(saves)
             value = Reading(
-                profile: StyleProfile.build(from: saves),
+                profile: StyleProfile.build(from: taste.counted(saves)),
                 suggested: FitSuggestions.build(
-                    from: saves,
+                    from: fitPool,
                     candidates: candidates,
                     statement: statement,
-                    kept: kept
+                    kept: kept,
+                    mood: taste.inMood
                 ),
                 owned: owned,
-                missing: Self.missingSlots(owned: owned, saves: saves),
-                gaps: FitCandidates.gaps(in: saves)
+                missing: Self.missingSlots(owned: owned, saves: taste.counted(saves)),
+                gaps: FitCandidates.gaps(in: fitPool),
+                leftOut: taste.leftOut(of: saves),
+                mood: taste.moodName
             )
             key = fingerprint
             return value
@@ -185,6 +202,8 @@ struct StyleView: View {
         ///
         /// - Parameter owned: the wardrobe. It falls back to everything saved, since most
         ///   people never split the two and an empty section would just look broken.
+        /// - Parameter saves: the saves that count towards taste — the fallback reads them as
+        ///   a stand-in for what somebody owns, and something they said is not theirs is not.
         private static func missingSlots(
             owned: [SavedItem],
             saves: [SavedItem]
@@ -212,7 +231,8 @@ struct StyleView: View {
             for: saves,
             candidates: fitCandidates,
             statement: statement.statement,
-            kept: fits
+            kept: fits,
+            taste: TasteScope(boards: boards, saves: saves)
         )
 
         return NavigationStack {
@@ -222,7 +242,7 @@ struct StyleView: View {
                         emptyWardrobe
                     } else {
                         if !fits.isEmpty { myFits }
-                        if !reading.suggested.isEmpty { suggestedFits(reading.suggested) }
+                        if !reading.suggested.isEmpty { suggestedFits(reading.suggested, mood: reading.mood) }
                         gaps(reading)
                     }
 
@@ -239,7 +259,7 @@ struct StyleView: View {
                     // reading precisely so the tab did not open as a shop — the right
                     // instinct, applied to something that should not have been on the page
                     // at all.
-                    if !reading.profile.isEmpty { taste(reading.profile) }
+                    if !reading.profile.isEmpty { taste(reading.profile, leftOut: reading.leftOut) }
                 }
                 .padding(.vertical, 10)
                 .padding(.bottom, 28)
@@ -381,9 +401,15 @@ struct StyleView: View {
     /// reason in the dialog's own comment.
     @State private var fitPendingDeletion: Fit?
 
-    private func suggestedFits(_ suggested: [SuggestedFit]) -> some View {
+    /// - Parameter mood: the board the row is leaning towards, said in its header — a row that
+    ///   has started favouring one board's clothes without saying so looks like it has stopped
+    ///   seeing the rest of the wardrobe.
+    private func suggestedFits(_ suggested: [SuggestedFit], mood: String?) -> some View {
         VStack(alignment: .leading, spacing: 14) {
-            sectionHeader("From your wardrobe", "TAP TO KEEP ONE")
+            sectionHeader(
+                "From your wardrobe",
+                mood.map { "LEANING TOWARD \($0.uppercased()) · TAP TO KEEP ONE" } ?? "TAP TO KEEP ONE"
+            )
 
             ScrollView(.horizontal) {
                 LazyHStack(alignment: .top, spacing: 14) {
@@ -446,9 +472,13 @@ struct StyleView: View {
         }
     }
 
-    private func taste(_ profile: StyleProfile) -> some View {
-        VStack(alignment: .leading, spacing: 14) {
-            sectionHeader("Your taste", "FROM \(profile.totalSaves) SAVED \(profile.totalSaves == 1 ? "ITEM" : "ITEMS")")
+    /// - Parameter leftOut: saves the reading was told not to use, said beside the count it
+    ///   *was* built from. A reading of twenty under a wall of twenty-three, with no word
+    ///   about the other three, reads as the app having lost them.
+    private func taste(_ profile: StyleProfile, leftOut: Int) -> some View {
+        let source = "FROM \(profile.totalSaves) SAVED \(profile.totalSaves == 1 ? "ITEM" : "ITEMS")"
+        return VStack(alignment: .leading, spacing: 14) {
+            sectionHeader("Your taste", leftOut == 0 ? source : "\(source) · \(leftOut) LEFT OUT")
 
             VStack(alignment: .leading, spacing: 16) {
                 FacetLine(title: "Colours", facets: profile.colors, axis: .colour)
@@ -554,6 +584,7 @@ struct StyleView: View {
         fit.placements = FitArrangement.placements(for: arranged)
         context.insert(fit)
         try? context.save()
+        UsageCounts.record(.fitCreated)
 
         // The render, once every piece has actually decoded — the same contract `FitCanvas`
         // and `FitStudio` hold. Without it a kept fit shows the live canvas until the next

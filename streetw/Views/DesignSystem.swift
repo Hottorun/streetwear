@@ -341,6 +341,7 @@ extension SizeRun {
     /// XS through XXXL, then shoe sizes ascending, then anything unrecognised.
     static func entries(for update: BrandUpdate, profile: SizeProfile) -> [Entry] {
         let meaningful = update.variants.filter(\.isMeaningfulSize)
+        let context = update.sizeContext
 
         if meaningful.isEmpty {
             // Items with no variant data at all — a collection announcement, a page
@@ -348,27 +349,35 @@ extension SizeRun {
             // which sizes just came back, and those are available by definition.
             return update.restockedSizes
                 .filter { $0 != "Default Title" && !$0.isEmpty }
-                .map { Entry(token: $0.uppercased(), isAvailable: true, isMine: profile.claims($0)) }
+                .map { Entry(token: $0.uppercased(), isAvailable: true, isMine: profile.claims($0, in: context)) }
         }
 
-        return entries(for: update.variants, profile: profile)
+        return entries(for: update.variants, in: context, profile: profile)
     }
 
     /// The same run over an explicit set of variants, so the detail page can narrow it to
     /// one colourway — "which sizes are left in black" is a different question from
     /// "which sizes are left", and on a product page it is usually the one being asked.
-    static func entries(for variants: [VariantInfo], profile: SizeProfile) -> [Entry] {
+    ///
+    /// - Parameter context: the *product's*, built from its whole run. A colourway's subset
+    ///   can be too short to say which system a man's bare numbers are printed in.
+    static func entries(for variants: [VariantInfo], in context: SizeContext, profile: SizeProfile) -> [Entry] {
         let meaningful = variants.filter(\.isMeaningfulSize)
         guard !meaningful.isEmpty else { return [] }
 
         // Collapse duplicates: a product with a colour axis repeats every size once per
         // colour, and printing "M M M L L L" would be nonsense. A size counts as
         // available if it is available in any colour.
+        //
+        // Printed and collapsed on the **label** — the size as the shop wrote it — not on
+        // the canonical token. On the token a European sneaker's run printed in US numbers
+        // nobody in that shop uses, and "EU 41" and "EU 41.5", which convert to the same
+        // US 8, collapsed into one entry and the other size vanished from the run.
         var byToken: [String: Entry] = [:]
         var order: [String] = []
         for variant in meaningful {
             let raw = variant.displaySize
-            let token = SizeNormalizer.normalize(raw)?.token ?? raw.uppercased()
+            let token = SizeNormalizer.normalize(raw, in: context)?.label ?? raw.uppercased()
             if var existing = byToken[token] {
                 existing.isAvailable = existing.isAvailable || variant.available
                 byToken[token] = existing
@@ -376,7 +385,7 @@ extension SizeRun {
                 byToken[token] = Entry(
                     token: token,
                     isAvailable: variant.available,
-                    isMine: profile.claims(raw)
+                    isMine: profile.claims(raw, in: context)
                 )
                 order.append(token)
             }
@@ -385,21 +394,30 @@ extension SizeRun {
         return order.compactMap { byToken[$0] }.sorted(by: canonical)
     }
 
-    /// Apparel in shop order, then shoes numerically, then the rest as they came.
+    /// Apparel in shop order, then numbers ascending, then the rest as they came.
     ///
     /// `nonisolated`: pure ordering over two value types, called from a nonisolated sort.
     private nonisolated static func canonical(_ a: Entry, _ b: Entry) -> Bool {
-        func rank(_ token: String) -> (Int, Double, String) {
+        func rank(_ token: String) -> (Int, Double, Int, String) {
             if let index = SizeProfile.apparelOptions.firstIndex(of: token) {
-                return (0, Double(index), token)
+                return (0, Double(index), 0, token)
             }
-            if let value = Double(token) { return (1, value, token) }
-            return (2, 0, token)
+            // "00" is the dress rung below 0, and as a number it would tie with it.
+            if token == "00" { return (1, -1, 0, token) }
+            if let value = Double(token) { return (1, value, 0, token) }
+            // A chest with a length sorts with the numbers — 38S 38R 38L 40S — rather than
+            // falling to the end of the run in alphabetical order.
+            if let length = token.last, let position = ["S", "R", "L"].firstIndex(of: String(length)),
+               let value = Double(token.dropLast()) {
+                return (1, value, position + 1, token)
+            }
+            return (2, 0, 0, token)
         }
-        let (ga, va, ta) = rank(a.token)
-        let (gb, vb, tb) = rank(b.token)
+        let (ga, va, la, ta) = rank(a.token)
+        let (gb, vb, lb, tb) = rank(b.token)
         if ga != gb { return ga < gb }
         if va != vb { return va < vb }
+        if la != lb { return la < lb }
         return ta < tb
     }
 }

@@ -46,6 +46,14 @@ final class SyncEngine {
             lastSyncedAt = Date()
         }
 
+        // 1.0's mute, carried over as *Quiet* — the half of `RemoteSync.migrateMutes` for the
+        // mode with no server to tell. Before the fetch, so this pass already files the
+        // brand's arrivals the way it now asks.
+        for brand in brands where brand.isMuted {
+            brand.isMuted = false
+            brand.apply(.quiet)
+        }
+
         for brand in brands {
             progress = brand.name
             await sync(brand: brand)
@@ -57,6 +65,9 @@ final class SyncEngine {
         // After the save, so a watch that fires sees committed variant data — and after
         // pruning, so it can't fire on a product that is about to be dropped.
         await WatchNotifier.run(in: context)
+        // A markdown on something saved or watched. With no server, this is the only path
+        // either can be told by.
+        await PriceAlerts.run(in: context, serverPushesWatches: false)
     }
 
     func sync(brand: Brand) async {
@@ -102,6 +113,66 @@ final class SyncEngine {
         // membership reaches only collections published from here on and every release
         // already on the feed keeps falling back to the word match.
         if since != nil, reachedSomething { await fillMemberships(brand) }
+
+        if reachedSomething { await readProductPages(brand) }
+    }
+
+    /// Pages read per brand per sync. Fewer than the server's per-pass budget: this runs
+    /// while somebody has the app open, and each read waits its turn on `pageFetcher`.
+    private static let pageReadBudget = 4
+
+    /// robots.txt and one request per host per second, for every page this engine reads.
+    private let pageFetcher = PoliteFetcher(minInterval: 1)
+
+    /// The standalone half of the server's `Poller.enrich`: a sitemap product's own page,
+    /// read once, for the price, stock and sizes the sitemap never had. Unread rows first —
+    /// they are what somebody is about to look at — then the newest.
+    ///
+    /// Unlike the server, nothing is held back to be announced afterwards: here the row *is*
+    /// the feed card, so reading the page fills in the card somebody already has.
+    private func readProductPages(_ brand: Brand) async {
+        guard brand.sources.contains(where: { $0.kind == .sitemap }) else { return }
+        let queue = brand.updates
+            .filter { $0.pageReadAt == nil && $0.linkURL != nil && $0.externalID.hasPrefix("sitemap:") }
+            .map { (update: $0, unread: !$0.isSeen, published: $0.publishedAt) }
+            .sorted { $0.unread != $1.unread ? $0.unread : $0.published > $1.published }
+            .prefix(Self.pageReadBudget)
+            .map(\.update)
+
+        for update in queue {
+            guard let link = update.linkURL else { continue }
+            let outcome = await ProductPage.read(link, http: pageFetcher)
+            if case .unreachable(retryable: true) = outcome { continue }
+            update.pageReadAt = Date()
+            guard case .product(let page) = outcome else { continue }
+
+            let item = page.applied(to: FetchedItem(
+                externalID: update.externalID,
+                title: update.title,
+                summary: update.summary,
+                linkURL: update.linkURL,
+                imageURLStrings: update.imageURLStrings,
+                publishedAt: update.publishedAt,
+                kind: update.kind,
+                priceText: update.priceText,
+                priceAmount: update.priceAmount,
+                isAvailable: update.isAvailable,
+                tags: update.tags,
+                productType: update.productType,
+                variants: update.variants
+            ))
+            refresh(update, with: item)
+            update.title = item.title
+            if update.summary == nil { update.summary = item.summary }
+            if item.imageURLStrings.count > update.imageURLStrings.count {
+                update.imageURLStrings = item.imageURLStrings
+            }
+            if update.productType == nil { update.productType = item.productType }
+            if update.tags.isEmpty { update.tags = item.tags }
+            // The name and the type are what both classifiers read, and both just changed.
+            update.refreshGender()
+            update.refreshMerchandise()
+        }
     }
 
     /// How many stored collections one sync goes back for, and how far back it looks. Small
@@ -153,8 +224,17 @@ final class SyncEngine {
 
                 // A 304 means "unchanged", which is different from "returned nothing" —
                 // merging its empty item list would be harmless but pointless.
+                //
+                // A source can call its own read a baseline (`FetchResult.isBaseline`) when
+                // the brand's isn't — a sitemap meeting its memory for the first time. And a
+                // tentative item is one only its page can confirm, which the server does and
+                // the phone, polling for itself, leaves out.
                 if !result.notModified {
-                    merge(result.items, into: brand, isFirstSync: isFirstSync)
+                    merge(
+                        result.items.filter { !$0.isTentative },
+                        into: brand,
+                        isFirstSync: isFirstSync || result.isBaseline
+                    )
                 }
                 if let currency = result.shopCurrency { brand.currencyCode = currency }
                 if let name = result.shopName, brand.usesGeneratedName {
@@ -194,13 +274,25 @@ final class SyncEngine {
                 // See `Reshelving`.
                 let news = Reshelving.firstSighting(of: item)
                 // A brand added today shouldn't dump its entire back catalogue into the
-                // feed as "new" — the first sync is a baseline.
-                insert(item, into: brand, as: news, markSeen: isFirstSync || news == nil)
+                // feed as "new" — the first sync is a baseline. And a kind the brand's mode
+                // keeps out of the feed is stored read, the same rule `RemoteSync.merge`
+                // applies — see `Brand.apply`.
+                let admitted = news.map(brand.followMode.admits) ?? false
+                insert(item, into: brand, as: news, markSeen: isFirstSync || !admitted, isHistory: isFirstSync)
             }
         }
     }
 
-    private func insert(_ item: FetchedItem, into brand: Brand, as kind: UpdateKind?, markSeen: Bool) {
+    /// - Parameter isHistory: a first sync's batch, which is context rather than news — and
+    ///   so not a markdown worth an alert either, which `markSeen` cannot say on its own: a
+    ///   quiet brand's rows are stored read too, and a watch or a save ignores the mode.
+    private func insert(
+        _ item: FetchedItem,
+        into brand: Brand,
+        as kind: UpdateKind?,
+        markSeen: Bool,
+        isHistory: Bool
+    ) {
         let update = BrandUpdate(
             externalID: item.externalID,
             brand: brand,
@@ -218,6 +310,15 @@ final class SyncEngine {
             variants: item.variants
         )
         update.releaseDate = item.releaseDate
+        update.originalPriceAmount = item.originalPriceAmount
+        update.originalPriceText = item.originalPriceText
+        // A markdown met for the first time has no earlier sync to have fallen from, so what
+        // it fell from is the brand's own original — the same rule the server's poller keeps.
+        if kind == .priceDrop {
+            update.previousPriceText = item.originalPriceText
+            update.previousPriceAmount = item.originalPriceAmount
+        }
+        if isHistory { update.priceAlertedAmount = item.priceAmount }
         // What the storefront says is in this collection, when it said anything. Empty for
         // every other kind — see `BrandUpdate.memberExternalIDs`.
         update.memberExternalIDs = item.memberExternalIDs
@@ -266,13 +367,20 @@ final class SyncEngine {
         // brand whose only news was a restock kept the date of its last new product and
         // sorted below brands that had done nothing since. In server mode the question
         // does not arise — every event is its own row there, and `merge` inserts it.
+        // Whether the brand's mode lets a rewrite back into the feed. The row is rewritten
+        // either way — it is the catalogue's record of the garment — but a quiet brand's
+        // restock is not news, and flagging it unread would put it there regardless.
+        let admits = { (kind: UpdateKind) in update.brand?.followMode.admits(kind) ?? true }
+
         if !returned.isEmpty || wholeProductReturned {
             update.kind = .restock
             update.restockedSizes = returned
             update.publishedAt = Date()
             update.brand?.noteActivity(update.publishedAt)
-            update.isSeen = false
-            newItemCount += 1
+            if admits(.restock) {
+                update.isSeen = false
+                newItemCount += 1
+            }
         } else if dropped {
             update.kind = .priceDrop
             update.previousPriceText = update.priceText
@@ -282,19 +390,31 @@ final class SyncEngine {
             update.previousPriceAmount = update.priceAmount
             update.publishedAt = Date()
             update.brand?.noteActivity(update.publishedAt)
-            update.isSeen = false
             // A second cut is a new markdown, so a dismissal of the first one is spent.
             // This path *rewrites* the row rather than inserting one — in server mode every
             // event is its own row and the question never arises — so without this, waving
             // off a 10% cut in March would silently swallow the 40% cut in June.
             update.markdownDismissedAt = nil
-            newItemCount += 1
+            if admits(.priceDrop) {
+                update.isSeen = false
+                newItemCount += 1
+            }
         }
 
-        update.variants = item.variants
-        update.isAvailable = item.isAvailable
-        update.priceAmount = item.priceAmount
-        update.priceText = item.priceText
+        // A source that says nothing about stock or price does not erase what the product's
+        // page said — a sitemap item carries neither, and the row's came from
+        // `readProductPages`. The same rule the server's `Poller.refresh` keeps.
+        if !item.variants.isEmpty { update.variants = item.variants }
+        update.isAvailable = item.isAvailable ?? update.isAvailable
+        // The brand's original follows the price it belongs to: a source that publishes a
+        // price says every time whether it is marked down, so a null compare-at clears it,
+        // and one that publishes no price says nothing about either.
+        if item.priceAmount != nil, update.originalPriceAmount != item.originalPriceAmount {
+            update.originalPriceAmount = item.originalPriceAmount
+            update.originalPriceText = item.originalPriceText
+        }
+        update.priceAmount = item.priceAmount ?? update.priceAmount
+        update.priceText = item.priceText ?? update.priceText
         if update.imageURLStrings.isEmpty { update.imageURLStrings = item.imageURLStrings }
         if update.tags.isEmpty { update.tags = item.tags }
         // A collection stored before the membership was read has none, and nothing else

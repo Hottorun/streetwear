@@ -150,7 +150,190 @@ actor Poller {
                 await quarantine(source, reason: error)
             }
         }
+
+        // After the polls and inside the same pass, so a product found a moment ago is read
+        // and announced before `PollLoop` hands the pass to the notifier.
+        await enrich()
+        // And the announcement bars that are due, on the same politeness budget — a homepage
+        // is a request to a storefront like any other. See `SaleBanners`.
+        await SaleBanners(app: app, http: http).checkDue()
         return polled
+    }
+
+    // MARK: - Product pages
+
+    /// Pages read per pass, at most.
+    ///
+    /// A page is the heaviest request this server makes — Hollister's is 968 KB — and each
+    /// one waits its turn on the politeness budget like everything else, so six to one host
+    /// is twelve seconds at the default interval. Enough that a sitemap's new products are
+    /// read and announced within a pass or two; never enough to turn the poller into a crawler.
+    static let enrichmentBudget = 6
+
+    /// How long a watched product's page is believed before it is read again.
+    ///
+    /// The one product a sitemap brand has that anybody is waiting on. Re-reading it is what
+    /// lets a watch fire at all on a brand with no catalogue endpoint — the restock is only
+    /// visible on the page — and six hours is a restock found the same day for four requests
+    /// a day per watched product.
+    static let recheckAfter: TimeInterval = 6 * 3600
+
+    /// The queue beyond what is owed an announcement is a scan of the products table, and
+    /// has no business running every thirty seconds.
+    static let backfillInterval: TimeInterval = 5 * 60
+    private var lastBackfill: Date?
+
+    /// Reads the pages of sitemap products, most urgent first, within `enrichmentBudget`.
+    ///
+    /// Three queues in order. **Owed an announcement** — a product just found, whose event is
+    /// waiting on its page (`PendingAnnouncement`); oldest first, because it has waited
+    /// longest. **Watched** — read again after `recheckAfter`, through the same `refresh` a
+    /// poll uses, so a restock or a markdown there fires exactly as it would on Shopify.
+    /// **Never read** — a baseline's rows, newest first, so the brand's page and Discover
+    /// show prices and photographs too; last, because nobody is waiting on any of them.
+    @discardableResult
+    func enrich(budget: Int = Poller.enrichmentBudget) async -> Int {
+        let queue: [ProductModel]
+        do {
+            queue = try await enrichmentQueue(limit: budget)
+        } catch {
+            app.logger.error("poller: enrichment queue failed: \(error)")
+            return 0
+        }
+
+        var read = 0
+        for product in queue {
+            let outcome: ProductPage.Outcome
+            if let link = product.linkURL.flatMap(URL.init(string:)) {
+                outcome = await ProductPage.read(link, http: http)
+            } else {
+                outcome = .unreachable(retryable: false)
+            }
+            do {
+                try await apply(outcome, to: product)
+                read += 1
+            } catch {
+                app.logger.error("poller: could not store the page of \(product.externalID): \(error)")
+            }
+        }
+        return read
+    }
+
+    private func enrichmentQueue(limit: Int) async throws -> [ProductModel] {
+        let db = app.db
+        var queue = try await ProductModel.query(on: db)
+            .filter(\.$pendingAnnouncement != nil)
+            .sort(\.$firstSeenAt)
+            .limit(limit)
+            .with(\.$variants)
+            .all()
+
+        let now = Date()
+        guard queue.count < limit,
+              lastBackfill.map({ now.timeIntervalSince($0) >= Self.backfillInterval }) ?? true
+        else { return queue }
+        lastBackfill = now
+
+        let watched = try await WatchModel.query(on: db)
+            .filter(\.$firedAt == nil)
+            .all()
+            .map(\.$product.id)
+        if !watched.isEmpty {
+            let stale = now.addingTimeInterval(-Self.recheckAfter)
+            queue += try await ProductModel.query(on: db)
+                .filter(\.$id ~~ Array(Set(watched)))
+                .filter(\.$externalID =~ "sitemap:")
+                .group(.or) { $0.filter(\.$enrichedAt == nil).filter(\.$enrichedAt < stale) }
+                .limit(limit - queue.count)
+                .with(\.$variants)
+                .all()
+        }
+
+        guard queue.count < limit else { return queue }
+        let held = Set(queue.compactMap(\.id))
+        let unread = try await ProductModel.query(on: db)
+            .filter(\.$externalID =~ "sitemap:")
+            .filter(\.$enrichedAt == nil)
+            .filter(\.$kind == UpdateKind.product.rawValue)
+            .sort(\.$firstSeenAt, .descending)
+            .limit(limit)
+            .with(\.$variants)
+            .all()
+        queue += unread.filter { $0.id.map { !held.contains($0) } ?? false }.prefix(limit - queue.count)
+        return queue
+    }
+
+    /// What one page read means for its row.
+    private func apply(_ outcome: ProductPage.Outcome, to product: ProductModel) async throws {
+        let db = app.db
+        let owed = product.pendingAnnouncement.flatMap(PendingAnnouncement.init(rawValue:))
+        let firstRead = product.enrichedAt == nil
+
+        switch outcome {
+        case .unreachable(retryable: true):
+            // Our own queue for that host was full. Nothing is stamped, so the next pass
+            // asks again — this is congestion, not an answer.
+            return
+
+        case .product(let page):
+            let item = page.applied(to: storedItem(product))
+            product.title = item.title
+            if product.summary == nil { product.summary = item.summary }
+            if item.imageURLStrings.count > product.imageURLs.count { product.imageURLs = item.imageURLStrings }
+            if product.productType == nil { product.productType = item.productType }
+            if product.tags.isEmpty { product.tags = item.tags }
+            product.enrichedAt = Date()
+            product.pendingAnnouncement = nil
+            // Price, stock and variants go through the poll's own `refresh`, so a watched
+            // product read again raises the same restock and price-drop events a Shopify
+            // poll would. A first read is a baseline: there is nothing to compare it with.
+            _ = try await refresh(product, with: item, brandID: product.$brand.id, isBaseline: firstRead)
+            try await product.save(on: db)
+
+        case .notAProduct, .unreachable(retryable: false):
+            // A guess the page did not bear out is not a product. Nothing was announced and
+            // the sitemap's memory still holds the URL, so it will not come back.
+            if owed == .confirm {
+                try await product.delete(on: db)
+                return
+            }
+            product.enrichedAt = Date()
+            product.pendingAnnouncement = nil
+            try await product.save(on: db)
+        }
+
+        // Owed, and either the page confirmed it or it was surely a product all along. A
+        // page that failed costs the announcement its details, never the announcement.
+        if let owed, owed == .announce || outcomeIsProduct(outcome), let productID = product.id {
+            try await EventModel(brandID: product.$brand.id, productID: productID, kind: .product)
+                .save(on: db)
+        }
+    }
+
+    private func outcomeIsProduct(_ outcome: ProductPage.Outcome) -> Bool {
+        if case .product = outcome { return true }
+        return false
+    }
+
+    /// The row as the adapter item it was made from, so a page can be laid over it.
+    private func storedItem(_ product: ProductModel) -> FetchedItem {
+        FetchedItem(
+            externalID: product.externalID,
+            title: product.title,
+            summary: product.summary,
+            linkURL: product.linkURL.flatMap(URL.init(string:)),
+            imageURLStrings: product.imageURLs,
+            publishedAt: product.publishedAt,
+            kind: UpdateKind(rawValue: product.kind) ?? .product,
+            priceText: product.priceText,
+            priceAmount: product.priceAmount,
+            originalPriceAmount: product.originalPriceAmount,
+            originalPriceText: product.originalPriceText,
+            isAvailable: product.isAvailable,
+            tags: product.tags,
+            productType: product.productType,
+            variants: product.variants.map(\.asVariantInfo)
+        )
     }
 
     /// How long a claimed source stays off the queue before another instance may retry
@@ -355,12 +538,17 @@ actor Poller {
                 try await brand.save(on: db)
             }
 
+            // A source can declare its own read a baseline when this one has already been
+            // spent: a sitemap meeting its memory for the first time has no idea what it has
+            // seen, and without this a source baselined under the old rules would offer up a
+            // poll's worth of long-listed products as drops. See `FetchResult.isBaseline`.
             if !result.notModified {
                 hadEvent = try await merge(
                     result.items,
-                    brandID: brandID,
+                    brand: brand,
                     sourceID: sourceID,
-                    isBaseline: isFirstPoll
+                    isBaseline: isFirstPoll || result.isBaseline,
+                    kind: kind
                 )
             }
 
@@ -394,17 +582,21 @@ actor Poller {
             .filter(\.$createdAt >= Date().addingTimeInterval(-7 * 86_400))
             .count() == 0
 
+        let cadence = Cadence.next(
+            locked: source.lockedAt != nil,
+            hadRecentEvent: hadEvent,
+            quietForAWeek: quiet,
+            failures: source.failureCount,
+            // Only asked when a hint hasn't already answered it: both produce sixty
+            // seconds, and the rhythm read costs an indexed query over 400 rows.
+            inDropWindow: isHinted ? false : try await isInDropWindow(brandID: brandID),
+            hinted: isHinted
+        )
+        // A sitemap is regenerated on a schedule, not as products go up, and can be megabytes
+        // a read — see `SitemapSource.minimumInterval`. The app's own copy of the rule is in
+        // `BrandSource.isReadyToCheck`.
         source.nextCheckAt = Date().addingTimeInterval(
-            Cadence.next(
-                locked: source.lockedAt != nil,
-                hadRecentEvent: hadEvent,
-                quietForAWeek: quiet,
-                failures: source.failureCount,
-                // Only asked when a hint hasn't already answered it: both produce sixty
-                // seconds, and the rhythm read costs an indexed query over 400 rows.
-                inDropWindow: isHinted ? false : try await isInDropWindow(brandID: brandID),
-                hinted: isHinted
-            )
+            kind == .sitemap ? max(cadence, SitemapSource.minimumInterval) : cadence
         )
         try await source.save(on: db)
 
@@ -500,14 +692,26 @@ actor Poller {
     }
 
     /// Returns whether anything user-visible happened.
+    ///
+    /// - Parameter kind: the source's. A new sitemap product is stored with its event held
+    ///   back for its page to be read — see `PendingAnnouncement` and `enrich`.
     private func merge(
         _ items: [FetchedItem],
-        brandID: UUID,
+        brand: BrandModel,
         sourceID: UUID,
-        isBaseline: Bool
+        isBaseline: Bool,
+        kind: BrandSource.Kind
     ) async throws -> Bool {
-        guard !items.isEmpty else { return false }
+        // A tentative item is a guess only its page can settle, and a baseline settles
+        // nothing — storing one would leave a category page in the catalogue for good.
+        let items = isBaseline ? items.filter { !$0.isTentative } : items
+        guard !items.isEmpty, let brandID = brand.id else { return false }
         let db = app.db
+        // How much of what this pass read is marked down — counted before `refresh`
+        // overwrites the stored price, which is the "previous" half of a cut. See
+        // `CatalogueSale`.
+        var reading = CatalogueSale.Reading()
+        let holdsAnnouncements = kind == .sitemap && !isBaseline
 
         let existing = try await ProductModel.query(on: db)
             .filter(\.$source.$id == sourceID)
@@ -520,11 +724,18 @@ actor Poller {
 
         for item in items {
             if let product = byExternalID[item.externalID] {
+                reading.count(now: item.priceAmount, original: item.originalPriceAmount, previous: product.priceAmount)
                 if try await refresh(product, with: item, brandID: brandID, isBaseline: isBaseline) {
                     producedEvent = true
                 }
             } else {
+                reading.count(now: item.priceAmount, original: item.originalPriceAmount, previous: nil)
                 let product = ProductModel(brandID: brandID, sourceID: sourceID, item: item)
+                if holdsAnnouncements {
+                    product.pendingAnnouncement = (item.isTentative
+                        ? PendingAnnouncement.confirm
+                        : PendingAnnouncement.announce).rawValue
+                }
                 try await product.save(on: db)
                 if let productID = product.id {
                     try await insertVariants(item.variants, productID: productID)
@@ -535,16 +746,49 @@ actor Poller {
                     // fires normally — see `Reshelving`.
                     //
                     // The first poll of a brand must not fire 2,500 notifications, which is
-                    // the other reason there may be no event here.
-                    if !isBaseline, let kind = Reshelving.firstSighting(of: item) {
-                        try await EventModel(brandID: brandID, productID: productID, kind: kind)
-                            .save(on: db)
+                    // the other reason there may be no event here. A held announcement is
+                    // the third: `enrich` writes it once the page has been read.
+                    if !isBaseline, !holdsAnnouncements, let kind = Reshelving.firstSighting(of: item) {
+                        // A markdown met for the first time has no earlier poll to have
+                        // fallen from, so what it fell from is the brand's own original.
+                        let isMarkdown = kind == .priceDrop
+                        try await EventModel(
+                            brandID: brandID,
+                            productID: productID,
+                            kind: kind,
+                            previousPriceText: isMarkdown ? item.originalPriceText : nil,
+                            previousPriceAmount: isMarkdown ? item.originalPriceAmount : nil
+                        ).save(on: db)
                         producedEvent = true
                     }
                 }
             }
         }
+        if try await settleSale(reading, of: brand, isBaseline: isBaseline) { producedEvent = true }
         return producedEvent
+    }
+
+    /// Whether this pass put the brand on sale, and if it did, the one event that says so.
+    ///
+    /// The state is written only on a transition — `CatalogueSale.decide` answers
+    /// `.unchanged` for every pass in between — because the brand row is read on every poll
+    /// and rewriting it each time is the volume problem `refresh` guards against.
+    private func settleSale(_ reading: CatalogueSale.Reading, of brand: BrandModel, isBaseline: Bool) async throws -> Bool {
+        guard let brandID = brand.id else { return false }
+        let state = CatalogueSale.State(measuredAt: brand.saleMeasuredAt, since: brand.saleSince)
+        let next: CatalogueSale.State
+        let started: Bool
+        switch CatalogueSale.decide(reading, state: state, isBaseline: isBaseline) {
+        case .unchanged: return false
+        case .record(let recorded): (next, started) = (recorded, false)
+        case .started(let recorded): (next, started) = (recorded, true)
+        }
+        brand.saleMeasuredAt = next.measuredAt
+        brand.saleSince = next.since
+        try await brand.save(on: app.db)
+        guard started else { return false }
+        let said = CatalogueSale.announcement(for: reading)
+        return try await SaleEvents.announce(on: app.db, brandID: brandID, title: said.title, summary: said.summary)
     }
 
     private func insertVariants(_ variants: [VariantInfo], productID: UUID) async throws {
@@ -624,12 +868,31 @@ actor Poller {
         //
         // Nothing here is new behaviour: the same values are stored, just not restored
         // identically several thousand times a day.
-        var changed = product.isAvailable != item.isAvailable
-            || product.priceText != item.priceText
-            || product.priceAmount != item.priceAmount
-        product.isAvailable = item.isAvailable
-        product.priceText = item.priceText
-        product.priceAmount = item.priceAmount
+        //
+        // **A source that says nothing about price or stock does not erase them.** A sitemap
+        // item carries neither; the row's came from its page (`enrich`), and a sitemap read
+        // that rewrote them with nil would undo that read. Every source that does publish a
+        // price — Shopify, UCP — publishes one every time, so for those nothing changes.
+        let isAvailable = item.isAvailable ?? product.isAvailable
+        let priceText = item.priceText ?? product.priceText
+        let priceAmount = item.priceAmount ?? product.priceAmount
+        var changed = product.isAvailable != isAvailable
+            || product.priceText != priceText
+            || product.priceAmount != priceAmount
+        product.isAvailable = isAvailable
+        product.priceText = priceText
+        product.priceAmount = priceAmount
+        // The brand's original follows the price it belongs to. A source that publishes a
+        // price says every time whether it is marked down — compare-at comes back null once
+        // a sale ends, which must clear it — and one that publishes no price says nothing
+        // about either.
+        let originalText = item.priceAmount == nil ? product.originalPriceText : item.originalPriceText
+        let originalAmount = item.priceAmount == nil ? product.originalPriceAmount : item.originalPriceAmount
+        if product.originalPriceText != originalText || product.originalPriceAmount != originalAmount {
+            product.originalPriceText = originalText
+            product.originalPriceAmount = originalAmount
+            changed = true
+        }
 
         // **`last_seen_at` is coarsened to a day, and that is the whole point of it.**
         //

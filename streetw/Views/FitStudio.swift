@@ -122,6 +122,8 @@ struct FitStudio: View {
     @Environment(StyleStatementStore.self) private var statement: StyleStatementStore
 
     @Query(sort: \SavedItem.savedAt, order: .reverse) private var saves: [SavedItem]
+    /// Only the boards with a taste setting — see `Board.shapingTaste`. Usually none.
+    @Query(filter: Board.shapingTaste) private var tasteBoards: [Board]
 
     /// The garment the fit is being built around. Never swappable — it is what was on screen
     /// when the row was tapped, and a builder that lets you replace its own subject is just
@@ -200,10 +202,10 @@ struct FitStudio: View {
         // fallback `GoesWith` and `StyleView` use, because most people never split the two
         // axes and insisting on `.wardrobe` would leave this permanently empty. A save with
         // no photograph is excluded outright: there is nothing to draw and nothing to lift a
-        // cutout from.
+        // cutout from. The pool is `TasteScope.pairingPool`, the one `GoesWith` reads, so the
+        // row and the studio it opens cannot disagree about what you have.
         let kept = saves.filter { $0.update?.imageURLStrings.isEmpty == false }
-        let owned = kept.filter { $0.type == .wardrobe }
-        let wardrobe = owned.isEmpty ? kept : owned
+        let wardrobe = TasteScope(boards: tasteBoards, saves: saves).pairingPool(kept)
 
         var options: [FitPosition: [Option]] = [:]
         var garments: [String: Garment] = [:]
@@ -676,6 +678,7 @@ struct FitStudio: View {
         fit.backgroundName = background.rawValue
         context.insert(fit)
         try? context.save()
+        UsageCounts.record(.fitCreated)
 
         // The render is written after the fact and only when every piece actually decoded —
         // `ImageRenderer` draws one frame synchronously, so an unwarmed canvas comes out as a

@@ -141,31 +141,54 @@ Mostly things that hurt people using 1.0 today.
       copy of the watchability rule (`BrandProbe.canMonitor`) still refused a page watch after the
       server had stopped refusing one, so a page-only shop read "Nothing to watch here" with the
       button disabled. Fixed, with a test that the two rules agree.
-- [ ] **A generic `<title>` becomes a brand's global name.** Hollister's check suggests "Clothing
+- [x] **A generic `<title>` becomes a brand's global name.** Hollister's check suggests "Clothing
       for Women & Men" — the first segment of its title. `BrandNaming` refuses "Home" and
       "Official Site" but not this, and a page-watch brand has no `/meta.json` to correct it later.
-- [ ] **The sitemaps real retailers publish.** Hollister, Subdued and victoriassecret.com list
+      *Done:* `BrandNaming.isDescriptive` refuses a candidate carrying a catalogue noun unless the
+      domain agrees with it, and the title segment that names the domain wins — Hollister reads
+      "Hollister Co.".
+- [x] **The sitemaps real retailers publish.** Hollister, Subdued and victoriassecret.com list
       theirs only in robots.txt, at non-standard paths. Read the `Sitemap:` lines; follow nested
       indexes (VS is two levels deep, and the three-child cap picks nl/at/au before en/us); treat
       a URL seen for the first time as new rather than trusting `<lastmod>`, which only one of the
       three carries usefully; and decide what is a product from the page's data rather than URL
       patterns, which missed two of the three shapes.
-- [ ] **Robots.txt on every redirect hop.** Only the first URL is checked today, and redirects are
+      *Done:* `Sitemap:` lines from robots.txt first; nested indexes to three levels;
+      `SitemapChoice` picks product files and one storefront per locale; what is new is what the
+      source has not seen (`SitemapMemory` in the fingerprint), with a silent baseline and a
+      re-baseline when a sitemap is rebuilt; read at most hourly. Hollister, Subdued and Victoria's
+      Secret now yield products.
+- [x] **Robots.txt on every redirect hop.** Only the first URL is checked today, and redirects are
       followed unspaced — into disallowed paths included.
-- [ ] **Product details from the page.** Read schema.org `Product` JSON-LD — name, price,
+      *Done:* `Net.session` follows nothing; `PoliteFetcher` follows by hand (`Net.maxRedirects`)
+      and checks every hop's host, robots.txt and spacing. Also fixed: `Disallow: /gb/` could never
+      match, because `URL.path` drops the trailing slash. Linux redirect behaviour is read from
+      source, not yet run.
+- [x] **Product details from the page.** Read schema.org `Product` JSON-LD — name, price,
       availability, images, SKU — once per new product. It was on every product page that could be
       loaded. Replaces the slug-and-one-photograph sitemap row; this was *Still open* since 1.0.
-- [ ] **Sizes read by garment type, plus womenswear and tailoring.** A US dress size 4–18 and
+      *Done:* `ProductPage` reads schema.org `Product` (both offer layouts); the server holds a
+      sitemap product's event until its page is read (`Poller.enrich`, a few pages per pass) and
+      deletes a tentative URL whose page shows no product; standalone fills rows in place.
+- [x] **Sizes read by garment type, plus womenswear and tailoring.** A US dress size 4–18 and
       "UK 10" are read as shoe sizes today, "EU 38" too, and "40R" and "34B" are not understood at
       all — so a woman who has entered a shoe size can have dresses wrongly hidden or wrongly
       matched. That is a live bug. The `GarmentSlot` decides which ladder a number belongs to; add
       women's numeric sizes (US/UK/EU/IT, canonicalised the way shoes are) and men's suit sizes.
       A string that still cannot be placed stays `.other` and is never hidden.
-- [ ] **Events past 200 between two syncs are lost.** `/v1/feed` pages newest first,
+      *Done:* `SizeContext` (no default anywhere) decides the ladder; women's numeric (UK = US+4,
+      FR = US+32, IT = US+36, one-rung tolerance) and suits (chest inches, EU = chest+10, lengths
+      separate) on both ends and in onboarding/Settings. Known gap: a UK shop printing bare UK
+      numbers reads two rungs off until region-aware data exists.
+- [x] **Events past 200 between two syncs are lost.** `/v1/feed` pages newest first,
       `nextCursor` is the *newest* event, and the client asks once with `limit 200`, so the
       overflow is never delivered — and one busy brand can fill the page. Found by reading the
       code; reproduce it in a test before fixing. Needs per-brand fairness too.
-- [ ] **Sales.**
+      *Done:* reproduced first (200 of 251 delivered); the server pages fairly between brands with
+      a continuation token (`FeedPaging`), the new client reads up to five pages a sync
+      (`FeedPager`), and 1.0 still gets one page — now losing the deep end of the busiest brand
+      rather than a quiet brand's drop.
+- [x] **Sales.**
       - Read `compare_at_price`, so a product that goes live already discounted counts.
       - A price drop on a saved or watched item pushes (see *Rules that change*).
       - "Sale is live" for a whole brand: one push when a large share of a catalogue is marked
@@ -174,33 +197,61 @@ Mostly things that hurt people using 1.0 today.
         bar and in the cart, never in a product price. Read the homepage every 30–60 minutes,
         match sale wording, and alert once per sale per brand with the percentage and the code.
         Pattern matching only, until Phase 4 can read the end date and the fine print.
-- [ ] **Follow modes** (see *Decided*), on the server, replacing `Brand.isMuted`.
-- [ ] **The product photograph as the cover on the saved wall.** `ProductShot` already finds the
+      *Done:* `compare_at_price` read and carried as the brand's "was"; a markdown on a watched
+      item pushes (exempt from modes and cooldown); a markdown on a saved item is a local
+      notification, so saves still never leave the phone; a brand-wide sale (≥30% and ≥12 products
+      marked down in one read) and sale banners (homepage announcement bar every 30–60 minutes)
+      write one `sale` event per sale. **The follow mode is the opt-in** for sale pushes —
+      Everything and Sales only get them, Quiet doesn't — rather than a separate per-brand switch.
+      1.0 never receives the new kind: the feed sends only the kinds a client names in `?kinds=`.
+- [x] **Follow modes** (see *Decided*), on the server, replacing `Brand.isMuted`.
+      *Done:* `follows.mode` (default everything), `PATCH /v1/follows/:id`, `FollowMode.admits` as
+      the one rule for push and for what is stored already read; muted brands become Quiet on the
+      first sync of the new build. Every new follow starts on Everything — no guessed default.
+- [x] **The product photograph as the cover on the saved wall.** `ProductShot` already finds the
       photograph with nobody in it, and deliberately uses it only for measuring. On the wall and
       the saved item's page it becomes the cover and leads the gallery, with "Set as cover" to
       override it. The feed and Discover keep the brand's own first photograph, because there the
       styling is part of the announcement.
-- [ ] **Multi-select, and one item on several boards.** There is no multi-select anywhere, and
+      *Done:* hand-picked cover, else the packshot, else the brand's first photograph, on the wall
+      and the save's page only; "Set as cover" in the gallery.
+- [x] **Multi-select, and one item on several boards.** There is no multi-select anywhere, and
       `SavedItem.board` is to-one although boards are "filters, not folders". Make it
       many-to-many — a migration that must not lose a single assignment — then a select mode on
       the wall and on boards: add to or remove from boards, switch Inspiration/Wardrobe, delete,
       start a fit, leave out of taste.
-- [ ] **Leaving things out of your taste.** Per board: counts (the default), doesn't count, or
+      *Done:* `SavedItem.boards`, with the old filing copied across once at launch
+      (`BoardFiling.adoptLegacy`) — verified by installing over a store the unchanged app wrote.
+      Select mode on the wall and boards with every bulk action listed above.
+- [x] **Leaving things out of your taste.** Per board: counts (the default), doesn't count, or
       *inspire me from this* — the mood. Per item: "don't use for my taste". Ignored by everything
       that infers taste — Your taste, picks, Shop ranking, brand suggestions — while a wardrobe
       item can still go into a fit, because it is still owned.
-- [ ] **Checkout links.** Shopify: `/cart/<variant_id>:1` with your size already in the cart.
+      *Done:* one rule, `TasteRule.role` via `TasteScope`; one mood board at a time, weighted as
+      much as the rest of the collection combined.
+- [x] **Checkout links.** Shopify: `/cart/<variant_id>:1` with your size already in the cart.
       Everywhere else: the exact product page, opening the shop's own app when it is installed
       (already signed in, payment saved) and Safari otherwise, with the size preselected where the
       platform's URLs allow it and named in the alert where they don't.
-- [ ] **Anonymous usage counts, on our own server.** Tab opened, search run, alert tapped, saves.
+      *Done:* `Checkout.link` — "CHECK OUT IN M" when exactly one available variant is yours by
+      `claims`, in the garment's own size context; the product page otherwise, opened so the shop's
+      own app can take it. Not done: naming your size in an alert for platforms that cannot
+      preselect one.
+- [x] **Anonymous usage counts, on our own server.** Tab opened, search run, alert tapped, saves.
       No third-party SDK: the smallest step from 1.0's "no analytics" promise, and needed before
       choosing which AI features are worth paying for. The privacy policy names it.
-- [ ] **The Discover card's description is centred** while everything around it is leading-aligned
+      *Done:* `POST /v1/usage` adds daily totals with no user or device id; weekly actives from one
+      overwritten day on the device row; `GET /admin/usage`. **Before it ships:** publish the
+      updated privacy policy and add Analytics to Product Interaction on the App Store privacy
+      label.
+- [x] **The Discover card's description is centred** while everything around it is leading-aligned
       (`DiscoverCardView.swift:602-617`), probably a missing `.multilineTextAlignment(.leading)`
       inside a `Button`.
-- [ ] **`docs/ucp.md` ranks UCP below the sitemap; `BrandDiscovery` tries it first.** Decide which
+      *Done:* `.multilineTextAlignment(.leading)` on the label.
+- [x] **`docs/ucp.md` ranks UCP below the sitemap; `BrandDiscovery` tries it first.** Decide which
       is intended and make them agree.
+      *Done:* the code was right — UCP carries prices, sizes and stock on every poll — so the docs
+      now agree with it.
 
 ### Phase 1 — the redesign
 

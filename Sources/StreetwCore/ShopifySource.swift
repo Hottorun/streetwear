@@ -175,9 +175,12 @@ public struct ShopifySource: SourceAdapter {
         // what a merchant's own slug looks like in this field, and it reached the global
         // catalogue as a brand's name. Nil here means the callers fall through to
         // `og:site_name` and the `<title>`, which is exactly what `BrandNaming.pick` is for.
+        // So is a description of the stock that does not also name the domain — the same
+        // refusal `pick` makes, made here because the poller reads this field directly.
+        let host = base.host()
         let name = meta.name
-            .flatMap(BrandNaming.withoutTail)
-            .flatMap { BrandNaming.looksLikeHandle($0) ? nil : $0 }
+            .flatMap { BrandNaming.withoutTail($0, host: host) }
+            .flatMap { BrandNaming.looksLikeHandle($0) || !BrandNaming.isUsable($0, host: host) ? nil : $0 }
         return ShopInfo(name: name, currency: meta.currency)
     }
 
@@ -333,6 +336,10 @@ public struct ShopifySource: SourceAdapter {
         link?.path = "/products/\(product.handle)"
         link?.query = nil
 
+        let priced = Self.lowest(
+            (product.variants ?? []).map { ($0.price.flatMap(Double.init), $0.compare_at_price?.value) }
+        )
+
         return FetchedItem(
             externalID: "shopify:\(product.id)",
             title: product.title,
@@ -348,7 +355,9 @@ public struct ShopifySource: SourceAdapter {
             // The lowest variant price, not the first: a product whose S is on sale and
             // whose XL is not should read as the sale price, which is what a shopper
             // sees on the storefront too.
-            priceAmount: (product.variants ?? []).compactMap { $0.price.flatMap(Double.init) }.min(),
+            priceAmount: priced.min,
+            originalPriceAmount: priced.original,
+            originalPriceText: priced.original.map { formatPrice(String($0), currency: currency) },
             isAvailable: variants.contains { $0.available },
             tags: product.tags ?? [],
             productType: product.productType,
@@ -371,6 +380,25 @@ public struct ShopifySource: SourceAdapter {
             }
         }
         return indices
+    }
+
+    /// The product's price and the brand's own original for it, from its variants.
+    ///
+    /// The price is the lowest variant's, as it always was. The original is the compare-at
+    /// price **of a variant at that lowest price** — not the highest compare-at anywhere on
+    /// the product, which on a product whose S is marked down and whose XL is not would
+    /// measure the S's price against the XL's tag. Where several variants share the lowest
+    /// price the largest of their originals is taken, and it only counts when it is a real
+    /// cut (`PriceChange.isDrop`): storefronts routinely leave compare-at equal to the price,
+    /// or set it below, and neither is a markdown.
+    static func lowest(_ variants: [(price: Double?, original: Double?)]) -> (min: Double?, original: Double?) {
+        let min = variants.compactMap(\.price).min()
+        let original = variants
+            .filter { $0.price == min }
+            .compactMap(\.original)
+            .filter { PriceChange.isDrop(from: $0, to: min) }
+            .max()
+        return (min, original)
     }
 
     public nonisolated static func formatPrice(_ raw: String, currency: String) -> String {
@@ -454,7 +482,12 @@ private extension ShopifySource {
         var title: String
         var handle: String
         var description: String?
-        var published_at: Date?
+        /// A string, as everywhere in Shopify. This was declared `Date?`, which a plain
+        /// `JSONDecoder` reads as a number of seconds — so every real payload, all of which
+        /// carry an ISO timestamp here, failed to decode as a whole and the share fell back
+        /// to paging the catalogue listing. Only the hand-written test payload, which had
+        /// no timestamp, ever decoded.
+        var published_at: String?
         var type: String?
         var tags: [String]?
         var images: [String]?
@@ -472,6 +505,8 @@ private extension ShopifySource {
             var available: Bool?
             /// Minor units — 5500 is 55.00.
             var price: Int?
+            /// Minor units too, and null when the variant is not marked down.
+            var compare_at_price: LenientAmount?
             var option1: String?
             var option2: String?
             var option3: String?
@@ -526,6 +561,13 @@ private extension ShopifySource {
             link?.query = nil
             link?.fragment = nil
 
+            // Minor units on this endpoint too, compare-at included.
+            let priced = ShopifySource.lowest(
+                (variants ?? []).map { variant in
+                    (variant.price.map { Double($0) / 100 }, variant.compare_at_price?.value.map { $0 / 100 })
+                }
+            )
+
             return FetchedItem(
                 // Keyed the same way the poller keys it, so a link shared for a brand the
                 // app already follows lands on the row that already exists instead of
@@ -537,10 +579,12 @@ private extension ShopifySource {
                 // Protocol-relative — "//cdn.shopify.com/…" — is what this endpoint
                 // returns, and it is not a URL an image loader can open.
                 imageURLStrings: (images ?? []).map { $0.hasPrefix("//") ? "https:\($0)" : $0 },
-                publishedAt: published_at ?? Date(),
+                publishedAt: published_at.flatMap(DateParsing.iso8601) ?? Date(),
                 kind: .product,
                 priceText: mapped.compactMap(\.price).first,
-                priceAmount: (variants ?? []).compactMap(\.price).min().map { Double($0) / 100 },
+                priceAmount: priced.min,
+                originalPriceAmount: priced.original,
+                originalPriceText: priced.original.map { formatPrice(String($0), currency: currency) },
                 isAvailable: mapped.contains { $0.available },
                 tags: tags ?? [],
                 productType: type,
@@ -612,6 +656,9 @@ private extension ShopifySource {
         var title: String?
         var available: Bool?
         var price: String?
+        /// What the brand says it cost before the markdown: a decimal string such as
+        /// `"75.00"`, or null when the variant is not marked down.
+        var compare_at_price: LenientAmount?
         var option1: String?
         var option2: String?
         var option3: String?
@@ -622,6 +669,29 @@ private extension ShopifySource {
             case 2: option2
             case 3: option3
             default: nil
+            }
+        }
+    }
+
+    /// A price that may arrive as a string, a number or null, and never fails to decode.
+    ///
+    /// **Lenient because the whole catalogue rides on it.** `products.json` sends
+    /// compare-at as a string and `.js` as an integer, and a field this adapter merely
+    /// *reads* must not be able to sink the page: one storefront sending `""` or a number
+    /// where the other sends a string would fail `Catalog` as a whole, and a catalogue that
+    /// fails to decode is reported as "not a Shopify store" — the brand demoted to a
+    /// sitemap over a markdown it had not even announced.
+    struct LenientAmount: Decodable {
+        var value: Double?
+
+        init(from decoder: any Decoder) throws {
+            let container = try decoder.singleValueContainer()
+            if let number = try? container.decode(Double.self) {
+                value = number
+            } else if let text = try? container.decode(String.self) {
+                value = Double(text)
+            } else {
+                value = nil
             }
         }
     }

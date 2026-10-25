@@ -55,8 +55,9 @@ struct ProductDetailView: View {
         // times over to draw one page.
         let variants = visibleVariants
         let colorways = self.colorways
-        let entries = SizeRun.entries(for: variants, profile: sizes.profile)
+        let entries = SizeRun.entries(for: variants, in: update.sizeContext, profile: sizes.profile)
         let isSoldOut = variants.isEmpty ? update.isAvailable == false : !variants.contains { $0.available }
+        let checkout = update.checkoutLink(profile: sizes.profile, colorway: selectedColorway)
 
         return ScrollView {
             VStack(alignment: .leading, spacing: 0) {
@@ -121,7 +122,7 @@ struct ProductDetailView: View {
                 }
             }
         }
-        .safeAreaInset(edge: .bottom) { buyBar(isSoldOut: isSoldOut) }
+        .safeAreaInset(edge: .bottom) { buyBar(checkout, isSoldOut: isSoldOut) }
         .onAppear {
             // Opening the page is acknowledging the item, the same as tapping through to
             // the site used to be.
@@ -163,11 +164,18 @@ struct ProductDetailView: View {
                         .font(.data(15, .medium))
                         .foregroundStyle(Color.ink)
                 }
-                if let was = update.previousPriceText, update.kind == .priceDrop {
+                // Any kind, not only a markdown event: a product that went live discounted is
+                // announced as a drop and still carries the brand's own "was".
+                if let was = update.wasPriceText {
                     Text(was)
                         .font(.data(12))
                         .foregroundStyle(Color.muted)
                         .strikethrough(color: .muted)
+                    if let off = update.percentOffText {
+                        Text(off)
+                            .font(.data(12, .medium))
+                            .foregroundStyle(Color.ink)
+                    }
                 }
                 Spacer(minLength: 0)
                 DataLabel(text: Stamp.short(update.publishedAt).uppercased())
@@ -226,9 +234,9 @@ struct ProductDetailView: View {
     /// Pinned to the bottom rather than buried in the scroll: buying is what the page is
     /// for, and it must be reachable without hunting for it.
     @ViewBuilder
-    private func buyBar(isSoldOut: Bool) -> some View {
-        if let link = update.linkURL {
-            StorefrontBar(url: link, isSoldOut: isSoldOut)
+    private func buyBar(_ checkout: CheckoutLink?, isSoldOut: Bool) -> some View {
+        if let checkout {
+            StorefrontBar(link: checkout, isSoldOut: isSoldOut)
         }
     }
 
@@ -239,6 +247,23 @@ struct ProductDetailView: View {
 }
 
 extension BrandUpdate {
+    /// Where this product's buy bar goes, given the reader's sizes and the colourway the page
+    /// is showing. Nil when there is no link at all. See `Checkout`.
+    ///
+    /// Falls back to `externalID` for the product key because a row the phone polled itself
+    /// is keyed `shopify:<id>` there and may never have been given a `productExternalID`.
+    func checkoutLink(profile: SizeProfile, colorway: String?) -> CheckoutLink? {
+        guard let linkURL else { return nil }
+        return Checkout.link(
+            to: linkURL,
+            productExternalID: productExternalID ?? externalID,
+            variants: variants,
+            profile: profile,
+            context: sizeContext,
+            colorway: colorway
+        )
+    }
+
     /// Which photograph shows a colourway, if the catalogue said.
     ///
     /// Nil is a real and common answer, and callers must treat it as "leave the gallery
@@ -266,11 +291,25 @@ extension BrandUpdate {
 /// to look at it on the site is the same act whether you found it in the feed this morning
 /// or kept it a year ago. Naming the host — "OPEN ON KITH.COM" — is what makes it a
 /// destination rather than a generic link.
+///
+/// **It says which of two places it goes.** With your size settled, a Shopify product's bar
+/// opens the shop's checkout with that size already in it — see `Checkout` — and the label
+/// says so: "CHECK OUT IN M", not "ADD TO BAG", because a cart permalink skips the bag and
+/// lands on checkout, and a button that promises a bag and opens a payment page is a button
+/// nobody trusts twice. Otherwise it is the product page, as it always was.
 struct StorefrontBar: View {
-    @Environment(\.openURL) private var openURL
-
-    let url: URL
+    let link: CheckoutLink
     var isSoldOut: Bool
+
+    init(link: CheckoutLink, isSoldOut: Bool) {
+        self.link = link
+        self.isSoldOut = isSoldOut
+    }
+
+    /// A page with no variants to choose between — a release, a link with nothing behind it.
+    init(url: URL, isSoldOut: Bool) {
+        self.init(link: CheckoutLink(url: url, action: .productPage), isSoldOut: isSoldOut)
+    }
 
     /// What the bar overlaps and therefore has to be lifted clear of, in points. The save
     /// confirmation reads this so it never covers the one control the page is for.
@@ -280,12 +319,21 @@ struct StorefrontBar: View {
         VStack(spacing: 0) {
             Rule()
             Button {
-                openURL(url)
+                // `UIApplication.open`, deliberately — not an in-app Safari sheet, which never
+                // hands a link to another app. A shop's own app claims its product and
+                // checkout URLs as universal links, and that is where somebody is already
+                // signed in with a card saved; Safari, with Apple Pay, is the fallback.
+                UIApplication.shared.open(link.url)
             } label: {
                 HStack(spacing: 8) {
-                    Text(isSoldOut ? "VIEW ON SITE" : "OPEN ON \(host)")
+                    Text(label)
                         .font(.data(12, .semibold))
                         .tracking(1.1)
+                        .lineLimit(1)
+                        // A long regional host beside a size can outrun a narrow phone, and
+                        // an ellipsis in the one control the page is for is worse than
+                        // slightly smaller type.
+                        .minimumScaleFactor(0.8)
                     Image(systemName: "arrow.up.right")
                         .font(.system(size: 10, weight: .semibold))
                 }
@@ -302,9 +350,22 @@ struct StorefrontBar: View {
         .background(.bar)
     }
 
+    private var label: String {
+        let size = link.size?.uppercased()
+        switch link.action {
+        case .checkout:
+            return size.map { "CHECK OUT IN \($0) · \(host)" } ?? "CHECK OUT ON \(host)"
+        case .productPage:
+            // A page opened on your size, which is sold out — the shop's own page then
+            // says so, and the label is about that size rather than the product.
+            if let size { return "VIEW \(size) ON \(host)" }
+            return isSoldOut ? "VIEW ON SITE" : "OPEN ON \(host)"
+        }
+    }
+
     /// "KITH.COM" — naming the destination, so the button says where it goes.
     private var host: String {
-        (url.host() ?? "site").replacingOccurrences(of: "www.", with: "").uppercased()
+        (link.url.host() ?? "site").replacingOccurrences(of: "www.", with: "").uppercased()
     }
 }
 

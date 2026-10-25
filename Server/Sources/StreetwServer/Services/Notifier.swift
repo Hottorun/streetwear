@@ -349,12 +349,28 @@ actor Notifier {
             let query = EventModel.query(on: db).filter(\.$notifiedAt == nil)
             // Guarded: an empty `!~` is not a query anybody wants to hand to a database.
             if !quiet.isEmpty { query.filter(\.$brand.$id !~ quiet) }
-            pending = try await query
+            let open = try await query
                 .sort(\.$createdAt)
                 .limit(limit)
                 .with(\.$brand)
                 .with(\.$product)
                 .all()
+            // **The cooldown never applied to a watch, and this is what makes that true.**
+            // Excluding a cooled brand's events from the batch also excluded the restock — or
+            // the markdown — somebody was watching for, so the one alert asked for by name
+            // waited out a quarter of an hour behind the brand's drop. Only the kinds a watch
+            // answers to are loaded, and they are not sudden, so stamping them now takes
+            // nothing from the summary the cooldown is holding.
+            let watchable = quiet.isEmpty ? [] : try await EventModel.query(on: db)
+                .filter(\.$notifiedAt == nil)
+                .filter(\.$brand.$id ~~ quiet)
+                .filter(\.$kind ~~ [UpdateKind.restock.rawValue, UpdateKind.priceDrop.rawValue])
+                .sort(\.$createdAt)
+                .limit(limit)
+                .with(\.$brand)
+                .with(\.$product)
+                .all()
+            pending = open + watchable
         } catch {
             app.logger.error("notifier: could not load pending events: \(error)")
             return result
@@ -388,7 +404,8 @@ actor Notifier {
                 uniquingKeysWith: { first, _ in first }
             )
 
-            for (brandID, events) in Dictionary(grouping: fresh, by: { $0.$brand.id }) {
+            let cooling = Set(quiet)
+            for (brandID, events) in Dictionary(grouping: fresh, by: { $0.$brand.id }) where !cooling.contains(brandID) {
                 let brand = byID[brandID]
                 let before = result.sent
                 await notify(
@@ -458,7 +475,7 @@ actor Notifier {
         using sender: any PushSending,
         into result: inout NotifyResult
     ) async -> Set<Pair> {
-        var claimed: Set<Pair> = []
+        var claimed = await notifyWatchedPriceDrops(events, using: sender, into: &result)
 
         let restockedProducts = Set(
             events
@@ -494,8 +511,9 @@ actor Notifier {
 
             for watch in watches {
                 let variants = watch.product.variants.map(\.asVariantInfo)
-                let back = watch.target.availableSizes(in: variants)
-                guard watch.target.isSatisfied(by: variants) else { continue }
+                let context = watch.product.sizeContext(sizes: variants.map(\.displaySize))
+                let back = watch.target.availableSizes(in: variants, context: context)
+                guard watch.target.isSatisfied(by: variants, in: context) else { continue }
 
                 // Stamped whether or not a device is reachable, for the same reason
                 // `events.notified_at` is: a user with no token must not accumulate a
@@ -541,6 +559,104 @@ actor Notifier {
         return claimed
     }
 
+    /// A markdown on something somebody is watching — the one price drop worth a push.
+    ///
+    /// **A rule from 1.0 changed on purpose.** A price drop is not sudden and never woke
+    /// anybody: a markdown is worth as much next week, which is what the markdowns list is
+    /// for. That is right about a markdown on a garment you have never seen and wrong about
+    /// one on the thing you asked to be told about by name — that is news about *you*. The
+    /// server cannot know what somebody saved (saves never leave the phone; the phone says
+    /// that half itself, see `PriceAlerts`), but it knows watches.
+    ///
+    /// It goes by the watch path's rules, not the summary's: **no cooldown**, and it does not
+    /// start one; **no follow mode**, so a quiet brand's markdown still reaches the person
+    /// watching one of its products; no size or gender filter, because the product was
+    /// chosen. It does not spend the watch — `fired_at` is the restock's ledger, and a cheaper
+    /// sold-out jacket is still a jacket somebody is waiting to come back. Only **active**
+    /// watches: one that has fired has been answered. `events.notified_at` is its ledger, so
+    /// each markdown is said once. One push per person per product per pass, and it claims
+    /// that person's brand summary exactly as a restock alert does.
+    private func notifyWatchedPriceDrops(
+        _ events: [EventModel],
+        using sender: any PushSending,
+        into result: inout NotifyResult
+    ) async -> Set<Pair> {
+        var claimed: Set<Pair> = []
+        let drops = Dictionary(
+            events
+                .filter { UpdateKind(rawValue: $0.kind) == .priceDrop }
+                .compactMap { event in event.$product.id.map { ($0, event) } },
+            uniquingKeysWith: { first, _ in first }
+        )
+        guard !drops.isEmpty else { return claimed }
+
+        do {
+            let watches = try await WatchModel.query(on: app.db)
+                .filter(\.$product.$id ~~ Array(drops.keys))
+                .filter(\.$firedAt == nil)
+                .with(\.$product)
+                .with(\.$brand)
+                .all()
+            guard !watches.isEmpty else { return claimed }
+
+            let devices = try await DeviceModel.query(on: app.db)
+                .filter(\.$user.$id ~~ Array(Set(watches.map(\.$user.id))))
+                .filter(\.$apnsToken != nil)
+                .all()
+            let devicesByUser = Dictionary(grouping: devices, by: { $0.$user.id })
+
+            var told: Set<String> = []
+            for watch in watches {
+                let productID = watch.$product.id
+                // Two watches on one product — an M in black, an L in sand — are one markdown.
+                guard let event = drops[productID],
+                      told.insert("\(watch.$user.id)/\(productID)").inserted
+                else { continue }
+                claimed.insert(Pair(user: watch.$user.id, brand: watch.$brand.id))
+
+                let product = watch.product
+                let body = PriceChange.alert(
+                    title: product.title,
+                    priceText: product.priceText,
+                    percent: PriceChange.percentOff(
+                        previous: event.previousPriceAmount,
+                        original: product.originalPriceAmount,
+                        now: product.priceAmount
+                    )
+                )
+                for device in devicesByUser[watch.$user.id] ?? [] {
+                    guard let token = device.apnsToken else { continue }
+                    let message = PushMessage(
+                        deviceToken: token,
+                        environment: device.environment,
+                        title: watch.brand.name,
+                        body: body,
+                        brandID: watch.$brand.id,
+                        eventID: event.id,
+                        // A second cut on the same product replaces the first if it is
+                        // still unread; a different product never does.
+                        collapseID: "price-\(productID.uuidString)"
+                    )
+                    do {
+                        try await sender.send(message)
+                        result.sent += 1
+                    } catch PushDeliveryError.invalidToken {
+                        device.apnsToken = nil
+                        try? await device.save(on: app.db)
+                        result.prunedTokens += 1
+                    } catch {
+                        app.logger.warning("notifier: price-drop push failed: \(error)")
+                        result.failed += 1
+                        result.retryableBrands.insert(watch.$brand.id)
+                    }
+                }
+            }
+        } catch {
+            app.logger.error("notifier: price-drop fan-out failed: \(error)")
+        }
+        return claimed
+    }
+
     /// "Back in M — Nathan Cargo Pant". Names the product, because a watch is about one
     /// specific thing and a summary would defeat the point of setting it.
     static func watchCopy(product: String, sizes: [String]) -> String {
@@ -567,10 +683,17 @@ actor Notifier {
         let brandName = events.first?.brand.name ?? "A brand you follow"
 
         do {
-            let followers = try await FollowModel.query(on: db)
+            let follows = try await FollowModel.query(on: db)
                 .filter(\.$brand.$id == brandID)
                 .all()
-                .map(\.$user.id)
+            // How each follower hears from this brand — see `FollowMode`. A quiet follow is
+            // left out before its devices are even loaded; the watch alerts it may still be
+            // owed went out in `notifyWatches`, which never asks.
+            let modes = Dictionary(
+                follows.map { ($0.$user.id, $0.mode) },
+                uniquingKeysWith: { first, _ in first }
+            )
+            let followers = follows.filter { $0.mode != .quiet }.map(\.$user.id)
             guard !followers.isEmpty else { return }
 
             let users = try await UserModel.query(on: db).filter(\.$id ~~ followers).all()
@@ -589,12 +712,16 @@ actor Notifier {
                 guard !claimed.contains(Pair(user: userID, brand: brandID)) else { continue }
 
                 let profile = user.sizeProfile
-                let relevant = events.filter { Self.isRelevant($0, to: profile) }
+                let mode = modes[userID] ?? .everything
+                let relevant = events.filter { Self.isRelevant($0, to: profile, mode: mode) }
                 guard let copy = Self.summary(brand: brandName, events: relevant) else { continue }
                 // Only when the alert names one thing. A counted summary ("3 restocks and
                 // 2 new items") has no single product behind it, and picking one of them
-                // to open would be arbitrary — the brand is the honest destination.
-                let single = relevant.count == 1 ? relevant.first?.id : nil
+                // to open would be arbitrary — the brand is the honest destination. So is it
+                // for a sale, which is about the whole shop and has no product page to open.
+                let single = relevant.count == 1 && relevant.first?.kind != UpdateKind.sale.rawValue
+                    ? relevant.first?.id
+                    : nil
 
                 for device in userDevices {
                     guard let token = device.apnsToken else { continue }
@@ -651,7 +778,10 @@ actor Notifier {
     ///   exempt from the cooldown — so a restock somebody asked about still arrives instantly
     ///   while a restock nobody asked about no longer wakes them at seven.
     /// - **`priceDrop`** — real news and not urgent. A markdown is worth as much a week later
-    ///   as on the day, which is exactly why `MarkdownsView` exists and carries a badge.
+    ///   as on the day, which is exactly why `MarkdownsView` exists and carries a badge. The
+    ///   one somebody is waiting for — on a product they watch — goes by the watch path,
+    ///   `notifyWatchedPriceDrops`; one on something they saved, the phone says itself. A
+    ///   brand putting much of its catalogue on sale is `.sale`, which *is* sudden.
     /// - **`pageChange`** — "something on this page is different", from a hashed page watch.
     ///   The weakest signal in the app: it fires on brands where nothing happened.
     /// - **`post`** — a brand's own RSS. Marketing, published by people who already have a
@@ -667,7 +797,15 @@ actor Notifier {
     /// waking somebody" is what the question means on this side.
     static func isWorthWaking(_ kind: UpdateKind) -> Bool { kind.isSudden }
 
-    static func isRelevant(_ event: EventModel, to profile: SizeProfile) -> Bool {
+    /// - Parameter mode: how this follower follows the brand. Both questions must say yes —
+    ///   the mode only ever takes away, so a *Sales only* follow is never woken by a kind an
+    ///   *Everything* follow would not be. The default is what every follow is until
+    ///   somebody chooses otherwise.
+    static func isRelevant(
+        _ event: EventModel,
+        to profile: SizeProfile,
+        mode: FollowMode = .everything
+    ) -> Bool {
         // Gender applies to every kind, not just restocks. Being woken at 7am for a
         // women's hoodie is worse than merely seeing one in the feed, so if the filter
         // is worth having anywhere it is worth having here first.
@@ -677,11 +815,14 @@ actor Notifier {
         if let product = event.product, !profile.allows(product.gender) { return false }
 
         let kind = UpdateKind(rawValue: event.kind) ?? .product
-        guard Self.isWorthWaking(kind) else { return false }
+        guard Self.isWorthWaking(kind), mode.admits(kind) else { return false }
 
         guard kind == .restock else { return true }
         guard !profile.isEmpty, !event.sizes.isEmpty else { return true }
-        return event.sizes.contains { profile.matches($0) }
+        // The run is the event's own sizes, never `product.$variants`: the products here
+        // were loaded without them, and that accessor traps rather than returning nothing.
+        let context = event.product?.sizeContext(sizes: event.sizes) ?? .unknown
+        return event.sizes.contains { profile.matches($0, in: context) }
     }
 
     /// The notification text for one brand's batch. `nil` when there is nothing to say.
@@ -710,6 +851,10 @@ actor Notifier {
                 return (brand, "Something changed on the site")
             case .post:
                 return (brand, name ?? "New post")
+            case .sale:
+                // The sale's own words — "25% OFF EVERYTHING · CODE AUTUMN" — because the
+                // code is the one part of it found nowhere else.
+                return (brand, event.title ?? "A sale just started")
             }
         }
 
@@ -723,6 +868,12 @@ actor Notifier {
         }
         if let drops = byKind[.priceDrop]?.count { parts.append("\(drops) price drop\(drops == 1 ? "" : "s")") }
         if byKind[.dropLock] != nil { parts.append("a storefront lock") }
+        // A sale leads a mixed batch in its own words, so its code is not counted away into
+        // "a sale and 3 new items".
+        if let sale = byKind[.sale]?.first {
+            let said = sale.title ?? "A sale just started"
+            return (brand, parts.isEmpty ? said : "\(said) — and \(sentence(parts))")
+        }
         if parts.isEmpty { parts.append("\(events.count) updates") }
 
         return (brand, sentence(parts))

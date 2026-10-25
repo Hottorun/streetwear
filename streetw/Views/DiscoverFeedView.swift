@@ -43,6 +43,8 @@ struct DiscoverFeedView: View {
     /// this tab rather than the root, so a save does not rebuild the whole app.
     @Query(sort: \SavedItem.savedAt, order: .reverse) private var saves: [SavedItem]
     @Query private var dismissals: [BrandDismissal]
+    /// Only the boards with a taste setting — see `Board.shapingTaste`. Usually none.
+    @Query(filter: Board.shapingTaste) private var tasteBoards: [Board]
 
     /// The brands they follow, and what is still unread from them.
     ///
@@ -130,6 +132,9 @@ struct DiscoverFeedView: View {
         /// from this, so comparing one string is both cheaper and exactly as sensitive.
         var statement: String
         var slot: GarmentSlot?
+        /// What counts towards taste. Leaving something out, or choosing a mood, moves none of
+        /// the counts above. Sets of ids, so still nothing here runs a classifier.
+        var taste: TasteScope
     }
 
     private var deckKey: DeckKey {
@@ -148,23 +153,35 @@ struct DiscoverFeedView: View {
             followed: followedBrands.count,
             gender: sizes.profile.gender,
             statement: statement.statement.text,
-            slot: slot
+            slot: slot,
+            taste: TasteScope(boards: tasteBoards, saves: saves)
         )
     }
 
-    private var deckContext: DeckContext {
+    /// - Parameter scope: what counts towards taste, from the key this is built under.
+    ///
+    /// Two different sets, on purpose — see `TasteScope`. **The pairing reads what you have**:
+    /// the wardrobe whatever its taste setting, since a jacket left out of the taste reading is
+    /// still in the cupboard and still goes with the trousers. **The taste vector reads what you
+    /// like**: the same saves less anything left out, plus the mood board's, leant on.
+    private func deckContext(taste scope: TasteScope) -> DeckContext {
         // A save with no photograph is excluded outright, the same rule `GoesWith` and
         // `FitSuggestions` apply: this page is looked at before it is read.
         let kept = saves.filter { $0.update?.imageURLStrings.isEmpty == false }
-        let owned = kept.filter { $0.type == .wardrobe }
-        let wardrobe = (owned.isEmpty ? kept : owned).compactMap(\.update)
+        let pool = scope.pairingPool(kept)
+        let wardrobe = pool.compactMap(\.update)
 
         var counts: [GarmentSlot: Int] = [:]
         for item in wardrobe { counts[item.garmentSlot, default: 0] += 1 }
 
+        // The pool's saves that count, and the mood's wherever they are filed — a mood of
+        // tailoring kept as inspiration is exactly what somebody leaning on it wants read.
+        let poolIDs = Set(pool.map(\.id))
+        let tasteSaves = kept.filter { poolIDs.contains($0.id) || scope.isMood($0) }
+
         return DeckContext(
             wardrobe: wardrobe.map(\.garment),
-            taste: taste(from: wardrobe),
+            taste: taste(from: scope.weighted(tasteSaves)),
             dismissed: Set(dismissals.map(\.remoteID)),
             owned: counts,
             gender: sizes.profile.gender,
@@ -220,20 +237,18 @@ struct DiscoverFeedView: View {
     /// uses, and for the same reason.
     private static let minimumSavesToRank = 8
 
-    private func taste(from wardrobe: [BrandUpdate]) -> BrandVector {
-        guard wardrobe.count >= Self.minimumSavesToRank else { return BrandVector() }
+    /// The threshold is on how many different saves there are, not on their weight — a mood
+    /// board of three is not a taste of eight because it is leant on.
+    private func taste(from weighted: [(save: SavedItem, weight: Double)]) -> BrandVector {
+        let usable = weighted.compactMap { entry in
+            entry.save.update.map { (product: $0.productSummary, weight: entry.weight) }
+        }
+        guard usable.count >= Self.minimumSavesToRank else { return BrandVector() }
         let vectors = deck.cards.compactMap { $0.card.vector }
         guard !vectors.isEmpty else { return BrandVector() }
         return BrandVectorBuilder.taste(
-            from: wardrobe.map {
-                ProductSummary(
-                    title: $0.title,
-                    productType: $0.productType,
-                    tags: $0.tags,
-                    priceAmount: $0.priceAmount,
-                    publishedAt: $0.publishedAt
-                )
-            },
+            from: usable.map(\.product),
+            weights: usable.map(\.weight),
             comparedWith: vectors
         )
     }
@@ -308,7 +323,7 @@ struct DiscoverFeedView: View {
         // Keyed on the fingerprint, and the context is built in here — so the expensive
         // derivation happens once per actual change rather than once per body.
         .task(id: deckKey) {
-            deck.update(context: deckContext)
+            deck.update(context: deckContext(taste: deckKey.taste))
         }
         // The other supply. Ordered after the context deliberately: `adopt` ranks, and
         // ranking a followed card before the deck knows which brands are followed would draw

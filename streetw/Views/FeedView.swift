@@ -133,7 +133,7 @@ struct FeedView: View {
     /// So the courtesy it gets instead is saying whether the room is empty before you open
     /// it. A brand locked for a drop is the strongest signal there is that something is
     /// about to happen, so it earns the accent rather than a plain dot.
-    private var isLockedSomewhere: Bool { brands.contains { $0.isLockedForDrop } }
+    private var isLockedSomewhere: Bool { brands.contains { $0.isAnnouncingLock } }
 
     /// How many garments one story prints before the rest go behind "+N more".
     ///
@@ -234,7 +234,11 @@ struct FeedView: View {
             $0.sortKey == $1.sortKey ? $0.brand.name < $1.brand.name : $0.sortKey > $1.sortKey
         }
         result.total = result.groups.reduce(0) { $0 + $1.updates.count }
-        result.markdowns = markdowns.count { $0.kind == .priceDrop && $0.passes(profile) }
+        // The same three questions `MarkdownsView.ordered` asks, or the badge and the sheet
+        // it opens disagree about a quiet brand's price cuts.
+        result.markdowns = markdowns.count {
+            $0.kind == .priceDrop && $0.isAdmittedByFollowMode && $0.passes(profile)
+        }
         return result
     }
 
@@ -465,8 +469,9 @@ struct FeedView: View {
                 .overlay(alignment: .topTrailing) {
                     // A locked storefront earns the mark whether or not anything is unread:
                     // it is the strongest signal in the app and the moment somebody most
-                    // wants the page.
-                    if isShouting || brand.isLockedForDrop {
+                    // wants the page — unless the brand is followed in a mode that asked
+                    // the feed not to say so (`Brand.isAnnouncingLock`).
+                    if isShouting || brand.isAnnouncingLock {
                         Circle()
                             .fill(Color.signal)
                             .frame(width: 8, height: 8)
@@ -780,6 +785,11 @@ private struct BrandSpread: View {
         /// few minutes, and an accent on every headline makes the one that matters invisible
         /// — the same argument the drop calendar's watch line settles the same way.
         var color: Color { kind == .dropLock ? .signal : .ink }
+
+        /// Whether the headline opens the list it counts. A sale's evidence is its own
+        /// words — "25% OFF EVERYTHING · CODE AUTUMN" under the headline — and a page of the
+        /// rows that said it would be the same sentence again with no garment in it.
+        var opensItsList: Bool { total > 0 && kind != .sale }
     }
 
     private func layout(profile: SizeProfile) -> Layout {
@@ -853,7 +863,7 @@ private struct BrandSpread: View {
         // strongest signal the app has, and the old header printed it from `isLockedForDrop`
         // for exactly this reason; losing it to a bucket that happens to be empty would be a
         // silent downgrade of the one line worth reading.
-        if group.brand.isLockedForDrop, byKind[.dropLock] == nil {
+        if group.brand.isAnnouncingLock, byKind[.dropLock] == nil {
             byKind[.dropLock] = []
         }
 
@@ -912,14 +922,15 @@ private struct BrandSpread: View {
                 // four, per the rule that every count on a spread opens the list it
                 // counts. What goes is the evidence row, because a markdown is a claim
                 // about a *number* and the tile was never the thing that carried it.
-                shown: bucket.kind == .priceDrop
+                //
+                // A sale is the same and more so: it is about the brand, there is no garment
+                // in it to tile, and the sale's own words are the detail below.
+                shown: bucket.kind == .priceDrop || bucket.kind == .sale
                     ? []
                     : Array(bucket.items.prefix(storyLimit)),
                 // Read off `byKind` rather than off the bucket, so the sizes still name the
                 // garment that became the lead.
-                detail: bucket.kind == .restock
-                    ? Self.returnedSizes(byKind[.restock] ?? [], profile: profile)
-                    : nil
+                detail: Self.detail(for: bucket.kind, byKind: byKind, profile: profile)
             )
         }
 
@@ -973,6 +984,20 @@ private struct BrandSpread: View {
         return post.subtracting(release).count <= 1 || release.subtracting(post).isEmpty
     }
 
+    /// The line under a story's headline: the sizes that came back, or what the sale is —
+    /// the newest one's words, which carry the percentage and the code. Nil otherwise.
+    private static func detail(
+        for kind: UpdateKind,
+        byKind: [UpdateKind: [BrandUpdate]],
+        profile: SizeProfile
+    ) -> String? {
+        switch kind {
+        case .restock: returnedSizes(byKind[.restock] ?? [], profile: profile)
+        case .sale: byKind[.sale]?.first?.title.uppercased()
+        default: nil
+        }
+    }
+
     /// What came back, the reader's own sizes first.
     ///
     /// The same rule `FeedState` applies to one card, applied to a story about several: the
@@ -984,9 +1009,11 @@ private struct BrandSpread: View {
         var mine: [String] = []
         var others: [String] = []
         for item in items {
+            // Each garment's own: "8" is a shoe on one item in a story and a dress on another.
+            let context = item.sizeContext
             for size in item.restockedSizes where size != "Default Title" && !size.isEmpty {
                 guard seen.insert(size).inserted else { continue }
-                if profile.claims(size) { mine.append(size) } else { others.append(size) }
+                if profile.claims(size, in: context) { mine.append(size) } else { others.append(size) }
             }
         }
         let shown = (mine + others).prefix(4)
@@ -1079,7 +1106,7 @@ private struct BrandSpread: View {
                     .font(.editorial(19))
                     .foregroundStyle(story.color)
                     .fixedSize(horizontal: false, vertical: true)
-                if story.total > 0 {
+                if story.opensItsList {
                     Image(systemName: "chevron.right")
                         .font(.system(size: 11, weight: .semibold))
                         .foregroundStyle(Color.muted)
@@ -1091,7 +1118,7 @@ private struct BrandSpread: View {
             }
         }
 
-        if story.total > 0 {
+        if story.opensItsList {
             NavigationLink(value: BrandFeedRoute(brand: group.brand, kind: story.kind)) {
                 text
             }

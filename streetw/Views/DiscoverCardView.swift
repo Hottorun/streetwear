@@ -616,6 +616,11 @@ struct DiscoverCardView: View {
                             .padding(.top, 5)
                     }
                 }
+                // A `Button` centres the lines of any multi-line text in its label, whatever
+                // the stack around them says — `alignment: .leading` places each `Text`, not
+                // the lines inside one. So a two-line headline or blurb sat centred in a
+                // column where everything else, the meta row included, starts at the edge.
+                .multilineTextAlignment(.leading)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .contentShape(.rect)
             }

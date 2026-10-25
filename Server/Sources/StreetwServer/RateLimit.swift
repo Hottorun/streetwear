@@ -221,6 +221,13 @@ final class RateLimits: @unchecked Sendable {
     /// burst — the app syncs on a sixty-second throttle and pages Discover by hand, so this
     /// is roughly two orders of magnitude above what it does.
     let standard = RateLimitStore(capacity: 60, refillPerSecond: 4)
+
+    /// Usage reports, per device. Each one is a handful of upserts, so this is the budget
+    /// that stops the counting route from being a way to make the database write: ten in a
+    /// burst, thirty an hour. The app reports at most once every five minutes, whether on
+    /// coming back, on the way out or when its token changes — twelve an hour at the very
+    /// most, and one or two on an ordinary day.
+    let usage = RateLimitStore(capacity: 10, refillPerSecond: 30.0 / 3600)
 }
 
 extension Application {

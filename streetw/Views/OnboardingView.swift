@@ -259,7 +259,7 @@ struct OnboardingView: View {
         .padding(.horizontal, 20)
     }
 
-    /// The three ladders, in the same order and the same shapes Settings uses.
+    /// The ladders, in the same order and the same shapes Settings uses.
     ///
     /// Waist is asked here rather than left to be discovered later, because this step
     /// exists for one reason — the very first sync is what fills the feed, and a profile
@@ -291,13 +291,17 @@ struct OnboardingView: View {
                     // person ever sees sets the wrong expectation for every screen after.
                     AnyView(
                         WordPicker(
-                            options: SizeScale.allCases.map { ($0.label, $0) },
+                            options: SizeScale.shoeScales.map { ($0.label, $0) },
                             selection: sizes.profile.shoeScale,
                             select: sizes.setShoeScale
                         )
                     )
                 }
             )
+
+            // Asked here for the reason the waist is: a woman who enters only a shoe size
+            // on this screen has every dress in her first sync read on no ladder of hers.
+            DressAndSuitRows()
 
             // Nothing here is required, and the step is skippable — but somebody who fills
             // in one ladder and not the others should know that the empty ones are not a

@@ -28,6 +28,17 @@ final class BrandModel: Model, @unchecked Sendable {
     /// When this brand last interrupted anybody. The rate limit that turns a drop from a
     /// trickle of pushes into one alert and one follow-up — see `Notifier.cooldown`.
     @OptionalField(key: "last_notified_at") var lastNotifiedAt: Date?
+    /// When this brand's prices were first measured for a sale, and when the sale now
+    /// running started — `CatalogueSale.State`, written only on a transition.
+    @OptionalField(key: "sale_measured_at") var saleMeasuredAt: Date?
+    @OptionalField(key: "sale_since") var saleSince: Date?
+    /// When the announcement bar is next due a read; nil until it has been read once, which
+    /// makes that read a baseline. See `SaleBanners`.
+    @OptionalField(key: "banner_check_at") var bannerCheckAt: Date?
+    /// The offer last announced from the bar, and when it was last seen there —
+    /// `SaleBannerLedger`.
+    @OptionalField(key: "sale_banner") var saleBanner: String?
+    @OptionalField(key: "sale_banner_seen_at") var saleBannerSeenAt: Date?
     @Timestamp(key: "created_at", on: .create) var createdAt: Date?
 
     @Children(for: \.$brand) var sources: [SourceModel]
@@ -116,6 +127,11 @@ final class ProductModel: Model, @unchecked Sendable {
     /// The numeric price, so a markdown is detectable. `price_text` is formatted for
     /// display and two different strings say nothing about direction.
     @OptionalField(key: "price_amount") var priceAmount: Double?
+    /// What the brand says it cost before it was marked down — `compare_at_price`. Beside
+    /// the price rather than on an event, because it describes the product as it is now.
+    /// See `AddProductOriginalPrice`.
+    @OptionalField(key: "original_price_text") var originalPriceText: String?
+    @OptionalField(key: "original_price_amount") var originalPriceAmount: Double?
     @OptionalField(key: "is_available") var isAvailable: Bool?
     @Field(key: "tags") var tags: [String]
     @OptionalField(key: "product_type") var productType: String?
@@ -126,6 +142,12 @@ final class ProductModel: Model, @unchecked Sendable {
     @Field(key: "published_at") var publishedAt: Date
     @Timestamp(key: "first_seen_at", on: .create) var firstSeenAt: Date?
     @Field(key: "last_seen_at") var lastSeenAt: Date
+    /// When this product's own page was last read for its details (`ProductPage`), or nil
+    /// if it never has been. Stamped even when the page had nothing to say, so a page that
+    /// cannot be read is not asked again every pass. Only sitemap products are ever read.
+    @OptionalField(key: "enriched_at") var enrichedAt: Date?
+    /// What this product is owed once its page has been read — see `PendingAnnouncement`.
+    @OptionalField(key: "pending_announcement") var pendingAnnouncement: String?
 
     @Children(for: \.$product) var variants: [VariantModel]
 
@@ -142,6 +164,8 @@ final class ProductModel: Model, @unchecked Sendable {
         self.kind = item.kind.rawValue
         self.priceText = item.priceText
         self.priceAmount = item.priceAmount
+        self.originalPriceText = item.originalPriceText
+        self.originalPriceAmount = item.originalPriceAmount
         self.isAvailable = item.isAvailable
         self.tags = item.tags
         self.productType = item.productType
@@ -149,6 +173,22 @@ final class ProductModel: Model, @unchecked Sendable {
         self.publishedAt = item.publishedAt
         self.lastSeenAt = Date()
     }
+}
+
+/// The event a new sitemap product is waiting to be announced with.
+///
+/// **A sitemap product is announced from its page, not from the sitemap.** The sitemap has
+/// a URL and at best a photograph; the page has the name, the price and the size run. An
+/// event written at first sight went out as a push saying "New arrival" and a card with no
+/// price — and the phone keeps the copy it was sent, so reading the page a minute later
+/// fixed the server's row and nobody's screen. So the row is stored, the event is held,
+/// and `Poller.enrich` writes it once the page has been read, usually in the same pass.
+enum PendingAnnouncement: String {
+    /// Surely a product: announced once the page is read, whatever it says.
+    case announce
+    /// Only the page can say — `FetchedItem.isTentative`. Announced if it shows a product,
+    /// and the row deleted if it does not, since a category page is not a catalogue entry.
+    case confirm
 }
 
 /// Per-variant stock is the whole reason restock alerts can name a size.
@@ -216,6 +256,11 @@ final class EventModel: Model, @unchecked Sendable {
     /// true when it fired.
     @OptionalField(key: "previous_price_text") var previousPriceText: String?
     @OptionalField(key: "previous_price_amount") var previousPriceAmount: Double?
+    /// The event's own words, for a kind with no product to take them from — a `.sale`
+    /// ("25% OFF EVERYTHING · CODE AUTUMN", and the bar's message as written). Nil for every
+    /// other kind, which is drawn from its product.
+    @OptionalField(key: "title") var title: String?
+    @OptionalField(key: "summary") var summary: String?
 
     init() {}
 
@@ -225,7 +270,9 @@ final class EventModel: Model, @unchecked Sendable {
         kind: UpdateKind,
         sizes: [String] = [],
         previousPriceText: String? = nil,
-        previousPriceAmount: Double? = nil
+        previousPriceAmount: Double? = nil,
+        title: String? = nil,
+        summary: String? = nil
     ) {
         self.$brand.id = brandID
         self.$product.id = productID
@@ -233,6 +280,8 @@ final class EventModel: Model, @unchecked Sendable {
         self.sizes = sizes
         self.previousPriceText = previousPriceText
         self.previousPriceAmount = previousPriceAmount
+        self.title = title
+        self.summary = summary
     }
 }
 
@@ -253,6 +302,13 @@ final class UserModel: Model, @unchecked Sendable {
     /// Waists in inches. Its own ladder, not a flavour of `apparel_sizes` — a 32 is not
     /// an M and no table converts between them.
     @Field(key: "waist_sizes") var waistSizes: [String]
+    /// Women's dress sizes as US tokens. See `AddUserDressAndSuitSizes`.
+    @Field(key: "dress_sizes") var dressSizes: [String]
+    /// Jacket chests in inches.
+    @Field(key: "suit_sizes") var suitSizes: [String]
+    /// Jacket lengths: "S", "R", "L". Its own column rather than folded into `suit_sizes`,
+    /// for the reason `SizeProfile.suitLength` is its own field.
+    @Field(key: "suit_lengths") var suitLengths: [String]
     /// Vestigial. One-size items fit everyone, so the preference was removed and this is
     /// now always true — kept only because the column is `NOT NULL` in a schema that is
     /// already applied in production, and dropping it would be a migration bought for
@@ -266,15 +322,24 @@ final class UserModel: Model, @unchecked Sendable {
         self.apparelSizes = []
         self.shoeSizes = []
         self.waistSizes = []
+        self.dressSizes = []
+        self.suitSizes = []
+        self.suitLengths = []
         self.includeOneSize = true
     }
 
+    /// The display scales (`shoeScale`, `dressScale`, `suitScale`) have no column on
+    /// purpose: they change how a size is *read out*, never what is stored or matched, and
+    /// they never leave the phone.
     var sizeProfile: SizeProfile {
         get {
             var profile = SizeProfile()
             profile.apparel = Set(apparelSizes)
             profile.shoe = Set(shoeSizes)
             profile.waist = Set(waistSizes)
+            profile.dress = Set(dressSizes)
+            profile.suit = Set(suitSizes)
+            profile.suitLength = Set(suitLengths)
             profile.gender = gender.flatMap(GenderPreference.init(rawValue:)) ?? .everything
             return profile
         }
@@ -282,6 +347,9 @@ final class UserModel: Model, @unchecked Sendable {
             apparelSizes = Array(newValue.apparel)
             shoeSizes = Array(newValue.shoe)
             waistSizes = Array(newValue.waist)
+            dressSizes = Array(newValue.dress)
+            suitSizes = Array(newValue.suit)
+            suitLengths = Array(newValue.suitLength)
             includeOneSize = true
             gender = newValue.gender.rawValue
         }
@@ -299,6 +367,15 @@ final class DeviceModel: Model, @unchecked Sendable {
     @Field(key: "environment") var environment: String
     @OptionalField(key: "locale") var locale: String?
     @Timestamp(key: "updated_at", on: .update) var updatedAt: Date?
+    /// The UTC day (`yyyy-MM-dd`) this device last sent a usage report, and nothing finer.
+    ///
+    /// The one per-device fact the usage counts keep, and it is overwritten rather than
+    /// appended to: it is what lets "how many people used it this week" be answered without
+    /// counting one person's ten opens as ten people, and without any row that says which
+    /// device did what. Written only by `POST /v1/usage` — never by the feed or the size push,
+    /// which a background refresh also makes, so a phone in a drawer is not an active user.
+    /// See `UsageLedger.markActive`.
+    @OptionalField(key: "active_on") var activeOn: String?
 
     init() {}
 
@@ -318,12 +395,24 @@ final class FollowModel: Model, @unchecked Sendable {
     @Parent(key: "user_id") var user: UserModel
     @Parent(key: "brand_id") var brand: BrandModel
     @Timestamp(key: "created_at", on: .create) var createdAt: Date?
+    /// `FollowMode` raw value. A string rather than an enum column for the reason the wire
+    /// carries one: a mode a later deploy writes must still read on an earlier one, as
+    /// `.everything`. See `AddFollowMode`.
+    @Field(key: "mode") var modeRaw: String
 
-    init() {}
+    init() {
+        self.modeRaw = FollowMode.everything.rawValue
+    }
 
-    init(userID: UUID, brandID: UUID) {
+    init(userID: UUID, brandID: UUID, mode: FollowMode = .everything) {
         self.$user.id = userID
         self.$brand.id = brandID
+        self.modeRaw = mode.rawValue
+    }
+
+    var mode: FollowMode {
+        get { FollowMode(lenient: modeRaw) }
+        set { modeRaw = newValue.rawValue }
     }
 }
 
@@ -471,4 +560,25 @@ final class BrandCheckWatcherModel: Model, @unchecked Sendable {
         self.$user.id = userID
         self.instagram = instagram
     }
+}
+
+/// How many times one thing happened on one day, across everybody.
+///
+/// **Not personal and not catalogue — a total.** There is no `user_id` and no `device_id` here
+/// and there must never be one: the whole promise of the usage counts is that what arrives is
+/// added to a number shared by everybody and nothing else is kept. One row per (day, event),
+/// unique, so the table grows by at most a dozen rows a day however many reports arrive.
+/// See `UsageLedger` and `UsagePolicy`.
+final class UsageCountModel: Model, @unchecked Sendable {
+    static let schema = "usage_counts"
+
+    @ID(key: .id) var id: UUID?
+    /// `yyyy-MM-dd` in UTC. A string rather than a date column, so Postgres and SQLite agree
+    /// on where a day ends and the ordering is plain text.
+    @Field(key: "day") var day: String
+    /// A `UsageEvent` raw value, or one of `UsagePolicy`'s server-only active rows.
+    @Field(key: "event") var event: String
+    @Field(key: "total") var total: Int
+
+    init() {}
 }

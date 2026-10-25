@@ -104,7 +104,17 @@ struct DiscoverProductSheet: View {
             }
             .safeAreaInset(edge: .bottom) {
                 if let url = card.linkURL.flatMap(URL.init(string:)) {
-                    StorefrontBar(url: url, isSoldOut: card.isAvailable == false)
+                    StorefrontBar(
+                        link: Checkout.link(
+                            to: url,
+                            productExternalID: card.productExternalID,
+                            variants: card.variants ?? [],
+                            profile: sizes.profile,
+                            context: card.sizeContext,
+                            colorway: colorway
+                        ),
+                        isSoldOut: card.isAvailable == false
+                    )
                 }
             }
         }
@@ -147,7 +157,7 @@ struct DiscoverProductSheet: View {
     }
 
     private var sizeEntries: [SizeRun.Entry] {
-        SizeRun.entries(for: variants, profile: sizes.profile)
+        SizeRun.entries(for: variants, in: card.sizeContext, profile: sizes.profile)
     }
 
     private func description(_ text: String) -> some View {

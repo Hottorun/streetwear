@@ -18,6 +18,15 @@ public enum UpdateKind: String, Codable, Sendable, CaseIterable {
     /// nobody wants pushed to their phone, and treating every edit as an event would
     /// turn the feed into a changelog — the thing this app is trying not to be.
     case priceDrop
+    /// A brand-wide sale: much of a catalogue marked down in one pass, or a sale announced
+    /// in the storefront's own announcement bar. About the brand, never one product — the
+    /// row has no garment behind it, like a lock.
+    ///
+    /// **Added after 1.0, which cannot draw it.** The App Store build maps a kind it does
+    /// not know onto `.product` — a "new product" with no photograph, counted in "N new
+    /// products" and given a drop's lead slot — so the server never sends it to a client
+    /// that has not named it in `?kinds=`. See `FeedKinds`.
+    case sale
 
     public var label: String {
         switch self {
@@ -28,6 +37,7 @@ public enum UpdateKind: String, Codable, Sendable, CaseIterable {
         case .pageChange: "Page changed"
         case .dropLock: "Locked for drop"
         case .priceDrop: "Price drop"
+        case .sale: "Sale"
         }
     }
 
@@ -50,6 +60,7 @@ public enum UpdateKind: String, Codable, Sendable, CaseIterable {
         case .pageChange: "Something on the site changed"
         case .dropLock: "Locked — a drop is imminent"
         case .collection: count == 1 ? "A new collection" : "\(count) new collections"
+        case .sale: count == 1 ? "A sale is on" : "\(count) sales are on"
         }
     }
 
@@ -66,10 +77,37 @@ public enum UpdateKind: String, Codable, Sendable, CaseIterable {
     /// Nothing is hidden by a `false` here. A restock, a markdown, a page hash moving and a
     /// brand's own marketing all still land in the feed, still count as unread, still reach
     /// the markdowns list. This decides only what leads.
+    ///
+    /// **`.sale` is sudden, and that is a deliberate change of rule.** A single markdown is
+    /// not — it is worth as much next week, which is what the markdowns list is for. A brand
+    /// putting much of its catalogue on sale, or announcing "25% off everything" in its own
+    /// bar, is the other thing: it starts at a moment, the sizes go first, and the code in the
+    /// bar is found nowhere else. It is also the only thing a *Sales only* follow was ever
+    /// going to be woken by, and until it existed that mode woke nobody.
     public var isSudden: Bool {
         switch self {
-        case .product, .collection, .dropLock: true
+        case .product, .collection, .dropLock, .sale: true
         case .restock, .priceDrop, .pageChange, .post: false
+        }
+    }
+
+    /// Whether an event of this kind is **sale news** — what a follow in *Sales only* mode
+    /// lets through (`FollowMode.admits`), on the feed and on the lock screen alike.
+    ///
+    /// A switch over every case rather than `self == .priceDrop`, so a kind added later has
+    /// to be decided here and cannot fall into the wrong answer by default. A brand-wide sale
+    /// or a sale banner is a `true`; anything that is about a garment arriving, coming back
+    /// or a storefront changing is not, however loud it is — somebody who asked for *sales*
+    /// from a shop with daily arrivals asked precisely not to hear about those.
+    ///
+    /// Nothing here decides what is worth a push. That is `isSudden`, and both must agree
+    /// before `Notifier` sends anything: a markdown passes this and is not sudden, so a
+    /// *Sales only* follow is woken by `.sale` alone — the brand-wide sale — and a single
+    /// markdown reaches its feed and the markdowns list without a buzz.
+    public var isSale: Bool {
+        switch self {
+        case .priceDrop, .sale: true
+        case .product, .restock, .collection, .post, .pageChange, .dropLock: false
         }
     }
 
@@ -81,7 +119,8 @@ public enum UpdateKind: String, Codable, Sendable, CaseIterable {
     /// into a total order so that two sudden kinds landing in the same poll — a storefront
     /// locking while a season is announced — still have a settled answer between them.
     ///
-    /// The lock comes first because it is about the next few minutes; a release outranks the
+    /// The lock comes first because it is about the next few minutes; a sale next, because it
+    /// is about everything the brand sells and its best sizes go first; a release outranks the
     /// garments because it is *about* them.
     ///
     /// Fixed rather than derived from how many of each landed. A rank computed from counts
@@ -90,12 +129,13 @@ public enum UpdateKind: String, Codable, Sendable, CaseIterable {
     public var newsRank: Int {
         switch self {
         case .dropLock: 0
-        case .collection: 1
-        case .product: 2
-        case .restock: 3
-        case .priceDrop: 4
-        case .post: 5
-        case .pageChange: 6
+        case .sale: 1
+        case .collection: 2
+        case .product: 3
+        case .restock: 4
+        case .priceDrop: 5
+        case .post: 6
+        case .pageChange: 7
         }
     }
 
@@ -110,6 +150,7 @@ public enum UpdateKind: String, Codable, Sendable, CaseIterable {
         case .pageChange: "eye"
         case .dropLock: "lock"
         case .priceDrop: "arrow.down.right"
+        case .sale: "tag"
         }
     }
 }

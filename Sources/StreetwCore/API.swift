@@ -27,15 +27,38 @@ public struct SizePayload: Codable, Sendable, Hashable {
     ///
     /// Optional, so a server that predates it still decodes this body.
     public var waist: [String]?
+    /// Women's dress sizes, as US tokens — the same canonical form `shoe` travels in, so
+    /// `dressScale` stays on the phone. The waist's lesson applied up front: a ladder the
+    /// app holds and the payload does not carry is a ladder the server targets alerts
+    /// without, while the screen goes on looking right.
+    ///
+    /// Optional, because the 1.0 app has no dress ladder and sends nothing; absent reads
+    /// as empty, and an empty ladder filters nothing.
+    public var dress: [String]?
+    /// Jacket chests in inches. Optional for the same reason.
+    public var suit: [String]?
+    /// Jacket lengths, "S", "R" or "L". Optional for the same reason.
+    public var suitLength: [String]?
     /// Which genders the user wants pushed. Held server-side for the same reason the
     /// sizes are: the server decides whether a drop is news for this person, and it can
     /// only do that if it knows. Optional for back-compatibility.
     public var gender: String?
 
-    public init(apparel: [String], shoe: [String], waist: [String]? = nil, gender: String? = nil) {
+    public init(
+        apparel: [String],
+        shoe: [String],
+        waist: [String]? = nil,
+        dress: [String]? = nil,
+        suit: [String]? = nil,
+        suitLength: [String]? = nil,
+        gender: String? = nil
+    ) {
         self.apparel = apparel
         self.shoe = shoe
         self.waist = waist
+        self.dress = dress
+        self.suit = suit
+        self.suitLength = suitLength
         self.gender = gender
     }
 
@@ -43,6 +66,9 @@ public struct SizePayload: Codable, Sendable, Hashable {
         self.apparel = Array(profile.apparel)
         self.shoe = Array(profile.shoe)
         self.waist = Array(profile.waist)
+        self.dress = Array(profile.dress)
+        self.suit = Array(profile.suit)
+        self.suitLength = Array(profile.suitLength)
         self.gender = profile.gender.rawValue
     }
 
@@ -55,6 +81,10 @@ public struct SizePayload: Codable, Sendable, Hashable {
         // waist to send — so both leave the ladder empty, and an empty ladder filters
         // nothing rather than hiding everything.
         profile.waist = Set((waist ?? []).compactMap { SizeNormalizer.normalize($0)?.token })
+        // Strictly: a token that is not on the ladder is dropped, not kept as `.other`.
+        profile.dress = Set((dress ?? []).compactMap(SizeProfile.dressToken))
+        profile.suit = Set((suit ?? []).compactMap(SizeProfile.suitToken))
+        profile.suitLength = Set((suitLength ?? []).compactMap(SizeProfile.suitLengthToken))
         profile.gender = gender.flatMap(GenderPreference.init(rawValue:)) ?? .everything
         return profile
     }
@@ -108,9 +138,24 @@ public struct DiscoverBrand: Codable, Sendable {
 
 public struct FollowBrand: Codable, Sendable {
     public var brandID: UUID
+    /// How much of the brand should reach this person. Optional, and absent from every body
+    /// the 1.0 app sends — which the server reads as `.everything`, the only mode that build
+    /// can show. Sent when a follow is *restored* rather than made, so a re-registration
+    /// puts a quiet brand back quiet.
+    public var mode: FollowMode?
 
-    public init(brandID: UUID) {
+    public init(brandID: UUID, mode: FollowMode? = nil) {
         self.brandID = brandID
+        self.mode = mode
+    }
+}
+
+/// Changes how much of an already-followed brand reaches this person. See `FollowMode`.
+public struct UpdateFollow: Codable, Sendable {
+    public var mode: FollowMode
+
+    public init(mode: FollowMode) {
+        self.mode = mode
     }
 }
 
@@ -323,6 +368,12 @@ public struct BrandDTO: Codable, Sendable, Hashable, Identifiable {
     /// statements, and the one place a failing source is visible was blank in the mode the
     /// app actually ships in.
     public var sources: [BrandSourceDTO]
+    /// How the caller follows this brand — set by `GET /v1/follows` only, because it is a
+    /// fact about one person's follow and not about the brand. Every other route that hands
+    /// over a brand leaves it nil, and nil means "not said", never "everything": the client
+    /// keeps the mode it already holds rather than resetting a quiet brand because it
+    /// happened to reappear in a search result.
+    public var followMode: FollowMode?
 
     public init(
         id: UUID?,
@@ -333,7 +384,8 @@ public struct BrandDTO: Codable, Sendable, Hashable, Identifiable {
         currency: String? = nil,
         lockedForDrop: Bool = false,
         logoURL: String? = nil,
-        sources: [BrandSourceDTO] = []
+        sources: [BrandSourceDTO] = [],
+        followMode: FollowMode? = nil
     ) {
         self.id = id
         self.name = name
@@ -344,6 +396,7 @@ public struct BrandDTO: Codable, Sendable, Hashable, Identifiable {
         self.lockedForDrop = lockedForDrop
         self.logoURL = logoURL
         self.sources = sources
+        self.followMode = followMode
     }
 }
 
@@ -511,12 +564,29 @@ public struct FeedItem: Codable, Sendable, Hashable, Identifiable {
     public var linkURL: String?
     public var imageURLs: [String]
     public var priceText: String?
+    /// The same price as a number.
+    ///
+    /// **A markdown is a claim about two numbers, and the wire carried one.** The phone had
+    /// the "was" as an amount and the "now" only as display text, so every server-backed
+    /// markdown had no measurable cut: no "−30%" on any card, and a markdowns list that
+    /// could not rank one cut against another in the mode the app ships in. Optional, and
+    /// ignored by the 1.0 app.
+    public var priceAmount: Double?
     /// What it cost before, on a `.priceDrop`. Both forms, for the same reason the model
     /// keeps both: the string is what a card prints, and only the number can say which of
     /// two markdowns is the better one. Optional throughout — a client older than this
     /// decodes without them, and a server older than this sends none.
     public var previousPriceText: String?
     public var previousPriceAmount: Double?
+    /// What the brand says the product cost before it was marked down — its own
+    /// compare-at price — beside `priceText`, which is what it costs now. Both describe the
+    /// product as it is, not as it was when the event fired, so the pair always agrees.
+    ///
+    /// Sent for any kind, not only a markdown: a product that went live already discounted
+    /// is announced as a drop and still says "−30%". Optional, and ignored by the 1.0 app,
+    /// which decodes without it.
+    public var originalPriceText: String?
+    public var originalPriceAmount: Double?
     public var isAvailable: Bool?
     /// Sizes that came back in a restock, already narrowed to ones the user wears.
     public var restockedSizes: [String]
@@ -586,6 +656,15 @@ public struct FeedItem: Codable, Sendable, Hashable, Identifiable {
 
     public var updateKind: UpdateKind { UpdateKind(rawValue: kind) ?? .product }
 
+    /// The kind, or nil for one this build has never heard of.
+    ///
+    /// `updateKind` falls back to `.product`, which is what 1.0 does with an unknown kind —
+    /// and it is exactly the misreading `FeedKinds` exists to keep from happening: a row
+    /// with no garment behind it drawn as a new product, counted in "N new products" and
+    /// handed a drop's lead slot. The server only sends what this build named, so an unknown
+    /// kind here is a server bug or a newer server ignoring the request; the merge skips it.
+    public var knownKind: UpdateKind? { UpdateKind(rawValue: kind) }
+
     /// Never nil: an absent or unrecognised value means we don't know, which is a real
     /// answer and one that is never filtered out.
     public var itemGender: Gender {
@@ -603,8 +682,11 @@ public struct FeedItem: Codable, Sendable, Hashable, Identifiable {
         linkURL: String? = nil,
         imageURLs: [String] = [],
         priceText: String? = nil,
+        priceAmount: Double? = nil,
         previousPriceText: String? = nil,
         previousPriceAmount: Double? = nil,
+        originalPriceText: String? = nil,
+        originalPriceAmount: Double? = nil,
         isAvailable: Bool? = nil,
         restockedSizes: [String] = [],
         availableInMySize: Bool = false,
@@ -626,8 +708,11 @@ public struct FeedItem: Codable, Sendable, Hashable, Identifiable {
         self.linkURL = linkURL
         self.imageURLs = imageURLs
         self.priceText = priceText
+        self.priceAmount = priceAmount
         self.previousPriceText = previousPriceText
         self.previousPriceAmount = previousPriceAmount
+        self.originalPriceText = originalPriceText
+        self.originalPriceAmount = originalPriceAmount
         self.isAvailable = isAvailable
         self.restockedSizes = restockedSizes
         self.availableInMySize = availableInMySize
@@ -641,14 +726,76 @@ public struct FeedItem: Codable, Sendable, Hashable, Identifiable {
     }
 }
 
+/// Which kinds of event a client can draw, so the server never sends it one it cannot.
+///
+/// **1.0 cannot be told about a kind it does not know.** It decodes `FeedItem.kind` as a
+/// string and maps anything it does not recognise onto `.product` — so a `.sale` would land
+/// as a new product with no photograph, be counted in the spread's "N new products", and,
+/// being sudden, take the lead slot reserved for a drop. Nothing would crash; everything
+/// would be wrong, on the build that cannot be changed.
+///
+/// So a client names what it understands in `?kinds=` on `GET /v1/feed` and
+/// `GET /v1/brands/:id/feed`, and the server sends only those. A request that names nothing
+/// — every request 1.0 makes — gets `legacy`, the seven kinds 1.0 shipped with. A kind added
+/// later is therefore invisible to every client until it says it can draw it, and adding one
+/// never needs a change here: `understood` is this build's own `UpdateKind.allCases`.
+///
+/// The filter is applied to the window a read pages through, and the kinds travel inside
+/// the continuation, so one read is one set of kinds from its first page to its last.
+public enum FeedKinds {
+    public static let parameter = "kinds"
+
+    /// What the 1.0 app decodes. Frozen: a kind added after it never joins this list.
+    public static let legacy: [UpdateKind] = [
+        .product, .restock, .collection, .post, .pageChange, .dropLock, .priceDrop
+    ]
+
+    /// This build's whole vocabulary, as the value of `?kinds=`.
+    public static var understood: String {
+        UpdateKind.allCases.map(\.rawValue).joined(separator: ",")
+    }
+
+    /// The kinds a request may be sent, as raw values.
+    ///
+    /// Only kinds *this* side knows survive — nothing else exists in its tables, and it
+    /// bounds the filter whatever a client sends. A request that names none of them is read
+    /// as naming nothing, and gets `legacy`.
+    public static func accepted(_ raw: String?) -> [String] {
+        let named = Set(
+            (raw ?? "")
+                .split(separator: ",")
+                .map { $0.trimmingCharacters(in: .whitespaces) }
+        )
+        let known = UpdateKind.allCases.map(\.rawValue).filter(named.contains)
+        return known.isEmpty ? legacy.map(\.rawValue) : known
+    }
+}
+
 public struct FeedResponse: Codable, Sendable {
     public var items: [FeedItem]
-    /// Timestamp of the newest event in this page; pass back as `since` to page forward.
+    /// Timestamp of the newest event the read could see; pass back as `since` on the next
+    /// sync. Set on the first page of a read only — a continued page is not progress through
+    /// the head of the feed, and nil there means "leave the cursor where it is".
     public var nextCursor: Date?
+    /// The rest of this read, when it did not fit in one page. Pass back as `continuation`
+    /// and nothing else; nil means the window is complete.
+    ///
+    /// **Why a sync now takes more than one request.** The first page used to be the whole
+    /// answer: newest first, capped at 200, with `nextCursor` its newest event — so whatever
+    /// was older than the 200th event fell behind the cursor without ever being sent. A
+    /// device that had been away while a busy brand wrote 250 restocks lost every other
+    /// brand's news in that window, and the quiet brand's one drop was precisely the row that
+    /// went. See `FeedPaging` on the server for the order pages come in and why it is fair
+    /// between brands.
+    ///
+    /// Optional, and ignored by the 1.0 app, which asks once and moves its cursor exactly as
+    /// before. Opaque for the reason `DiscoverResponse.nextCursor` is.
+    public var continuation: String?
 
-    public init(items: [FeedItem], nextCursor: Date? = nil) {
+    public init(items: [FeedItem], nextCursor: Date? = nil, continuation: String? = nil) {
         self.items = items
         self.nextCursor = nextCursor
+        self.continuation = continuation
     }
 }
 

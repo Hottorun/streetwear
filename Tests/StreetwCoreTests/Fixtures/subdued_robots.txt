@@ -1,0 +1,142 @@
+# === BOT CONSENTITI (IA + DEFAULT) ===
+
+User-agent: Google-Extended
+User-agent: GPTBot
+User-agent: ChatGPT-User
+User-agent: anthropic-ai
+User-agent: Claude-Web
+User-agent: *
+
+# Inizio Restrizioni Adobe Commerce
+Disallow: /lib/
+Disallow: /*.php$
+Disallow: /pkginfo/
+Disallow: /report/
+Disallow: /var/
+Disallow: /catalog/
+Disallow: /customer/
+Disallow: /sendfriend/
+Disallow: /review/
+Disallow: /*SID=
+
+# Paths (clean URLs)
+Disallow: /index.php/
+Disallow: */checkout/*
+Disallow: /control/
+Disallow: /contacts/
+Disallow: /*/contact/
+Disallow: /customize/
+Disallow: /newsletter/
+Disallow: /wishlist/
+Disallow: /*all-products
+
+# Disable checkout & customer account
+Disallow: /*/customer/account/
+Disallow: /*/customer/account/login/
+Disallow: /*/checkout/
+
+# Disable Search pages
+Disallow: /*catalogsearch
+Disallow: /catalogsearch/
+Disallow: /catalog/product_compare/
+Disallow: /catalog/category/view/
+Disallow: /catalog/product/view/
+
+# Disallow URL Filter Searches
+Disallow: /*?dir*
+Disallow: /*?dir=desc
+Disallow: /*?dir=asc
+Disallow: /*?limit=all
+Disallow: /*?*product_list_mode=
+Disallow: /*?*product_list_limit=
+Disallow: /*?*price=
+
+# Disable common folders
+Disallow: /app/
+Disallow: /bin/
+Disallow: /dev/
+Disallow: /phpserver/
+Disallow: /pub/
+
+# Disable Tag & Review
+Disallow: /tag/
+Disallow: /review/
+
+# Files critici
+Disallow: /composer.json
+Disallow: /composer.lock
+Disallow: /CONTRIBUTING.md
+Disallow: /LICENSE.txt
+# Fine Restrizioni Adobe Commerce
+
+# BOT TOTALMENTE BLOCCATI
+# Tool SEO aggressivi e motori di ricerca non desiderati
+User-agent: AhrefsBot
+User-agent: AwarioRssBot
+User-agent: AwarioSmartBot
+User-agent: BLEXBot
+User-agent: dotbot
+User-agent: ImagesiftBot
+User-agent: MJ12bot
+User-agent: PetalBot
+User-agent: SBIntuitionsBot
+User-agent: Scrapy
+User-agent: SeekportBot
+User-agent: SemrushBot
+User-agent: YandexBot
+User-agent: Baiduspider
+User-agent: Baiduspider-image
+User-agent: Sogou web spider
+User-agent: Sogou inst spider
+User-agent: Sogou spider2
+User-agent: Sogou blog
+User-agent: Sogou News Spider
+User-agent: Sogou Orion spider
+Disallow: /
+
+# BOT META (Facebook/Instagram/Meta AI)
+# Blocco totale dei parametri per proteggere URL fuori cache
+User-agent: facebookexternalhit
+User-agent: meta-externalagent
+User-agent: meta-externalads
+User-agent: meta-webindexer
+Crawl-delay: 10
+Disallow: /*?*
+Disallow: /checkout/
+Disallow: /customer/
+Disallow: /catalogsearch/
+
+# MICROSOFT BING
+User-agent: bingbot
+Crawl-delay: 10
+Disallow: /*?*
+Disallow: /catalogsearch/
+
+# Indicazione del path della sitemap XML
+Sitemap: https://www.subdued.com/media/sitemap/eu_en/sitemap.xml
+Sitemap: https://www.subdued.com/media/sitemap/it_en/sitemap.xml
+Sitemap: https://www.subdued.com/media/sitemap/it_it/sitemap.xml
+Sitemap: https://www.subdued.com/media/sitemap/ww_en/sitemap.xml
+Sitemap: https://www.subdued.com/media/sitemap/ww_fr/sitemap.xml
+Sitemap: https://www.subdued.com/media/sitemap/ww_de/sitemap.xml
+Sitemap: https://www.subdued.com/media/sitemap/it_it/sitemap.xml
+Sitemap: https://www.subdued.com/media/sitemap/ww_it/sitemap.xml
+Sitemap: https://www.subdued.com/media/sitemap/ww_es/sitemap.xml
+Sitemap: https://www.subdued.com/media/sitemap/uk_en/sitemap.xml
+Sitemap: https://www.subdued.com/media/sitemap/us_en/sitemap.xml
+Sitemap: https://www.subdued.com/media/sitemap/be_en/sitemap.xml
+Sitemap: https://www.subdued.com/media/sitemap/be_fr/sitemap.xml
+Sitemap: https://www.subdued.com/media/sitemap/fr_en/sitemap.xml
+Sitemap: https://www.subdued.com/media/sitemap/de_de/sitemap.xml
+Sitemap: https://www.subdued.com/media/sitemap/de_en/sitemap.xml
+Sitemap: https://www.subdued.com/media/sitemap/nl_en/sitemap.xml
+Sitemap: https://www.subdued.com/media/sitemap/es_en/sitemap.xml
+Sitemap: https://www.subdued.com/media/sitemap/ch_de/sitemap.xml
+Sitemap: https://www.subdued.com/media/sitemap/ch_en/sitemap.xml
+Sitemap: https://www.subdued.com/media/sitemap/cf_fr/sitemap.xml
+Sitemap: https://www.subdued.com/media/sitemap/ch_it/sitemap.xml
+Sitemap: https://www.subdued.com/media/sitemap/es_es/sitemap.xml
+Sitemap: https://www.subdued.com/media/sitemap/no_no/sitemap.xml
+Sitemap: https://www.subdued.com/media/sitemap/se_se/sitemap.xml
+
+

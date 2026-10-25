@@ -31,9 +31,48 @@ final class SavedItem {
     var savedAt: Date = Date()
     var type: SaveType = SaveType.inspiration
     var note: String?
-    /// Optional, and stays optional: most saves never get filed anywhere, and requiring
-    /// a board before you can keep something would defeat the point of a one-tap save.
+
+    /// **Legacy, and read by exactly one thing: `BoardFiling.adoptLegacy`.**
+    ///
+    /// 1.0 filed a save on at most one board, through this to-one, although boards were
+    /// always meant to be filters rather than folders — an item belongs with the other tees
+    /// *and* with Tokyo. It stays in the schema because that is the safe way to migrate a store
+    /// already on phones: the many-to-many below is a brand-new relationship, which is the one
+    /// change a lightweight migration cannot get wrong, and the launch pass moves every filing
+    /// across and clears this in the same save. After the first launch of a build that has
+    /// `boards`, this is nil on every row. Never read it for anything else and never write it.
     var board: Board?
+
+    /// The boards this is filed on. Empty is the common case and stays allowed: most saves
+    /// never get filed anywhere, and requiring a board before you can keep something would
+    /// defeat the point of a one-tap save.
+    ///
+    /// Many-to-many and a cascade in neither direction — deleting a board must never take its
+    /// saves with it, and un-saving something just takes it off the boards it was on. The
+    /// inverse and the delete rule are declared once, on `Board.saves`.
+    var boards: [Board] = []
+
+    /// "Don't use for my taste." See `TasteRule` — this beats every board setting.
+    ///
+    /// Taste only: the item still shows everywhere it always did, and a wardrobe piece flagged
+    /// this way still goes into fits and still answers "goes with your …", because owning
+    /// something is a fact and liking it is not. See `TasteScope` for who reads what.
+    var isExcludedFromTaste: Bool = false
+
+    /// The photograph somebody chose to stand for this on the wall, overriding the packshot.
+    ///
+    /// Stored as one of the product's own image strings, and only honoured while it still is
+    /// one: a share whose gallery `SharedSaveImporter.repair` later replaces must not go on
+    /// pointing at a photograph the product no longer has. See `cover`.
+    var coverImageURLString: String?
+
+    /// Width ÷ height of `coverImageURLString`, measured when it was chosen.
+    ///
+    /// The wall never crops — a tile takes its photograph's shape — and `imageAspect` was
+    /// measured on the packshot, so a cover somebody picked needs a shape of its own or the
+    /// tile is laid out for a different picture.
+    var coverAspect: Double?
+
     /// The size you own, or the one you're waiting for. Free text on purpose — brands
     /// run their own scales and "44" or "Youth L" must be as storable as "M".
     var sizeNote: String?
@@ -75,5 +114,96 @@ final class SavedItem {
 
         // Every word must appear somewhere, so "kith hoodie" narrows rather than widens.
         return needle.split(separator: " ").allSatisfy { haystack.contains($0) }
+    }
+
+    /// Whether this row has been deleted out from under whatever is still drawing it.
+    ///
+    /// The `Fit.isGone` rule, for the same reason: reading any property of a deleted `@Model`
+    /// traps, and a bulk delete on the wall removes rows a `LazyVStack` may still hold for
+    /// one more pass. `isDeleted` alone is not enough — a model whose context has gone
+    /// answers false to it and still traps.
+    var isGone: Bool { isDeleted || modelContext == nil }
+
+    // MARK: - Boards
+
+    func isFiled(on board: Board) -> Bool {
+        boards.contains { $0.id == board.id }
+    }
+
+    /// Where this went, in words — what the save confirmation says it was kept to.
+    ///
+    /// The board when it is on exactly one, since that is the most specific true answer; the
+    /// type otherwise, including when it is on several, because a list of board names is not
+    /// something a one-line confirmation can say.
+    var destinationLabel: String {
+        boards.count == 1 ? boards[0].name : type.label
+    }
+
+    // MARK: - The cover
+
+    /// The photograph the wall and this item's own page lead with.
+    ///
+    /// **The product, not the brand's lead shot.** A feed card is an announcement, and there
+    /// the styling is part of it — so the feed and Discover keep the photograph the brand put
+    /// first. A wall of things somebody kept is the opposite case: it is a collection of
+    /// garments, and Stüssy's model-first galleries put a person in boots on the wall to stand
+    /// for a shirt. `ProductShot` already finds the frame with nobody in it, so that is the
+    /// cover; a photograph chosen by hand beats it; and where neither is known — nothing has
+    /// been analysed yet, or the packshot is not in the gallery any more — it is the lead
+    /// shot, which is exactly what the wall showed before.
+    var coverURLString: String? {
+        guard let update else { return nil }
+        if let chosen = coverImageURLString, update.imageURLStrings.contains(chosen) { return chosen }
+        return Self.automaticCover(of: update)
+    }
+
+    var coverURL: URL? {
+        coverURLString.flatMap(URL.init(string:)) ?? update?.primaryImageURL
+    }
+
+    /// The cover's measured shape, or nil when nothing has measured it yet.
+    ///
+    /// `imageAspect` is measured on the photograph `ImageTagger` analysed, which is the
+    /// packshot — the automatic cover — so it is the right shape whenever no cover has been
+    /// chosen by hand. A chosen one carries its own.
+    var coverAspectMeasured: Double? {
+        if let chosen = coverImageURLString, chosen == coverURLString { return coverAspect }
+        return update?.imageAspect
+    }
+
+    /// What the cover is when nobody has chosen one.
+    private static func automaticCover(of update: BrandUpdate) -> String? {
+        if let packshot = update.packshotURLString, update.imageURLStrings.contains(packshot) {
+            return packshot
+        }
+        return update.imageURLStrings.first { URL(string: $0) != nil }
+    }
+
+    /// Chooses the cover. Returns whether anything changed, so a caller can skip the save.
+    ///
+    /// Choosing the photograph the automatic rule would pick anyway **clears** the choice
+    /// rather than pinning it: that is the way back to "whatever the product shot is", and it
+    /// means a better packshot found by a later analysis still reaches this item.
+    @discardableResult
+    func setCover(_ string: String, aspect: Double?) -> Bool {
+        guard let update, update.imageURLStrings.contains(string) else { return false }
+        let pinned = string == Self.automaticCover(of: update) ? nil : string
+        let shape = pinned == nil ? nil : aspect
+        guard pinned != coverImageURLString || shape != coverAspect else { return false }
+        coverImageURLString = pinned
+        coverAspect = shape
+        return true
+    }
+
+    /// The product's photographs in the order this item's page pages through them: the cover
+    /// first, then everything else in the brand's own order. Only ever reordered, never
+    /// filtered — every photograph is still there to swipe to, which is `ProductShot`'s rule.
+    var galleryURLs: [URL] {
+        guard let update else { return [] }
+        var strings = update.imageURLStrings
+        if let cover = coverURLString, let index = strings.firstIndex(of: cover), index > 0 {
+            strings.insert(strings.remove(at: index), at: 0)
+        }
+        return strings.compactMap(URL.init(string:))
     }
 }

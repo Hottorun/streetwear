@@ -292,7 +292,7 @@ enum SharedSaveImporter {
             return
         }
         guard updates.count == 1, let only = updates.first else { return }
-        confirm?.confirm(only, destination: only.save?.board?.name ?? only.save?.type.label ?? "Inspiration")
+        confirm?.confirm(only, destination: only.save?.destinationLabel ?? "Inspiration")
     }
 
     private static func row(for externalID: String, in context: ModelContext) -> BrandUpdate? {
@@ -363,6 +363,7 @@ enum SharedSaveImporter {
             if let product { apply(product, to: existing) }
             if existing.save == nil {
                 context.insert(SavedItem(update: existing, type: .inspiration))
+                UsageCounts.record(.saveAdded)
                 return externalID
             }
             return nil
@@ -400,6 +401,7 @@ enum SharedSaveImporter {
 
         context.insert(update)
         context.insert(SavedItem(update: update, type: .inspiration, note: nil))
+        UsageCounts.record(.saveAdded)
         return externalID
     }
 

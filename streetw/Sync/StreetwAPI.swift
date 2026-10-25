@@ -163,8 +163,22 @@ struct StreetwAPI: Sendable {
         try await send(path: "v1/follows", method: "GET", body: Optional<Never>.none)
     }
 
-    func follow(brandID: UUID) async throws {
-        try await sendVoid(path: "v1/follows", method: "POST", body: FollowBrand(brandID: brandID))
+    /// - Parameter mode: nil for a new follow, which the server makes `.everything`; set only
+    ///   when a follow is being *restored* and the mode it had is known.
+    func follow(brandID: UUID, mode: FollowMode? = nil) async throws {
+        try await sendVoid(
+            path: "v1/follows",
+            method: "POST",
+            body: FollowBrand(brandID: brandID, mode: mode)
+        )
+    }
+
+    func setFollowMode(brandID: UUID, mode: FollowMode) async throws {
+        try await sendVoid(
+            path: "v1/follows/\(brandID.uuidString)",
+            method: "PATCH",
+            body: UpdateFollow(mode: mode)
+        )
     }
 
     func unfollow(brandID: UUID) async throws {
@@ -216,10 +230,22 @@ struct StreetwAPI: Sendable {
         try await send(path: "v1/watches", method: "GET", body: Optional<Never>.none)
     }
 
-    func feed(since: Date?, limit: Int = 200) async throws -> FeedResponse {
-        var query = [URLQueryItem(name: "limit", value: String(limit))]
-        if let since {
-            query.append(URLQueryItem(name: "since", value: ISO8601DateFormatter().string(from: since)))
+    /// One page of the feed — the head of a read, or the rest of one. See `FeedPager`.
+    func feed(_ request: FeedPager.Request, limit: Int = 200) async throws -> FeedResponse {
+        // Every kind this build can draw. Without it the server sends only what 1.0 knows,
+        // which is the point of it — see `FeedKinds`.
+        var query = [
+            URLQueryItem(name: "limit", value: String(limit)),
+            URLQueryItem(name: FeedKinds.parameter, value: FeedKinds.understood)
+        ]
+        switch request {
+        case .head(let since):
+            if let since {
+                query.append(URLQueryItem(name: "since", value: ISO8601DateFormatter().string(from: since)))
+            }
+        case .resume(let token):
+            // Echoed exactly as it arrived; it is the server's own place in its own order.
+            query.append(URLQueryItem(name: "continuation", value: token))
         }
         return try await send(path: "v1/feed", method: "GET", body: Optional<Never>.none, query: query)
     }
@@ -235,6 +261,11 @@ struct StreetwAPI: Sendable {
         try await send(path: "v1/poll-hints", method: "PUT", body: PollHintSync(hints: hints))
     }
 
+    /// Adds this device's tallies to everybody's totals. See `UsageCounts`.
+    func reportUsage(_ report: UsageReport) async throws -> UsageReceipt {
+        try await send(path: "v1/usage", method: "POST", body: report)
+    }
+
     /// One brand's recent history, outside the feed cursor. See the route's own note for
     /// why this cannot be a `since` on `/v1/feed`.
     func brandFeed(brandID: UUID, limit: Int = 60) async throws -> FeedResponse {
@@ -242,7 +273,10 @@ struct StreetwAPI: Sendable {
             path: "v1/brands/\(brandID.uuidString)/feed",
             method: "GET",
             body: Optional<Never>.none,
-            query: [URLQueryItem(name: "limit", value: String(limit))]
+            query: [
+                URLQueryItem(name: "limit", value: String(limit)),
+                URLQueryItem(name: FeedKinds.parameter, value: FeedKinds.understood)
+            ]
         )
     }
 

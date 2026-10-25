@@ -22,6 +22,12 @@ Part of the streetw guidance set; see `CLAUDE.md` for the index and the build ru
 - **The taste vector is computed on the phone.** Saves are the sharpest signal and the most
   personal; the server ships candidates *with their vectors* and the comparison happens locally, so
   nothing about a save leaves the device. Don't "improve" this by uploading saves.
+- **…and only from the saves that count** (`TasteScope.weighted`, see `docs/collection.md`,
+  *Leaving things out of your taste*). A save marked "don't use for my taste", or on a board that
+  doesn't count, weighs nothing; a board somebody is in the mood for carries half the vector
+  however small it is, through the `weights:` parameter of `BrandVectorBuilder.taste` — a weight is
+  exactly a repetition, which a test pins. The eight-save threshold counts distinct saves, never
+  weight. `TasteScope` is in `Key`, because leaving one save out changes none of its counts.
 - **A headcount has to earn its weight** (`Popularity.confidence`). Normalising by the maximum makes
   a number between 0 and 1 at any scale, which quietly turned a *two-person* lead into a full unit
   of evidence — a bigger gap than the entire spread of affinity, since every streetwear catalogue

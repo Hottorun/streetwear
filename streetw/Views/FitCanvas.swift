@@ -47,6 +47,23 @@ struct FitCanvas: View {
     /// Nil when composing a new fit.
     let fit: Fit?
 
+    /// What a new fit opens with, when it was begun from a selection on the wall.
+    ///
+    /// Laid out by `FitArrangement`, the one table everything that arranges a fit by machine
+    /// reads, and **nothing is stored until Save** — the same contract as any other new fit.
+    /// Starting one and closing the canvas leaves nothing behind, which is the failure
+    /// `StyleView.keep` once had: a fit written before anybody agreed to it.
+    let starting: [SavedItem]
+    /// The board a fit begun from a board's selection is filed on, which is where somebody
+    /// looking at that board would expect to find it. Still changeable before saving.
+    let startingBoard: Board?
+
+    init(fit: Fit?, starting: [SavedItem] = [], board: Board? = nil) {
+        self.fit = fit
+        self.starting = starting
+        self.startingBoard = board
+    }
+
     @State private var name = ""
     @State private var placements: [FitPlacement] = []
     @State private var chosen: [UUID: SavedItem] = [:]
@@ -64,6 +81,7 @@ struct FitCanvas: View {
     /// Only ever grows. Sparse z values mean bringing something to the front is one write
     /// rather than renumbering everything behind it.
     @State private var topZ = 0
+    @State private var didArrangeStarting = false
 
     /// What the tray is made of, worked out **once** per render.
     ///
@@ -483,7 +501,10 @@ struct FitCanvas: View {
     // MARK: - Persistence
 
     private func load() {
-        guard let fit else { return }
+        guard let fit else {
+            arrangeStarting()
+            return
+        }
         name = fit.name
         placements = fit.placements
         chosen = Dictionary(fit.items.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
@@ -509,6 +530,38 @@ struct FitCanvas: View {
         }
     }
 
+    /// Lays out the pieces a selection began this fit with, once.
+    ///
+    /// Once, because `onAppear` fires again whenever something presented over the canvas goes
+    /// away, and re-running this would undo every move made since. Two pieces that belong in
+    /// the same position — two pairs of trousers selected together — are stepped apart rather
+    /// than stacked exactly, or the second is invisible under the first and the canvas looks
+    /// as if it dropped one.
+    private func arrangeStarting() {
+        guard !didArrangeStarting else { return }
+        didArrangeStarting = true
+        board = startingBoard
+
+        let garments = starting.compactMap { item in item.update.map { (item: item, garment: $0.garment) } }
+        guard !garments.isEmpty else { return }
+        let splitting = garments.count { $0.garment.slot == .top } > 1
+        let arranged = garments.map {
+            (position: FitArrangement.position(for: $0.garment, splittingTops: splitting), itemID: $0.item.id)
+        }
+
+        var taken: [FitPosition: Int] = [:]
+        placements = zip(arranged, FitArrangement.placements(for: arranged)).map { piece, placement in
+            let step = Double(taken[piece.position, default: 0])
+            taken[piece.position, default: 0] += 1
+            var stepped = placement
+            stepped.x = min(max(placement.x + step * 0.07, 0.1), 0.9)
+            stepped.y = min(max(placement.y + step * 0.05, 0.1), 0.9)
+            return stepped
+        }
+        chosen = Dictionary(garments.map { ($0.item.id, $0.item) }, uniquingKeysWith: { first, _ in first })
+        topZ = placements.map(\.z).max() ?? 0
+    }
+
     private func save() {
         let items = placements.compactMap { chosen[$0.itemID] }
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -523,6 +576,8 @@ struct FitCanvas: View {
 
         // Written before the render, so the canvas it draws is the one being saved.
         try? context.save()
+        // A new fit, not an edit — re-saving one somebody already made is not another outfit.
+        if fit == nil { UsageCounts.record(.fitCreated) }
 
         // The sheet closes now rather than waiting on the render. Everything the canvas
         // needs is already decoded — it was just on screen — so the warm-up is normally

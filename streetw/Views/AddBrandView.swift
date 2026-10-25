@@ -295,6 +295,9 @@ struct AddBrandView: View {
             let found = try await remote.searchBrands(term)
             guard term == trimmed else { return } // a newer keystroke won
             results = found
+            // Counted once the answer is on screen, so a keystroke overtaken by the next one
+            // is not a search anybody ran.
+            UsageCounts.record(.brandSearch)
         } catch {
             searchError = error.localizedDescription
         }

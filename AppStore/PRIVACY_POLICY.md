@@ -29,7 +29,7 @@ upload as-is.
 
 # Dropwall — Privacy Policy
 
-**Last updated: 8 September 2026**
+**Last updated: 24 October 2026**
 
 Dropwall is made by KERN AG, Germany. Questions about this
 policy go to hottorun@pm.me.
@@ -43,8 +43,10 @@ Almost everything the app knows about you stays on your phone. The one exception
 amount of information our server needs in order to tell you that something you are waiting for
 has been released or has come back in stock.
 
-We do not sell data, we show no advertising, we use no analytics or attribution services, and
-we do not track you across other companies' apps or websites.
+We do not sell data, we show no advertising, we use no third-party analytics or attribution
+services, and we do not track you across other companies' apps or websites. The one thing we
+count is how often the app's main features are used, as anonymous daily totals on our own
+server — see *Anonymous usage counts* below.
 
 ## What stays on your device and is never sent to us
 
@@ -79,7 +81,38 @@ Deleting the app deletes all of it. We hold no copy and cannot recover it.
   instant are sent — never the title or the note you wrote, and never any date for a brand you
   do not follow. Nobody else can read it, and no notification or public record is produced
   from it.
+- **Anonymous usage counts** — see the next section.
 - **Ordinary server logs**, including IP addresses, kept briefly for security and debugging.
+
+## Anonymous usage counts
+
+So that we can tell which parts of the app people actually use, the app counts a handful of
+things, per day:
+
+- opening the app
+- opening each of its tabs (Feed, Discover, Saved, Style)
+- running a brand search
+- asking us to check a shop nobody has added yet
+- following a brand
+- saving something
+- creating a fit
+- tapping one of our notifications
+
+It sends only **how many times** each of those happened on each day. Never what you searched
+for, saved, followed or looked at; never which product or brand; never a time finer than the
+date.
+
+Our server adds those numbers to totals shared by everyone who uses the app, and keeps nothing
+else from what was sent: there is no record of which device sent which counts. Like everything
+else the app sends us, the counts arrive with your device's anonymous credential — that is how
+we stop anyone flooding the totals — and they are separated from it on arrival.
+
+To count how many people use the app in a week without counting one person twice, your device
+record holds one extra fact: the date (not the time) on which it last sent counts. It is
+replaced each day rather than added to, so it is never a history.
+
+The counts go to our server and nowhere else. No analytics company, SDK or third party is
+involved. If the app is running without our server, nothing is counted or sent.
 
 ## Where product photographs come from
 
@@ -96,8 +129,8 @@ the brand's website in a browser. They receive nothing from us about you.
 - **Our hosting provider**, which runs the server and its database on our behalf and does not
   use the data for anything else.
 
-That is the complete list. There is no advertising network, no analytics service and no data
-broker of any kind in this app.
+That is the complete list. There is no advertising network, no third-party analytics service and
+no data broker of any kind in this app.
 
 ## App Tracking Transparency
 
@@ -112,6 +145,8 @@ is why you are never shown the tracking permission prompt.
 - A release date you sent as a polling hint is deleted shortly after that date has passed.
 - Your device record, your follows, your alerts and your size preferences are kept for as long
   as you use the app.
+- The usage totals are kept indefinitely, because they describe nobody. The date your device
+  last sent counts is replaced each day.
 
 ## Deleting your data
 

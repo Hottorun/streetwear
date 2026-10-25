@@ -150,6 +150,16 @@ struct BrandRow: View {
         return kinds.isEmpty ? "NOT WATCHED" : kinds.joined(separator: " · ")
     }
 
+    /// What the row says under the wordmark, led by the mode when it is not the default.
+    ///
+    /// This list is where a quiet brand is *reachable* from — it is not on the feed by
+    /// definition — so it has to be recognisable as quiet here, or a brand you silenced reads
+    /// as one that stopped publishing.
+    private var status: String {
+        let state = brand.isLockedForDrop ? "LOCKED · DROP IMMINENT" : watching
+        return brand.followMode.listLabel.map { "\($0) · \(state)" } ?? state
+    }
+
     var body: some View {
         HStack(alignment: .center, spacing: 14) {
             BrandMonogram(name: brand.name, logoURL: brand.logoURL)
@@ -157,9 +167,10 @@ struct BrandRow: View {
             VStack(alignment: .leading, spacing: 5) {
                 Wordmark(name: brand.name, size: 14)
                 DataLabel(
-                    text: brand.isLockedForDrop ? "LOCKED · DROP IMMINENT" : watching,
+                    text: status,
                     size: 10,
-                    color: brand.isLockedForDrop ? .signal : .muted
+                    // The accent only where the feed would raise its voice too.
+                    color: brand.isAnnouncingLock ? .signal : .muted
                 )
             }
 

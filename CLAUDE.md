@@ -201,7 +201,7 @@ plutil -p /tmp/streetw-dd/Build/Products/Debug-iphonesimulator/streetw.app/Info.
 ### Tests
 
 ```bash
-swift test                                    # all 394
+swift test                                    # all 610
 swift test --filter "Size normalisation"      # one suite
 swift test --filter relockFiresAgain          # one test
 ```
@@ -250,9 +250,34 @@ Adapters live in `streetw/Sources/` and are resolved through `SourceAdapters.ada
   `Release.isAnnouncement` — a collection list is mostly navigation, and only the stock in
   one can tell a drop from a rail. See `docs/design-decisions.md`.
 - `FeedSource` — one `XMLParser` delegate handling both RSS `<item>` and Atom `<entry>`.
+- `UCPSource` — the Universal Commerce Protocol endpoint a storefront advertises **for
+  machines**, when it has switched its JSON catalogue off. See *Reading a storefront that
+  has closed its catalogue* below. Above the sitemap because it carries prices, sizes and
+  live stock on every poll; `docs/ucp.md` has the argument.
 - `SitemapSource` — `/sitemap.xml` for brands that are neither Shopify nor feed-publishing.
-  Uses `<lastmod>` as `published_at`, so `since` filtering needs no extra state. Skips
-  entries with no `lastmod`: assuming "now" would resurface the whole catalogue every poll.
+  **What is new is what the source has not seen, never what `<lastmod>` says**: Hollister's
+  2,123 products carry no `lastmod`, Victoria's Secret stamps one instant on 17,134, and only
+  Subdued's dates mean anything. The adapter keeps its own memory in `BrandSource.fingerprint`
+  (`SitemapMemory` — 32-bit FNV digests of every product URL plus each child file's ETag), the
+  first read is a baseline (`FetchResult.isBaseline`, which the callers OR with their own so a
+  source baselined before the memory existed stays quiet), later reads offer only unseen URLs —
+  at most 250, the rest held for the next read, and a sitemap that has plainly been *rebuilt*
+  (more than half unseen) is a silent re-baseline. **robots.txt `Sitemap:` lines first** — all
+  three retailers publish theirs only there. Indexes are followed up to three levels and four
+  child fetches, and `SitemapChoice` picks children: product-named files win, other-named files
+  (categories, pages, `product_cat`) are never read, siblings that differ by locale or by a
+  non-paging query are *storefronts* and one is chosen (`LocalePreference`: the typed URL's host
+  and path, else en-US), and what remains are parts of one catalogue, all read. Discovery pins the
+  source to the chosen storefront's URL. What is a product comes from the file's name, the path,
+  or a photograph; an entry with none is *tentative* (`FetchedItem.isTentative`) and only its page
+  can confirm it. A page that sits above another listed page is its parent, not a product
+  (Victoria's Secret lists each garment once bare and once per colourway). Never read more often
+  than `SitemapSource.minimumInterval` (an hour), on both ends — sitemaps are regenerated on a
+  schedule, and Subdued's is 7.2 MB a read. **Price, stock and sizes come from each new
+  product's own page, once** — `ProductPage` reads its schema.org `Product` JSON-LD (Open Graph
+  only when it prints a price; Hollister's *homepage* says `og:type` `product`). On the server
+  `Poller.enrich` reads a few per pass and holds the product's event until it has (see
+  `docs/server.md`); standalone, `SyncEngine.readProductPages` fills in the row in place.
   **`<image:title>` is the product's name and `<image:loc>` its lead photograph** — read
   both, because the slug is not always a name: Palace randomises its handles until a drop
   is live, so `/products/e7anvz3i1psy` yielded a feed of hashes over empty tiles while the
@@ -260,10 +285,8 @@ Adapters live in `streetw/Sources/` and are resolved through `SourceAdapters.ada
   `<loc>`, so the parser must know which one it is inside or every link points at a CDN.
   A slug that still reads as a hash becomes `SitemapSource.unnamed` rather than being
   printed, and both merge paths upgrade a provisional title when a real one arrives later
-  (`isProvisional`) — dedupe is on `externalID`, so nothing else would ever revisit it.
-- `UCPSource` — the Universal Commerce Protocol endpoint a storefront advertises **for
-  machines**, when it has switched its JSON catalogue off. See *Reading a storefront that
-  has closed its catalogue* below.
+  (`isProvisional`) — dedupe is on `externalID`, so nothing else would ever revisit it. Since the
+  memory, a seen URL is never re-offered, so in practice the real name arrives with the page read.
 - `PageWatchSource` — last resort, only when nothing structured was found.
 
 Discovery prefers them in that order, so a page watch is now genuinely a fallback rather
@@ -279,7 +302,13 @@ is global, so whatever the first person to add a brand accepted is what everyone
 was **already making** for the logo, so it costs nothing. Order is Shopify `/meta.json` →
 `og:site_name` → `<title>` (first segment, marketing tail dropped) → host. A generic title ("Home",
 "Official Site") is refused rather than adopted, because the field is pre-filled and pre-filled
-fields get accepted.
+fields get accepted. **So is a description of the stock** — Hollister's title is "Clothing for
+Women & Men | Teen Clothing | Hollister Co." with no `og:site_name`, and the first segment was
+offered as its global name. `BrandNaming.isDescriptive` refuses a candidate carrying a catalogue
+noun (clothing, shoes, store, sale…) *unless the domain agrees with it* — "Fashion Nova" on
+`fashionnova.com` is a brand — and with the host known, the title segment that names the domain
+wins wherever it sits (`naming`, which also strips "Official … Store UK" from the edges). Audience
+words are deliberately not catalogue nouns: "Boys" is in Billionaire Boys Club's name.
 
 **…and `/meta.json` is typed in by a human, so it is tidied where it is read.** Stüssy publishes
 `" Stüssy"` — a literal leading space — and Represent publishes `"REPRESENT | US"`. `BrandNaming`
@@ -330,11 +359,30 @@ bought it. The short form of the load-bearing ones:
 - There is no refresh button — `scenePhase == .active` and pull-to-refresh, on two very different
   throttles (60s server, 20min standalone).
 - A brand's first sync is a baseline, and only a sync that reached something may spend it.
+- A sync reads the feed to the end, a page at a time (`FeedPager`), and the server's pages are fair
+  between brands (`FeedPaging`) — one page per sync is how anything past the 200th event was lost.
+- A follow has a mode, and `FollowMode.admits` is the one rule: `Notifier` asks it before a push,
+  and the phone asks it where a row is written — what the mode does not admit is stored already
+  read, so no count or list needs to know. A watch ignores every mode.
 - Ordering: brands by `lastActivityAt` (stored, never by newest *unread*); a brand's output by
   `BrandUpdate.newestFirst`; one garment one row via `oncePerProduct`.
-- Only a price *drop* past 5% is an event; restock outranks it; a lock fires on the transition.
+- Only a price *drop* past 5% is an event; restock outranks it; a lock fires on the transition. A
+  markdown is measured from the brand's own `compare_at_price` where it published one
+  (`FetchedItem.originalPriceAmount`, `PriceChange.base`), and old stock first seen marked down is a
+  `.priceDrop`, not a restock.
 - Push: one per brand per **cooldown**, `aps-environment` is load-bearing, one `threadID` for the
-  whole app.
+  whole app, and a follow's mode only ever takes away.
+- **A brand going on sale is sudden; a markdown is not** (`UpdateKind.sale`, a deliberate change
+  from 1.0). One `.sale` per sale, from the catalogue (`CatalogueSale`) or the announcement bar
+  (`SaleBanner`), whichever sees it first; it wakes *Everything* and *Sales only*, never *Quiet*.
+  A markdown on something **watched** pushes by the watch path; on something **saved**, the phone
+  says it (`PriceAlerts`), because saves never leave it.
+- **1.0 is never sent a kind it cannot draw.** It maps an unknown kind onto `.product`, so the feed
+  routes send only the kinds named in `?kinds=` and default to `FeedKinds.legacy`. A new
+  `UpdateKind` case needs nothing on the wire — and nothing in `legacy`, which is frozen.
+- The buy bar opens a Shopify cart permalink only when **exactly one available variant is
+  yours** by `SizeProfile.claims` (never `matches`) in the colourway on screen, and says
+  "CHECK OUT", not "bag"; everything else gets the exact product page (`Checkout`).
 
 ### Push, and why it was silent for months
 
@@ -358,8 +406,8 @@ bought it. The short form of the load-bearing ones:
   own pile on the lock screen instead of one stack that says "Dropwall". Grouping is the thread id;
   stopping a single brand from shouting is `collapseID`, which stays per brand. They are different
   knobs and were being confused for each other. **The value lives in `PushGrouping.threadID` in
-  `StreetwCore`**, because three targets raise alerts — the server's APNs sender, `DropReminders`
-  and `WatchNotifier` — and nothing makes it visible when they stop agreeing. `WatchNotifier`
+  `StreetwCore`**, because four paths raise alerts — the server's APNs sender, `DropReminders`,
+  `WatchNotifier` and `PriceAlerts` — and nothing makes it visible when they stop agreeing. `WatchNotifier`
   threaded by brand id for a long time while its comment claimed it matched the server, which it
   never had: a restock announced by push stacked under the app, and the *same* restock announced
   locally started a pile of that brand's own.
@@ -423,13 +471,67 @@ verdict*, because nothing would ever revisit it.
 
 ### Sizing
 
+- **A number is read on the ladder of the garment it is printed on.** A "38" is an EU shoe on a
+  sneaker, a waist on trousers and a French 38 (a US 6) on a dress. Read without knowing which, a
+  US dress 4–18 was taken for a US shoe, "UK 10" for a UK shoe, a bare 34 for a waist and "EU 48"
+  on a suit for a size 14 sneaker — so a woman who had entered a shoe size had dresses ruled as
+  hers by a ladder that had nothing to do with her. `SizeContext` (built once per product from the
+  `GarmentSlot`, the product's gender and its dress/tailoring words, which the slot does not place)
+  decides; `SizeProfile.matches`/`claims` and `WatchTarget` take it **with no default**, so a new
+  call site cannot forget it. `BrandUpdate.sizeContext`, `DiscoverCard.sizeContext` and
+  `ProductModel.sizeContext(sizes:)` build it. A product nothing places is `.unknown`, which runs
+  the old rules **unchanged** — they are what kept that ignorance from hiding anything. Letters and
+  one-size are read before the context and identically everywhere, which is why
+  `SizeContext.matters` lets a run with no numbers skip the classifiers. Bras are band-and-cup, a
+  later ladder: a bra word makes the context `.unknown`, so "34B" stays `.other`.
 - **Shoe sizes are stored canonically in US**, everywhere — the profile, the wire, every
   comparison. `SizeProfile.shoeScale` is a *display* preference, so switching to EU rewrites
-  nothing and needs no re-send.
+  nothing and needs no re-send. Dress sizes are US too (`dressScale`), and suits chest inches
+  (`suitScale`); no scale ever leaves the phone.
 - **A region code is the whole difference between a UK 9 and a US 9**, which are a full size apart.
   Both codes used to be stripped and the remainder read as US. Only a size that *names* its scale
-  is converted; a bare "44" stays `.other` and is never hidden, because it is as likely a waist or
-  an EU jacket.
+  is converted, except where the garment leaves one reading: a bare 44 on a sneaker can only be
+  European. On a product nothing places, a bare "44" stays `.other` and is never hidden, because
+  it is as likely a waist or an EU jacket.
+- **Women's dress sizes are fixed offsets: UK = US + 4, EU (FR) = US + 32, IT = US + 36**, even
+  sizes only (odd US numbers are juniors'), US 00–28 — "00" is a rung of its own (UK 2), carried
+  as −2, because read as a number it collapsed into the 0 beside it. A converted dress size
+  matches within **one rung** (2), the dress ladder's half-size rule: German shops label their own
+  ladder "EUR" one rung below French, and plenty of US brands print UK 10 as a US 8. A bare number on a women's garment
+  is US up to 28 and French from 30 — the ranges do not meet. **Known gap:** a UK shop printing
+  bare UK numbers reads two rungs off, the same US-default assumption the shoe ladder makes; the
+  storefront's market is the fix and arrives with region-aware data.
+- **Suits are chest inches; EU and IT jackets are the chest plus ten**, on every table, so a
+  converted chest gets **no** tolerance — a jacket two inches off does not button. A length suffix
+  ("40R", "42 Long") is tailoring's own notation and always means inches. The profile holds chests
+  (`suit`) and lengths (`suitLength`) separately, because a length is a height and a chest a build:
+  a length narrows only when both the run and the profile name one, and a run with none ("EU 50")
+  is one jacket per chest. A length with no chest is not a profile (`isEmpty`). On trousers a
+  length is the leg and is dropped, like an inseam.
+- **The cut decides where the ladders meet.** Women's and men's European numbers overlap at 44–60:
+  the product's gender settles it, and a garment naming itself tailoring settles it for the suit.
+  A men's garment never reads the dress ladder (a men's "EU 38" is a collar). Unlabelled bare
+  numbers on a top stay `.other` — a 40 is a chest, a French 40 and an Italian 40 at once —
+  unless the run can only be the US dress ladder (`SizeContext.isDressRun`: every bare number
+  even, 00–28, at least one below 20, at least two of them). Plenty of womenswear tags nothing —
+  every Staud product classifies `.unknown` — and without this only its dresses, which name
+  themselves, were readable. A Japanese 0–5 run has odd numbers, a waist run starts at 20, and
+  a European or chest run passes 28; on trousers a dress run wins over the waist reading, so a
+  plus run of 14–22 is one ladder rather than three dress sizes and two waists.
+- **A man's bare numbers are read whole or not at all.** European sizes run 42–56 and chests
+  34–48, so a bare 44 is an XS in Milan and an XL in London. A run is printed in one system, so
+  `SizeContext.runScale` reads it off the run's ends (a 36 means inches, a 52 European) and leaves
+  every bare number `.other` when they do not say. Reading numbers one at a time would make the
+  ends of a run readable and not the middle — YoungLA's half-readable run again.
+- **A size run prints the label, a profile compares the token.** `NormalizedSize.label` is the size
+  as the shop printed it ("44" for EU 44); `token` is canonical. `SizeRun` printed and collapsed on
+  the token, so a European run read in US numbers nobody in that shop uses, and "EU 41"/"EU 41.5",
+  which convert to one US 8, collapsed into one entry. `WatchTarget` compares labels too — both
+  sides are sizes of one product, and comparing tokens fired a watch on the 41.5 when the 41 came
+  back.
+- **New ladders canonicalise strictly.** `SizePayload.asProfile` keeps the older ladders' `.other`
+  tokens (that is how a bare "44" reached a shoe ladder), but `dressToken`/`suitToken` drop anything
+  that is not on the ladder.
 - **Bottoms have their own ladder, and it is not apparel.** A 32 is not an M, no table converts
   between them, and a person wears one of each — so `SizeKind.waist` is its own case. Without it
   every pair of trousers normalised to `.other`: never hidden, and never *matched* either, so on
@@ -437,13 +539,18 @@ verdict*, because nothing would ever revisit it.
   Two bands, and the difference is the whole care taken: a string that **names** itself a waist
   ("W34", "34W", "waist 34", "32x30") is read across the full human range, while a **bare** number
   is only a waist up to 37, because from 38 up it collides with the EU shoe ladder and guessing
-  would *hide* a product. Note `w` is also the women's-shoe marker: "W 9" falls out of the waist
-  reader by range and lands on the shoe ladder, and there is a test pinning that.
+  would *hide* a product — on a product nothing places. On trousers no shoe collides, so there a
+  bare number is a waist across the full range. Note `w` is also the women's-shoe marker: "W 9"
+  falls out of the waist reader by range and lands on the shoe ladder, and there is a test pinning
+  that.
 - **Each ladder filters only once it has been filled in.** They are separate questions — a shoe size
   says nothing about a waist — and the profile-wide `isEmpty` guard could not express it: somebody
   who had entered shoe sizes and nothing else had *every garment in the app* hidden, because an
   empty `apparel` set matched no letter. Adding a third ladder made that three times as likely to
-  be reached. Adding a fourth means adding the `isEmpty ||` to its case too.
+  be reached. There are five now (apparel, shoe, waist, dress, suit); adding a sixth means adding
+  the `isEmpty ||` to its case too, a column on `UserModel` (see `docs/server.md`), and a field on
+  `SizePayload` — the server test `noFieldIsSilentlyDropped` fails until it is stored or named
+  display-only.
 - **A size spelled out in full is the same size.** YoungLA writes its entire catalogue as
   `XXSmall, XSmall, Small, Medium, Large, XLarge, XXLarge`, and the word table held only the three
   bare words — so every extremity fell through to `.other`: never hidden, per the rule below, but
@@ -452,9 +559,9 @@ verdict*, because nothing would ever revisit it.
   shorthand for one) onto the short form before the lookup. The prefix must be X's and nothing
   else: "petite small" is not an S, and folding it into one would put the wrong garment in a
   size-filtered feed, which is the failure this whole layer exists to prevent.
-- **A converted size matches within half a size.** Brand tables genuinely disagree by that much, so
-  demanding an exact hit after a conversion would hide real results. Native US sizes get no
-  tolerance, or the profile silently widens by a size.
+- **A converted shoe size matches within half a size.** Brand tables genuinely disagree by that
+  much, so demanding an exact hit after a conversion would hide real results. Native US sizes get
+  no tolerance, or the profile silently widens by a size. (Dresses: one rung. Suits: none.)
 - **One-size items always match.** The toggle that could exclude them bought nothing and hid most
   of the accessories in the feed. `UserModel.includeOneSize` survives only because the column is
   `NOT NULL` in an applied schema.
@@ -763,16 +870,20 @@ the local path in the `else`. Adding a new one means adding both halves:
 
 | Operation | Server route |
 |---|---|
-| launch/refresh sync | `GET /v1/follows` + `GET /v1/feed` |
-| catch up on a brand just followed | `GET /v1/brands/:id/feed` (merged as a baseline) |
+| launch/refresh sync | `GET /v1/follows` + `GET /v1/feed?kinds=`, then `?continuation=` until it comes back nil — five pages a sync, the rest kept for the next (`FeedPager`) |
+| catch up on a brand just followed | `GET /v1/brands/:id/feed?kinds=` (merged as a baseline) |
+| price drops on saved items | none — saves never leave the phone; `PriceAlerts` reads the synced markdowns in both modes |
+| brand-wide sales, sale banners | poller only (`CatalogueSale`, `SaleBanners`); standalone detects neither |
 | find a brand | `GET /v1/brands?q=` (name **or** pasted URL) |
 | "check site" preview | `POST /v1/brands/checks`, then `GET /v1/brands/checks/:id` until it settles (creates nothing) |
 | add a brand nobody has | `POST /v1/brands/checks/:id/watch` — the server follows it, now or when the check finishes |
 | delete / unfollow | `DELETE /v1/follows/:id` |
+| follow mode (Everything / Sales only / Quiet) | `PATCH /v1/follows/:id` — the server first, the phone only once it took it; standalone, `Brand.followModeRaw` alone |
 | size and gender profile | `PATCH /v1/devices/me` |
 | APNs token / environment | `PATCH /v1/devices/me` |
 | stock watches | `POST` / `GET` / `DELETE /v1/watches` |
 | poll hints from the drop calendar | `PUT /v1/poll-hints` (whole set; no-op standalone) |
+| anonymous usage counts | `POST /v1/usage` (daily tallies; standalone counts and sends nothing) — read back with `GET /admin/usage`, see `docs/server.md` |
 | recommendations | `GET /v1/brands/popular` |
 | the Discover feed | `GET /v1/discover` (no standalone equivalent — the phone only holds brands somebody already followed, which is the opposite of the question) |
 
@@ -824,6 +935,16 @@ rather than all firing at once. `Net.userAgent` is honest on purpose — verifie
 browser. A missing robots.txt is treated as permissive: failing closed would drop brands
 for an unrelated reason.
 
+**Every redirect hop is a request like any other.** `Net.session` follows nothing; the
+fetchers follow by hand, at most `Net.maxRedirects` hops with loops cut short. `PoliteFetcher`
+checks each hop's host against `HostSafety`, its robots.txt and its interval — it must wrap
+`Net.singleHop` (the default), because a base that follows redirects itself lets every hop after
+the first escape all three, which is how victoriassecret.com's redirect into its disallowed
+`/gb/` and Hollister's `/products.json` → `/shop/FileNotFoundError` (also disallowed) were
+fetched unasked. `Net.live` follows with the host check alone, for one-off reads on somebody's
+behalf. Rules are matched against `percentEncodedPath`, never `URL.path`, which drops the
+trailing slash and so could never match `Disallow: /gb/`.
+
 ### StreetwCore must compile on Linux
 
 The server image builds it with swift-corelibs-foundation, which differs from Apple's
@@ -862,12 +983,13 @@ builds the executable. Omitting them yields a confusing "overlapping sources" er
 
 **The catalog is global** — brands, sources, products and variants are one row per real-world thing;
 only users, devices, follows, size profiles, watches and poll hints are personal. Never add a
-`user_id` to a catalog table.
+`user_id` to a catalog table. `usage_counts` is neither: totals per day per event, with no user or
+device id ever — the one per-device usage fact is `devices.active_on`, overwritten.
 
 **Read `docs/server.md` before touching the poller, the schema, migrations or `Notifier`.** The
 traps that cost the most: a `[String]` column must be `TEXT[]` on Postgres and **cannot reproduce on
 SQLite**; a failed poll must still advance `next_check_at`; the poll claim is a lease
-(`FOR UPDATE SKIP LOCKED`); `UserModel.sizeProfile` is three discrete columns, so a new
+(`FOR UPDATE SKIP LOCKED`); `UserModel.sizeProfile` is discrete columns, so a new
 `SizeProfile` field is silently dropped without a migration; retention prunes events before
 products; `Poller.refresh` guards every write, because rewrites — not rows — are what fill the
 volume; and only the *unexpected* is worth a buzz (`Notifier.isWorthWaking`), one push per brand per
@@ -877,7 +999,11 @@ volume; and only the *unexpected* is worth a buzz (`Notifier.isWorthWaking`), on
 
 The saved wall, the archive page, and everything the photograph is asked. `SaveConfirmation`
 completes a save unconditionally and then *offers* to amend it — filing is never a question asked
-before the save. Boards are **filters, not folders** (`.nullify`, never cascade). The wall never
+before the save. Boards are **filters, not folders** (`.nullify`, never cascade), and a save can be
+on several (`SavedItem.boards`). The old to-one `board` is copied across and emptied once at launch
+by `BoardFiling.adoptLegacy`; keep the property until every install has run that pass. Which saves
+count for taste is **one rule**, `TasteRule.role` reached through `TasteScope` — a new taste
+consumer goes through it, or Your taste and the recommendations disagree about the same save. The wall never
 crops and does not invert: `Color.sweep` is the one fixed colour in the app, because photographs
 don't invert either.
 

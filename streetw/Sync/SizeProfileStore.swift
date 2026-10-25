@@ -54,10 +54,44 @@ final class SizeProfileStore {
         }
     }
 
+    func toggleDress(_ size: String) {
+        if profile.dress.contains(size) {
+            profile.dress.remove(size)
+        } else {
+            profile.dress.insert(size)
+        }
+    }
+
+    func toggleSuit(_ chest: String) {
+        if profile.suit.contains(chest) {
+            profile.suit.remove(chest)
+        } else {
+            profile.suit.insert(chest)
+        }
+    }
+
+    func toggleSuitLength(_ length: String) {
+        if profile.suitLength.contains(length) {
+            profile.suitLength.remove(length)
+        } else {
+            profile.suitLength.insert(length)
+        }
+    }
+
     /// Display preference only — stored sizes stay canonically US, so switching scales
     /// never rewrites the profile or needs re-sending to the server.
     func setShoeScale(_ scale: SizeScale) {
         profile.shoeScale = scale
+    }
+
+    /// Display only, like the shoe scale: the ladder is stored in US whatever it is read in.
+    func setDressScale(_ scale: SizeScale) {
+        profile.dressScale = scale
+    }
+
+    /// Display only: the ladder is stored as chest inches whatever it is read in.
+    func setSuitScale(_ scale: SizeScale) {
+        profile.suitScale = scale
     }
 
     func setGender(_ gender: GenderPreference) {

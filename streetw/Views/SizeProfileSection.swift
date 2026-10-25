@@ -30,7 +30,7 @@ struct SizeProfileSection: View {
         .onChange(of: store.profile) { _, profile in pushIfNeeded(profile) }
     }
 
-    // MARK: - The three ladders
+    // MARK: - The ladders
 
     private var sizes: some View {
         VStack(alignment: .leading, spacing: 18) {
@@ -70,13 +70,15 @@ struct SizeProfileSection: View {
                 accessory: {
                     AnyView(
                         WordPicker(
-                            options: SizeScale.allCases.map { ($0.label, $0) },
+                            options: SizeScale.shoeScales.map { ($0.label, $0) },
                             selection: store.profile.shoeScale,
                             select: store.setShoeScale
                         )
                     )
                 }
             )
+
+            DressAndSuitRows()
         }
     }
 
@@ -111,6 +113,60 @@ struct SizeProfileSection: View {
 }
 
 // MARK: - Pieces
+
+/// The women's dress ladder and the men's tailoring ladder, in onboarding and in Settings.
+///
+/// One view for both screens because they must not disagree about what can be entered:
+/// the first is where the first sync's highlighting is decided, the second is where it is
+/// corrected. Each ladder sits on its own row with its own scale, for the reason the shoe
+/// row carries its scale — a "38" means nothing until you know which ladder it is read on,
+/// which is the bug these ladders exist to fix.
+struct DressAndSuitRows: View {
+    @Environment(SizeProfileStore.self) private var store: SizeProfileStore
+
+    var body: some View {
+        SizeChipRow(
+            title: "Dress",
+            options: SizeProfile.dressOptions(in: store.profile.dressScale),
+            isSelected: { store.profile.dress.contains($0) },
+            toggle: store.toggleDress,
+            accessory: {
+                AnyView(
+                    WordPicker(
+                        options: SizeScale.dressScales.map { ($0.label, $0) },
+                        selection: store.profile.dressScale,
+                        select: store.setDressScale
+                    )
+                )
+            }
+        )
+
+        SizeChipRow(
+            title: "Suit",
+            options: SizeProfile.suitOptions(in: store.profile.suitScale),
+            isSelected: { store.profile.suit.contains($0) },
+            toggle: store.toggleSuit,
+            accessory: {
+                AnyView(
+                    WordPicker(
+                        options: SizeScale.suitScales.map { ($0.suitLabel, $0) },
+                        selection: store.profile.suitScale,
+                        select: store.setSuitScale
+                    )
+                )
+            }
+        )
+
+        // Its own row because a length is a fact about a height and a chest about a build:
+        // somebody between a 40 and a 42 is still a Regular in both.
+        SizeChipRow(
+            title: "Suit length",
+            options: SizeProfile.suitLengthOptions,
+            isSelected: { store.profile.suitLength.contains($0) },
+            toggle: store.toggleSuitLength
+        )
+    }
+}
 
 /// A section title and the sentence under it, in the two faces this app uses for exactly
 /// that job everywhere else.
@@ -171,8 +227,9 @@ struct WordPicker<Value: Hashable>: View {
 struct SizeChipRow: View {
     let title: String
     /// `display` is what the chip reads; `stored` is the canonical token the profile
-    /// keeps. They differ only for shoes, where the ladder is shown in the user's scale
-    /// and stored in US.
+    /// keeps. They differ where a ladder is shown in the user's scale and stored in a
+    /// canonical one — shoes, dresses and suits — and for suit lengths, which are spelled
+    /// out on the chip and stored as a letter.
     let options: [(display: String, stored: String)]
     let isSelected: (String) -> Bool
     let toggle: (String) -> Void

@@ -16,6 +16,7 @@ extension RegisterDevice: @retroactive Content {}
 extension UpdateDevice: @retroactive Content {}
 extension DiscoverBrand: @retroactive Content {}
 extension FollowBrand: @retroactive Content {}
+extension UpdateFollow: @retroactive Content {}
 extension DeviceResponse: @retroactive Content {}
 extension BrandDTO: @retroactive Content {}
 extension FeedItem: @retroactive Content {}
@@ -31,6 +32,8 @@ extension PollHintSync: @retroactive Content {}
 extension PollHintsResponse: @retroactive Content {}
 extension DiscoverCard: @retroactive Content {}
 extension DiscoverResponse: @retroactive Content {}
+extension UsageReport: @retroactive Content {}
+extension UsageReceipt: @retroactive Content {}
 
 extension BrandSourceDTO {
     init(_ source: SourceModel) {
@@ -53,7 +56,9 @@ extension BrandDTO {
     /// loaded, and the callers here are four routes with four different query shapes. An
     /// explicit parameter turns "somebody forgot a `.with`" from a crash on a production
     /// route into a compile error at the call site.
-    init(_ brand: BrandModel, sources: [SourceModel]) {
+    /// - Parameter followMode: the caller's own follow, for the one route that is about
+    ///   the caller's follows. Nil everywhere else, which the client reads as "not said".
+    init(_ brand: BrandModel, sources: [SourceModel], followMode: FollowMode? = nil) {
         self.init(
             id: brand.id,
             name: brand.name,
@@ -63,7 +68,8 @@ extension BrandDTO {
             currency: brand.currency,
             lockedForDrop: brand.lockedForDrop,
             logoURL: brand.logoURL,
-            sources: sources.map(BrandSourceDTO.init)
+            sources: sources.map(BrandSourceDTO.init),
+            followMode: followMode
         )
     }
 }
@@ -75,8 +81,9 @@ extension FeedItem {
         guard let eventID = event.id, let createdAt = event.createdAt else { return nil }
 
         let product = event.product
-        let variants = product?.variants ?? []
-        let mine = event.sizes.filter { profile.matches($0) }
+        let variants = (product?.variants ?? []).map(\.asVariantInfo)
+        let context = product?.sizeContext(sizes: variants.map(\.displaySize) + event.sizes) ?? .unknown
+        let mine = event.sizes.filter { profile.matches($0, in: context) }
 
         self.init(
             eventID: eventID,
@@ -84,24 +91,30 @@ extension FeedItem {
             createdAt: createdAt,
             brandID: event.$brand.id,
             brandName: event.brand.name,
-            title: product?.title ?? event.brand.name,
-            summary: product?.summary,
-            linkURL: product?.linkURL,
+            // An event's own words first: a `.sale` has no product to be named after. Its
+            // link is the shop, which is where a sale is.
+            title: event.title ?? product?.title ?? event.brand.name,
+            summary: event.summary ?? product?.summary,
+            linkURL: product?.linkURL ?? (event.title == nil ? nil : event.brand.website),
             imageURLs: product?.imageURLs ?? [],
             priceText: product?.priceText,
+            priceAmount: product?.priceAmount,
             previousPriceText: event.previousPriceText,
             previousPriceAmount: event.previousPriceAmount,
+            // The product's own, beside its price — both what is true now.
+            originalPriceText: product?.originalPriceText,
+            originalPriceAmount: product?.originalPriceAmount,
             isAvailable: product?.isAvailable,
             // Fall back to every returned size when no profile is set, so the card can
             // still say "Back in M, L".
             restockedSizes: profile.isEmpty ? event.sizes : mine,
             availableInMySize: variants.isEmpty
                 ? false
-                : variants.contains { $0.available && profile.claims($0.asVariantInfo) },
+                : variants.contains { $0.available && profile.claims($0, in: context) },
             // Sent in full so the client's size run, colourway swatches and restock
             // watcher have something to work with. Withholding these is what made the
             // whole size feature inert in the app's default server-backed mode.
-            variants: variants.map(\.asVariantInfo),
+            variants: variants,
             gender: product?.gender.rawValue,
             // Shipped alongside the verdict rather than instead of it: the server decides
             // gender so both platforms agree, but the client re-derives whenever its own
@@ -212,5 +225,17 @@ extension ProductModel {
             // distinction when the visible title doesn't.
             handle: linkURL.flatMap { URL(string: $0)?.lastPathComponent }
         )
+    }
+
+    /// What this garment's sizes are printed on, so a "38" is read on the ladder the phone
+    /// reads it on. See `SizeContext`.
+    ///
+    /// - Parameter sizes: the run to read. Passed in rather than read off `$variants`, for
+    ///   the reason `DiscoverCard.init` takes its variants that way: the `@Children`
+    ///   accessor traps when the relation was not eager loaded, and the notifier holds
+    ///   events whose products were loaded without them.
+    func sizeContext(sizes: [String]) -> SizeContext {
+        guard SizeContext.matters(for: sizes) else { return .unknown }
+        return SizeContext.of(gender: gender, title: title, productType: productType, tags: tags, sizes: sizes)
     }
 }

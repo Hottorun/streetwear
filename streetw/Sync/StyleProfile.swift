@@ -39,8 +39,12 @@ struct CollectionFacet: Hashable, Identifiable {
 
     var id: String { "\(axis)-\(value)" }
 
-    func matches(_ save: SavedItem) -> Bool {
-        guard let update = save.update else { return false }
+    /// - Parameter scope: what counts towards taste. The reading the facet came from was built
+    ///   only from saves that count (`StyleView`), so the query it opens must ask the same
+    ///   question of the same saves — otherwise "Black · 12" opens onto fourteen, two of them
+    ///   things somebody said were not their taste, and the count reads as broken.
+    func matches(_ save: SavedItem, in scope: TasteScope) -> Bool {
+        guard scope.counts(save), let update = save.update else { return false }
 
         switch axis {
         case .brand:

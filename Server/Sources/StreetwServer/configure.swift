@@ -77,6 +77,13 @@ func configure(_ app: Application) async throws {
     app.migrations.add(CreatePollHints())
     app.migrations.add(AddProductMembers())
     app.migrations.add(CreateBrandChecks())
+    app.migrations.add(CreateUsageCounts())
+    app.migrations.add(AddDeviceActiveDay())
+    app.migrations.add(AddUserDressAndSuitSizes())
+    app.migrations.add(AddFollowMode())
+    app.migrations.add(AddProductEnrichment())
+    app.migrations.add(AddProductOriginalPrice())
+    app.migrations.add(AddSaleLedgers())
     if Environment.get("AUTO_MIGRATE") != "false" {
         try await app.autoMigrate()
     }
@@ -93,7 +100,7 @@ func configure(_ app: Application) async throws {
     // The two lines above pin the JSON *body* coder, and `since` is not in a body — it is
     // `?since=` on `GET /v1/feed`. Vapor decodes query values with a separate
     // `URLEncodedFormDecoder` whose default date strategy is `.secondsSince1970`, i.e. a
-    // plain `Double(_:)` parse. The client sends ISO-8601 (`StreetwAPI.feed(since:)`), so
+    // plain `Double(_:)` parse. The client sends ISO-8601 (`StreetwAPI.feed(_:)`), so
     // `Double("2026-09-16T22:00:00Z")` was nil, the decode threw, the `try?` at the call
     // site swallowed it, and **every request silently fell back to the seven-day default**.
     //

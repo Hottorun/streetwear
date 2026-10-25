@@ -122,7 +122,9 @@ Changing these silently will break intended behavior:
   default, deliberately, because an unmarked size costs a glance at the run and a wrongly marked
   one costs the accent all its meaning. One-size is shown and not claimed: it fits everybody,
   which is not a fact about this reader. `Notifier` keeps `matches`, because waking somebody is
-  the place where a false positive really is cheaper than a miss.
+  the place where a false positive really is cheaper than a miss. Both questions are asked **in the
+  product's `SizeContext`** — a "38" on a dress is a dress size, not a shoe — and both take it with
+  no default; see *Sizing* in `CLAUDE.md`.
 - **A count is subject to the same filter as the list it counts.** `Brand.unseenCount` counts
   everything unseen and no screen means that: the feed cleared to "all caught up" under a Menswear
   setting while the brands list still claimed 40 unread and the brand page still printed UNREAD in
@@ -216,6 +218,25 @@ Changing these silently will break intended behavior:
   exception to the table further down: `SharedSaveImporter` already does the same through the same
   adapter, and there is no route for "what is in stock right now" because the question is always
   about the single product being looked at.
+- **The buy bar checks out in your size only when it can say which** (`Checkout`,
+  `StorefrontBar`). It always opened the product page, so buying meant picking the size the app
+  already knew, again, on the shop's own menu — five steps on the one page where a drop is won
+  or lost. For a Shopify product (`shopify:` key, numeric variant ids) with **exactly one
+  available variant you wear** in the colourway on screen, it now opens the cart permalink
+  `https://<product host>/cart/<variant>:1` and says "CHECK OUT IN M · KITH.COM". Four rules
+  hold it. **`claims`, never `matches`**: the filter's optimism turns "can't read 44" into
+  "yours", which on a size run is a wrongly ruled token and here is money — so no profile, an
+  unreadable size, two of your sizes in stock or four colourways with none chosen all open the
+  page instead. **The label says checkout, not bag**: a permalink skips the bag, and a button
+  promising one and opening a payment page is not trusted twice. **The product's own host**,
+  because `usa.` is a different shop in a different currency. And **`UIApplication.open`, not an
+  in-app browser**: a shop's app claims its URLs as universal links and is where somebody is
+  signed in with a card saved. Otherwise it is the exact product page — `?variant=<id>` when
+  your one size is sold out, so the shop says so — and on every other platform the page
+  untouched, because no other platform's variant URL is something the catalogue tells us
+  (WooCommerce wants a per-store attribute slug, Salesforce a product-scoped parameter, UCP
+  publishes nothing about its web URLs). Variant ids needed no wire change: `VariantInfo.id` has
+  always been the Shopify id, stored server-side as `variants.external_id`.
 - **Following a brand the poller has watched for months hands over its recent history, pre-marked
   seen.** The feed cursor is one timestamp across every followed brand, so `GET /v1/feed` correctly
   reports that nothing has happened since — the brand page opened empty, its counts read zero, and
@@ -225,6 +246,68 @@ Changing these silently will break intended behavior:
   must never advance `cursor` — that would skip every other brand's events in the same window — and
   must never arrive unread, which is the 250-product bug delivered at the exact moment somebody is
   deciding whether following was a good idea.
+- **A sync reads the feed to the end, a page at a time, and loses nothing at a page
+  boundary** (`FeedPager`, the server's `FeedPaging`). It asked once for 200 and moved the
+  cursor to the newest of them, so anything older than the 200th event between two syncs was
+  behind the cursor before it was ever sent — and with the page newest first, one busy brand
+  could fill it and push a quiet brand's only drop out. The server's order is now fair between
+  brands and a page that leaves anything behind carries a `continuation`. Four rules on this
+  side. **The cursor moves when the head lands**, because a read is a fixed window and the rest
+  of it is remembered as the server's own token (`feedPendingReads`, beside `feedCursor`) —
+  the token is written before the cursor, and each page is saved before either, so a process
+  killed between them reads a page twice rather than never. **Five pages per sync, head
+  first**: what happened since you last looked is what a push is about, and a phone away for
+  a fortnight can be owed tens of thousands of events that one foreground refresh must not try
+  to pull; what waits is the deep end of the busiest brands, because the order is fair. At
+  most four unfinished windows are kept and past that the oldest goes — the one remaining way
+  to lose an event, and it takes a phone more than four whole windows behind. **Only the first
+  page can fail a sync**: everything after it is already pending, so a dropped connection on
+  page three is a slower catch-up and not a failed refresh. And **a first sync stops at its
+  first page**, because it is a baseline and history owes nothing — the same reason it is
+  stored read. A continuation the server refuses is spent, not retried for ever.
+- **A follow has a mode, and the mode is applied where a row is written, not where the feed is
+  drawn** (`FollowMode`, `Brand.apply`). *Everything*, *Sales only* or *Quiet* — the roadmap's
+  answer to following H&M without burying the feed in daily arrivals, and the replacement for
+  1.0's mute, which was a phone-only flag consulted when a push arrived in the foreground:
+  the push had been composed, sent and delivered regardless, and in the background iOS showed
+  it anyway. `FollowMode.admits` is the one rule, asked by `Notifier` before anything is sent
+  and by the phone for the feed — and what *Sales only* lets through is `UpdateKind.isSale`, so
+  a new sale kind is one case in one switch. The decisions:
+  - **The feed is filtered on the phone, by storing what the mode does not admit as already
+    read** (`RemoteSync.merge`, `SyncEngine.insert` and `refresh`). Not on the server, because
+    a quiet brand's own page is still its whole catalogue and a server that withheld its
+    events would freeze that page the moment it went quiet; and standalone has no server.
+    Not as a filter in the feed's body either, because every unread count, the rail's dot and
+    the brand page's UNREAD would each need the same rule — five copies of it — and the unread
+    queue would grow for ever, since nothing that is unread is ever pruned. Stored read, the
+    feed, the counts and the rail agree without knowing modes exist.
+  - **Changing the mode clears what it no longer admits from the unread queue**, which is
+    "mark all seen" for those kinds; nothing is deleted, and nothing is un-seen on the way back
+    to *Everything* — what happened while a brand was quiet is its history, not news.
+  - **The lists that are about news and not emptied by reading ask the mode themselves**: the
+    markdowns list and its badge (`BrandUpdate.isAdmittedByFollowMode`), and the feed's lock
+    signals — the rail's dot, the calendar's accent and the lock story (`Brand.isAnnouncingLock`)
+    — plus Upcoming, which skips a brand whose drops are not admitted. A date somebody typed is
+    kept whatever the mode; they asked for it by name. The brand page and the brands list still
+    say a storefront is locked, in muted ink: that is a fact about the shop.
+  - **A quiet brand is reachable**: it stays on the rail, in the brands list — labelled QUIET or
+    SALES ONLY, so a silenced brand does not read as one that stopped publishing — and its page
+    is its catalogue. It still counts as a follow for recommendations and Discover.
+  - **A watch ignores the mode**, on the lock screen and in the feed: a fired watch still
+    surfaces its row unread, because it is the one alert somebody asked for by name.
+  - **The server's mode is the mode.** In server mode `Brand.followModeRaw` mirrors
+    `GET /v1/follows`, the page changes it with `PATCH /v1/follows/:id` first and locally only
+    once that succeeds — a mode that changed only here would be the mute again. Only the follow
+    list carries a mode; nil from any other route means "not said", never "everything".
+  - **1.0's mute becomes *Quiet*, once.** The first sync of this build sends it before the
+    follow list is asked for and clears `isMuted` when the server has it; standalone does it
+    locally. Quiet and not Everything because the promise was silence, and breaking it is
+    worse than the one thing that changes — the brand also leaves the feed. `isMuted` stays as
+    a stored property only so the old value can be read.
+  - **No default is guessed.** A new follow is *Everything*, on every client. A heuristic that
+    filed a big catalogue under *Sales only* at follow time would be a filter somebody did not
+    set, which is indistinguishable from a broken follow — and product velocity alone does not
+    tell Kith, the roadmap's *Everything* brand, from H&M.
 - **A collection is not a product** (`CollectionCard`, `CollectionReleaseView`). It is the one update
   that is *about* other updates, and it was drawn as a garment: no photograph (a season page rarely
   has one), an empty size run, no price, and a tap onto a product page with nothing on it — so
@@ -355,6 +438,68 @@ Changing these silently will break intended behavior:
   real markdown. A rise is never announced. `FetchedItem.priceAmount` exists because
   `priceText` is formatted for display and two strings say nothing about direction.
   A restock outranks a drop, so one product writes at most one event per poll.
+- **A markdown is measured from the brand's own tag where it published one**
+  (`FetchedItem.originalPriceAmount`, Shopify's `compare_at_price`; `PriceChange.base`). A drop
+  used to be only a fall between two polls, so a product first seen already discounted — last
+  season's stock moved onto the sale rail, which is most of what a sale is — was never a markdown:
+  no "−30%", nothing in the markdowns list. Four rules. **The original belongs to the lowest
+  variant's price**, not the highest compare-at anywhere on the product, and counts only past the
+  same 5%: storefronts leave compare-at equal to the price or below it. **A re-shelved product
+  that is marked down is a `.priceDrop`** with the original as its "was" (`Reshelving`), not a
+  restock; a launch at a discount keeps its kind and its card still says how much is off. **The
+  card says the larger cut** — 180, then 150 for a week, then 120 is "−20%" against the poll and
+  "−33%" against the tag, and the tag is what a shopper can check — and the markdowns list ranks
+  on the same number (`BrandUpdate.markdownBase`, `wasPriceText`). **A source that publishes a
+  price says every time whether it is marked down**, so a null compare-at clears the original; a
+  source with no price (a sitemap) says nothing about either. `FeedItem` carries the current
+  price as a number as well: it carried only the display text, so every server-backed markdown had
+  no measurable cut in the mode the app ships in.
+- **A brand going on sale is news; a markdown is not** (`UpdateKind.sale`, the deliberate change
+  to "only the unexpected is worth a buzz"). A single markdown is worth as much next week, which is
+  what the markdowns list is for, and stays quiet. A brand putting much of its catalogue on sale,
+  or announcing "25% off everything with code AUTUMN" in its bar, starts at a moment, its best
+  sizes go first, and the code is found nowhere else — so `.sale` is `isSudden` *and* `isSale`,
+  and it is the one thing a *Sales only* follow is woken by. Quiet hears nothing; the mode still
+  only takes away. Two detectors on the server, one event per sale (see `docs/server.md`): the
+  catalogue (`CatalogueSale` — at least 30% of what a pass read and at least 12 products marked
+  down, ending only under 10% and after three days, the first measurement a baseline) and the
+  announcement bar (`SaleBanner`, every 30–60 minutes; free shipping, somebody else's discount
+  and "on sale Friday" are not sales). **The roadmap calls the brand-wide alert opt-in per brand,
+  and the opt-in is the follow mode**: *Everything* and *Sales only* are two ways of asking for
+  it, *Quiet* the way of declining — a separate switch per brand would be a fourth mode by
+  another name. Standalone detects neither: both need the poller's view over time, and the
+  phone polling a homepage every half hour for itself is the hammering `FeedRefresh` exists to
+  avoid.
+- **A sale is a brand-level story, said in its own words.** The row has no garment — its words
+  live on the event (`events.title`/`summary`) and arrive as `FeedItem.title`/`summary`, its link
+  is the shop — so the feed prints "A sale is on" with "25% OFF EVERYTHING · CODE AUTUMN" under
+  it, no tiles, and **the headline is not a link**: a page of the rows that said it would be the
+  sentence again with nothing in it. It ranks after a lock and before a release (`newsRank`), and
+  a push about it opens the brand, not a product page. Phase 1 redesigns the feed; this is the
+  minimum the current one can say honestly.
+- **A price drop on something you watch or saved reaches you** — the roadmap's rule from 1.0 that
+  changes on purpose. A markdown on a garment you have never seen is not news; one on the thing
+  you asked about by name, or kept, is news about *you*. **Watched: the server pushes it**, by the
+  watch path — no follow mode, no cooldown and it does not start one, no size or gender filter,
+  one push per person per product, and it does **not** spend the watch (`fired_at` is the
+  restock's ledger; a cheaper sold-out jacket is still being waited for). Only active watches: one
+  that has fired has been answered. **Saved: the phone says it** (`PriceAlerts`), because saves
+  never leave the device — after every sync, a local notification on the server's wording
+  (`PriceChange.alert`), one thread (`PushGrouping.threadID`), opening the row, once per price
+  (`BrandUpdate.priceAlertedAmount`, a price rather than a date because standalone rewrites one row
+  per cut). History — a first sync, a catch-up — arrives with the ledger spent, and the ledger is
+  spent even when the switch is off, so turning it on does not fire a burst. In server mode a
+  product with a server watch is left to the push; standalone, watched products are said here
+  too. On by default; the switch is in Alerts.
+- **A kind 1.0 cannot draw is never sent to it** (`FeedKinds`). 1.0 decodes `FeedItem.kind` as a
+  string and maps anything unknown onto `.product`: a sale would have arrived as a new product with
+  no photograph, been counted in "N new products" and — being sudden — taken a drop's lead slot.
+  So `GET /v1/feed` and `GET /v1/brands/:id/feed` send only the kinds a client names in
+  `?kinds=`; naming none, as every 1.0 request does, gets the seven kinds 1.0 shipped with
+  (`FeedKinds.legacy`, frozen). The new client names its whole `UpdateKind.allCases`, so a kind
+  added later stays invisible to every build until it can draw it, and it skips a kind it does
+  not know (`FeedItem.knownKind`) rather than drawing it as a product. A push is not filtered: a
+  sale push to a 1.0 phone carries no event id, so tapping it opens the brand, which 1.0 has.
 - **Restock is the only reason a seen item resurfaces.** `SyncEngine.refresh` re-flags an update
   only when a *variant* goes false→true, recording which sizes returned in `restockedSizes`
   (falling back to whole-product `isAvailable` for sources without variants).

@@ -498,9 +498,46 @@ func routes(_ app: Application) throws {
             guard try await BrandModel.find(body.brandID, on: req.db) != nil else {
                 throw Abort(.notFound, reason: "No brand with that id.")
             }
-            try await FollowModel(userID: device.$user.id, brandID: body.brandID).save(on: req.db)
+            try await FollowModel(
+                userID: device.$user.id,
+                brandID: body.brandID,
+                mode: body.mode ?? .everything
+            ).save(on: req.db)
+        } else if let existing, let mode = body.mode, existing.mode != mode {
+            // Only when a mode was *sent*. Following a brand you already follow — from a
+            // search result, a saved item, a recommendation — posts again with no mode, and
+            // reading a missing one as `.everything` would undo a choice made on the brand's
+            // page by tapping a button somewhere else.
+            existing.mode = mode
+            try await existing.save(on: req.db)
         }
         return .created
+    }
+
+    /// How much of a followed brand reaches the caller. See `FollowMode`.
+    ///
+    /// A route of its own rather than a field on `POST /v1/follows`, because changing how you
+    /// hear from a brand is not following it again: this refuses a brand you do not follow
+    /// rather than quietly starting to, which is the difference between a setting and a
+    /// side effect.
+    authed.patch("follows", ":brandID") { req async throws -> HTTPStatus in
+        let device = try await req.authenticatedDevice()
+        guard let brandID = req.parameters.get("brandID", as: UUID.self) else {
+            throw Abort(.badRequest)
+        }
+        let body = try req.content.decode(UpdateFollow.self)
+        guard let follow = try await FollowModel.query(on: req.db)
+            .filter(\.$user.$id == device.$user.id)
+            .filter(\.$brand.$id == brandID)
+            .first()
+        else { throw Abort(.notFound, reason: "You don't follow that brand.") }
+
+        // Guarded, like every write here that can change nothing.
+        if follow.mode != body.mode {
+            follow.mode = body.mode
+            try await follow.save(on: req.db)
+        }
+        return .noContent
     }
 
     authed.delete("follows", ":brandID") { req async throws -> HTTPStatus in
@@ -536,7 +573,9 @@ func routes(_ app: Application) throws {
             // since it does no polling and never discovered these itself.
             .with(\.$brand) { $0.with(\.$sources) }
             .all()
-        return follows.map { BrandDTO($0.brand, sources: $0.brand.sources) }
+        // With the mode, because this is the only list that is about the caller's follows
+        // and the phone decides the feed with it — see `FollowMode.admits`.
+        return follows.map { BrandDTO($0.brand, sources: $0.brand.sources, followMode: $0.mode) }
     }
 
     // MARK: Discover
@@ -897,13 +936,39 @@ func routes(_ app: Application) throws {
 
     // MARK: Feed
 
-    /// Events since a cursor, hydrated with their product. Cursor is the timestamp of
-    /// the last event the client saw, so paging is stable as new events arrive.
+    /// Events since a cursor, hydrated with their product, a page at a time and fairly
+    /// between brands — see `FeedPaging` for the order and why it is the one it is.
+    ///
+    /// `?since=` begins a read: the window is everything after the cursor up to the newest
+    /// event visible now, which comes back as `nextCursor`. When the window does not fit in
+    /// one page the response also carries a `continuation`, and `?continuation=` carries the
+    /// read on from exactly there — same window, same order — until it comes back nil.
+    ///
+    /// The 1.0 app sends `since` and never `continuation`, and moves its cursor to
+    /// `nextCursor` exactly as it always has; the only thing that changed for it is *which*
+    /// 200 events the one page holds. See `FeedPaging`.
+    ///
+    /// `?kinds=` names the kinds the client can draw, and only those are in the window —
+    /// 1.0 names none and gets the seven it shipped with (`FeedKinds`). A continued read
+    /// keeps the kinds its first page was asked for, carried in the token, so a read is one
+    /// window from its first page to its last even across an app update.
     authed.get("feed") { req async throws -> FeedResponse in
         let device = try await req.authenticatedDevice()
         let user = try await device.$user.get(on: req.db)
-        let since = (try? req.query.get(Date.self, at: "since")) ?? Date().addingTimeInterval(-7 * 86_400)
         let limit = min((try? req.query.get(Int.self, at: "limit")) ?? 100, 200)
+
+        var resumed: FeedContinuation?
+        if let token = try? req.query.get(String.self, at: "continuation") {
+            guard let decoded = FeedContinuation(token: token) else {
+                throw Abort(.badRequest, reason: "Not a continuation this server wrote.")
+            }
+            resumed = decoded
+        }
+        let since = resumed?.since
+            ?? (try? req.query.get(Date.self, at: "since"))
+            ?? Date().addingTimeInterval(-7 * 86_400)
+        let kinds = resumed.map { $0.kinds ?? FeedKinds.legacy.map(\.rawValue) }
+            ?? FeedKinds.accepted(try? req.query.get(String.self, at: FeedKinds.parameter))
 
         let followed = try await FollowModel.query(on: req.db)
             .filter(\.$user.$id == device.$user.id)
@@ -911,20 +976,56 @@ func routes(_ app: Application) throws {
             .map(\.$brand.id)
         guard !followed.isEmpty else { return FeedResponse(items: [], nextCursor: nil) }
 
-        let events = try await EventModel.query(on: req.db)
+        // The whole window, three columns a row, so the ranking can see every brand's share
+        // of it; products and variants are loaded for the one page afterwards.
+        //
+        // **Bounded above in Swift, not in SQL.** The upper bound is a timestamp read back out
+        // of this database on the first page, and binding it again is not guaranteed to keep
+        // its last microsecond — so `<= until` could drop the newest event, which re-ranks its
+        // whole brand by one and slides rows past the reader. Comparing the decoded values
+        // with each other is exact, because every page decodes the same rows the same way.
+        let window = try await EventModel.query(on: req.db)
             .filter(\.$brand.$id ~~ followed)
             .filter(\.$createdAt > since)
-            .sort(\.$createdAt, .descending)
-            .limit(limit)
+            .filter(\.$kind ~~ kinds)
+            .field(\.$id)
+            .field(\.$brand.$id)
+            .field(\.$createdAt)
+            .all()
+            .compactMap { event -> FeedPaging.Row? in
+                guard let id = event.id, let createdAt = event.createdAt else { return nil }
+                if let until = resumed?.until, createdAt > until { return nil }
+                return FeedPaging.Row(id: id, brandID: event.$brand.id, createdAt: createdAt)
+            }
+        guard let until = resumed?.until ?? window.map(\.createdAt).max() else {
+            return FeedResponse(items: [], nextCursor: nil)
+        }
+
+        let page = FeedPaging.page(window, after: resumed?.after, limit: limit)
+        let hydrated = page.ids.isEmpty ? [] : try await EventModel.query(on: req.db)
+            .filter(\.$id ~~ page.ids)
             .with(\.$brand)
             .with(\.$product) { $0.with(\.$variants) }
             .all()
+        let byID = Dictionary(
+            hydrated.compactMap { event in event.id.map { ($0, event) } },
+            uniquingKeysWith: { first, _ in first }
+        )
 
         let profile = user.sizeProfile
-        let items = events.compactMap { event -> FeedItem? in
-            FeedItem(event: event, profile: profile)
-        }
-        return FeedResponse(items: items, nextCursor: events.first?.createdAt)
+        let items = page.ids
+            .compactMap { byID[$0] }
+            .compactMap { FeedItem(event: $0, profile: profile) }
+        return FeedResponse(
+            items: items,
+            // The head of the read only. A continued page is not progress through the
+            // device's own feed — the client keeps the cursor the first page gave it, which
+            // is exactly what `brands/:id/feed` says for the same reason.
+            nextCursor: resumed == nil ? until : nil,
+            continuation: page.next.map {
+                FeedContinuation(since: since, until: until, after: $0, kinds: kinds).token
+            }
+        )
     }
 
     /// One brand's recent history, independent of the cursor.
@@ -958,10 +1059,13 @@ func routes(_ app: Application) throws {
         let limit = min((try? req.query.get(Int.self, at: "limit")) ?? 60, 200)
         let since = (try? req.query.get(Date.self, at: "since"))
             ?? Date().addingTimeInterval(-catchUpWindow)
+        // The same contract as `/v1/feed`: nothing the client did not name.
+        let kinds = FeedKinds.accepted(try? req.query.get(String.self, at: FeedKinds.parameter))
 
         let events = try await EventModel.query(on: req.db)
             .filter(\.$brand.$id == brandID)
             .filter(\.$createdAt > since)
+            .filter(\.$kind ~~ kinds)
             .sort(\.$createdAt, .descending)
             .limit(limit)
             .with(\.$brand)
@@ -1174,6 +1278,57 @@ func routes(_ app: Application) throws {
             .sort(\.$releaseAt)
             .all()
             .map(\.asPollHint)
+    }
+
+    // MARK: Usage
+
+    /// Add this device's tallies to everybody's totals.
+    ///
+    /// Written from the refusals outwards, like `PUT /v1/poll-hints`, because a route that
+    /// writes on every call is a way to make the database work on a stranger's say-so:
+    ///
+    /// 1. **Device required**, and its own budget on top of the standard one — see
+    ///    `RateLimits.usage`.
+    /// 2. **A small body.** 32KB, against the server's 1MB default: a full week of every
+    ///    event is about six. Refused at the door, before anything is decoded.
+    /// 3. **`UsagePolicy` decides every row** — a whitelisted name, a day in the last week,
+    ///    a count a person could reach, no row twice — and refuses a long report whole.
+    /// 4. **Nothing written names the device.** The tallies go into shared totals; the
+    ///    device row keeps one overwritten day, which is how weekly actives are counted.
+    ///    See `UsageLedger`.
+    ///
+    /// One transaction, so a report is added whole or not at all — the phone keeps what it
+    /// sent until a reply arrives, and half a report followed by a retry would count twice.
+    let usageBodyLimit: ByteCount = "32kb"
+    authed.grouped(RateLimit(store: app.rateLimits.usage, identity: .device, name: "usage"))
+        .on(.POST, "usage", body: .collect(maxSize: usageBodyLimit)) { req async throws -> UsageReceipt in
+        // Checked again here because Vapor applies a route's limit only to a body that
+        // streams in: one that arrives in a single read — which is most bodies under a
+        // socket buffer — is handed over whole and never measured against it.
+        guard (req.body.data?.readableBytes ?? 0) <= usageBodyLimit.value else {
+            throw Abort(.payloadTooLarge)
+        }
+        let device = try await req.authenticatedDevice()
+        let report = try req.content.decode(UsageReport.self)
+        let now = Date()
+
+        let (accepted, refused) = UsagePolicy.accepted(report, now: now)
+        guard !accepted.isEmpty else { return UsageReceipt(accepted: 0, refused: refused) }
+
+        try await req.db.transaction { db in
+            try await UsageLedger.add(accepted, on: db)
+            // Only a report that counted something makes the device active. Nothing else
+            // stamps it — not the feed, not the size push — because a background refresh
+            // makes both, and a phone in a drawer is not somebody using the app.
+            try await UsageLedger.markActive(device, now: now, on: db)
+        }
+        return UsageReceipt(accepted: accepted.count, refused: refused)
+    }
+
+    /// The totals, for the operator. `?days=` how far back, default four weeks.
+    admin.get("usage") { req async throws -> UsageSummary in
+        let days = min(max((try? req.query.get(Int.self, at: "days")) ?? 28, 1), 366)
+        return try await UsageLedger.summary(days: days, now: Date(), on: req.db)
     }
 
     // MARK: Ops

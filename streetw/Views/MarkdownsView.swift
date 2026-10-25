@@ -68,7 +68,7 @@ struct MarkdownsView: View {
     private func ordered() -> [BrandUpdate] {
         let profile = sizes.profile
         return candidates
-            .filter { $0.kind == .priceDrop && $0.passes(profile) }
+            .filter { $0.kind == .priceDrop && $0.isAdmittedByFollowMode && $0.passes(profile) }
             .map { (update: $0, isMine: $0.isInMySize(profile), cut: $0.discountShare ?? 0) }
             .sorted { a, b in
                 a.isMine == b.isMine ? a.cut > b.cut : a.isMine
@@ -203,8 +203,9 @@ private struct MarkdownTile: View {
                         .foregroundStyle(Color.ink)
                 }
                 // The old price struck through, which is the whole claim being made and
-                // the only way to check it.
-                if let was = update.previousPriceText {
+                // the only way to check it — the brand's own tag where it published one, so
+                // the strike and the badge above measure from the same number.
+                if let was = update.wasPriceText {
                     Text(was)
                         .font(.data(11))
                         .strikethrough(true, color: .muted)

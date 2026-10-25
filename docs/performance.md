@@ -89,7 +89,13 @@ measurement, all invisible in a profile taken on a small store:
   multi-axis variant title 26µs. It is called twice per variant by `SizeRun.entries` and again
   per variant by `SizeProfile.matches` — **3.2ms for one 48-variant card**, on every body
   evaluation. Memoised (the input space is a few hundred strings and repeats relentlessly) and
-  the patterns compiled once: 0.10ms, a 31× improvement.
+  the patterns compiled once: 0.10ms, a 31× improvement. The cache is keyed on the string *and*
+  its `SizeContext`, which adds a handful of keys per string, not a multiple. The context itself
+  runs the slot classifier and tokenises the product's text — **14µs** per product measured on a
+  Mac in release, plus up to 18µs more when `BrandUpdate.gender` has to re-run its own classifier
+  — so it is built **once per question per product, never per variant** (per variant, a 48-variant
+  sneaker would pay that 48 times on every body evaluation), and not at all for a run with no
+  number in it (`SizeContext.matters`), because letters read the same on every garment.
 - `GarmentClassifier.match` rebuilt six `Set`s from `table` on every call, and `classify` calls
   it once per field — 78 set constructions for a product with ten tags.
 - `GenderClassifier` ran three `replacingOccurrences` per field for a phrase list that only
