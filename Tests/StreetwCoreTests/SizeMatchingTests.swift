@@ -313,6 +313,24 @@ struct SizeProfileTests {
         #expect(p.summary == "M, L, XL · US 9, 9.5")
         #expect(SizeProfile().summary == "Not set")
     }
+
+    @Test("Ladders list only what is filled in, one row each, as the summary prints it")
+    func ladders() {
+        var p = SizeProfile()
+        #expect(p.ladders.isEmpty)
+
+        p.apparel = ["L", "M"]
+        p.waist = ["34", "32"]
+        p.shoe = ["9"]
+        p.shoeScale = .eu
+        p.suit = ["40"]
+        p.suitLength = ["R"]
+        let rows = p.ladders
+        #expect(rows.map(\.ladder) == [.apparel, .waist, .shoe, .suit])
+        #expect(rows.map(\.sizes) == ["M, L", "32, 34", "EU 42.5", "40 R"])
+        // The summary is the rows with their ladder named where a bare run would be ambiguous.
+        #expect(p.summary == "M, L · W 32, 34 · EU 42.5 · Suit 40 R")
+    }
 }
 
 /// The other half of the pair: what the app is entitled to call *your* size.

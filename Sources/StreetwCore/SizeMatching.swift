@@ -983,15 +983,32 @@ public struct SizeProfile: Codable, Hashable, Sendable {
         apparel.isEmpty && shoe.isEmpty && waist.isEmpty && dress.isEmpty && suit.isEmpty
     }
 
-    public var summary: String {
-        var parts: [String] = []
+    /// One of the ladders a profile holds.
+    public enum Ladder: String, Sendable, CaseIterable {
+        case apparel, waist, shoe, dress, suit
+
+        /// What the row is called.
+        public var label: String {
+            switch self {
+            case .apparel: "Clothing"
+            case .waist: "Waist"
+            case .shoe: "Shoes"
+            case .dress: "Dress"
+            case .suit: "Suit"
+            }
+        }
+    }
+
+    /// The ladders that have been filled in, each as it is printed — in the user's own scale,
+    /// in ladder order. What a page listing sizes one row per ladder reads, and what `summary`
+    /// is made of, so the two cannot print the same profile two ways.
+    public var ladders: [(ladder: Ladder, sizes: String)] {
+        var rows: [(ladder: Ladder, sizes: String)] = []
         if !apparel.isEmpty {
-            parts.append(SizeProfile.apparelOptions.filter(apparel.contains).joined(separator: ", "))
+            rows.append((.apparel, SizeProfile.apparelOptions.filter(apparel.contains).joined(separator: ", ")))
         }
         if !waist.isEmpty {
-            // "W 32, 34" — the W marks the ladder, because a bare "32, 34" beside "M, L"
-            // reads as a continuation of the same run.
-            parts.append("W " + SizeProfile.waistOptions.filter(waist.contains).joined(separator: ", "))
+            rows.append((.waist, SizeProfile.waistOptions.filter(waist.contains).joined(separator: ", ")))
         }
         if !shoe.isEmpty {
             // Printed in the user's own scale — "EU 43" reads as a size to someone who
@@ -999,14 +1016,13 @@ public struct SizeProfile: Codable, Hashable, Sendable {
             let shown = SizeProfile.shoeOptions(in: shoeScale)
                 .filter { shoe.contains($0.stored) }
                 .map(\.display)
-            parts.append("\(shoeScale.label) " + shown.joined(separator: ", "))
+            rows.append((.shoe, "\(shoeScale.label) " + shown.joined(separator: ", ")))
         }
         if !dress.isEmpty {
-            // Named, because "US 4, 6" beside "US 9, 9.5" reads as more shoes.
             let shown = SizeProfile.dressOptions(in: dressScale)
                 .filter { dress.contains($0.stored) }
                 .map(\.display)
-            parts.append("Dress \(dressScale.label) " + shown.joined(separator: ", "))
+            rows.append((.dress, "\(dressScale.label) " + shown.joined(separator: ", ")))
         }
         if !suit.isEmpty {
             let shown = SizeProfile.suitOptions(in: suitScale)
@@ -1017,7 +1033,22 @@ public struct SizeProfile: Codable, Hashable, Sendable {
                 .map(\.stored)
                 .filter(suitLength.contains)
                 .joined(separator: "/")
-            parts.append("Suit \(scale)" + shown.joined(separator: ", ") + (lengths.isEmpty ? "" : " \(lengths)"))
+            rows.append((.suit, scale + shown.joined(separator: ", ") + (lengths.isEmpty ? "" : " \(lengths)")))
+        }
+        return rows
+    }
+
+    public var summary: String {
+        let parts = ladders.map { row in
+            switch row.ladder {
+            case .apparel, .shoe: row.sizes
+            // "W 32, 34" — the W marks the ladder, because a bare "32, 34" beside "M, L"
+            // reads as a continuation of the same run.
+            case .waist: "W " + row.sizes
+            // Named, because "US 4, 6" beside "US 9, 9.5" reads as more shoes.
+            case .dress: "Dress " + row.sizes
+            case .suit: "Suit " + row.sizes
+            }
         }
         return parts.isEmpty ? "Not set" : parts.joined(separator: " · ")
     }

@@ -36,8 +36,14 @@ public enum UsageEvent: String, Codable, CaseIterable, Sendable {
     /// The app came to the foreground from the background (or was launched).
     case appOpened = "app.opened"
     case feedTab = "tab.feed"
-    case discoverTab = "tab.discover"
+    /// The tab that replaced Discover. Its own name rather than a reuse of `discoverTab`,
+    /// because it is a different page — Discover is one part of it — and a count that
+    /// carried on under the old name would compare the two as if they were one.
+    case shopTab = "tab.shop"
     case savedTab = "tab.saved"
+    /// Discover and Style are no longer tabs, and stay accepted: builds that still have
+    /// them go on reporting for as long as they are installed.
+    case discoverTab = "tab.discover"
     case styleTab = "tab.style"
     /// A search of the shared brand catalogue was run. Never what it was for.
     case brandSearch = "brand.search"
