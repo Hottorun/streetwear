@@ -201,7 +201,7 @@ plutil -p /tmp/streetw-dd/Build/Products/Debug-iphonesimulator/streetw.app/Info.
 ### Tests
 
 ```bash
-swift test                                    # all 456
+swift test                                    # all 610
 swift test --filter "Size normalisation"      # one suite
 swift test --filter relockFiresAgain          # one test
 ```
@@ -366,9 +366,20 @@ bought it. The short form of the load-bearing ones:
   read, so no count or list needs to know. A watch ignores every mode.
 - Ordering: brands by `lastActivityAt` (stored, never by newest *unread*); a brand's output by
   `BrandUpdate.newestFirst`; one garment one row via `oncePerProduct`.
-- Only a price *drop* past 5% is an event; restock outranks it; a lock fires on the transition.
+- Only a price *drop* past 5% is an event; restock outranks it; a lock fires on the transition. A
+  markdown is measured from the brand's own `compare_at_price` where it published one
+  (`FetchedItem.originalPriceAmount`, `PriceChange.base`), and old stock first seen marked down is a
+  `.priceDrop`, not a restock.
 - Push: one per brand per **cooldown**, `aps-environment` is load-bearing, one `threadID` for the
   whole app, and a follow's mode only ever takes away.
+- **A brand going on sale is sudden; a markdown is not** (`UpdateKind.sale`, a deliberate change
+  from 1.0). One `.sale` per sale, from the catalogue (`CatalogueSale`) or the announcement bar
+  (`SaleBanner`), whichever sees it first; it wakes *Everything* and *Sales only*, never *Quiet*.
+  A markdown on something **watched** pushes by the watch path; on something **saved**, the phone
+  says it (`PriceAlerts`), because saves never leave it.
+- **1.0 is never sent a kind it cannot draw.** It maps an unknown kind onto `.product`, so the feed
+  routes send only the kinds named in `?kinds=` and default to `FeedKinds.legacy`. A new
+  `UpdateKind` case needs nothing on the wire — and nothing in `legacy`, which is frozen.
 - The buy bar opens a Shopify cart permalink only when **exactly one available variant is
   yours** by `SizeProfile.claims` (never `matches`) in the colourway on screen, and says
   "CHECK OUT", not "bag"; everything else gets the exact product page (`Checkout`).
@@ -395,8 +406,8 @@ bought it. The short form of the load-bearing ones:
   own pile on the lock screen instead of one stack that says "Dropwall". Grouping is the thread id;
   stopping a single brand from shouting is `collapseID`, which stays per brand. They are different
   knobs and were being confused for each other. **The value lives in `PushGrouping.threadID` in
-  `StreetwCore`**, because three targets raise alerts — the server's APNs sender, `DropReminders`
-  and `WatchNotifier` — and nothing makes it visible when they stop agreeing. `WatchNotifier`
+  `StreetwCore`**, because four paths raise alerts — the server's APNs sender, `DropReminders`,
+  `WatchNotifier` and `PriceAlerts` — and nothing makes it visible when they stop agreeing. `WatchNotifier`
   threaded by brand id for a long time while its comment claimed it matched the server, which it
   never had: a restock announced by push stacked under the app, and the *same* restock announced
   locally started a pile of that brand's own.
@@ -859,8 +870,10 @@ the local path in the `else`. Adding a new one means adding both halves:
 
 | Operation | Server route |
 |---|---|
-| launch/refresh sync | `GET /v1/follows` + `GET /v1/feed`, then `?continuation=` until it comes back nil — five pages a sync, the rest kept for the next (`FeedPager`) |
-| catch up on a brand just followed | `GET /v1/brands/:id/feed` (merged as a baseline) |
+| launch/refresh sync | `GET /v1/follows` + `GET /v1/feed?kinds=`, then `?continuation=` until it comes back nil — five pages a sync, the rest kept for the next (`FeedPager`) |
+| catch up on a brand just followed | `GET /v1/brands/:id/feed?kinds=` (merged as a baseline) |
+| price drops on saved items | none — saves never leave the phone; `PriceAlerts` reads the synced markdowns in both modes |
+| brand-wide sales, sale banners | poller only (`CatalogueSale`, `SaleBanners`); standalone detects neither |
 | find a brand | `GET /v1/brands?q=` (name **or** pasted URL) |
 | "check site" preview | `POST /v1/brands/checks`, then `GET /v1/brands/checks/:id` until it settles (creates nothing) |
 | add a brand nobody has | `POST /v1/brands/checks/:id/watch` — the server follows it, now or when the check finishes |

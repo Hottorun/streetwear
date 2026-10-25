@@ -438,6 +438,68 @@ Changing these silently will break intended behavior:
   real markdown. A rise is never announced. `FetchedItem.priceAmount` exists because
   `priceText` is formatted for display and two strings say nothing about direction.
   A restock outranks a drop, so one product writes at most one event per poll.
+- **A markdown is measured from the brand's own tag where it published one**
+  (`FetchedItem.originalPriceAmount`, Shopify's `compare_at_price`; `PriceChange.base`). A drop
+  used to be only a fall between two polls, so a product first seen already discounted — last
+  season's stock moved onto the sale rail, which is most of what a sale is — was never a markdown:
+  no "−30%", nothing in the markdowns list. Four rules. **The original belongs to the lowest
+  variant's price**, not the highest compare-at anywhere on the product, and counts only past the
+  same 5%: storefronts leave compare-at equal to the price or below it. **A re-shelved product
+  that is marked down is a `.priceDrop`** with the original as its "was" (`Reshelving`), not a
+  restock; a launch at a discount keeps its kind and its card still says how much is off. **The
+  card says the larger cut** — 180, then 150 for a week, then 120 is "−20%" against the poll and
+  "−33%" against the tag, and the tag is what a shopper can check — and the markdowns list ranks
+  on the same number (`BrandUpdate.markdownBase`, `wasPriceText`). **A source that publishes a
+  price says every time whether it is marked down**, so a null compare-at clears the original; a
+  source with no price (a sitemap) says nothing about either. `FeedItem` carries the current
+  price as a number as well: it carried only the display text, so every server-backed markdown had
+  no measurable cut in the mode the app ships in.
+- **A brand going on sale is news; a markdown is not** (`UpdateKind.sale`, the deliberate change
+  to "only the unexpected is worth a buzz"). A single markdown is worth as much next week, which is
+  what the markdowns list is for, and stays quiet. A brand putting much of its catalogue on sale,
+  or announcing "25% off everything with code AUTUMN" in its bar, starts at a moment, its best
+  sizes go first, and the code is found nowhere else — so `.sale` is `isSudden` *and* `isSale`,
+  and it is the one thing a *Sales only* follow is woken by. Quiet hears nothing; the mode still
+  only takes away. Two detectors on the server, one event per sale (see `docs/server.md`): the
+  catalogue (`CatalogueSale` — at least 30% of what a pass read and at least 12 products marked
+  down, ending only under 10% and after three days, the first measurement a baseline) and the
+  announcement bar (`SaleBanner`, every 30–60 minutes; free shipping, somebody else's discount
+  and "on sale Friday" are not sales). **The roadmap calls the brand-wide alert opt-in per brand,
+  and the opt-in is the follow mode**: *Everything* and *Sales only* are two ways of asking for
+  it, *Quiet* the way of declining — a separate switch per brand would be a fourth mode by
+  another name. Standalone detects neither: both need the poller's view over time, and the
+  phone polling a homepage every half hour for itself is the hammering `FeedRefresh` exists to
+  avoid.
+- **A sale is a brand-level story, said in its own words.** The row has no garment — its words
+  live on the event (`events.title`/`summary`) and arrive as `FeedItem.title`/`summary`, its link
+  is the shop — so the feed prints "A sale is on" with "25% OFF EVERYTHING · CODE AUTUMN" under
+  it, no tiles, and **the headline is not a link**: a page of the rows that said it would be the
+  sentence again with nothing in it. It ranks after a lock and before a release (`newsRank`), and
+  a push about it opens the brand, not a product page. Phase 1 redesigns the feed; this is the
+  minimum the current one can say honestly.
+- **A price drop on something you watch or saved reaches you** — the roadmap's rule from 1.0 that
+  changes on purpose. A markdown on a garment you have never seen is not news; one on the thing
+  you asked about by name, or kept, is news about *you*. **Watched: the server pushes it**, by the
+  watch path — no follow mode, no cooldown and it does not start one, no size or gender filter,
+  one push per person per product, and it does **not** spend the watch (`fired_at` is the
+  restock's ledger; a cheaper sold-out jacket is still being waited for). Only active watches: one
+  that has fired has been answered. **Saved: the phone says it** (`PriceAlerts`), because saves
+  never leave the device — after every sync, a local notification on the server's wording
+  (`PriceChange.alert`), one thread (`PushGrouping.threadID`), opening the row, once per price
+  (`BrandUpdate.priceAlertedAmount`, a price rather than a date because standalone rewrites one row
+  per cut). History — a first sync, a catch-up — arrives with the ledger spent, and the ledger is
+  spent even when the switch is off, so turning it on does not fire a burst. In server mode a
+  product with a server watch is left to the push; standalone, watched products are said here
+  too. On by default; the switch is in Alerts.
+- **A kind 1.0 cannot draw is never sent to it** (`FeedKinds`). 1.0 decodes `FeedItem.kind` as a
+  string and maps anything unknown onto `.product`: a sale would have arrived as a new product with
+  no photograph, been counted in "N new products" and — being sudden — taken a drop's lead slot.
+  So `GET /v1/feed` and `GET /v1/brands/:id/feed` send only the kinds a client names in
+  `?kinds=`; naming none, as every 1.0 request does, gets the seven kinds 1.0 shipped with
+  (`FeedKinds.legacy`, frozen). The new client names its whole `UpdateKind.allCases`, so a kind
+  added later stays invisible to every build until it can draw it, and it skips a kind it does
+  not know (`FeedItem.knownKind`) rather than drawing it as a product. A push is not filtered: a
+  sale push to a 1.0 phone carries no event id, so tapping it opens the brand, which 1.0 has.
 - **Restock is the only reason a seen item resurfaces.** `SyncEngine.refresh` re-flags an update
   only when a *variant* goes false→true, recording which sizes returned in `restockedSizes`
   (falling back to whole-product `isAvailable` for sources without variants).

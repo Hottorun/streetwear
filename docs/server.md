@@ -96,9 +96,9 @@ Part of the streetw guidance set; see `CLAUDE.md` for the index and the build ru
     no mode. A nullable column is also a trap: `mode != 'quiet'` is NULL for a NULL row, so
     the obvious filter would have silenced every follow older than the migration.
   - **The mode only takes away.** `isRelevant` asks `isWorthWaking` *and* `admits`, so a
-    *Sales only* follow is never woken by a kind an *Everything* follow would not be — today
-    that means it is woken by nothing, because a markdown is not sudden. A quiet follow is
-    dropped before its devices are loaded.
+    *Sales only* follow is never woken by a kind an *Everything* follow would not be — which
+    means by a brand-wide `.sale` and nothing else, because a single markdown is not sudden. A
+    quiet follow is dropped before its devices are loaded.
   - **A watch alert ignores every mode.** `notifyWatches` never asks: it is the one alert
     somebody asked for by name, and quieting a brand must not swallow the restock a watch was
     set for.
@@ -111,9 +111,10 @@ Part of the streetw guidance set; see `CLAUDE.md` for the index and the build ru
   and a server-side filter would have frozen it at the moment it went quiet.
 - **`/status` counts every table**, `users` included. It was the one table it didn't touch,
   which is exactly why a completely broken registration path still reported green.
-- **Only the *unexpected* is worth a buzz** (`Notifier.isWorthWaking`). A drop, a collection and
-  a storefront lock happen suddenly, are worth acting on within minutes, and cannot be found any
-  other way. A **restock**, a **price drop**, a **page change** and a **post** are not: the first
+- **Only the *unexpected* is worth a buzz** (`Notifier.isWorthWaking`). A drop, a collection, a
+  storefront lock and a brand going on sale (`.sale`, added since — see
+  `docs/design-decisions.md`) happen suddenly, are worth acting on within minutes, and cannot be
+  found any other way. A **restock**, a **price drop**, a **page change** and a **post** are not: the first
   is the largest single source of volume and almost all of it is about a garment the reader has
   never seen; a markdown is worth as much a week later, which is what `MarkdownsView` and its
   badge are for; a page change is "something on this page is different", which fires on brands
@@ -125,7 +126,16 @@ Part of the streetw guidance set; see `CLAUDE.md` for the index and the build ru
   — that is what a `StockWatch` is for, it runs first, claims its (user, brand) pairs, and is
   exempt from the cooldown. Note the server *cannot* do this for a merely **saved** item: saves
   never leave the phone, by design. "Notify" in `SaveConfirmation` is the path that turns a save
-  into something the server can act on.
+  into something the server can act on. **The markdown somebody cares about arrives the same
+  way** (`notifyWatchedPriceDrops`): a `.priceDrop` on a product with an active watch pushes "Down
+  33% to $120 — Nathan Cargo Pant" by the watch rules — no mode, no cooldown, does not spend the
+  watch, one per person per product, collapsed per product so a second cut replaces the first.
+  A saved item's markdown is said by the phone (`PriceAlerts`).
+  **Exempt from the cooldown was only half true until sales.** Cooled-down brands are left out
+  of the batch in the query, and with them the restock a watch was waiting for — so the one alert
+  asked for by name waited out the brand's quarter of an hour. The watch kinds (`.restock`,
+  `.priceDrop`) of a cooling brand are now loaded too and answered at once; neither is sudden, so
+  stamping them takes nothing from the summary the cooldown is holding.
   Three existing tests encoded the old behaviour and were re-pointed rather than deleted, because
   the old expectations are exactly what a later change might reinstate by accident.
 - **One push per brand per pass, never one per event.** A brand publishing a collection
@@ -255,6 +265,43 @@ Part of the streetw guidance set; see `CLAUDE.md` for the index and the build ru
   Victoria's Secret's at 02:31, Hollister's cached at the edge for a day — and Subdued's is 7.2 MB
   a read. Its memory of what it has seen lives in `sources.fingerprint` (`SitemapMemory`), which
   is only rewritten when it changed.
+- **A brand going on sale is said once, by whichever detector sees it first** (`SaleEvents`,
+  `.sale`). Both write through `SaleEvents.announce`, which refuses a second `.sale` for the brand
+  inside `quietPeriod` (24h): an end-of-season sale marks the catalogue down *and* puts "SALE NOW
+  ON" in the bar, minutes apart. Each detector still records what it saw, so the suppressed one
+  cannot fire later. A sale event has no product; its words are `events.title`/`summary`
+  (`AddSaleLedgers`), its link on the wire is the brand's site.
+  - **The catalogue** (`Poller.settleSale`, `CatalogueSale`): every pass with prices counts what
+    share of the products it read is a real cut — from the brand's original
+    (`products.original_price_*`, `AddProductOriginalPrice`) or from the price stored before the
+    pass. On at 30% and at least 12 products, off under 10% and only after three days, so a
+    markdown taken in waves on a store with no compare-at is one sale and not one per wave. The
+    state is `brands.sale_measured_at`/`sale_since`, **written only on a transition** — the brand
+    row is read every poll and rewriting it each time is the volume problem `refresh` guards
+    against — and **the first measurement is a baseline**: measured against Motel Rocks, 1,155 of
+    2,748 products were already marked down, which a deploy would otherwise have announced. It is
+    a share of the *read* (the newest 250 for an incremental Shopify poll), not of the stored
+    catalogue, whose prices are whatever they were when last seen; older stock nobody re-reads is
+    the roadmap's Phase 3 blind spot.
+  - **The announcement bar** (`SaleBanners`, `SaleBanner`, `SaleBannerLedger`): a code sale moves
+    no price, so the homepage is read every 30–60 minutes per brand (fixed per brand by its id, so
+    reads do not bunch), three a pass, through the shared `PoliteFetcher`. Only brands somebody
+    would hear from — at least one follow that is not *Quiet* — and never a locked storefront.
+    `brands.banner_check_at` is the schedule, nil until the first read, **which is a baseline**;
+    it moves whatever the read did, like `next_check_at` after a failed poll (a day when robots.txt
+    refuses `/`). On Postgres the due brands are claimed with `FOR UPDATE SKIP LOCKED` in a CTE
+    that returns the old schedule, because two instances reading one bar would both announce it;
+    SQLite keeps the plain query. The ledger (`sale_banner`, `sale_banner_seen_at`) keys on the
+    offer ("30% OFF EVERYTHING · CODE BDAY30"), not the prose, and a banner briefly missing from a
+    rotated bar is not forgotten for two weeks. Pattern matching only: the end date and the fine
+    print wait for Phase 4.
+- **The feed sends only the kinds a client can draw** (`FeedKinds`, `?kinds=` on `/v1/feed` and
+  `/v1/brands/:id/feed`). 1.0 maps an unknown kind onto a product, so a request naming none gets
+  `FeedKinds.legacy`, the seven 1.0 shipped with; only kinds this server knows survive the
+  parameter, which bounds the filter. The filter is on the window the read pages through, and the
+  kinds travel inside the continuation (`FeedContinuation.kinds`, nil in an older token, read as
+  legacy) so one read is one window to its last page — the new client sends its kinds on every
+  page, but a token stored across an app update must not change its window halfway.
 - **`HTTPFetching`, not `HTTPClient`** — Vapor re-exports `AsyncHTTPClient.HTTPClient` and
   an unqualified collision in the server target is nastier than the wordier name.
 - **Don't name a test helper `withApp`.** VaporTesting exports a generic `withApp<T>` that
