@@ -260,24 +260,6 @@ struct SavedView: View {
                 // actually worried about.
                 Text("The saves and fits filed here are kept — only the board goes.")
             }
-            .confirmationDialog(
-                deletionTitle(wall),
-                isPresented: $isConfirmingDeletion,
-                titleVisibility: .visible
-            ) {
-                Button("Remove", role: .destructive) {
-                    let doomed = wall.selected(selection)
-                    endSelecting()
-                    CollectionEdit.delete(doomed, in: context)
-                }
-                Button("Keep", role: .cancel) {}
-            } message: {
-                // Always asked, unlike one bookmark: a selection is the one place a single tap
-                // removes many things, and every one of them may carry a note. Worded as the
-                // single-item dialog is, because it is the same act and a second wording of
-                // one promise is how the two stop agreeing.
-                Text("Their notes and where you filed them go too. Fits they appear in are left alone.")
-            }
         }
         .tint(.ink)
     }
@@ -323,6 +305,7 @@ struct SavedView: View {
                             isNamingBoard = true
                         }
                         tastePicker(for: board)
+                            .pickerStyle(.menu)
                         Button("Delete board", systemImage: "trash", role: .destructive) {
                             deleting = board
                         }
@@ -339,11 +322,18 @@ struct SavedView: View {
         return count == 0 ? "Select" : "\(count) selected"
     }
 
-    private func deletionTitle(_ wall: Wall) -> String {
-        let count = wall.selected(selection).count
-        return count == 1
+    private func deletionTitle(_ count: Int) -> String {
+        count == 1
             ? "Remove this from your collection?"
             : "Remove \(count) things from your collection?"
+    }
+
+    /// Worded as the single-item dialogs are, because it is the same act and a second wording
+    /// of one promise is how the two stop agreeing.
+    private func deletionMessage(_ count: Int) -> String {
+        count == 1
+            ? "Your note and where you filed it go too. Fits it appears in are left alone."
+            : "Their notes and where you filed them go too. Fits they appear in are left alone."
     }
 
     private func endSelecting() {
@@ -394,13 +384,16 @@ struct SavedView: View {
                 Text(mode.label).tag(mode)
             }
         }
-        .pickerStyle(.menu)
     }
 
     /// A search that finds nothing needs to say so, rather than reusing the "you have
     /// saved nothing" copy — which reads as though the collection had been emptied.
+    ///
+    /// A facet is the same case. It is a query over the taste reading, so it leaves out what
+    /// does not count — and on a board that doesn't count it leaves out everything, where
+    /// "This board is empty" would be false about a board that is full.
     private var emptyTitle: String {
-        if !query.isEmpty { return "No matches" }
+        if !query.isEmpty || collection.facet != nil { return "No matches" }
         switch filter {
         case .type(.inspiration): return "Nothing kept yet"
         case .type(.wardrobe): return "Wardrobe is empty"
@@ -410,6 +403,9 @@ struct SavedView: View {
 
     private var emptyAction: String {
         if !query.isEmpty { return "NOTHING IN \(filterLabel.uppercased()) MATCHES \"\(query.uppercased())\"" }
+        if let facet = collection.facet {
+            return "NOTHING IN \(filterLabel.uppercased()) THAT COUNTS TOWARD YOUR TASTE READS AS \(facet.value.uppercased())"
+        }
         switch filter {
         case .type(.inspiration): return "TAP THE BOOKMARK ON ANYTHING IN YOUR FEED"
         case .type(.wardrobe): return "LONG-PRESS AN ITEM AND CHOOSE ADD TO WARDROBE"
@@ -538,8 +534,11 @@ struct SavedView: View {
     /// changes what the Style tab, Discover and the brand suggestions show, which is too much
     /// to leave findable only inside a menu.
     private func tasteLine(_ board: Board) -> some View {
+        // The three choices inline. A submenu here would make the line a menu whose only item
+        // is another menu — a lid on a button.
         Menu {
             tastePicker(for: board)
+                .pickerStyle(.inline)
         } label: {
             HStack(spacing: 6) {
                 Image(systemName: board.tasteMode == .mood ? "sparkles" : "eye.slash")
@@ -678,6 +677,24 @@ struct SavedView: View {
                 .disabled(isEmpty)
                 barButton("Delete", systemImage: "trash") { isConfirmingDeletion = true }
                     .disabled(isEmpty)
+                    // Always asked, unlike one bare bookmark: a selection is the one place a
+                    // single tap removes many things, and any of them may carry a note. On the
+                    // button rather than on the page, because on iOS 26 the dialog is a popover
+                    // that points at whatever it is attached to — from the page it pointed at
+                    // the title, the far end of the screen from the button that raised it.
+                    .confirmationDialog(
+                        deletionTitle(chosen.count),
+                        isPresented: $isConfirmingDeletion,
+                        titleVisibility: .visible
+                    ) {
+                        Button("Remove", role: .destructive) {
+                            endSelecting()
+                            CollectionEdit.delete(chosen, in: context)
+                        }
+                        Button("Keep", role: .cancel) {}
+                    } message: {
+                        Text(deletionMessage(chosen.count))
+                    }
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 10)
@@ -693,6 +710,22 @@ struct SavedView: View {
     }
 
     private func barLabel(_ title: String, systemImage: String) -> some View {
+        SelectionBarLabel(title: title, systemImage: systemImage)
+    }
+}
+
+/// One action in the selection bar: a glyph over tracked caps, muted while it cannot act.
+///
+/// Its own view so it can read `isEnabled`. The colour is set explicitly — ink, never the
+/// tint — and an explicit colour is not dimmed by `.disabled`, so with nothing selected every
+/// action was drawn exactly as if a tap would do something.
+private struct SelectionBarLabel: View {
+    @Environment(\.isEnabled) private var isEnabled
+
+    let title: String
+    let systemImage: String
+
+    var body: some View {
         VStack(spacing: 4) {
             Image(systemName: systemImage)
                 .font(.system(size: 14, weight: .medium))
@@ -702,7 +735,7 @@ struct SavedView: View {
                 .lineLimit(1)
                 .fixedSize()
         }
-        .foregroundStyle(Color.ink)
+        .foregroundStyle(isEnabled ? Color.ink : Color.muted.opacity(0.6))
         .frame(maxWidth: .infinity)
         .contentShape(.rect)
     }

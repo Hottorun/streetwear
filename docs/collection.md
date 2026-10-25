@@ -75,7 +75,11 @@ Part of the streetw guidance set; see `CLAUDE.md` for the index and the build ru
   because an action on things you cannot see is not one you chose. Both toolbar items are
   trailing; a leading text button beside `.searchable` folds into a "···" menu. Tiles are
   guarded with `SavedItem.isGone`, the `Fit.isGone` rule, because a bulk delete removes rows a
-  lazy stack may still draw for one pass.
+  lazy stack may still draw for one pass. Two details found by driving it: the bar's labels set
+  their own ink, which `.disabled` does not dim, so `SelectionBarLabel` reads `isEnabled` — with
+  nothing selected every action was drawn as if it would act; and the delete confirmation hangs
+  off the Delete button, because on iOS 26 it is a popover pointing at whatever it is attached
+  to, and from the page it pointed at the title.
 - **A fit started from a selection is not stored until it is saved.** `FitCanvas(fit: nil,
   starting:board:)` lays the pieces out with `FitArrangement` (stepping apart two that want the
   same spot) and files it on the board it was begun from; closing the canvas leaves nothing,
@@ -290,7 +294,12 @@ has its own "don't use for my taste" (`isExcludedFromTaste`).
   the mode strip, and the line is the menu that changes it; the Style tab's reading says how many
   saves it left out, and the fit row says which board it is leaning towards; a save's own page
   says when a board, rather than its own chips, is deciding. A setting that changes three tabs and
-  is visible only inside a menu is indistinguishable from those tabs misbehaving.
+  is visible only inside a menu is indistinguishable from those tabs misbehaving. The line *is* the
+  menu, with the three choices inline — a submenu there was a menu whose only item was a menu.
+- **A facet opened onto a board that doesn't count finds nothing, and the page says why.** The
+  facet narrows whatever the wall is showing, and it asks only about saves that count — so on such
+  a board every facet is empty, and the old copy called the board empty while it was full.
+  `SavedView.emptyAction` now says nothing *that counts* reads as that facet.
 - **It never hides anything.** Left-out saves are on the wall, in search and on their boards
   exactly as before — the rule is about what the app *learns*, which is the same promise the style
   statement and the size profile make.
