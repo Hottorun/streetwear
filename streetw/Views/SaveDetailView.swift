@@ -102,16 +102,21 @@ struct SaveDetailView: View {
         let stock = stock()
         let colorways = self.colorways
         let checkout = update?.checkoutLink(profile: sizes.profile, colorway: selectedColorway)
+        let gallery = save.galleryURLs
 
         return NavigationStack(path: $path) {
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
-                    if let update, !update.imageURLs.isEmpty {
+                    if let update, !gallery.isEmpty {
                         // The whole set, paged, not just the first frame. You kept this
                         // particular thing; the other seven photographs of it are already
                         // on the phone.
+                        //
+                        // Led by the cover, the photograph the wall shows for this tile — so
+                        // opening it lands on the picture that was tapped rather than on the
+                        // brand's lookbook frame. Reordered, never filtered.
                         ImageGallery(
-                            urls: update.imageURLs,
+                            urls: gallery,
                             kind: update.kind,
                             isZoomable: true,
                             // The same fixed sweep the wall uses. Opening a tile must not
@@ -120,6 +125,7 @@ struct SaveDetailView: View {
                             mark: update.brandLabel,
                             selection: $imageIndex
                         )
+                        .overlay(alignment: .bottomLeading) { coverControl(gallery) }
                     }
 
                     VStack(alignment: .leading, spacing: 26) {
@@ -128,8 +134,13 @@ struct SaveDetailView: View {
                         if !colorways.isEmpty {
                             ColorwaySection(colorways: colorways, selected: $selectedColorway)
                                 .onChange(of: selectedColorway) { _, colour in
-                                    guard let index = update?.imageIndex(forColorway: colour) else { return }
-                                    withAnimation(.easeInOut(duration: 0.25)) { imageIndex = index }
+                                    // The catalogue's index is into the brand's order, and this
+                                    // gallery leads with the cover — so it is found by URL.
+                                    guard let update,
+                                          let index = update.imageIndex(forColorway: colour),
+                                          let position = gallery.firstIndex(of: update.imageURLs[index])
+                                    else { return }
+                                    withAnimation(.easeInOut(duration: 0.25)) { imageIndex = position }
                                 }
                         }
                         if let update {
@@ -169,6 +180,7 @@ struct SaveDetailView: View {
                         )
                         boardPicker
                         typePicker
+                        tastePicker
                     }
                     .padding(.horizontal, 20)
                 }
@@ -421,14 +433,14 @@ struct SaveDetailView: View {
     /// has just decided this thing belongs with something else.
     private var boardPicker: some View {
         VStack(alignment: .leading, spacing: 10) {
-            DataLabel(text: "BOARD")
+            DataLabel(text: "BOARDS")
             // Wraps rather than scrolls: on a detail page you want to see every board at
-            // once, not hunt along a strip.
+            // once, not hunt along a strip. Each chip on its own — a save can be on several,
+            // so filing it on one never takes it off another.
             FlowRow(spacing: 8) {
                 ForEach(boards) { board in
-                    chip(label: board.name, isOn: save.board?.id == board.id) {
-                        save.board = save.board?.id == board.id ? nil : board
-                        try? context.save()
+                    chip(label: board.name, isOn: save.isFiled(on: board)) {
+                        CollectionEdit.toggle([save], on: board, in: context)
                     }
                 }
                 chip(label: boards.isEmpty ? "New board" : "+ New", isOn: false) {
@@ -445,12 +457,112 @@ struct SaveDetailView: View {
             HStack(spacing: 8) {
                 ForEach(SavedItem.SaveType.allCases) { type in
                     chip(label: type.label, isOn: save.type == type) {
-                        save.type = type
-                        try? context.save()
+                        CollectionEdit.keep([save], as: type, in: context)
                     }
                 }
             }
         }
+    }
+
+    /// Whether this is part of what the app reads your taste from. See `TasteRule`.
+    ///
+    /// On this page because this is where somebody is looking at one thing and deciding what
+    /// it is to them — the half of the page below the masthead is exactly that. The line under
+    /// the chips says when a *board* is deciding instead, because a setting that something else
+    /// is overriding without saying so is the same as a control that does not work.
+    private var tastePicker: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            DataLabel(text: "YOUR TASTE")
+            HStack(spacing: 8) {
+                chip(label: "Use it", isOn: !save.isExcludedFromTaste) {
+                    CollectionEdit.exclude([save], false, in: context)
+                }
+                chip(label: "Don't use it", isOn: save.isExcludedFromTaste) {
+                    CollectionEdit.exclude([save], true, in: context)
+                }
+            }
+            if let line = boardTasteLine {
+                DataLabel(text: line, size: 9)
+            }
+        }
+    }
+
+    /// What one of its boards is doing to this save's taste, when that is not what the chips
+    /// say. Read through `TasteRule` itself, so this cannot describe a different answer from
+    /// the one every taste engine is given.
+    private var boardTasteLine: String? {
+        let modes = Set(save.boards.map(\.tasteMode))
+        switch TasteRule.role(isExcluded: save.isExcludedFromTaste, boards: modes) {
+        case .mood:
+            let mood = save.boards.first { $0.tasteMode == .mood }?.name ?? ""
+            return "PART OF YOUR MOOD · \(mood.uppercased())"
+        case .ignored where !save.isExcludedFromTaste:
+            let board = save.boards.first { $0.tasteMode == .ignored }?.name ?? ""
+            return "LEFT OUT — \(board.uppercased()) DOESN'T COUNT"
+        default:
+            return nil
+        }
+    }
+
+    /// Which photograph stands for this on the wall, and the way to change it.
+    ///
+    /// On the photograph rather than in a menu, in the same corner chip the count already
+    /// uses: the question is about the picture being looked at, and an action that lives two
+    /// levels down from the thing it acts on is one nobody finds. The first frame is always the
+    /// cover — the gallery leads with it — so there the chip says so, and everywhere else it
+    /// offers to make this one the cover.
+    @ViewBuilder
+    private func coverControl(_ gallery: [URL]) -> some View {
+        if gallery.count > 1 {
+            let position = min(max(imageIndex, 0), gallery.count - 1)
+            Group {
+                if position == 0 {
+                    DataLabel(text: "COVER", size: 10, color: .ink)
+                } else {
+                    Button { setCover(gallery[position]) } label: {
+                        DataLabel(text: "SET AS COVER", size: 10, color: .ink)
+                    }
+                    .buttonStyle(.borderless)
+                }
+            }
+            .padding(.horizontal, 7)
+            .padding(.vertical, 4)
+            .background(Color.paper.opacity(0.92), in: Capsule())
+            .padding(12)
+        }
+    }
+
+    /// Makes this photograph the cover, measured, and keeps it on screen.
+    ///
+    /// The wall lays a tile out at its photograph's own shape and never crops, so a cover
+    /// needs its aspect — read off the copy the gallery has just drawn, which is already
+    /// decoded, and fetched only if it somehow is not. The gallery reorders to lead with the
+    /// new cover, so the index moves to 0 with it, or the page would jump to a different
+    /// photograph under the tap that chose this one.
+    private func setCover(_ url: URL) {
+        let rendition = ImageRendition.sized(url, width: Self.galleryWidth)
+        let aspect = ImageLoader.shared.cached(rendition).flatMap(Self.aspect(of:))
+        guard save.setCover(url.absoluteString, aspect: aspect) else { return }
+        try? context.save()
+        imageIndex = 0
+        guard aspect == nil, save.coverImageURLString == url.absoluteString else { return }
+        Task {
+            guard let image = try? await ImageLoader.shared.load(rendition, width: Self.galleryWidth),
+                  !save.isGone, save.coverImageURLString == url.absoluteString
+            else { return }
+            save.coverAspect = Self.aspect(of: image)
+            try? context.save()
+        }
+    }
+
+    /// The width `ImageGallery` draws at by default, so the cached rendition is the one on
+    /// screen rather than a second request for the same photograph.
+    private static let galleryWidth = 400
+
+    /// `nonisolated` so it can be handed to `flatMap` as a function reference — the same
+    /// reason as `FitCanvas.itemID(fromPayload:)`.
+    private nonisolated static func aspect(of image: UIImage) -> Double? {
+        image.size.height > 0 ? Double(image.size.width / image.size.height) : nil
     }
 
     private func chip(label: String, isOn: Bool, action: @escaping () -> Void) -> some View {
@@ -469,12 +581,8 @@ struct SaveDetailView: View {
     /// Filing straight onto a board that did not exist a second ago, which is the usual
     /// way a board gets made: you find the second thing that belongs with the first.
     private func createBoard() {
-        let name = newBoardName.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !name.isEmpty else { return }
-        let created = Board(name: name, sortIndex: (boards.map(\.sortIndex).max() ?? 0) + 1)
-        context.insert(created)
-        save.board = created
-        try? context.save()
+        guard let created = CollectionEdit.newBoard(named: newBoardName, after: boards, in: context) else { return }
+        CollectionEdit.file([save], on: created, in: context)
     }
 
     private func commit() {

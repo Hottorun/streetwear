@@ -986,7 +986,11 @@ volume; and only the *unexpected* is worth a buzz (`Notifier.isWorthWaking`), on
 
 The saved wall, the archive page, and everything the photograph is asked. `SaveConfirmation`
 completes a save unconditionally and then *offers* to amend it — filing is never a question asked
-before the save. Boards are **filters, not folders** (`.nullify`, never cascade). The wall never
+before the save. Boards are **filters, not folders** (`.nullify`, never cascade), and a save can be
+on several (`SavedItem.boards`). The old to-one `board` is copied across and emptied once at launch
+by `BoardFiling.adoptLegacy`; keep the property until every install has run that pass. Which saves
+count for taste is **one rule**, `TasteRule.role` reached through `TasteScope` — a new taste
+consumer goes through it, or Your taste and the recommendations disagree about the same save. The wall never
 crops and does not invert: `Color.sweep` is the one fixed colour in the app, because photographs
 don't invert either.
 

@@ -43,10 +43,47 @@ Part of the streetw guidance set; see `CLAUDE.md` for the index and the build ru
     dismissible toast is right for a save you just made and watched happen, and the wrong shape
     for an offer you might not be there for. Raising both would be two answers to one share.
 
-- **Boards are filters, not folders.** `SavedItem.board` is optional and
-  `Board.items` deletes with `.nullify` — removing a board must never take the saved
-  things with it. `SaveType` (Inspiration/Wardrobe) is a separate axis and an item can be
-  on both.
+- **Boards are filters, not folders.** `Board.saves` deletes with `.nullify` — removing a
+  board must never take the saved things with it. `SaveType` (Inspiration/Wardrobe) is a
+  separate axis and an item can be on both.
+- **…and a save can be on several boards** (`SavedItem.boards` ↔ `Board.saves`, many-to-many,
+  a cascade in neither direction). 1.0 had a to-one `SavedItem.board`, which made a board a
+  folder in everything but name: the jacket from the Tokyo trip could be on "Tokyo" or on
+  "Outerwear", and filing it on the second silently took it off the first. Every picker is a
+  set of toggles now, and `CollectionEdit` is the one place that files, unfiles and guards the
+  no-op write (`context.save()` invalidates every `@Query`).
+- **The old filings were moved by a launch pass, not by a schema migration plan.**
+  `BoardFiling.adoptLegacy` runs in `streetwApp.init`, before any view exists, copies each
+  `board` into `boards` and clears `board` **in the same save** — so it is atomic, idempotent
+  (the second launch finds nothing) and cannot resurrect a filing somebody later removes. The
+  alternatives were both worse for stores already on phones: a `VersionedSchema` has to restate
+  all eight models exactly as 1.0 shipped them, and one mismatch is a container that will not
+  open; changing the cardinality in place relies on Core Data inferring that a foreign key
+  should become join-table rows, which is undocumented. Adding a brand-new relationship is the
+  one change a lightweight migration cannot get wrong. Verified by installing over a store
+  written by the 1.0 build (five filings across two boards, one with a note): all five arrived
+  in the join table, `ZBOARD` was empty, nothing else moved. **`SavedItem.board` and
+  `Board.items` stay in the schema and are read by nothing else** — do not reuse them, and do
+  not delete them until every install has launched a build with the pass.
+- **Select mode is the platform's, and it works the same on every view of the wall.**
+  "Select" in the bar, taps toggle, a row above the tab bar acts on the lot: Boards (a sheet
+  with all/some/none per board — a partial selection is filed, a full one unfiled), Take off
+  (on a board page only, and unasked, because nothing is lost), Keep as, Fit, Taste and Delete.
+  Delete is **always** confirmed, unlike one bare bookmark: it is the one place a single tap
+  removes many things, any of which may carry a note. The selection holds only what is on the
+  wall — switching filter, searching or an action that moves items out of view drops them,
+  because an action on things you cannot see is not one you chose. Both toolbar items are
+  trailing; a leading text button beside `.searchable` folds into a "···" menu. Tiles are
+  guarded with `SavedItem.isGone`, the `Fit.isGone` rule, because a bulk delete removes rows a
+  lazy stack may still draw for one pass. Two details found by driving it: the bar's labels set
+  their own ink, which `.disabled` does not dim, so `SelectionBarLabel` reads `isEnabled` — with
+  nothing selected every action was drawn as if it would act; and the delete confirmation hangs
+  off the Delete button, because on iOS 26 it is a popover pointing at whatever it is attached
+  to, and from the page it pointed at the title.
+- **A fit started from a selection is not stored until it is saved.** `FitCanvas(fit: nil,
+  starting:board:)` lays the pieces out with `FitArrangement` (stepping apart two that want the
+  same spot) and files it on the board it was begun from; closing the canvas leaves nothing,
+  which is the contract `StyleView.keep` learned the hard way.
 - **The wall never crops.** The feed's grid fills its tiles because a grid of thumbnails
   needs one rhythm; the archive is the opposite — you kept these particular photographs, so
   `CollectionTile` draws `.fit` and takes the picture's measured aspect as the tile's shape.
@@ -169,10 +206,32 @@ Part of the streetw guidance set; see `CLAUDE.md` for the index and the build ru
   one detection on an image already in hand, and no further photograph is fetched. And when
   detection is unavailable it answers *false*, which degrades to "keep what the brand put
   first" rather than wandering the gallery. `packshotURLString` is stored beside the images
-  rather than replacing `primaryImageURL`, because the lead shot is still what the feed, the
-  gallery and the collection wall should show — but `FitPieceImage` falls back to the
-  packshot, and **`FitRender.warm` has to ask for the same URL at the same width** or the
-  renderer finds an empty cache and writes a fit with a hole in it.
+  rather than replacing `primaryImageURL`, because the lead shot is still what the feed,
+  Discover and the product page show — but `FitPieceImage` falls back to the packshot, and
+  **`FitRender.warm` has to ask for the same URL at the same width** or the renderer finds an
+  empty cache and writes a fit with a hole in it.
+- **On the wall and on a save's own page, the packshot is the cover** (`SavedItem.coverURLString`).
+  This reverses the line above for exactly two surfaces, on purpose. A feed card is an
+  announcement and the styling is part of it, so the feed and Discover keep the brand's first
+  photograph. A wall of things somebody kept is a collection of *garments*, and Stüssy's
+  model-first galleries put a person in boots on the wall to stand for a shirt. The order is a
+  cover chosen by hand ("Set as cover", on the photograph in `SaveDetailView`), then the
+  packshot, then the lead shot — so **where no packshot is known nothing changes**. Both stored
+  answers are honoured only while they are still one of the product's image strings, because
+  `SharedSaveImporter.repair` can replace a share's whole gallery. The page's gallery *leads*
+  with the cover and is never filtered (`SavedItem.galleryURLs`); a colourway's photograph is
+  found in it by URL, since the catalogue's index is into the brand's order. Choosing the
+  photograph the automatic rule would pick anyway **clears** the choice rather than pinning it,
+  which is the way back and means a better packshot found later still arrives. **The cover is a
+  display choice and nothing else**: the cutout, the colour and the silhouette are still
+  measured on the packshot, and a fit's piece still falls back to it — somebody choosing a
+  lookbook frame to *look at* has not said it is a better photograph to *measure*.
+- **The wall's tile shape is the cover's shape.** `imageAspect` is measured on the photograph
+  `ImageTagger` analysed, which is the packshot — so until this the wall drew the lead shot in
+  a tile shaped for the packshot, letterboxing every model-first gallery. It is now written
+  whenever the packshot is chosen, not only when the tags are due, so a pass that re-picks it
+  for the cutout alone keeps the tile honest. A cover chosen by hand carries its own
+  `coverAspect`, read off the copy the gallery has just drawn. The wall still never crops.
 - **`Seamless` cannot lift a light garment off a light sweep, by construction**, and that is
   a correct refusal rather than a bug. Measured against real catalogues: it lifts 10/10 of
   Kith's photography (border spread 0.000, erasing ~90%), and refuses a white BAPE crewneck
@@ -192,3 +251,63 @@ Part of the streetw guidance set; see `CLAUDE.md` for the index and the build ru
   belong to reads as a bug rather than a suggestion. Suggestions are recomputed from the wardrobe
   and deterministic, so the row doesn't reshuffle on every render; keeping one turns it into a
   stored `Fit` and it stops being regenerated.
+
+## Leaving things out of your taste
+
+Every engine that infers taste used to read the whole collection, which is wrong in two ordinary
+ways: a board kept for somebody else taught them the wrong thing for as long as it existed, and a
+person is not one taste — suits and streetwear are one wardrobe in two moods. A board now has a
+`TasteMode` (*counts*, the default; *doesn't count*; *inspire me from this*, the mood) and a save
+has its own "don't use for my taste" (`isExcludedFromTaste`).
+
+- **One rule, in the core, and every consumer asks it.** `TasteRule.role` turns a save's flag and
+  its boards' modes into *ignored*, *counts* or *mood*; `TasteScope` (in the app) gathers what that
+  needs and hands out the sets below. A reading on one tab built from a different set than the
+  ranking on the next is how a count starts to look broken, and five consumers each filtering by
+  hand is how that would have happened. Precedence: the save's own flag beats everything (the most
+  specific statement there is), the mood beats a board that doesn't count (put there on purpose,
+  and current), and that beats the default (which is not a statement).
+- **Who reads which set**, and the reason for each line:
+
+  | Consumer | Reads | Why |
+  |---|---|---|
+  | Your taste (`StyleProfile`), its facets (`CollectionFacet.matches`) | `counted` | It is a reading of you. The facet asks the same saves the same question, or "Black · 12" opens onto fourteen |
+  | Brand suggestions' taste vector (`BrandRecommendations`) | `weighted` | Inferring taste; the mood leant on |
+  | Discover's taste vector (`DiscoverFeedView.deckContext`) | `weighted` over the pairing pool plus the mood's saves | Inferring taste; a mood of tailoring kept as inspiration is exactly what leaning on it should read |
+  | "Goes with your …" (`GoesWith`), `FitStudio`, Discover's pairing and `WardrobeGap` | `pairingPool` | What you *have*: the wardrobe whatever its setting, because owning something is a fact and liking it is not. Only the everything-kept fallback goes through the rule — there a save stands in for "you", and one you said is not you is the one known not to be |
+  | Fit suggestions and their gaps (`FitSuggestions`, `FitCandidates.gaps`) | `fitPool`, leaning on the mood | The wardrobe, plus the inspiration that counts |
+  | What's missing | the wardrobe, else `counted` | Same as the pairing pool, for the same reason |
+  | The fit canvas tray, a fit started from a selection | everything | A person choosing pieces is not an inference |
+
+- **The mood carries half of a taste vector, however small the board is** (`TasteRule.weights`).
+  Each mood save weighs `max(1, ordinary / mood)`, so the board together weighs as much as the rest
+  together. A fixed multiplier does not survive a real collection — six suits against two hundred
+  saves at three times the weight is a mood that does nothing — and replacing the vector outright
+  would forget that it is the same person. Thresholds (`minimumSavesToRank`, eight) count distinct
+  saves, never weight: a mood board of three is not a taste of eight because it is leant on. The
+  fit row leans by sorting the mood's pieces into the search pool first and lifting a proposal by
+  `moodLean × share of it that is the mood`; it reorders and never admits.
+- **One mood at a time** (`CollectionEdit.setTaste`). Choosing one puts any other mood board back
+  to counting, which its own menu then shows. Two boards each claiming to be the source of taste
+  would be two leans averaged into neither.
+- **It is said wherever it changes something.** A board on anything but the default says so under
+  the mode strip, and the line is the menu that changes it; the Style tab's reading says how many
+  saves it left out, and the fit row says which board it is leaning towards; a save's own page
+  says when a board, rather than its own chips, is deciding. A setting that changes three tabs and
+  is visible only inside a menu is indistinguishable from those tabs misbehaving. The line *is* the
+  menu, with the three choices inline — a submenu there was a menu whose only item was a menu.
+- **A facet opened onto a board that doesn't count finds nothing, and the page says why.** The
+  facet narrows whatever the wall is showing, and it asks only about saves that count — so on such
+  a board every facet is empty, and the old copy called the board empty while it was full.
+  `SavedView.emptyAction` now says nothing *that counts* reads as that facet.
+- **It never hides anything.** Left-out saves are on the wall, in search and on their boards
+  exactly as before — the rule is about what the app *learns*, which is the same promise the style
+  statement and the size profile make.
+- **Every derivation keyed on the collection is keyed on the scope too.** `TasteScope` is
+  `Equatable` and sits in `StyleView`'s fingerprint, `BrandRecommendations.Key` and
+  `DiscoverFeedView.DeckKey`, because flipping one save's flag or choosing a mood changes no count
+  and no photograph stamp — without it the reading would go on including the save until something
+  unrelated moved. The consumers that need boards ask only for `Board.shapingTaste`, the boards
+  with a setting, which is usually none.
+- **Local, like everything else about taste.** Board modes and the per-save flag never leave the
+  phone; the taste vectors are computed here and only the comparison uses what the server sent.

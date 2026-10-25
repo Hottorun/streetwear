@@ -292,7 +292,7 @@ enum SharedSaveImporter {
             return
         }
         guard updates.count == 1, let only = updates.first else { return }
-        confirm?.confirm(only, destination: only.save?.board?.name ?? only.save?.type.label ?? "Inspiration")
+        confirm?.confirm(only, destination: only.save?.destinationLabel ?? "Inspiration")
     }
 
     private static func row(for externalID: String, in context: ModelContext) -> BrandUpdate? {

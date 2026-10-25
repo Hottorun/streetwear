@@ -79,6 +79,14 @@ nobody here follows, which is where it is worth the most.
   failure arriving through the supply instead of the ranking. Scrolling past one does **not**
   mark it seen; `isSeen` belongs to the feed, and clearing somebody's queue as a side effect of
   looking at another tab would be the app deciding they had read something they had not.
+- **The deck reads two different sets of saves, on purpose** (`deckContext(taste:)`). The
+  *pairing* — "goes with your …", `WardrobeGap` — reads `TasteScope.pairingPool`: the wardrobe
+  whatever its taste setting, because a jacket somebody left out of their taste is still in the
+  cupboard and still goes with the trousers. The *taste vector* reads the same saves less anything
+  left out, **plus the mood board's saves wherever they are filed**, leant on to half the vector —
+  a mood of tailoring kept as inspiration is what somebody leaning on it wants the ranking to read.
+  `TasteScope` is in `DeckKey`, since flipping one save's flag moves none of its counts. See
+  `docs/collection.md`, *Leaving things out of your taste*.
 - **Deterministic, with no RNG.** Variety between two people comes from their wardrobes differing
   and between two sessions from the seen-ledger; a random number would cost the property that
   scrolling back shows the same card, which is `FeedView`'s lesson about a list that reorders
