@@ -39,6 +39,8 @@ struct FeedFilterRow: View {
                     Rectangle()
                         .fill(Color.hairline)
                         .frame(width: 1, height: 13)
+                        // Level with the words rather than with the word and its rule.
+                        .offset(y: -3)
                     brandMenu
                         .id(Self.brandID)
                 }

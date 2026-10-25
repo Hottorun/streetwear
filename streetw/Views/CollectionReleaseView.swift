@@ -71,7 +71,7 @@ struct CollectionReleaseView: View {
     /// Saved *or* watched, because both are the same statement made in different tenses: one
     /// is "I want this" and the other is "I want this the moment it exists". Watched first,
     /// since a standing watch is the more urgent of the two.
-    private let columns = [GridItem(.flexible(), spacing: 14), GridItem(.flexible(), spacing: 14)]
+    private let columns = [GridItem(.flexible(), spacing: 14, alignment: .top), GridItem(.flexible(), spacing: 14, alignment: .top)]
 
     var body: some View {
         let release = read()

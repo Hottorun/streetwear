@@ -17,7 +17,7 @@ struct DropPiecesView: View {
     let kind: UpdateKind
     let pieces: [BrandUpdate]
 
-    private let columns = [GridItem(.flexible(), spacing: 14), GridItem(.flexible(), spacing: 14)]
+    private let columns = [GridItem(.flexible(), spacing: 14, alignment: .top), GridItem(.flexible(), spacing: 14, alignment: .top)]
 
     var body: some View {
         // Rows can go while this is open — unfollowing from the brand page one push deeper
