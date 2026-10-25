@@ -45,6 +45,21 @@ struct RetailerSitemapTests {
         #expect(!http.requestedKeys.contains { $0.contains("/category") })
     }
 
+    /// Typed without the `www.`, as people type it. The apex's robots.txt redirects to a
+    /// file `www.` does not have, so only `www.`'s own robots.txt names the sitemap — and
+    /// reading the apex alone demoted Hollister to a page watch, live, on both macOS and Linux.
+    @Test("Hollister typed without www still finds the sitemap www's robots.txt names")
+    func detectsHollisterFromTheApex() async throws {
+        let http = hollister()
+        http.stub(host: "hollisterco.com", "/robots.txt", .init(status: 404))
+        http.stub(host: "www.hollisterco.com", "/robots.txt", fixture: "hollister_robots.txt")
+
+        let pinned = await SitemapSource.detect(at: URL(string: "https://hollisterco.com")!, http: http)
+
+        #expect(pinned?.absoluteString
+            == "https://www.hollisterco.com/api/ecomm/util/sitemap/product?targetStoreId=10251&targetLangId=-1")
+    }
+
     /// No `lastmod` on any of the 2,123: the rule that skipped such entries read none of it.
     @Test("Hollister: entries with no date and no photograph are products all the same")
     func readsHollister() async throws {

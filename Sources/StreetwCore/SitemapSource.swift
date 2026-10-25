@@ -476,12 +476,26 @@ public struct SitemapSource: SourceAdapter {
         http: any HTTPFetching = Net.live
     ) async -> URL? {
         let preference = LocalePreference.of(hint ?? base)
-        var roots = await robotsSitemaps(at: base, http: http, preferring: preference)
-        for path in ["/sitemap.xml", "/sitemap_index.xml"] {
-            var components = URLComponents(url: base, resolvingAgainstBaseURL: false)
-            components?.path = path
-            components?.query = nil
-            if let url = components?.url, !roots.contains(url) { roots.append(url) }
+
+        // **The host that was typed, then its `www.` twin, and nothing else** — the swap
+        // `ShopifySource.resolve` makes, for the same reason and with the same limit (every
+        // other subdomain is a region). Hollister's apex answers `/robots.txt` with a
+        // redirect to `/robots-hollisterco.com.txt` on `www.`, which is a 404, while
+        // `www.`'s own robots.txt names the sitemap: typed the way people type it, without
+        // the `www.`, the shop read as having no sitemap at all and fell to a page watch.
+        let hosts = [base, ShopifySource.wwwVariant(of: base)].compactMap { $0 }
+        var roots: [URL] = []
+        for host in hosts {
+            roots = await robotsSitemaps(at: host, http: http, preferring: preference)
+            if !roots.isEmpty { break }
+        }
+        for host in hosts {
+            for path in ["/sitemap.xml", "/sitemap_index.xml"] {
+                var components = URLComponents(url: host, resolvingAgainstBaseURL: false)
+                components?.path = path
+                components?.query = nil
+                if let url = components?.url, !roots.contains(url) { roots.append(url) }
+            }
         }
 
         let adapter = SitemapSource(http: http)
