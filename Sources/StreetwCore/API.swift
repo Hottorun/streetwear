@@ -570,6 +570,15 @@ public struct FeedItem: Codable, Sendable, Hashable, Identifiable {
     /// decodes without them, and a server older than this sends none.
     public var previousPriceText: String?
     public var previousPriceAmount: Double?
+    /// What the brand says the product cost before it was marked down — its own
+    /// compare-at price — beside `priceText`, which is what it costs now. Both describe the
+    /// product as it is, not as it was when the event fired, so the pair always agrees.
+    ///
+    /// Sent for any kind, not only a markdown: a product that went live already discounted
+    /// is announced as a drop and still says "−30%". Optional, and ignored by the 1.0 app,
+    /// which decodes without it.
+    public var originalPriceText: String?
+    public var originalPriceAmount: Double?
     public var isAvailable: Bool?
     /// Sizes that came back in a restock, already narrowed to ones the user wears.
     public var restockedSizes: [String]
@@ -639,6 +648,15 @@ public struct FeedItem: Codable, Sendable, Hashable, Identifiable {
 
     public var updateKind: UpdateKind { UpdateKind(rawValue: kind) ?? .product }
 
+    /// The kind, or nil for one this build has never heard of.
+    ///
+    /// `updateKind` falls back to `.product`, which is what 1.0 does with an unknown kind —
+    /// and it is exactly the misreading `FeedKinds` exists to keep from happening: a row
+    /// with no garment behind it drawn as a new product, counted in "N new products" and
+    /// handed a drop's lead slot. The server only sends what this build named, so an unknown
+    /// kind here is a server bug or a newer server ignoring the request; the merge skips it.
+    public var knownKind: UpdateKind? { UpdateKind(rawValue: kind) }
+
     /// Never nil: an absent or unrecognised value means we don't know, which is a real
     /// answer and one that is never filtered out.
     public var itemGender: Gender {
@@ -658,6 +676,8 @@ public struct FeedItem: Codable, Sendable, Hashable, Identifiable {
         priceText: String? = nil,
         previousPriceText: String? = nil,
         previousPriceAmount: Double? = nil,
+        originalPriceText: String? = nil,
+        originalPriceAmount: Double? = nil,
         isAvailable: Bool? = nil,
         restockedSizes: [String] = [],
         availableInMySize: Bool = false,
@@ -681,6 +701,8 @@ public struct FeedItem: Codable, Sendable, Hashable, Identifiable {
         self.priceText = priceText
         self.previousPriceText = previousPriceText
         self.previousPriceAmount = previousPriceAmount
+        self.originalPriceText = originalPriceText
+        self.originalPriceAmount = originalPriceAmount
         self.isAvailable = isAvailable
         self.restockedSizes = restockedSizes
         self.availableInMySize = availableInMySize
@@ -691,6 +713,51 @@ public struct FeedItem: Codable, Sendable, Hashable, Identifiable {
         self.genderVersion = genderVersion
         self.productExternalID = productExternalID
         self.memberExternalIDs = memberExternalIDs
+    }
+}
+
+/// Which kinds of event a client can draw, so the server never sends it one it cannot.
+///
+/// **1.0 cannot be told about a kind it does not know.** It decodes `FeedItem.kind` as a
+/// string and maps anything it does not recognise onto `.product` — so a `.sale` would land
+/// as a new product with no photograph, be counted in the spread's "N new products", and,
+/// being sudden, take the lead slot reserved for a drop. Nothing would crash; everything
+/// would be wrong, on the build that cannot be changed.
+///
+/// So a client names what it understands in `?kinds=` on `GET /v1/feed` and
+/// `GET /v1/brands/:id/feed`, and the server sends only those. A request that names nothing
+/// — every request 1.0 makes — gets `legacy`, the seven kinds 1.0 shipped with. A kind added
+/// later is therefore invisible to every client until it says it can draw it, and adding one
+/// never needs a change here: `understood` is this build's own `UpdateKind.allCases`.
+///
+/// The filter is applied to the window a read pages through, and the kinds travel inside
+/// the continuation, so one read is one set of kinds from its first page to its last.
+public enum FeedKinds {
+    public static let parameter = "kinds"
+
+    /// What the 1.0 app decodes. Frozen: a kind added after it never joins this list.
+    public static let legacy: [UpdateKind] = [
+        .product, .restock, .collection, .post, .pageChange, .dropLock, .priceDrop
+    ]
+
+    /// This build's whole vocabulary, as the value of `?kinds=`.
+    public static var understood: String {
+        UpdateKind.allCases.map(\.rawValue).joined(separator: ",")
+    }
+
+    /// The kinds a request may be sent, as raw values.
+    ///
+    /// Only kinds *this* side knows survive — nothing else exists in its tables, and it
+    /// bounds the filter whatever a client sends. A request that names none of them is read
+    /// as naming nothing, and gets `legacy`.
+    public static func accepted(_ raw: String?) -> [String] {
+        let named = Set(
+            (raw ?? "")
+                .split(separator: ",")
+                .map { $0.trimmingCharacters(in: .whitespaces) }
+        )
+        let known = UpdateKind.allCases.map(\.rawValue).filter(named.contains)
+        return known.isEmpty ? legacy.map(\.rawValue) : known
     }
 }
 

@@ -20,8 +20,9 @@ import Foundation
 ///
 /// - **Everything** — today's behaviour, and the default for every follow that does not say
 ///   otherwise. That includes every follow the 1.0 app makes, which has no way to say.
-/// - **Sales only** — markdowns, and later a brand-wide sale; nothing else reaches the feed
-///   or the lock screen. For the huge catalogue somebody follows to watch prices.
+/// - **Sales only** — markdowns and brand-wide sales; nothing else reaches the feed or the
+///   lock screen, and only a sale is worth a buzz. For the huge catalogue somebody follows
+///   to watch prices.
 /// - **Quiet** — nothing reaches the feed or the lock screen at all. The brand is still
 ///   followed: still polled, still on the brand list and its own page, still counted by the
 ///   recommendations and (later) searched.
@@ -56,10 +57,10 @@ public enum FollowMode: String, Codable, Sendable, CaseIterable, Identifiable {
     ///
     /// The one rule, asked by the feed on the phone (in both modes) and by `Notifier` on the
     /// server. It is a *filter*, never a promotion: a push still needs
-    /// `Notifier.isWorthWaking` as well, so *Sales only* sends nothing a markdown would not
-    /// have sent under *Everything* — today that is nothing, because a markdown is not
-    /// sudden. What it changes is that the brand's daily arrivals stop reaching the feed and
-    /// the lock screen; what sales are worth a buzz is `UpdateKind`'s question.
+    /// `Notifier.isWorthWaking` as well, so *Sales only* sends nothing *Everything* would
+    /// not have sent — a brand-wide `.sale`, never a single markdown, which is not sudden.
+    /// What it changes is that the brand's daily arrivals stop reaching the feed and the
+    /// lock screen; what sales are worth a buzz is `UpdateKind`'s question.
     ///
     /// What *Sales only* lets through is `UpdateKind.isSale`, not a list here — so a new
     /// sale kind is one case in one switch and both ends pick it up.
