@@ -11,7 +11,7 @@ Center** — but answer the specific guideline they cite rather than re-sending 
 no paywall; every screen is reachable on a fresh install.
 
 **Keep this file in step with the app.** It makes factual claims — which endpoints are read,
-that checkout is never touched, that Instagram is never fetched — and each one is enforced in
+that the app has no checkout of its own, that Instagram is never fetched — and each one is enforced in
 code today. If any of that changes, this text becomes a false statement to App Review, which is
 a much worse problem than the change itself.
 
@@ -57,9 +57,11 @@ screen, loaded from the brand's own server and served for exactly that purpose. 
 photographs are loaded directly from the brand's own content delivery network and shown
 alongside the brand's name, the product's name and its price.
 
-Every product links out to that product's page on the brand's own store. The app has no
-checkout, takes no commission, sells nothing, and does not touch resale or reseller data. It
-sends buyers to the brand.
+Every product links out to the brand's own store: to the product's page, or, on a Shopify
+store when exactly one available size matches the sizes the reader saved, to that store's own
+cart link for that size, which opens the brand's checkout in Safari or in the brand's app. The
+app has no checkout of its own, takes no commission, sells nothing, and does not touch resale or
+reseller data. It sends buyers to the brand.
 
 The Universal Commerce Protocol integration is deliberately read-only. The protocol also
 offers cart and checkout operations; the app implements none of them and its published agent
