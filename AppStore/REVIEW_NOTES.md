@@ -19,12 +19,14 @@ a much worse problem than the change itself.
 
 ## The text to paste
 
-Dropwall watches streetwear brands for new releases, restocks and price drops, and lets you
-keep the pieces you care about in a private local archive.
+Dropwall watches clothing brands and shops — menswear and womenswear, any kind of clothing —
+for new releases, restocks, sales and price drops, and lets you keep the pieces you care about
+in a private local archive.
 
 There is no account, no sign-in and no purchase. On first launch you are offered a short list
 of suggested brands — tapping two or three of them is enough to populate the feed, and the
-Style, Saved and Calendar tabs are all reachable immediately. If the feed looks empty, it is
+Feed, Shop and Saved tabs, and the You page behind the person icon at the top right, are all
+reachable immediately. If the feed looks empty, it is
 because no brand has published anything in the last few minutes; the brand's own page shows
 its full catalogue right away.
 

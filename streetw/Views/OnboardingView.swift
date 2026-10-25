@@ -16,7 +16,7 @@
 //    question is "do you want to know when *these* drop", which is a question with an
 //    obvious answer.
 //
-// Every step is skippable and everything set here is editable later in Settings.
+// Every step is skippable and everything set here is editable later, on You.
 
 import StreetwCore
 import SwiftData
@@ -33,19 +33,32 @@ struct StarterBrand: Identifiable, Hashable {
 }
 
 enum StarterPack {
-    /// Chosen to span the range rather than to rank: a couple of the obvious ones, some
-    /// that drop unpredictably, and some whose whole appeal is that they sell out.
+    /// **Any kind of clothing, menswear and womenswear in equal number.** The pack was ten
+    /// streetwear labels, nine of them cut for men, which told everybody else on the first
+    /// screen that the app was not for them — while the app itself watches any shop with a
+    /// website and reads dress and suit sizes as carefully as sneakers. So: six womenswear
+    /// shops and six menswear or unisex, alternating so neither reads as the section after
+    /// the other; tailoring and fast fashion beside the labels that sell out; and still the
+    /// cases that show what the app is for — a Friday drop, a shock drop, a weekly programme,
+    /// and a shop whose daily arrivals are best followed for its sales.
+    ///
+    /// Every one serves a public Shopify catalogue, checked when it was added, so the first
+    /// sync fills the feed in seconds. The notes are measured off each catalogue's own
+    /// publication dates in October 2026, not taken from the brands' marketing: a note is a
+    /// claim, and it is on the first screen anybody sees.
     static let brands: [StarterBrand] = [
         StarterBrand(name: "Kith", domain: "kith.com", note: "Weekly Monday programme"),
+        StarterBrand(name: "Staud", domain: "staud.clothing", note: "Dresses and bags, new in most weeks"),
         StarterBrand(name: "Aimé Leon Dore", domain: "aimeleondore.com", note: "Seasonal, sells out fast"),
-        StarterBrand(name: "Stüssy", domain: "stussy.com", note: "Steady drops, deep archive"),
-        StarterBrand(name: "Billionaire Boys Club", domain: "bbcicecream.com", note: "Frequent restocks"),
-        StarterBrand(name: "Noah", domain: "noahny.com", note: "Small runs, quiet releases"),
-        StarterBrand(name: "Awake NY", domain: "awakeny.com", note: "Limited, collab-heavy"),
+        StarterBrand(name: "Faithfull the Brand", domain: "faithfullthebrand.com", note: "A new collection about once a month"),
+        StarterBrand(name: "Drake's", domain: "drakes.com", note: "Tailoring, ties and knitwear"),
+        StarterBrand(name: "Rixo", domain: "rixo.co.uk", note: "Printed dresses, new pieces every week"),
         StarterBrand(name: "Carhartt WIP", domain: "carhartt-wip.com", note: "Broad catalogue, regular restocks"),
-        StarterBrand(name: "Represent", domain: "representclo.com", note: "Scheduled seasonal drops"),
+        StarterBrand(name: "With Jean", domain: "withjean.com", note: "A new edit every few weeks"),
         StarterBrand(name: "Palace", domain: "palaceskateboards.com", note: "Friday drops, gone in minutes"),
-        StarterBrand(name: "Corteiz", domain: "crtz.xyz", note: "Unannounced — the shock-drop case")
+        StarterBrand(name: "Princess Polly", domain: "us.princesspolly.com", note: "New arrivals every day"),
+        StarterBrand(name: "Corteiz", domain: "crtz.xyz", note: "Unannounced — the shock-drop case"),
+        StarterBrand(name: "Fashion Nova", domain: "fashionnova.com", note: "Hundreds of new pieces a week — follow it for sales")
     ]
 }
 
@@ -174,7 +187,7 @@ struct OnboardingView: View {
         switch step {
         case .sizes: "Your sizes"
         case .gender: "What to show"
-        case .brands: "Start watching"
+        case .brands: "Your shops"
         case .howItWorks: "How it works"
         case .alerts: "Drop alerts"
         }
@@ -216,11 +229,11 @@ struct OnboardingView: View {
         case .gender:
             "Narrow the feed to what you'd actually wear."
         case .brands:
-            "Pick a few brands and Dropwall watches their catalogues for drops, restocks and the moment a storefront locks down."
+            "Pick a few to start with. Dropwall watches their catalogues for new arrivals, restocks, sales and the moment a storefront locks down — and any other shop can be added later by its website."
         case .howItWorks:
             "Four things that are easy to miss."
         case .alerts:
-            "A drop resolves in minutes. Dropwall can tell you the moment one of your brands releases something or restocks in your size."
+            "The best pieces go first. Dropwall can tell you the moment one of your shops releases something, goes on sale or restocks in your size."
         }
     }
 
@@ -346,7 +359,8 @@ struct OnboardingView: View {
     private var alertStep: some View {
         VStack(alignment: .leading, spacing: 16) {
             ForEach([
-                ("bolt.fill", "A brand you follow drops something new"),
+                ("bolt.fill", "A shop you follow drops something new"),
+                ("tag.fill", "A shop you follow goes on sale"),
                 ("arrow.clockwise", "Something comes back in your size"),
                 ("lock.fill", "A storefront locks down — usually minutes before a release")
             ], id: \.1) { symbol, line in
