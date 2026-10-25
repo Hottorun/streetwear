@@ -55,7 +55,7 @@ enum WatchNotifier {
             watch.firedSizes = back
             // Surfacing it in the feed as well as in a notification: an alert that is
             // swiped away should still leave the thing it was about somewhere findable.
-            update.isSeen = false
+            newestEvent(for: update, in: context).arrive()
             fired += 1
 
             await notify(update: update, watch: watch, sizes: back)
@@ -63,6 +63,27 @@ enum WatchNotifier {
 
         if fired > 0 { try? context.save() }
         return fired
+    }
+
+    /// The row the feed should surface for a fired watch: the garment's newest event, which
+    /// is not necessarily the one the watch was set on.
+    ///
+    /// In server mode every event is its own row and a watch points at whichever one it was
+    /// set from — often the drop, months old. The restock that fired it arrived as a row of
+    /// its own, stored read when the brand's mode keeps restocks out of the feed; surfacing
+    /// the drop instead put a card saying "NEW" at a date from spring above the line. The
+    /// feed shows one card per garment (`oncePerProduct`), and this is the row it would pick.
+    /// Standalone there is one row per garment, so it is the watch's own.
+    private static func newestEvent(for update: BrandUpdate, in context: ModelContext) -> BrandUpdate {
+        let product = update.productExternalID
+        guard product != nil else { return update }
+        let siblings = (try? context.fetch(FetchDescriptor<BrandUpdate>(
+            predicate: #Predicate { $0.productExternalID == product }
+        ))) ?? []
+        let brandID = update.brand?.id
+        return siblings
+            .filter { $0.brand?.id == brandID }
+            .min(by: BrandUpdate.newestFirst) ?? update
     }
 
     /// A local notification, which needs no APNs key and no server round trip.

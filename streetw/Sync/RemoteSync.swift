@@ -934,9 +934,16 @@ final class RemoteSync {
             update.refreshMerchandise()
             // History, or something this brand's mode does not let into the feed. The row is
             // still stored — the brand page is its catalogue, whatever reaches the feed — and
-            // it arrives read, so the feed, the counts and the rail never need to know the
-            // mode exists. See `Brand.apply`.
-            update.isSeen = asBaseline || !brand.followMode.admits(kind)
+            // it arrives read and with no arrival, so the feed and every count agree without
+            // knowing the mode exists. See `Brand.apply`.
+            //
+            // News is stamped with when it arrived, which is what places it against the
+            // feed's "since you were last here" line. See `BrandUpdate.arrivedAt`.
+            if asBaseline || !brand.followMode.admits(kind) {
+                update.isSeen = true
+            } else {
+                update.arrive()
+            }
             context.insert(update)
             // What the feed orders brands by, kept as a stored fact so the feed never has
             // to walk the store to work it out — see `Brand.lastActivityAt`.

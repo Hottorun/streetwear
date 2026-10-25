@@ -69,7 +69,8 @@ final class Brand {
     func noteActivity(_ date: Date) {
         if date > (lastActivityAt ?? .distantPast) { lastActivityAt = date }
     }
-    /// Last time the user actually looked at this brand's updates. Drives "new since".
+    /// Last time the user left this brand's page. Not what the feed's "since you were last
+    /// here" reads — that is one line for every brand, see `FeedVisit`.
     var lastOpenedAt: Date?
 
     /// From the storefront's /meta.json. Prices are meaningless without it.
@@ -97,6 +98,9 @@ final class Brand {
     @Relationship(deleteRule: .cascade, inverse: \BrandUpdate.brand)
     var updates: [BrandUpdate] = []
 
+    /// Deleted, or detached from its context — see `BrandUpdate.isGone`.
+    var isGone: Bool { isDeleted || modelContext == nil }
+
     init(
         name: String,
         websiteURL: URL? = nil,
@@ -117,17 +121,18 @@ final class Brand {
 
     var followMode: FollowMode { FollowMode(lenient: followModeRaw) }
 
-    /// Sets the mode, and takes out of the unread queue whatever it no longer lets through.
+    /// Sets the mode, and takes out of the feed whatever it no longer lets through.
     ///
     /// **The mode is decided where a row is written, not where the feed is drawn.** A row the
-    /// mode does not admit arrives already seen (`RemoteSync.merge`, `SyncEngine.insert`), so
-    /// the feed, every unread count and the brand rail agree without each learning the rule —
-    /// the alternative was a filter in five places and an unread queue that grew for ever,
-    /// since retention never drops anything unread. That leaves the rows that were already
-    /// unread when the mode changed, which is this: going quiet is "mark all seen" for the
-    /// kinds that will no longer arrive. Nothing is deleted — every row stays in the brand's
-    /// catalogue — and nothing is un-seen on the way back to *Everything*: what happened
-    /// while a brand was quiet is the brand's history, not news.
+    /// mode does not admit arrives already seen and with no arrival (`RemoteSync.merge`,
+    /// `SyncEngine.insert`), so the feed and every unread count agree without each learning
+    /// the rule — the alternative was a filter in five places and an unread queue that grew
+    /// for ever, since retention never drops anything unread. That leaves the rows that were
+    /// already news when the mode changed, which is this: going quiet takes the kinds that
+    /// will no longer arrive out of the feed's timeline as well as out of the unread queue.
+    /// Nothing is deleted — every row stays in the brand's catalogue — and nothing comes back
+    /// on the way to *Everything*: what happened while a brand was quiet is the brand's
+    /// history, not news.
     ///
     /// Walks `updates`, which faults the brand's catalogue. That is the right cost for a tap
     /// somebody makes once and for a sync that sees the mode change, and both callers only
@@ -135,8 +140,9 @@ final class Brand {
     func apply(_ mode: FollowMode) {
         guard followModeRaw != mode.rawValue else { return }
         followModeRaw = mode.rawValue
-        for update in updates where !update.isSeen && !mode.admits(update.kind) {
+        for update in updates where (!update.isSeen || update.arrivedAt != nil) && !mode.admits(update.kind) {
             update.isSeen = true
+            update.arrivedAt = nil
         }
     }
 
@@ -209,8 +215,8 @@ final class Brand {
     ///
     /// So: the storefront's own answer when we have it, the word match for rows written
     /// before we did, and **nothing at all** otherwise. A release we cannot name the
-    /// contents of prints no contents — `CollectionCard` and `CollectionReleaseView` both
-    /// draw an empty strip rather than a wrong one, which is the honest shape for a
+    /// contents of prints no contents — the feed's release card and `CollectionReleaseView`
+    /// both draw nothing rather than something wrong, which is the honest shape for a
     /// collection page a brand has announced and not yet filled.
     func members(
         of collection: BrandUpdate,

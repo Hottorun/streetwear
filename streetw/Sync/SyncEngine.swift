@@ -330,7 +330,8 @@ final class SyncEngine {
         // chart arrive through this function like everything else. See
         // `BrandUpdate.isMerchandise`.
         update.refreshMerchandise()
-        update.isSeen = markSeen
+        // News or history, decided once, here — see `BrandUpdate.arrivedAt`.
+        if markSeen { update.isSeen = true } else { update.arrive() }
         context.insert(update)
         // See `Brand.lastActivityAt`: the feed's sort order, stored so it never has to be
         // recomputed by walking every update the brand has.
@@ -372,32 +373,34 @@ final class SyncEngine {
         // restock is not news, and flagging it unread would put it there regardless.
         let admits = { (kind: UpdateKind) in update.brand?.followMode.admits(kind) ?? true }
 
+        // **The rewrite is a new arrival of the same row**, so it is restamped rather than
+        // left at the first sighting — or a restock this morning would sit below the line
+        // under last week's drop. And a rewrite the mode does not admit takes the row out of
+        // the feed: the event it was is gone, overwritten by one the brand asked not to show.
         if !returned.isEmpty || wholeProductReturned {
             update.kind = .restock
             update.restockedSizes = returned
             update.publishedAt = Date()
             update.brand?.noteActivity(update.publishedAt)
             if admits(.restock) {
-                update.isSeen = false
+                update.arrive()
                 newItemCount += 1
+            } else {
+                update.arrivedAt = nil
             }
         } else if dropped {
             update.kind = .priceDrop
             update.previousPriceText = update.priceText
             // The number as well as the string. `previousPriceText` can say "was €180";
-            // only this can say which of two markdowns is the better one, which is what
-            // the markdowns list is ordered by.
+            // only this can say how deep the cut is, which is what the card prints.
             update.previousPriceAmount = update.priceAmount
             update.publishedAt = Date()
             update.brand?.noteActivity(update.publishedAt)
-            // A second cut is a new markdown, so a dismissal of the first one is spent.
-            // This path *rewrites* the row rather than inserting one — in server mode every
-            // event is its own row and the question never arises — so without this, waving
-            // off a 10% cut in March would silently swallow the 40% cut in June.
-            update.markdownDismissedAt = nil
             if admits(.priceDrop) {
-                update.isSeen = false
+                update.arrive()
                 newItemCount += 1
+            } else {
+                update.arrivedAt = nil
             }
         }
 

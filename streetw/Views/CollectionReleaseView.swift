@@ -7,12 +7,10 @@
 // with nothing on it. "DENIM TEARS FW26" — the single most interesting thing a brand
 // posts all season — rendered as the emptiest card in the feed.
 //
-// So it gets its own two objects. `CollectionCard` announces the release in the feed, set
-// as type rather than as a photograph, and carries a strip of what came with it — which
-// is both the honest illustration and the only preview a collection can have.
-// `CollectionReleaseView` is the page behind it: the name, whatever the brand said about
-// it, and the grid of garments. `Brand.members(of:)` decides what belongs; see there for
-// why it is a heuristic and why that is the right trade.
+// So it gets its own page. In the feed a release is one card — a mosaic of what came with
+// it, "NEW · ALPINE CAPSULE", "6 PIECES · FROM $38" (`FeedCard`) — and this is the page
+// behind it: the name, whatever the brand said about it, and the grid of garments.
+// `Brand.members(of:)` decides what belongs; see there for what it trusts and in what order.
 
 import StreetwCore
 import SwiftData
@@ -192,9 +190,9 @@ struct CollectionReleaseView: View {
     }
 }
 
-/// One garment inside a release. A tile, not a card: the release is the subject here and
-/// the pieces are its contents.
-private struct MemberTile: View {
+/// One garment inside a release, or inside a drop that had no name (`DropPiecesView`). A
+/// tile, not a card: the release is the subject here and the pieces are its contents.
+struct MemberTile: View {
     @Environment(SizeProfileStore.self) private var sizes: SizeProfileStore
 
     let update: BrandUpdate
@@ -241,103 +239,5 @@ private struct MemberTile: View {
             }
             .clipped()
         }
-    }
-}
-
-/// A release, announced in the feed.
-///
-/// No size run and no price, because a collection has neither and printing empty space
-/// where they go is what made this read as a broken product. The preview strip is the
-/// illustration: a season page usually publishes no image of its own, and the garments
-/// are what it is actually about.
-struct CollectionCard: View {
-    @Environment(SizeProfileStore.self) private var sizes: SizeProfileStore
-
-    let update: BrandUpdate
-
-    /// The contents, for the preview strip and the count under it.
-    ///
-    /// Only the strip's worth is kept. `Brand.members(of:)` walks the brand's whole
-    /// catalogue and sorts it twice; the card draws eight tiles, and the count says how many
-    /// there are, so nothing beyond that needs holding.
-    private func members() -> (shown: [BrandUpdate], total: Int) {
-        guard let brand = update.brand else { return ([], 0) }
-        let profile = sizes.profile
-        let all = brand.members(of: update).filter { $0.passes(profile) && $0.hasPhotograph }
-        return (Array(all.prefix(8)), all.count)
-    }
-
-    var body: some View {
-        // **Once per card, not four times.** This card is drawn inside the feed's
-        // `LazyVStack`, and `members` was a computed property read four times per body — so
-        // marking a brand read, which re-renders every visible spread, paid four full walks
-        // of that brand's catalogue per collection on screen.
-        let members = members()
-
-        return NavigationLink(value: ReleaseRoute(update: update)) {
-            VStack(alignment: .leading, spacing: 0) {
-                // The brand's own artwork when there is any — a lookbook cover is worth the
-                // whole width — and nothing at all when there isn't. A collection with no
-                // image must not fall back to a placeholder tile: that is precisely the
-                // empty grey square this card exists to stop drawing.
-                if let image = update.primaryImageURL {
-                    UpdateImage(url: image, kind: .collection, aspect: 1.5, drawnWidth: 400)
-                        .padding(.bottom, 14)
-                }
-
-                VStack(alignment: .leading, spacing: 8) {
-                    DataLabel(text: "NEW COLLECTION", size: 11, color: .ink)
-
-                    Text(update.title)
-                        .font(.editorial(24))
-                        .foregroundStyle(Color.ink)
-                        .multilineTextAlignment(.leading)
-                        .fixedSize(horizontal: false, vertical: true)
-
-                    if let summary = update.summary, !summary.isEmpty {
-                        Text(summary)
-                            .font(.editorial(14))
-                            .lineSpacing(2)
-                            .foregroundStyle(Color.muted)
-                            .lineLimit(3)
-                            .multilineTextAlignment(.leading)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                }
-                .padding(.horizontal, 20)
-
-                if !members.shown.isEmpty {
-                    ScrollView(.horizontal) {
-                        HStack(spacing: 10) {
-                            ForEach(members.shown) { member in
-                                UpdateImage(
-                                    url: member.primaryImageURL,
-                                    kind: member.kind,
-                                    aspect: 1,
-                                    drawnWidth: 130,
-                                    mark: member.brand?.name
-                                )
-                                .frame(width: 96)
-                            }
-                        }
-                        .padding(.horizontal, 20)
-                    }
-                    .scrollIndicators(.hidden)
-                    .padding(.top, 14)
-                    // Not a tappable strip: every tile in it is inside the card's own
-                    // link, and a nested target here would make the whole row a coin toss
-                    // between opening the release and opening one garment.
-                    .allowsHitTesting(false)
-
-                    DataLabel(text: "\(members.total) \(members.total == 1 ? "PIECE" : "PIECES") IN THIS RELEASE")
-                        .padding(.horizontal, 20)
-                        .padding(.top, 12)
-                }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .contentShape(.rect)
-        }
-        .buttonStyle(.plain)
-        .contextMenu { UpdateMenu(update: update) }
     }
 }

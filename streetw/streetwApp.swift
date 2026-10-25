@@ -81,6 +81,9 @@ struct streetwApp: App {
         // filed the 1.0 way. Does nothing once the store has been through it. See
         // `BoardFiling`.
         MainActor.assumeIsolated { BoardFiling.adoptLegacy(in: container.mainContext) }
+        // Same moment, same reason: the 1.0 unread queue becomes the feed's news before the
+        // feed first draws, or it would open on nothing. See `FeedHistory`.
+        MainActor.assumeIsolated { FeedHistory.adoptLegacy(in: container.mainContext) }
 
         let settings = ServerSettings()
         let sizes = SizeProfileStore()
@@ -280,11 +283,14 @@ enum DevSeed {
         try? context.save()
 
         // Second dev flag: `-seedSizes "M,L,9,9.5"` fills the size profile.
-        // First pass establishes the baseline; second marks a slice unseen so the
-        // feed has something to render.
+        // First pass establishes the baseline; second turns a slice into news so the
+        // feed has something to render, arriving when each was published. A dozen per brand
+        // by default; `-seedNews 400` makes the feed as deep as a busy follow list, which is
+        // what its speed has to be measured against.
         await engine.sync(brands: brands)
+        let slice = Int(UserDefaults.standard.string(forKey: "seedNews") ?? "") ?? 12
         for brand in brands {
-            for update in brand.recentUpdates(limit: 6) { update.isSeen = false }
+            for update in brand.recentUpdates(limit: slice) { update.arrive(at: update.publishedAt) }
         }
         try? context.save()
     }
