@@ -165,7 +165,8 @@ struct FeedLead: View {
                         SizeRun(entries: runEntries)
                         Spacer(minLength: 12)
                         if let price = update.priceText {
-                            Text(price)
+                            // A launch at a discount says so; the cut comes from the brand.
+                            Text([price, update.percentOffText].compactMap { $0 }.joined(separator: " "))
                                 .font(.data(12, .medium))
                                 .foregroundStyle(Color.ink)
                                 .fixedSize()
@@ -378,15 +379,18 @@ struct FeedState {
             self.text = "LOCKED · DROP IMMINENT"
             self.isForMe = true
         case .priceDrop:
-            if let was = update.previousPriceText {
-                self.text = "PRICE DROP · WAS \(was.uppercased())"
-            } else {
-                self.text = "PRICE DROP"
-            }
+            // The cut first, measured from the brand's own tag where it published one —
+            // "−33%" is the claim, and the "was" is how to check it.
+            let was = update.wasPriceText.map { "WAS \($0.uppercased())" }
+            self.text = [update.percentOffText ?? "PRICE DROP", was].compactMap { $0 }.joined(separator: " · ")
             // A markdown on something you can't buy in your size isn't yours either.
             self.isForMe = profile.isEmpty || update.isInMySize(profile)
         case .collection:
             self.text = "NEW COLLECTION"
+            self.isForMe = false
+        case .sale:
+            // News about the brand, not about you: the words are on the row itself.
+            self.text = "SALE"
             self.isForMe = false
         default:
             guard update.isInMySize(profile) else { return nil }

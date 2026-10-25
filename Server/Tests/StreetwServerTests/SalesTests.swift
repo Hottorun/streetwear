@@ -112,6 +112,33 @@ struct SaleFeedKindTests {
         }
     }
 
+    /// A markdown is a claim about two numbers; the phone needs both, and the brand's tag.
+    @Test("A markdown carries its price and the brand's original as numbers")
+    func markdownNumbersOnTheWire() async throws {
+        try await withServer { app in
+            let brandID = try await makeBrand(app)
+            let product = ProductModel(
+                brandID: brandID, sourceID: nil,
+                item: FetchedItem(
+                    externalID: "shopify:1", title: "Sevila Dress", publishedAt: Date(), kind: .product,
+                    priceText: "$40", priceAmount: 40, originalPriceAmount: 80, originalPriceText: "$80"
+                )
+            )
+            try await product.save(on: app.db)
+            try await EventModel(
+                brandID: brandID, productID: try product.requireID(), kind: .priceDrop,
+                previousPriceText: "$80", previousPriceAmount: 80
+            ).save(on: app.db)
+            let auth = try await deviceAuth(app)
+            try await follow(app, brandID, auth: auth)
+
+            let item = try #require(try await get(app, "v1/feed?limit=200", auth: auth).items.first)
+            #expect(item.priceAmount == 40)
+            #expect(item.originalPriceAmount == 80)
+            #expect(item.originalPriceText == "$80")
+        }
+    }
+
     @Test("A brand's own history is held to the same contract")
     func brandFeedFiltersKinds() async throws {
         try await withServer { app in

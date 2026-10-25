@@ -98,6 +98,7 @@ extension FeedItem {
             linkURL: product?.linkURL ?? (event.title == nil ? nil : event.brand.website),
             imageURLs: product?.imageURLs ?? [],
             priceText: product?.priceText,
+            priceAmount: product?.priceAmount,
             previousPriceText: event.previousPriceText,
             previousPriceAmount: event.previousPriceAmount,
             // The product's own, beside its price — both what is true now.

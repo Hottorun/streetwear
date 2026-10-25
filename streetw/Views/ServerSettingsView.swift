@@ -25,6 +25,8 @@ struct NotificationsSection: View {
     @State private var status: UNAuthorizationStatus = .notDetermined
     @State private var isRequesting = false
     @State private var delivery: DeliveryState = .unknown
+    /// The one alert decided on this phone rather than by the server — see `PriceAlerts`.
+    @AppStorage(PriceAlerts.settingKey) private var savedPriceDrops = true
 
     private enum DeliveryState: Equatable {
         case unknown
@@ -40,7 +42,7 @@ struct NotificationsSection: View {
         VStack(alignment: .leading, spacing: 14) {
             SettingsHeader(
                 title: "Alerts",
-                note: "Get told when a brand you follow drops, restocks in your size, or locks its storefront."
+                note: "Get told when a brand you follow drops, goes on sale, or locks its storefront, and when something you watch comes back."
             )
 
             switch status {
@@ -86,6 +88,20 @@ struct NotificationsSection: View {
                 }
                 .buttonStyle(.plain)
                 .disabled(isRequesting || !settings.isConfigured)
+            }
+
+            // Its own switch because it is the one alert about your collection rather than
+            // about a brand — and the only one the server never sees, since saves stay here.
+            Toggle(isOn: $savedPriceDrops) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Price drops on things you saved")
+                        .font(.editorial(15))
+                        .foregroundStyle(Color.ink)
+                    Text("Worked out on this phone — your saves never leave it.")
+                        .font(.editorial(12))
+                        .foregroundStyle(Color.muted)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
         }
         .task {

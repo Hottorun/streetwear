@@ -564,6 +564,14 @@ public struct FeedItem: Codable, Sendable, Hashable, Identifiable {
     public var linkURL: String?
     public var imageURLs: [String]
     public var priceText: String?
+    /// The same price as a number.
+    ///
+    /// **A markdown is a claim about two numbers, and the wire carried one.** The phone had
+    /// the "was" as an amount and the "now" only as display text, so every server-backed
+    /// markdown had no measurable cut: no "−30%" on any card, and a markdowns list that
+    /// could not rank one cut against another in the mode the app ships in. Optional, and
+    /// ignored by the 1.0 app.
+    public var priceAmount: Double?
     /// What it cost before, on a `.priceDrop`. Both forms, for the same reason the model
     /// keeps both: the string is what a card prints, and only the number can say which of
     /// two markdowns is the better one. Optional throughout — a client older than this
@@ -674,6 +682,7 @@ public struct FeedItem: Codable, Sendable, Hashable, Identifiable {
         linkURL: String? = nil,
         imageURLs: [String] = [],
         priceText: String? = nil,
+        priceAmount: Double? = nil,
         previousPriceText: String? = nil,
         previousPriceAmount: Double? = nil,
         originalPriceText: String? = nil,
@@ -699,6 +708,7 @@ public struct FeedItem: Codable, Sendable, Hashable, Identifiable {
         self.linkURL = linkURL
         self.imageURLs = imageURLs
         self.priceText = priceText
+        self.priceAmount = priceAmount
         self.previousPriceText = previousPriceText
         self.previousPriceAmount = previousPriceAmount
         self.originalPriceText = originalPriceText

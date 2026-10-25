@@ -43,6 +43,26 @@ final class BrandUpdate {
     /// from a formatted string would mean parsing currency by hand.
     var previousPriceAmount: Double?
 
+    /// What the brand says it cost before it was marked down — its own compare-at price —
+    /// beside `priceText`, which is what it costs now. See `FetchedItem.originalPriceAmount`.
+    ///
+    /// Not the same thing as `previousPriceAmount`, which is what the *last poll* saw. A
+    /// product met already discounted has no last poll, and a markdown taken in two steps
+    /// reads 180 → 150 → 120 as "−20%" against the poll and "−33%" against the tag; a card
+    /// says the larger, because that is the claim the storefront itself makes and the one a
+    /// shopper can check. Nil for every source but Shopify, and for rows written before.
+    var originalPriceAmount: Double?
+    var originalPriceText: String?
+
+    /// The price this row last raised a price-drop alert at — the ledger `PriceAlerts`
+    /// keeps, so a markdown on something saved is said once.
+    ///
+    /// A price rather than a date, because in standalone one row is rewritten for every cut
+    /// it takes: 180 → 120 is said, the next sync sees 120 again and says nothing, and a
+    /// second cut to 90 is a different price and is said. Rows that arrive as history — a
+    /// first sync, a brand's catch-up — are written with it already spent.
+    var priceAlertedAmount: Double?
+
     /// When this markdown was waved off, if it was.
     ///
     /// **Deliberately not `isSeen`.** The markdowns list exists precisely because it is
@@ -654,12 +674,29 @@ final class BrandUpdate {
         return result
     }
 
+    /// What a markdown is measured from: the brand's original or the last poll's price,
+    /// whichever is the larger real cut (`PriceChange.base`).
+    var markdownBase: Double? {
+        PriceChange.base(previous: previousPriceAmount, original: originalPriceAmount, now: priceAmount)
+    }
+
     /// How much was taken off, 0…1. Nil when there is nothing to compare against.
     var discountShare: Double? {
-        guard let now = priceAmount, let was = previousPriceAmount, was > 0, now < was else {
-            return nil
-        }
+        guard let now = priceAmount, let was = markdownBase, was > 0, now < was else { return nil }
         return (was - now) / was
+    }
+
+    /// The "was" a card strikes through — the text of whichever price `markdownBase` chose.
+    var wasPriceText: String? {
+        guard let base = markdownBase else { return nil }
+        return base == originalPriceAmount ? originalPriceText : previousPriceText
+    }
+
+    /// "−33%", when a cut is known. Printed on any kind, because a product that went live
+    /// already discounted is announced as a drop and is still a markdown.
+    var percentOffText: String? {
+        PriceChange.percentOff(previous: previousPriceAmount, original: originalPriceAmount, now: priceAmount)
+            .map { "−\($0)%" }
     }
 
     /// Which part of an outfit this is, read off the catalogue text.
