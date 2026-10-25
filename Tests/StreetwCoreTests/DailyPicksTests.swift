@@ -86,14 +86,18 @@ struct DailyPicksTests {
         let picks = DailyPicks.choose(
             from: [
                 candidate("shell", "Storm Shell Jacket", brand: "Ashgrove"),
-                candidate("hoodie", "Wave Hoodie", brand: "Ondo")
+                candidate("hoodie", "Wave Hoodie", brand: "Ondo"),
+                candidate("coat", "Canvas Chore Coat", brand: "Halden")
             ],
             wardrobe: wardrobe,
             owned: counts(wardrobe),
             day: day
         )
-        #expect(picks.first?.id == "shell")
+        #expect(picks.last?.id == "hoodie")
         #expect(picks.first?.reason == .goesWith(fills: .outerwear))
+        // Said once: the second jacket goes with something too, and does not open by
+        // repeating that the wardrobe has no jacket.
+        #expect(picks[1].reason == .goesWith(fills: nil))
     }
 
     /// Ties break on id, so without spreading every pick named the same jacket.

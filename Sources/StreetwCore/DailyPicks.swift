@@ -271,9 +271,13 @@ public enum DailyPicks {
         }
 
         var used: Set<String> = []
+        // "You own no outerwear yet" is said once, on the first pick that fills the gap. Three
+        // jackets each opening with it reads as the app repeating itself, not as three reasons.
+        var said: Set<GarmentSlot> = []
         return chosen.prefix(max(limit, keeping.count)).map { entry in
             let listing = entry.candidate.listing
-            let fills = missing.contains(listing.slot) ? listing.slot : nil
+            var fills: GarmentSlot?
+            if missing.contains(listing.slot), said.insert(listing.slot).inserted { fills = listing.slot }
             if let partner = entry.partners.first(where: { !used.contains($0.garment.id) }) ?? entry.partners.first {
                 used.insert(partner.garment.id)
                 return Pick(
