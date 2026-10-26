@@ -293,10 +293,11 @@ fit editor; the starter pack of six womenswear and six menswear shops. See
       sign-in adopts the device's user, and a later one merges the anonymous user into the
       account's in one transaction. `DELETE /v1/account` revokes Apple's token when a key is
       set. `GET`/`POST /admin/accounts` hold the owner's unlimited-credits flag. On You, the
-      section is hidden standalone and whenever the server says it cannot verify.
+      section is hidden standalone and whenever the server says it cannot verify. The owner
+      approved swift-crypto (`_CryptoExtras`) and swift-certificates, and the identity-token
+      verifier is real: RS256 against Apple's cached JWKS, re-read on an unknown `kid` at most
+      once per five minutes, then the claim checks (see `docs/server.md`).
       **Before it ships:**
-      - Approve the RSA dependency and write the verifier, which is the only refusal left (see
-        `docs/server.md`).
       - Turn on the Sign in with Apple capability for the App ID.
       - Set `SIWA_KEY_ID`, `SIWA_TEAM_ID` and `SIWA_PRIVATE_KEY` on Railway.
       - Name the account in the privacy policy.
@@ -333,9 +334,10 @@ fit editor; the starter pack of six womenswear and six menswear shops. See
       a lazy free monthly allowance, the owner's unlimited switch and monthly cost cap; StoreKit
       purchases credited once per transaction at `POST /v1/credits/purchases`, refunds from App
       Store Server Notifications V2; Credits on You for signed-in accounts, with a local
-      `streetw.storekit`. See `docs/credits.md`. **Before it ships:** approve swift-crypto and
-      swift-certificates and write the verifier — until then purchases are refused (503) and kept
-      unfinished on the phone; create the three products in App Store Connect; give it the
+      `streetw.storekit`. The StoreKit verifier is real, on the dependencies the owner approved:
+      the `x5c` chain to a compiled-in Apple Root CA - G3 with Apple's marker OIDs, valid at
+      `signedDate`, ES256 over the leaf's key, for purchases and for each signed part of a
+      notification. See `docs/credits.md`. **Before it ships:** create the three products in App Store Connect; give it the
       notifications URL; set `CREDITS_ALLOW_SANDBOX=true` for review; set the prices and the
       allowance from a few weeks of `/admin/costs` once Phase 4 runs.
 - [ ] **The new privacy policy and App Store privacy label**, before any of the above ships.

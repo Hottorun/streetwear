@@ -93,8 +93,8 @@ do {
 `POST /v1/credits/purchases` takes one StoreKit 2 transaction exactly as StoreKit signed it
 (`VerificationResult.jwsRepresentation`). **Nothing the phone says about a purchase is believed.**
 
-1. **The signature** — `SignedTransactionVerifying.verifiedPayload(of:)`, the only crypto. The
-   protocol's comment lists exactly what a real conformer checks.
+1. **The signature** — `SignedTransactionVerifying.verifiedPayload(of:)`, the only crypto;
+   `AppStoreVerifier` in production. See *Verifying the signature* below.
 2. **The bundle id** is `com.kern.functional.streetw`, or any app's purchase could be replayed.
 3. **The environment** (`PurchasePolicy.accepts`): `Production` everywhere; `Sandbox` off
    production or with `CREDITS_ALLOW_SANDBOX=true`; **`Xcode` never on production, flag or no
@@ -119,25 +119,47 @@ Then:
 - **Quantity multiplies the pack.**
 - **A revoked transaction** (`revocationDate`) is final: 200, `revoked`, nothing credited.
 
-### The verifier refuses, for now
+### Verifying the signature
 
-Verifying the `x5c` chain needs crypto, and declaring a dependency waits on the owner. Until then
-`AppStoreVerifier` throws `verifierUnavailable` — **503 "Purchases can't be verified on this server
-yet"** — the way a missing `ADMIN_TOKEN` refuses rather than allows. The phone leaves the
-transaction unfinished and posts it again on every launch, so a purchase made meanwhile is credited
-once a verifying server is deployed. Notifications answer 503 too, and Apple retries them for a
-while (not forever).
+`AppStoreVerifier` (`Server/Sources/StreetwServer/Services/AppStoreSignature.swift`) is what Apple's
+`app-store-server-library-swift` does, without its JWT stack. A JWS it cannot read is 400
+`malformed`; one whose signature or chain does not verify is 400 `untrusted` ("That transaction's
+signature doesn't verify"), and the phone leaves the transaction unfinished.
 
-What the real one needs: `swift-crypto` (`Crypto`, `_CryptoExtras` not needed) and
-`swift-certificates` (`X509`), plus `swift-asn1`, which it pulls in. **All three are already in
-`Package.resolved`** — Vapor, swift-nio-extras and APNSwift depend on them — so declaring them in
-`Server/Package.swift` downloads nothing new; it is a manifest decision, not a supply-chain one.
-The code is about 100–150 lines: decode the header, parse the three `x5c` DER certificates, build
-an `X509.Verifier` with Apple Root CA G3 as the only trusted root (the PEM, ~800 bytes, compiled
-in — never taken from the token) and a policy checking validity at the token's `signedDate` and the
-two Apple OIDs, then `P256.Signing.PublicKey(leaf).isValidSignature` over `header.payload` with
-the raw r‖s signature. Apple's own `app-store-server-library-swift` does exactly this and could be
-taken instead, at the cost of a fourth dependency and its JWT stack.
+- **`alg` is `ES256` and `x5c` is exactly three certificates** — leaf, Apple's WWDR intermediate,
+  root — standard base64 DER.
+- **The root is the server's, never the token's.** The chain is built from the leaf through the
+  token's intermediate to **Apple Root CA - G3**, compiled in as PEM (`AppleRootCA.g3PEM`, from
+  https://www.apple.com/certificateauthority/AppleRootCA-G3.cer, SHA-256
+  `63:34:3A:BF:B8:9A:6A:03:EB:B5:7E:9B:3F:5F:A7:BE:7C:4F:5C:75:6F:30:17:B3:A8:C4:88:C3:65:3E:91:79`).
+  The token's own third certificate plays no part. A test pins the PEM to that fingerprint, so
+  a mangled paste cannot ship. When Apple issues a successor root, it goes beside G3 in
+  `trustedRoots`.
+- **Apple's marker OIDs**: 1.2.840.113635.100.6.11.1 on the leaf (receipt signing),
+  1.2.840.113635.100.6.2.1 on the intermediate (WWDR). Without them, any certificate Apple's root
+  ever vouched for could sign a purchase.
+- **Validity is checked at the payload's `signedDate`, not now** — what Apple's libraries do with
+  online checks off. A transaction is signed once and may be posted again months later, and a
+  refund can be about a purchase older than the certificate in use today, so "now" would one day
+  refuse something genuine. The date is read before the chain is checked, which only lets a
+  caller choose *when* a chain is judged; it must still end at Apple's root and the signature
+  still verify. A payload with no `signedDate` is judged at now, which is stricter. RFC 5280's
+  rules (basic constraints, every certificate in its validity window) come from swift-certificates'
+  `RFC5280Policy(fixedExpiryValidationTime:)`, an `@_spi` initialiser the library itself points
+  to for exactly this.
+- **No online revocation check (OCSP).** The price of judging at `signedDate`: a leaf Apple revoked
+  after a key leak would still verify. Checking would put a request to Apple's OCSP responder in
+  front of every purchase and refund and make crediting depend on its uptime. Apple's library
+  makes it a switch (`enableOnlineChecks`); this is that switch off.
+- **The ES256 signature is raw r‖s, 64 bytes**, over `header.payload` exactly as sent, checked
+  with the leaf's P-256 key. A DER-encoded signature is refused.
+
+The dependencies: swift-crypto (`Crypto`, `_CryptoExtras` for Sign in with Apple's RSA) and
+swift-certificates (`X509`), approved by the owner and declared in `Server/Package.swift` with
+floors at the resolved versions. Both were already in `Package.resolved` through Vapor,
+swift-nio-extras and APNSwift, so declaring them downloaded nothing. swift-asn1 comes in through
+swift-certificates and is not declared; the code compares OIDs by their dotted form so it never
+names a SwiftASN1 type.
 
 ### The local double
 
@@ -151,8 +173,11 @@ the double in through `app.purchasePolicy`.
 
 `POST /v1/app-store/notifications` is App Store Server Notifications V2 — the URL App Store Connect
 is given, for both environments. **Public**: Apple holds no device token, so the signature is the
-authentication. It verifies the notification *and* the transaction inside it, and is rate-limited
-per address because each delivery is two signature checks.
+authentication. It verifies the notification *and* the transaction inside it — and the
+`signedRenewalInfo`, when there is one (only subscriptions carry it, so a pack never does, but a
+notification is only as genuine as everything inside it) — each the same way as a purchase. It is
+rate-limited per address because each delivery is two or three chain-and-signature checks. A
+delivery that does not verify is 400.
 
 - **`REFUND` and `REVOKE` take back exactly what the purchase row added** — the ledger's number,
   not the pack table's, which may have changed since. Once per transaction (the same unique

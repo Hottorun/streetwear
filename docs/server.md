@@ -308,7 +308,7 @@ Part of the streetw guidance set; see `CLAUDE.md` for the index and the build ru
   assume one. It is a plain index, not unique: Phase 2's profiles are one user each under one
   account. The column cascades from `accounts`, and deletion still deletes every table by hand
   in one transaction, so the promise does not rest on SQLite having foreign keys switched on.
-  Seven details are load-bearing:
+  Eight details are load-bearing:
   - **The first sign-in adopts the device's user; a later one merges** (`Accounts.signIn`). The
     reinstall and the second phone arrive with an anonymous user of their own. The device moves
     onto the account's user, keeping its token, and the anonymous user is folded in and deleted,
@@ -324,17 +324,26 @@ Part of the streetw guidance set; see `CLAUDE.md` for the index and the build ru
   - **The nonce on the wire is the raw value.** The app puts `SHA256(nonce)` on the Apple request
     and Apple copies it into the token. The server hashes what it is sent and compares. Sending
     the hash would prove nothing, because the claim is printed in the token.
-  - **The production verifier refuses** (`UnavailableAppleIdentityVerifier`, 503 "Sign in with
-    Apple is not available on this server yet"). An identity token is RS256 against Apple's
-    JWKS, and RSA is not in anything this package links. `GET /v1/account` says
-    `signInAvailable: false`, and the app draws no button. The claim checks
-    (`AppleIdentityClaims.check`: issuer, audience = the bundle id, expiry, nonce, subject) are
-    real and tested. A real verifier is a signature check in front of them:
-    `.package(url: "https://github.com/apple/swift-crypto.git", "3.0.0"..<"5.0.0")` with
-    `.product(name: "_CryptoExtras", package: "swift-crypto")` on the target. Cache
-    `https://appleid.apple.com/auth/keys`, find the header's `kid`, verify with
-    `_RSA.Signing.PublicKey(n:e:)` and `.insecurePKCS1v1_5` over SHA-256 of `header.payload`,
-    then call `check`. `jwt-kit` would also work and brings more with it.
+  - **The production verifier checks Apple's signature, then the claims**
+    (`AppleIdentityTokenVerifier`, `AppleSignIn.swift`). `GET /v1/account` says
+    `signInAvailable: true`. The header must say `alg: RS256` — `none`, HS256 and everything
+    else are refused before any key is looked at, because the algorithm is the server's to
+    choose, not the token's. The key is the one Apple's JWKS (`https://appleid.apple.com/auth/keys`)
+    publishes under the header's `kid`, built with `_RSA.Signing.PublicKey(n:e:)` (2048 bits or
+    refused) and checked with `.insecurePKCS1v1_5` over SHA-256 of `header.payload` exactly as
+    sent. Only then does `AppleIdentityClaims.check` run (issuer, audience = the bundle id,
+    expiry, nonce, subject). RSA is `_CryptoExtras` from swift-crypto, declared in
+    `Server/Package.swift` alongside swift-certificates once the owner approved both; neither
+    downloads anything, both were already in `Package.resolved` through Vapor. `jwt-kit` was
+    not taken.
+  - **The JWKS is cached and re-read on an unknown `kid` — at most once per five minutes**
+    (`AppleSigningKeys`), thirty seconds after a read that failed. Apple rotates keys, so an
+    unknown `kid` may be genuine; a forged token can name any `kid` too, and without the floor
+    every one would make this server ask Apple again. Concurrent misses share one read, a day-old
+    set is re-read on next use so a withdrawn key stops being trusted, and a re-read that fails
+    keeps the set already held. A bad token is 401; Apple unreachable with no keys held is 503,
+    the one refusal about the server rather than the token. Fetched through `app.client`, not
+    `PoliteFetcher` — it is Apple's API, not a storefront.
   - **`SIWA_TEST_TOKENS=true` accepts unsigned tokens, outside production only.** Every claim
     check still runs. It exists so the app's DEBUG-only `-fakeAppleSignIn <subject>` can drive
     sign-in → merge → delete against a local server. On an environment named `production`,
@@ -397,8 +406,9 @@ Part of the streetw guidance set; see `CLAUDE.md` for the index and the build ru
   `CAST(… AS BIGINT)` because Postgres sums a `BIGINT` into a `NUMERIC` that will not decode as
   an `Int`. Both tables set `created_at` themselves rather than through `@Timestamp`, because
   the month a row falls in decides the allowance and the cap and has to be testable across a
-  month's end. `POST /v1/app-store/notifications` is public and verified by signature; the
-  purchase verifier refuses until the crypto dependencies are approved.
+  month's end. `POST /v1/app-store/notifications` is public and verified by signature — the
+  envelope, the transaction and any renewal info, each against Apple Root CA - G3
+  (`AppStoreVerifier`, `AppStoreSignature.swift`; the rules are in `docs/credits.md`).
 - **A brand's main shop is the brand row; a country's shop is a `storefronts` row**
   (`StorefrontModel`, `CreateStorefronts`, `Storefronts`). Big retailers run a shop per country —
   Victoria's Secret UK is a different company from the US one — so a brand maps to its storefront

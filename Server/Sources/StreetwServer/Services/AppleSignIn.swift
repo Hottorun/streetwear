@@ -7,16 +7,17 @@
 // - `AppleTokenExchanging` — `/auth/token` at sign-in (for the refresh token) and
 //   `/auth/revoke` at deletion, which Apple requires of an app that deletes accounts.
 //
-// **The production verifier refuses.** Checking an identity token's signature is RS256
-// against Apple's published keys, and RSA is not in anything this package already links:
-// `Crypto` (re-exported by Vapor) has SHA-256 and P-256 and nothing else. The dependency that
-// adds it has not been approved, so until it is, sign-in is refused with a reason a person
-// can read — the same stance `AdminAuthenticator` takes on a missing key. Accepting a token
-// without its signature would let anybody who can write a JSON object sign in as anybody.
+// **The production verifier checks Apple's signature before it reads a claim**
+// (`AppleIdentityTokenVerifier`): RS256 against the keys Apple publishes at `/auth/keys`, held
+// by `AppleSigningKeys` and re-read only when a token names a key the cache does not hold —
+// and then at most once per few minutes, so a forged `kid` cannot make this server hammer
+// Apple. RSA is `_CryptoExtras`; the `Crypto` Vapor re-exports has SHA-256 and P-256 and
+// nothing else. Accepting a token without its signature would let anybody who can write a
+// JSON object sign in as anybody, so the claim checks (`AppleIdentityClaims.check`) only run
+// on a token whose signature has verified.
 //
-// What *is* real: the claim checks (`AppleIdentityClaims.check`), the client secret (P-256 is
-// in `Crypto`, so no dependency), the token exchange and the revocation. A real verifier is
-// a signature check in front of a function that already exists and is tested.
+// The client secret is P-256, which `Crypto` has, and the token exchange and the revocation
+// are plain HTTPS.
 //
 // **The test verifier is opt-in, and never in production.** `SIWA_TEST_TOKENS=true` on a
 // deployment whose environment is not `production` accepts *unsigned* tokens and still runs
@@ -24,6 +25,7 @@
 // server from a simulator with no Apple ID. `configure` refuses it on a production
 // environment and says so at boot.
 
+import _CryptoExtras
 import Foundation
 import Vapor
 
@@ -60,7 +62,8 @@ protocol AppleTokenExchanging: Sendable {
 
 // MARK: - The claims
 
-/// The part of verification that is not cryptography, and so is real today.
+/// The part of verification that is not cryptography. Read only once the signature has
+/// verified (`AppleIdentityTokenVerifier`), or by the unsigned test verifier.
 ///
 /// Every rule is something an attacker holding *a* genuine token would otherwise get past:
 /// a token minted for another app (`aud`), by somebody else (`iss`), last week (`exp`), or for
@@ -151,7 +154,203 @@ struct AppleIdentityClaims: Decodable, Sendable {
 
 // MARK: - Verifiers
 
-/// What a deployment uses until RS256 is available: a refusal, with the reason.
+/// The production verifier: Apple's signature first, then the claims.
+struct AppleIdentityTokenVerifier: AppleIdentityVerifying {
+    let keys: AppleSigningKeys
+    var isAvailable: Bool { true }
+
+    enum Failure: Error, Equatable, CustomStringConvertible {
+        /// Anything but RS256 — `none` and HS256 included. The algorithm is this server's to
+        /// choose, never the token's: honouring HS256 would let anybody sign with the public
+        /// key as an HMAC secret, and honouring `none` would let them not sign at all.
+        case unsupportedAlgorithm
+        /// A `kid` Apple does not publish, even after reading its keys again.
+        case unknownKey
+        case badSignature
+        /// Apple's keys could not be read and none are held. The one refusal that is about
+        /// this server rather than the token, so a 503 rather than a 401.
+        case keysUnavailable
+
+        var description: String {
+            switch self {
+            case .unsupportedAlgorithm: "The identity token is not signed the way Apple signs"
+            case .unknownKey: "The identity token was not signed by a key Apple publishes"
+            case .badSignature: "The identity token's signature doesn't verify"
+            case .keysUnavailable: "Apple's sign-in keys couldn't be read — try again in a minute"
+            }
+        }
+
+        var status: HTTPResponseStatus { self == .keysUnavailable ? .serviceUnavailable : .unauthorized }
+    }
+
+    private struct Header: Decodable {
+        var alg: String?
+        var kid: String?
+    }
+
+    func verify(identityToken: String, nonce: String, now: Date) async throws -> AppleIdentity {
+        let parts = identityToken.split(separator: ".", omittingEmptySubsequences: false)
+        guard parts.count == 3,
+              let headerData = Data(base64URL: String(parts[0])),
+              let header = try? JSONDecoder().decode(Header.self, from: headerData)
+        else { throw Abort(.unauthorized, reason: AppleIdentityClaims.Failure.malformed.description) }
+
+        guard header.alg == "RS256" else { throw Self.refusal(.unsupportedAlgorithm) }
+        guard let signature = Data(base64URL: String(parts[2])), !signature.isEmpty else {
+            throw Self.refusal(.badSignature)
+        }
+        guard let kid = header.kid, !kid.isEmpty else { throw Self.refusal(.unknownKey) }
+
+        let key: _RSA.Signing.PublicKey
+        switch await keys.key(for: kid, now: now) {
+        case .key(let found): key = found
+        case .unknown: throw Self.refusal(.unknownKey)
+        case .unavailable: throw Self.refusal(.keysUnavailable)
+        }
+        // The two segments exactly as sent, never re-encoded: the signature is over these
+        // bytes, and base64url has more than one spelling of the same JSON.
+        let signingInput = Data("\(parts[0]).\(parts[1])".utf8)
+        guard key.isValidSignature(
+            _RSA.Signing.RSASignature(rawRepresentation: signature),
+            for: signingInput,
+            padding: .insecurePKCS1v1_5
+        ) else { throw Self.refusal(.badSignature) }
+
+        do {
+            return try AppleIdentityClaims.decode(identityToken).check(nonce: nonce, now: now)
+        } catch let failure as AppleIdentityClaims.Failure {
+            throw Abort(.unauthorized, reason: failure.description)
+        }
+    }
+
+    private static func refusal(_ failure: Failure) -> Abort {
+        Abort(failure.status, reason: failure.description)
+    }
+}
+
+/// Apple's published identity-token keys (a JWKS), read on first use and cached.
+///
+/// **Re-read on an unknown `kid`, and never more often than `refetchFloor`.** Apple rotates
+/// its keys, so a `kid` the cache has not seen may be a genuine new one — but a forged token
+/// can name any `kid` it likes, and an unthrottled re-read would let anybody make this server
+/// hammer Apple on their behalf. Concurrent misses share one read. The set is also re-read
+/// once it is a day old, so a key Apple has withdrawn stops being trusted; if that read fails,
+/// the set already held is kept rather than refusing every sign-in.
+actor AppleSigningKeys {
+    typealias Fetch = @Sendable () async throws -> Data
+
+    static let url: URI = "https://appleid.apple.com/auth/keys"
+    /// The least time between two reads, after one that answered.
+    static let refetchFloor: TimeInterval = 300
+    /// …and after one that did not: shorter, so a first read that failed at boot does not shut
+    /// sign-in for five minutes, and still a bound on what a stream of forged tokens costs.
+    static let retryFloor: TimeInterval = 30
+    static let maximumAge: TimeInterval = 86_400
+
+    enum Lookup {
+        case key(_RSA.Signing.PublicKey)
+        case unknown
+        case unavailable
+    }
+
+    private let fetch: Fetch
+    private var keys: [String: _RSA.Signing.PublicKey] = [:]
+    private var readAt: Date?
+    private var attemptedAt: Date?
+    private var lastAttemptFailed = false
+    private var inFlight: Task<[String: _RSA.Signing.PublicKey], any Error>?
+    /// How many reads were started, for the test suite's throttle checks.
+    private(set) var reads = 0
+
+    init(fetch: @escaping Fetch) {
+        self.fetch = fetch
+    }
+
+    func key(for kid: String, now: Date) async -> Lookup {
+        let fresh = readAt.map { now.timeIntervalSince($0) < Self.maximumAge } ?? false
+        if fresh, let key = keys[kid] { return .key(key) }
+
+        if inFlight != nil || mayRead(now: now) {
+            await read(now: now)
+        }
+        if let key = keys[kid] { return .key(key) }
+        return keys.isEmpty && lastAttemptFailed ? .unavailable : .unknown
+    }
+
+    private func mayRead(now: Date) -> Bool {
+        guard let attemptedAt else { return true }
+        let floor = lastAttemptFailed ? Self.retryFloor : Self.refetchFloor
+        return now.timeIntervalSince(attemptedAt) >= floor
+    }
+
+    private func read(now: Date) async {
+        if let inFlight {
+            // Joining a read already under way. Assigning its answer a second time is
+            // harmless, and means a joiner that resumes before the reader never sees the old set.
+            if let answer = try? await inFlight.value { keys = answer }
+            return
+        }
+        attemptedAt = now
+        reads += 1
+        let fetch = self.fetch
+        let task = Task { try Self.parse(try await fetch()) }
+        inFlight = task
+        do {
+            keys = try await task.value
+            readAt = now
+            lastAttemptFailed = false
+        } catch {
+            lastAttemptFailed = true
+        }
+        inFlight = nil
+    }
+
+    /// The RSA signing keys in a JWKS. A set with none in it is a failed read rather than an
+    /// empty one, because adopting it would refuse every sign-in.
+    static func parse(_ data: Data) throws -> [String: _RSA.Signing.PublicKey] {
+        struct JWKS: Decodable {
+            struct Key: Decodable {
+                var kty: String?
+                var kid: String?
+                var alg: String?
+                var use: String?
+                var n: String?
+                var e: String?
+            }
+            var keys: [Key]
+        }
+        var found: [String: _RSA.Signing.PublicKey] = [:]
+        for entry in try JSONDecoder().decode(JWKS.self, from: data).keys {
+            guard entry.kty == "RSA",
+                  entry.alg == nil || entry.alg == "RS256",
+                  entry.use == nil || entry.use == "sig",
+                  let kid = entry.kid, !kid.isEmpty,
+                  let n = entry.n.flatMap({ Data(base64URL: $0) }),
+                  let e = entry.e.flatMap({ Data(base64URL: $0) }),
+                  let key = try? _RSA.Signing.PublicKey(n: n, e: e),
+                  // `init(n:e:)` takes any size. Apple's are 2048 bits; nothing smaller is one.
+                  key.keySizeInBits >= 2048
+            else { continue }
+            found[kid] = key
+        }
+        guard !found.isEmpty else { throw Abort(.badGateway, reason: "Apple published no usable signing keys") }
+        return found
+    }
+
+    /// The real transport: Vapor's client, as for the token endpoint.
+    static func vapor(_ client: any Client) -> Fetch {
+        {
+            let response = try await client.get(url)
+            guard (200..<300).contains(response.status.code), let body = response.body else {
+                throw Abort(.badGateway, reason: "Apple's keys answered \(response.status.code)")
+            }
+            return Data(buffer: body)
+        }
+    }
+}
+
+/// What `app.appleSignIn` answers before `configure` has set anything: a refusal with its
+/// reason, rather than a verifier nobody chose.
 struct UnavailableAppleIdentityVerifier: AppleIdentityVerifying {
     static let reason = "Sign in with Apple is not available on this server yet"
     var isAvailable: Bool { false }
@@ -305,18 +504,19 @@ struct AppleSignInConfiguration: Sendable {
     var tokens: (any AppleTokenExchanging)?
 
     static func make(for app: Application) -> AppleSignInConfiguration {
+        let signed = AppleIdentityTokenVerifier(keys: AppleSigningKeys(fetch: AppleSigningKeys.vapor(app.client)))
         let verifier: any AppleIdentityVerifying
         if Environment.get("SIWA_TEST_TOKENS") == "true" {
             if app.environment == .production {
                 app.logger.critical("siwa: SIWA_TEST_TOKENS is set on a production environment — ignored")
-                verifier = UnavailableAppleIdentityVerifier()
+                verifier = signed
             } else {
                 app.logger.warning("siwa: accepting UNSIGNED identity tokens (SIWA_TEST_TOKENS) — local development only")
                 verifier = UnsignedAppleIdentityVerifier()
             }
         } else {
-            app.logger.notice("siwa: identity tokens cannot be verified yet — sign-in will refuse")
-            verifier = UnavailableAppleIdentityVerifier()
+            app.logger.notice("siwa: identity tokens verified against Apple's published keys")
+            verifier = signed
         }
 
         guard

@@ -12,12 +12,9 @@
 //    believed where that cannot mint credits that matter (`PurchasePolicy`).
 // 4. The product is a pack in `CreditPacks`, which says how many credits it is.
 //
-// **The verifier refuses today, the way a missing `ADMIN_TOKEN` refuses.** Checking the
-// chain needs swift-crypto and swift-certificates, and declaring a dependency waits on the
-// owner. Until it is approved `AppStoreVerifier` answers 503 — "Purchases can't be verified
-// on this server yet" — and the phone leaves the transaction unfinished, so it is credited on
-// a later launch once a verifying server is deployed. Everything after the signature is real
-// and tested through a double. See `docs/credits.md`.
+// The signature is `AppStoreVerifier` (`AppStoreSignature.swift`); everything after it is
+// here, and is tested through a double that believes any well-formed JWS. See
+// `docs/credits.md`.
 
 import Fluent
 import Foundation
@@ -28,7 +25,7 @@ import Vapor
 protocol SignedTransactionVerifying: Sendable {
     /// The payload of `jws` — only once its signature is proven Apple's.
     ///
-    /// What a real conformer must check, and nothing else (everything after is
+    /// What `AppStoreVerifier` checks, and nothing else (everything after is
     /// `AppStorePurchases`): the header's `alg` is `ES256`; its `x5c` is three certificates
     /// whose chain verifies to Apple Root CA G3, held by this server rather than taken from
     /// the token; each is valid at the token's `signedDate`; the leaf carries the Mac App
@@ -39,34 +36,18 @@ protocol SignedTransactionVerifying: Sendable {
 }
 
 enum SignedPayloadError: AbortError, Equatable {
-    /// This deployment has no verifier. Refuses rather than allows, like `AdminAuthenticator`.
-    case verifierUnavailable
     /// Not three dot-separated base64url segments, or the payload is not JSON we read.
     case malformed
     /// Well-formed, and the signature or the chain did not verify.
     case untrusted
 
-    var status: HTTPResponseStatus {
-        switch self {
-        case .verifierUnavailable: .serviceUnavailable
-        case .malformed, .untrusted: .badRequest
-        }
-    }
+    var status: HTTPResponseStatus { .badRequest }
 
     var reason: String {
         switch self {
-        case .verifierUnavailable: "Purchases can't be verified on this server yet"
         case .malformed: "That isn't a signed App Store transaction"
         case .untrusted: "That transaction's signature doesn't verify"
         }
-    }
-}
-
-/// The production verifier — which, until the crypto dependencies are approved, refuses
-/// everything. See the file header.
-struct AppStoreVerifier: SignedTransactionVerifying {
-    func verifiedPayload(of jws: String) async throws -> Data {
-        throw SignedPayloadError.verifierUnavailable
     }
 }
 
@@ -173,6 +154,9 @@ struct AppStoreNotification: Decodable, Sendable {
         var environment: String?
         /// Itself a JWS, verified separately.
         var signedTransactionInfo: String?
+        /// A JWS too. Only subscriptions have one, so no pack ever does; verified when present
+        /// all the same, because a notification is only as genuine as everything inside it.
+        var signedRenewalInfo: String?
     }
 
     /// "REFUND", "REVOKE", "REFUND_REVERSED", "CONSUMPTION_REQUEST", "TEST", …
@@ -228,7 +212,7 @@ struct PurchasePolicy: Sendable {
             logger.warning("credits: believing UNVERIFIED App Store transactions — local testing only")
             verifier = UnverifiedLocalVerifier()
         } else {
-            logger.notice("credits: purchases refused until a transaction verifier is deployed")
+            logger.notice("credits: App Store transactions verified against Apple Root CA - G3")
         }
         return PurchasePolicy(
             verifier: verifier,
@@ -376,6 +360,9 @@ enum AppStorePurchases {
             transaction = try await verifiedTransaction(signedTransaction, policy: policy)
         } catch let refusal as Abort where refusal.status == .forbidden {
             return .ignored("environment")
+        }
+        if let renewal = notification.data?.signedRenewalInfo {
+            _ = try await policy.verifier.verifiedPayload(of: renewal)
         }
 
         let existing = try await CreditEntryModel.query(on: db)
