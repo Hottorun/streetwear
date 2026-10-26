@@ -21,19 +21,19 @@ PAPER, INK, SIGNAL, MUTED = "#F4F3EE", "#14140F", "#D93A1E", "#8A8A80"
 
 # (file, kicker, headline, subline, dark)
 SHOTS = [
-    ("feed", "Every brand, one feed", "Never miss<br>a drop again.",
-     "New releases, restocks and price cuts from the labels you follow.", False),
-    ("product", "Restock alerts", "Back in your size?<br>You'll know.",
-     "Your sizes, picked out on every product.", False),
-    ("discover", "Discover", "Pieces that go<br>with what you own.",
-     "Every card is matched against your wardrobe.", True),
-    ("saved", "Your collection", "Save it now.<br>Decide later.",
+    ("feed", "Every shop you follow", "New since<br>you last looked.",
+     "Drops, restocks and sales in one feed, newest first.", False),
+    ("product", "Restocks", "Back in your size?<br>You'll know.",
+     "Your sizes picked out on every product.", False),
+    ("search", "Shop", "Say what<br>you're after.",
+     "Describe it in plain words. It prints what it understood.", False),
+    ("picks", "Today's picks", "Pieces that go<br>with what you own.",
+     "A few each day from your shops, beside a piece you own.", True),
+    ("saved", "Saved", "Save it now.<br>Decide later.",
      "One wall for everything you're eyeing.", False),
-    ("style", "Style", "Outfits from your<br>own wardrobe.",
-     "See what works together, and what's missing.", False),
-    ("fit", "Fit studio", "Lay out the fit<br>before you buy it.",
+    ("fit", "Fits", "Lay out the fit<br>before you buy it.",
      "Every piece cut out. Drag, scale, rotate, pick a ground.", False),
-    ("calendar", "Drop calendar", "Know the date.<br>Get the reminder.",
+    ("calendar", "Upcoming", "Know the date.<br>Get the reminder.",
      "A heads-up the morning of, and again at release.", False),
 ]
 
@@ -80,12 +80,18 @@ def main() -> None:
             page = pathlib.Path(tmp) / f"{name}.html"
             page.write_text(html)
             png = pathlib.Path(tmp) / f"{name}.png"
-            subprocess.run([
-                CHROME, "--headless", "--disable-gpu", "--hide-scrollbars",
-                "--force-device-scale-factor=1", "--allow-file-access-from-files",
-                "--virtual-time-budget=8000", f"--window-size={W},{H}",
-                f"--screenshot={png}", page.as_uri(),
-            ], check=True, capture_output=True)
+            # Headless Chrome exits 2 now and then when memory is short; a retry is enough.
+            for attempt in range(3):
+                done = subprocess.run([
+                    CHROME, "--headless", "--disable-gpu", "--hide-scrollbars",
+                    "--force-device-scale-factor=1", "--allow-file-access-from-files",
+                    "--virtual-time-budget=8000", f"--window-size={W},{H}",
+                    f"--screenshot={png}", page.as_uri(),
+                ], capture_output=True)
+                if done.returncode == 0 and png.exists():
+                    break
+            else:
+                done.check_returncode()
             target = OUT / f"{index:02d}-{name}.jpg"
             subprocess.run(["sips", "-s", "format", "jpeg", "-s", "formatOptions", "92",
                             str(png), "--out", str(target)], check=True, capture_output=True)

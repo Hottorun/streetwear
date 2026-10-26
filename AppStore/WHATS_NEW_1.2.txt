@@ -1,0 +1,10 @@
+A new look: Feed, Shop and Saved.
+
+• The feed is now a grid of photos, newest first, with a line marking what's new since you last looked.
+• Shop: describe what you want and search everything your shops sell, or every shop Dropwall watches.
+• Five picks a day that go with clothes you already own.
+• Sale alerts now cover a shop's whole catalogue, not just its newest pieces.
+• Sign in with Apple (optional) keeps your brands, sizes and alerts if you reinstall.
+• Profiles: shop for someone else, with their own sizes, brands and alerts.
+• Location: see a brand's own shop and prices for your country, where it runs one.
+• Every outfit now opens in one editor.
