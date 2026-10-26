@@ -339,6 +339,8 @@ public struct UCPSource: SourceAdapter {
             kind: .product,
             priceText: price.map { money($0) },
             priceAmount: price.map(major(of:)),
+            // UCP names the currency on every amount, which is more than most sources say.
+            currency: CurrencyCode.normalized(price?.currency),
             isAvailable: variants.isEmpty ? nil : variants.contains(where: \.available),
             tags: product.tags ?? [],
             productType: product.categories?.first?.name,

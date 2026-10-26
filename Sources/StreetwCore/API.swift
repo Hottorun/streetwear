@@ -95,17 +95,23 @@ public struct RegisterDevice: Codable, Sendable {
     public var environment: String?
     public var locale: String?
     public var sizes: SizePayload?
+    /// The country somebody shops in, as `UpdateDevice.country` reads it — sent at
+    /// registration too, so the very first feed is already from the right shop. Optional:
+    /// 1.0 sends none, and none is the main shop.
+    public var country: String?
 
     public init(
         apnsToken: String? = nil,
         environment: String? = nil,
         locale: String? = nil,
-        sizes: SizePayload? = nil
+        sizes: SizePayload? = nil,
+        country: String? = nil
     ) {
         self.apnsToken = apnsToken
         self.environment = environment
         self.locale = locale
         self.sizes = sizes
+        self.country = country
     }
 }
 
@@ -116,11 +122,27 @@ public struct UpdateDevice: Codable, Sendable {
     /// tokens from different APNs environments, and a token is only valid at its own.
     public var environment: String?
     public var sizes: SizePayload?
+    /// Which country's shops this person is served — an ISO 3166 code, the phone's region
+    /// unless they chose another (`users.country`).
+    ///
+    /// Held server-side for the reason the sizes are: the server decides which of a brand's
+    /// storefronts a feed and a push come from, and can only do that if it knows. Three
+    /// readings, and the difference between the first two is the point: **absent** changes
+    /// nothing — every caller that is not the location setting sends none — while an **empty
+    /// string** clears it back to the main shop. A code the server cannot read is ignored
+    /// rather than refused, because this body is the liveness check every launch makes.
+    public var country: String?
 
-    public init(apnsToken: String? = nil, environment: String? = nil, sizes: SizePayload? = nil) {
+    public init(
+        apnsToken: String? = nil,
+        environment: String? = nil,
+        sizes: SizePayload? = nil,
+        country: String? = nil
+    ) {
         self.apnsToken = apnsToken
         self.environment = environment
         self.sizes = sizes
+        self.country = country
     }
 }
 
@@ -348,6 +370,27 @@ public struct BrandSourceDTO: Codable, Sendable, Hashable, Identifiable {
     public var isAutomatic: Bool { sourceKind?.isAutomatic ?? false }
 }
 
+/// The shop of a brand's that serves the caller, when it is not the brand's main one.
+///
+/// Big retailers run a shop per country, and the server serves a person the one for their
+/// country where the brand has one and it is being read — see `docs/server.md`. This is what
+/// lets a brand page say which shop it is showing. Nil on `BrandDTO` means the main shop,
+/// which is what every brand is to 1.0, to anybody whose country has no shop of its own, and
+/// to every brand that runs one shop for everybody.
+public struct StorefrontDTO: Codable, Sendable, Hashable {
+    /// ISO 3166-1 alpha-2.
+    public var country: String
+    public var url: String
+    /// ISO 4217, when the shop has said.
+    public var currency: String?
+
+    public init(country: String, url: String, currency: String? = nil) {
+        self.country = country
+        self.url = url
+        self.currency = currency
+    }
+}
+
 public struct BrandDTO: Codable, Sendable, Hashable, Identifiable {
     public var id: UUID?
     public var name: String
@@ -374,6 +417,10 @@ public struct BrandDTO: Codable, Sendable, Hashable, Identifiable {
     /// keeps the mode it already holds rather than resetting a quiet brand because it
     /// happened to reappear in a search result.
     public var followMode: FollowMode?
+    /// The country shop serving the caller, or nil for the brand's main shop. When set,
+    /// `currency` and `sources` are that shop's — a brand page describes the shop it is
+    /// showing. Optional, and absent from everything 1.0 is sent.
+    public var storefront: StorefrontDTO?
 
     public init(
         id: UUID?,
@@ -385,7 +432,8 @@ public struct BrandDTO: Codable, Sendable, Hashable, Identifiable {
         lockedForDrop: Bool = false,
         logoURL: String? = nil,
         sources: [BrandSourceDTO] = [],
-        followMode: FollowMode? = nil
+        followMode: FollowMode? = nil,
+        storefront: StorefrontDTO? = nil
     ) {
         self.id = id
         self.name = name
@@ -397,6 +445,7 @@ public struct BrandDTO: Codable, Sendable, Hashable, Identifiable {
         self.logoURL = logoURL
         self.sources = sources
         self.followMode = followMode
+        self.storefront = storefront
     }
 }
 
@@ -572,6 +621,15 @@ public struct FeedItem: Codable, Sendable, Hashable, Identifiable {
     /// could not rank one cut against another in the mode the app ships in. Optional, and
     /// ignored by the 1.0 app.
     public var priceAmount: Double?
+    /// The ISO 4217 code every price on this row is in — now, before, and the brand's own
+    /// original — so the phone can write it the reader's way (`PriceFormat`).
+    ///
+    /// A brand runs a shop per country, so "the brand's currency" is not one fact, and the
+    /// row says which it is rather than leaving the phone to guess from the brand: after
+    /// somebody changes country, the brand's currency names a different shop from the one
+    /// this row came from. Nil when nothing said; the phone then prints `priceText` as it
+    /// always did. Optional, and ignored by 1.0.
+    public var currency: String?
     /// What it cost before, on a `.priceDrop`. Both forms, for the same reason the model
     /// keeps both: the string is what a card prints, and only the number can say which of
     /// two markdowns is the better one. Optional throughout — a client older than this
@@ -683,6 +741,7 @@ public struct FeedItem: Codable, Sendable, Hashable, Identifiable {
         imageURLs: [String] = [],
         priceText: String? = nil,
         priceAmount: Double? = nil,
+        currency: String? = nil,
         previousPriceText: String? = nil,
         previousPriceAmount: Double? = nil,
         originalPriceText: String? = nil,
@@ -709,6 +768,7 @@ public struct FeedItem: Codable, Sendable, Hashable, Identifiable {
         self.imageURLs = imageURLs
         self.priceText = priceText
         self.priceAmount = priceAmount
+        self.currency = currency
         self.previousPriceText = previousPriceText
         self.previousPriceAmount = previousPriceAmount
         self.originalPriceText = originalPriceText
@@ -862,6 +922,8 @@ public struct DiscoverCard: Codable, Sendable, Hashable, Identifiable {
     public var linkURL: String?
     public var priceText: String?
     public var priceAmount: Double?
+    /// The price's ISO 4217 code, as `FeedItem.currency`. Optional.
+    public var currency: String?
     public var isAvailable: Bool?
     /// The classifier's inputs, for the same reason `FeedItem` carries them: the client does
     /// not merely display these. `GarmentSlot`, `Gender` and the whole of `Pairing` are read
@@ -908,6 +970,7 @@ public struct DiscoverCard: Codable, Sendable, Hashable, Identifiable {
         linkURL: String? = nil,
         priceText: String? = nil,
         priceAmount: Double? = nil,
+        currency: String? = nil,
         isAvailable: Bool? = nil,
         productType: String? = nil,
         tags: [String] = [],
@@ -929,6 +992,7 @@ public struct DiscoverCard: Codable, Sendable, Hashable, Identifiable {
         self.linkURL = linkURL
         self.priceText = priceText
         self.priceAmount = priceAmount
+        self.currency = currency
         self.isAvailable = isAvailable
         self.productType = productType
         self.tags = tags
