@@ -131,6 +131,25 @@ struct RegionWireTests {
         #expect(dto.storefront == nil)
     }
 
+    @Test("A shop names its one country, says Europe only when it is all Europe, and counts otherwise")
+    func shopReach() {
+        #expect(ShopReach(countries: []) == nil)
+        #expect(ShopReach(countries: ["gb"]) == .country("GB"))
+        #expect(ShopReach(countries: ["DE", "FR", "IT", "GB", "CH"]) == .europe)
+        // eu.kith.com's own list, which ships to the US and Canada too.
+        #expect(ShopReach(countries: ["DE", "FR", "US", "CA"]) == .countries(4))
+        #expect(ShopReach(countries: ["DE", "TR"]) == .countries(2), "Turkey is not wholly anything")
+    }
+
+    @Test("A storefront from a server that predates the set serves its one country")
+    func servedCountriesFallsBack() throws {
+        let old = #"{"country":"GB","url":"https://uk.example.com","currency":"GBP"}"#
+        let dto = try APICoding.decoder.decode(StorefrontDTO.self, from: Data(old.utf8))
+        #expect(dto.servedCountries == ["GB"])
+        let new = StorefrontDTO(country: "DE", url: "https://eu.example.com", countries: ["DE", "FR"])
+        #expect(new.servedCountries == ["DE", "FR"])
+    }
+
     /// Absent and empty mean different things — "say nothing" and "back to the main shop" —
     /// so a body that does not mean to touch the country must not carry the key at all.
     @Test("An update that says nothing about the country sends no country")

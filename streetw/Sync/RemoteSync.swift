@@ -999,6 +999,9 @@ final class RemoteSync {
                 if brand.storefrontURLString != dto.storefront?.url {
                     brand.storefrontURLString = dto.storefront?.url
                 }
+                if brand.storefrontCountries != dto.storefront?.servedCountries {
+                    brand.storefrontCountries = dto.storefront?.servedCountries
+                }
                 if brand.isLockedForDrop != dto.lockedForDrop {
                     brand.isLockedForDrop = dto.lockedForDrop
                 }
@@ -1028,6 +1031,7 @@ final class RemoteSync {
                 brand.currencyCode = dto.currency
                 brand.storefrontCountry = dto.storefront?.country
                 brand.storefrontURLString = dto.storefront?.url
+                brand.storefrontCountries = dto.storefront?.servedCountries
                 brand.isLockedForDrop = dto.lockedForDrop
                 brand.logoURLString = dto.logoURL
                 brand.sources = dto.sources.map(Self.source(from:))

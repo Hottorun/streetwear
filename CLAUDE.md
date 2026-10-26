@@ -1077,17 +1077,20 @@ builds the executable. Omitting them yields a confusing "overlapping sources" er
 
 ### Countries and currencies
 
-**A brand's main shop is the brand row; a country's shop is a `storefronts` row**, and
-`storefront_id` is null on every source, product and event of the main shop — which is every row
-written before storefronts existed, so nothing was backfilled or re-polled. A country is switched
-on by `STOREFRONT_COUNTRIES`; its shop is polled only while somebody there follows the brand, and
-a person is served **one shop per brand** — their country's when it is switched on, attached,
-followed there and baselined, otherwise the main shop exactly as before. Every stored price
+**A brand's main shop is the brand row; a country's shop is a `storefronts` row serving a set of
+countries** (`storefront_countries`, unique per brand and country — `eu.kith.com` is one shop for
+48), and `storefront_id` is null on every source, product and event of the main shop — which is
+every row written before storefronts existed, so nothing was backfilled or re-polled. A country is
+switched on by `STOREFRONT_COUNTRIES`; a shop is polled, once, while any of its switched-on
+countries has a follower of the brand, and a person is served **one shop per brand** — the one
+whose set holds their country when that country is switched on and the shop is read and
+baselined, otherwise the main shop exactly as before. Every stored price
 carries its currency (`FetchedItem.currency`, `products.currency`, `FeedItem.currency`), nothing
 converts, and the app prints a row in its own currency in the reader's locale
 (`PriceFormat`, `BrandUpdate.priceLabel`) — **never with the brand's currency**, which names the
 serving shop, not the one an older row came from. Shops are attached by hand
-(`POST /admin/brands/:id/storefronts?country=&url=`). **Read the storefront rules in
+(`POST /admin/brands/:id/storefronts?url=&countries=`; no countries is an offer and writes nothing),
+and `…/storefronts/:country/add` and `…/remove` change a shop's set. **Read the storefront rules in
 `docs/server.md` and the location rules in `docs/design-decisions.md` before touching
 `Storefronts`, `StorefrontModel`, the claim query, `LocationSetting` or a price print.**
 

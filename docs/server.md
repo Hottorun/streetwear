@@ -402,9 +402,22 @@ Part of the streetw guidance set; see `CLAUDE.md` for the index and the build ru
 - **A brand's main shop is the brand row; a country's shop is a `storefronts` row**
   (`StorefrontModel`, `CreateStorefronts`, `Storefronts`). Big retailers run a shop per country —
   Victoria's Secret UK is a different company from the US one — so a brand maps to its storefront
-  per country: a base URL, an ISO country, a currency and **its own sources**. `sources`,
-  `products` and `events` carry a nullable `storefront_id`, and **null is the main shop**. Five
-  details are load-bearing:
+  per country: a base URL, a currency, **its own sources** and the **set of countries it serves**.
+  `sources`, `products` and `events` carry a nullable `storefront_id`, and **null is the main
+  shop**. Six details are load-bearing:
+  - **A storefront serves a set of countries** (`storefront_countries`, `StorefrontCountryModel`,
+    `CreateStorefrontCountries`), because brands run one shop for a region: `eu.kith.com` is one
+    shop, in euros, for 48 countries. A join table, not a `TEXT[]`, because an array column
+    cannot be reproduced on SQLite and every serving rule would then be tested by nothing local.
+    **Unique on `(brand_id, country)`** — one shop per brand per country is the schema's rule,
+    not the routes' — with `brand_id` copied from the storefront so the constraint can see it.
+    The migration gave each existing shop its own country as its one entry and wrote nothing
+    else, so nothing was re-polled or re-baselined. `storefronts.country` survives as
+    `homeCountry`, always one of the set: it sits inside the old `(brand_id, country)` unique
+    constraint, SQLite cannot drop a column that does, and the two databases must not diverge.
+    Keeping it a member of the set means that constraint can never fire on its own; taking it
+    out of the set moves it to another member (`Storefronts.narrow`). It is what
+    `StorefrontDTO.country` sends; `StorefrontDTO.countries` is the set.
   - **The main shop is not a row, and that is what keeps existing data unchanged.** Every source,
     product and event already in the database is exactly "the main shop", so a null column says
     so with no backfill, no re-discovery, no new polling and no baseline re-spent. Minting a
@@ -417,22 +430,30 @@ Part of the streetw guidance set; see `CLAUDE.md` for the index and the build ru
     because a country multiplies the polling of every brand followed there, so switching one on
     is a deployment decision, made rarely and visibly — not a toggle somebody with the admin key
     flips at a terminal and nobody notices.
-  - **A country's storefront is polled only while somebody there follows the brand**
-    (`Storefronts.wanted`): its country is switched on and a follow's user has that
+  - **A storefront is polled only while any of its countries is switched on and has a follower
+    of the brand** (`Storefronts.wanted`, `Storefronts.isRead`): a follow's user has that
     `users.country`. Worked out once per tick, and applied in the claim itself
     (`storefront_id IS NULL OR storefront_id = ANY(wanted)`), so a paused storefront is never
-    claimed, never fetched and never pushes its schedule forward. **The main shop's sources are
+    claimed, never fetched and never pushes its schedule forward. `wanted` is a set of
+    storefront ids, so a shop followed from three countries is claimed and fetched **once** —
+    membership decides whether, the claim is per source (`MultiCountryStorefrontTests`, and
+    `StorefrontPostgresClaimTests` against a scratch Postgres). **The main shop's sources are
     claimed exactly as before** — `PollerStorefrontTests` counts the requests. Its product pages
     are read by `enrich` under the same rule.
-  - **A storefront that sat idle re-baselines** (`Storefronts.resumeAfter`, a day). Nothing
+  - **A storefront that sat idle re-baselines** (`Storefronts.resumeAfter`, a day), as a whole:
+    its sources are read for all its countries at once, so "idle" means nobody in any of them
+    followed the brand. Nothing
     polls a paused storefront, so the first read after a pause compares against whatever it
     knew months ago — and would announce every product and restock since as news to the first
     follower back. Nothing else ever leaves a source unread for a day: the longest backoff is
     six hours. The baseline is *un-spent* (`baselined_at` cleared) rather than this one read
     declared one, so a resumed read that fails still owes it — the rule a first poll keeps.
-  - **A caller is served a country's storefront only when it is live** — the country is
-    switched on, somebody there follows the brand, and it has been baselined
-    (`Storefronts.serving`). Otherwise the main shop, exactly as before. One rule for
+  - **A caller is served the storefront whose set holds their country, only when it is live** —
+    their country is switched on, the shop is being read (somebody in one of its switched-on
+    countries follows the brand — for a follower that is themselves, for Discover it can be a
+    German follower keeping `eu.kith.com` read for somebody browsing from France), and it has
+    been baselined (`Storefronts.serving`). Otherwise the main shop, exactly as before: an
+    Italian in `eu.kith.com`'s set gets Kith's main shop until Italy is switched on. One rule for
     `GET /v1/feed`, `GET /v1/brands/:id/feed`, `GET /v1/discover`, every `BrandDTO` and
     `Notifier`, and it is **one shop per brand per person, never both**: a reader in Britain
     would otherwise get every drop twice, once in each currency, and a push for each. A brand
@@ -458,22 +479,32 @@ Part of the streetw guidance set; see `CLAUDE.md` for the index and the build ru
   announcement bar is `brands.website` — so a country storefront's readers hear of no `.sale`
   yet; a sale on the main shop is not one on theirs. `repoint` and `source` rebuild the main
   shop and leave every storefront alone.
-- **A storefront is attached by hand** (`POST /admin/brands/:id/storefronts?country=GB&url=…`).
-  It runs ordinary discovery on the URL, through the poller's fetcher, and refuses three
-  mistakes: nothing watchable there; **the same catalogue as the main shop** — a Shopify Markets
-  subfolder like `/en-gb/` is read off the host, so it would be the main shop again in its
-  currency (reading those is not built); and a shop whose `/meta.json` says it does not ship to
-  the country, unless `&force=true`. Measured: Kith's US shop ships to 197 countries, `eu.kith.com`
-  prices in EUR and ships to 48, and Palace's `www.` prices in GBP and ships to five — GB, GG,
-  IM, JE, PH. `/meta.json`'s own `country` is where the *merchant* is (`eu.kith.com` says FR), not
-  who it sells to, and is not read. Attaching a country that already has one replaces it;
-  `POST /admin/brands/:id/storefronts/:country/delete` removes one with its sources, products and
-  events — the products by hand (`Storefronts.remove`), because `products.source_id` is `ON DELETE
-  SET NULL` from the initial schema and the cascade from the storefront stops at its sources.
-  Nothing discovers country storefronts automatically. **Known gap: one storefront, one country.**
-  `eu.kith.com` is one shop for 48 countries; it can be attached for one of them, and attaching
-  it for a second is refused as a catalogue already read rather than polled twice. Serving
-  several countries from one read is the next step when a second one is switched on.
+- **A storefront is attached by hand, for a set of countries**
+  (`POST /admin/brands/:id/storefronts?url=…&countries=DE,FR,IT` — or `country=GB`, or a JSON body
+  `{"countries": [...]}`). It runs ordinary discovery on the URL, through the poller's fetcher.
+  **Naming no countries is the offer and writes nothing**: every country the shop's `/meta.json`
+  ships to, minus those another shop of the brand serves; `countries=all` takes it. An offer
+  rather than a default because a shop's list is not its market — `eu.kith.com`'s 48 include the
+  US and Canada, where Kith's main shop is — so somebody reads it first. A token that is not a
+  country code refuses the whole request rather than attaching for the rest. It refuses three
+  mistakes: nothing watchable there; **a catalogue the brand already reads** — the main shop
+  (a Shopify Markets subfolder like `/en-gb/` is read off the host, so it would be the main shop
+  again in its currency; reading those is not built) or a shop already attached, which is pointed
+  at `…/add` instead; and countries the shop's `/meta.json` says it does not ship to, unless
+  `&force=true`. Measured: Kith's US shop ships to 197 countries, `eu.kith.com` prices in EUR and
+  ships to 48, and Palace's `www.` prices in GBP and ships to five — GB, GG, IM, JE, PH.
+  `/meta.json`'s own `country` is where the *merchant* is (`eu.kith.com` says FR), not who it
+  sells to, and is not read. Attaching for countries another shop serves takes them off it
+  (`Storefronts.release`); a shop left serving nobody is removed with its history, which is what
+  replacing a one-country shop always did. `POST /admin/brands/:id/storefronts/:country/add?countries=`
+  and `…/remove?countries=` change the set of the shop serving `:country` without re-reading or
+  re-baselining anything; `add` refuses a country another shop holds (remove it there, out loud —
+  the people in it change shop) and checks ships-to like attaching, and `remove` refuses the last
+  country, which is `…/delete`. `POST /admin/brands/:id/storefronts/:country/delete` removes the
+  whole shop, for every country it serves, with its sources, products and events — the products
+  by hand (`Storefronts.remove`), because `products.source_id` is `ON DELETE SET NULL` from the
+  initial schema and the cascade from the storefront stops at its sources. `GET /admin/catalog`
+  prints each shop's whole set. Nothing discovers country storefronts automatically.
 - **`HTTPFetching`, not `HTTPClient`** — Vapor re-exports `AsyncHTTPClient.HTTPClient` and
   an unqualified collision in the server target is nastier than the wordier name.
 - **Don't name a test helper `withApp`.** VaporTesting exports a generic `withApp<T>` that

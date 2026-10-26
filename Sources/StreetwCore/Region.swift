@@ -32,6 +32,44 @@ public enum CountryCode {
     ]
 }
 
+/// Who a brand's country shop serves, in as few words as are true — what a brand page prints
+/// beside the shop's host and currency.
+///
+/// A shop serves a set of countries (`StorefrontDTO.servedCountries`). One country is named;
+/// a set that is all European is "Europe", which is what the brand calls the shop; anything
+/// else is a count. **Never a region the set does not wholly sit in**: `eu.kith.com`'s own
+/// ships-to list includes the US and Canada, and a shop attached for all of it is not a
+/// European shop, whatever its host says.
+public enum ShopReach: Equatable, Sendable {
+    case country(String)
+    case europe
+    case countries(Int)
+
+    /// Nil for no countries — which is the main shop, and is said differently.
+    public init?(countries: [String]) {
+        let codes = Set(countries.compactMap(CountryCode.normalized))
+        if codes.isEmpty { return nil }
+        if codes.count == 1, let only = codes.first {
+            self = .country(only)
+        } else if codes.isSubset(of: Self.european) {
+            self = .europe
+        } else {
+            self = .countries(codes.count)
+        }
+    }
+
+    /// Wholly European, by any reading: the EU, the EEA, Switzerland, the UK and its Crown
+    /// Dependencies, the Balkans, the microstates and the dependencies inside the continent.
+    /// Russia and Turkey are left out because they are not wholly anything, and a shop
+    /// serving either is then a count, which is still true.
+    static let european: Set<String> = [
+        "AD", "AL", "AT", "AX", "BA", "BE", "BG", "BY", "CH", "CY", "CZ", "DE", "DK", "EE", "ES",
+        "FI", "FO", "FR", "GB", "GG", "GI", "GR", "HR", "HU", "IE", "IM", "IS", "IT", "JE", "LI",
+        "LT", "LU", "LV", "MC", "MD", "ME", "MK", "MT", "NL", "NO", "PL", "PT", "RO", "RS", "SE",
+        "SI", "SJ", "SK", "SM", "UA", "VA",
+    ]
+}
+
 /// An ISO 4217 currency, as a stored price carries it.
 public enum CurrencyCode {
     /// "gbp" → "GBP", and nil for a symbol, a word or anything that is not three letters.
