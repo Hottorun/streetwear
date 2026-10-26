@@ -39,6 +39,10 @@ final class BrandModel: Model, @unchecked Sendable {
     /// `SaleBannerLedger`.
     @OptionalField(key: "sale_banner") var saleBanner: String?
     @OptionalField(key: "sale_banner_seen_at") var saleBannerSeenAt: Date?
+    /// The share of the buyable catalogue the last complete scan found marked down, and when —
+    /// the scan's half of `CatalogueSale.State`. Written once per completed scan.
+    @OptionalField(key: "catalogue_share") var catalogueShare: Double?
+    @OptionalField(key: "catalogue_measured_at") var catalogueMeasuredAt: Date?
     @Timestamp(key: "created_at", on: .create) var createdAt: Date?
 
     @Children(for: \.$brand) var sources: [SourceModel]
@@ -198,6 +202,69 @@ final class SourceModel: Model, @unchecked Sendable {
     }
 }
 
+/// A Shopify source's daily full scan: when it is due, how far the one in progress has got,
+/// and what the last one found. See `Poller.scanTick`.
+///
+/// One row per source, made by the scanner itself for any Shopify source without one. Its own
+/// table so the scan's lease never locks the `sources` row the poll claims.
+final class CatalogueScanModel: Model, @unchecked Sendable {
+    static let schema = "catalogue_scans"
+
+    @ID(key: .id) var id: UUID?
+    @Parent(key: "source_id") var source: SourceModel
+    /// The schedule and the lease: the claim pushes it forward before any request, and a turn
+    /// sets it to now (more pages to read), to the source's next slot (finished), or to a
+    /// backoff (failed).
+    @Field(key: "due_at") var dueAt: Date
+    /// When the scan in progress began, nil between scans.
+    @OptionalField(key: "started_at") var startedAt: Date?
+    /// The page the scan in progress reads next.
+    @Field(key: "next_page") var nextPage: Int
+    /// Whether the scan in progress is a baseline — decided when it begins, so one scan is
+    /// one or the other from its first page to its last.
+    @Field(key: "is_baseline") var isBaseline: Bool
+    /// The products the scan in progress has seen, as `ScanDigests`. Kept in the row so an
+    /// interrupted scan resumes with its memory, on this instance or another.
+    @OptionalField(key: "seen") var seen: String?
+    /// The scan in progress's sale reading so far — `CatalogueSale.Reading`, accumulated a
+    /// page at a time.
+    @Field(key: "priced") var priced: Int
+    @Field(key: "marked_down") var markedDown: Int
+    @OptionalField(key: "deepest") var deepest: Int?
+    @Field(key: "failure_count") var failureCount: Int
+    @OptionalField(key: "last_error") var lastError: String?
+    /// When a scan last read to the end of the catalogue. Nil until one has, and the reason a
+    /// scan stops counting as the catalogue's word: see `Poller.scanIsBaseline` and `Reaper`.
+    @OptionalField(key: "completed_at") var completedAt: Date?
+    /// The last finished scan, complete or cut short at the page cap, for `/admin/status`.
+    @OptionalField(key: "last_started_at") var lastStartedAt: Date?
+    @OptionalField(key: "finished_at") var finishedAt: Date?
+    @OptionalField(key: "last_pages") var lastPages: Int?
+    @OptionalField(key: "last_products") var lastProducts: Int?
+    @OptionalField(key: "last_truncated") var lastTruncated: Bool?
+
+    init() {}
+
+    init(sourceID: UUID, dueAt: Date) {
+        self.$source.id = sourceID
+        self.dueAt = dueAt
+        self.nextPage = 1
+        self.isBaseline = false
+        self.priced = 0
+        self.markedDown = 0
+        self.failureCount = 0
+    }
+
+    /// The reading so far, as the rule takes it.
+    var reading: CatalogueSale.Reading {
+        var reading = CatalogueSale.Reading()
+        reading.priced = priced
+        reading.markedDown = markedDown
+        reading.deepest = deepest
+        return reading
+    }
+}
+
 final class ProductModel: Model, @unchecked Sendable {
     static let schema = "products"
 
@@ -246,6 +313,13 @@ final class ProductModel: Model, @unchecked Sendable {
     @OptionalField(key: "enriched_at") var enrichedAt: Date?
     /// What this product is owed once its page has been read — see `PendingAnnouncement`.
     @OptionalField(key: "pending_announcement") var pendingAnnouncement: String?
+    /// When a complete catalogue scan first failed to find this product, or nil while it is
+    /// listed. One miss is not a removal: paging a catalogue that changes under the reader
+    /// can skip a row.
+    @OptionalField(key: "missing_since") var missingSince: Date?
+    /// When a second complete scan in a row failed to find it: the shop no longer lists it.
+    /// Retention counts from here (`Reaper`). Cleared by any read that sees it again.
+    @OptionalField(key: "unlisted_at") var unlistedAt: Date?
 
     @Children(for: \.$product) var variants: [VariantModel]
 

@@ -1216,6 +1216,17 @@ public struct StatusResponse: Codable, Sendable {
     public var devicesWithToken: Int?
     /// Sign in with Apple accounts. Optional, like everything added here since 1.0.
     public var accounts: Int?
+    /// The database's size on disk, in bytes — `pg_database_size` on Postgres, nil on SQLite.
+    ///
+    /// The number the volume cap is measured against, and one no row count can stand in for:
+    /// what fills a Postgres volume is dead tuples, which no `COUNT(*)` sees. See
+    /// `docs/server.md` for what the daily scan adds.
+    public var databaseBytes: Int64?
+    /// The daily full scan: sources that finished one in the last day, scans part-way through,
+    /// and products two complete scans in a row no longer found.
+    public var scansFinishedToday: Int?
+    public var scansInProgress: Int?
+    public var unlistedProducts: Int?
 
     public init(
         database: String,

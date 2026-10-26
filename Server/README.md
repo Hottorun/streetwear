@@ -52,7 +52,8 @@ an unchanged catalog produces nothing, and a failing source backs off.
 | `DATABASE_URL` | — | Postgres URL. Absent → SQLite |
 | `SQLITE_PATH` | `streetw.sqlite` | `:memory:` supported |
 | `AUTO_MIGRATE` | on | `false` to skip migrations at boot |
-| `DISABLE_POLLER` | off | `true` to run the API without polling |
+| `DISABLE_POLLER` | off | `true` to run the API without polling (and without the daily scan) |
+| `DISABLE_CATALOGUE_SCAN` | off | `true` to keep polling but stop the daily full scan of Shopify catalogues — its cost is mostly storage. See `docs/server.md` |
 | `POLITE_INTERVAL` | `2.0` | Minimum seconds between requests to one host |
 | `CREDITS_ALLOW_SANDBOX` | off | `true` to credit sandbox purchases on a production server — App Review and TestFlight need it. `Xcode` purchases are never credited on production. See `docs/credits.md` |
 | `CREDITS_UNVERIFIED_TRANSACTIONS` | off | `true` believes any well-formed StoreKit transaction, for following a simulated purchase locally. **Ignored on `--env production`** |
@@ -64,7 +65,7 @@ an unchanged catalog produces nothing, and a failing source backs off.
 | `APNS_TEAM_ID` | — | Team ID from the developer portal |
 | `APNS_TOPIC` | — | **Required** with the other `APNS_*`. The app's bundle ID (`com.kern.functional.streetw`); no default, because a stale one means every push is rejected by Apple rather than failing at boot |
 | `EVENT_RETENTION_DAYS` | `30` | Events older than this, already notified, are pruned |
-| `PRODUCT_RETENTION_DAYS` | `180` | Products unseen this long *and* with no events left are pruned |
+| `PRODUCT_RETENTION_DAYS` | `180` | Products gone this long *and* with no events left are pruned — unlisted by the daily scan, or unseen where no scan reads them |
 
 **Push is optional.** With no `APNS_*` set the server logs `apns: not configured` and runs
 exactly as before — polling, feed, registration — it just never delivers an alert.
@@ -135,7 +136,8 @@ I/O-bound and mostly receives 304s, so one instance goes a long way.
 - **Retention deletes events before products, never the reverse.** `events.product_id`
   is `ON DELETE CASCADE`, so pruning a product would silently take feed history with it —
   and deleting a product the source still lists makes the next poll announce it as new.
-  Only products unseen for `PRODUCT_RETENTION_DAYS` with no events left are eligible.
+  Only products gone for `PRODUCT_RETENTION_DAYS` with no events left are eligible — for a
+  Shopify shop, two complete daily scans in a row no longer found them.
 
 ```bash
 # Fan out anything pending, and report what happened

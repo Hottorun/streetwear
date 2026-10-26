@@ -457,6 +457,21 @@ Changing these silently will break intended behavior:
   only when at least one source succeeded; the server keeps a separate `sources.baselined_at`
   rather than reusing `last_checked_at`, which is stamped before the fetch and survives a failure.
   This is not theoretical — it dumped 250 Kith products into the feed as new drops.
+- **The daily full scan keeps the catalogue current and is never news by itself** (server only;
+  `docs/server.md`, *The catalogue is read at two speeds*). It is what makes a markdown or a
+  restock on older stock visible at all — the poll re-reads only the newest ~250 — and it is the
+  largest single source of potential event storms in the system, so three rules are absolute.
+  **"New" belongs to the poll**: a product the scan meets for the first time is stored silently,
+  and one published within a day of the poll's last read is left for the poll to find, because a
+  scan that stored a drop first would have swallowed it. **A first scan, or one after a lapse, is
+  a baseline**: the older stock's stored state is months stale the first time, and every
+  difference from it would otherwise be announced. **Events only by the existing rules** — a
+  size back, a markdown past 5%, a sale — through the same `refresh` the poll uses. Standalone has
+  no scan: the phone reading thousands of products a day for itself is the hammering the server
+  exists to avoid.
+- **A product leaves the catalogue after two complete scans in a row do not find it**, never one:
+  paging a catalogue that changes under the reader skips rows. Unlisted is not deleted — retention
+  takes it six months on — and a scan that finds most of a shop gone is not believed.
 - **`PageWatchSource` hashes visible text, not raw HTML** — after stripping scripts, styles,
   comments, tags and hex-looking tokens. Raw HTML changes on every load (CSRF tokens, cache
   busters), which would make every check look like a change. The first sight of a page stores a
@@ -497,7 +512,9 @@ Changing these silently will break intended behavior:
   and it is the one thing a *Sales only* follow is woken by. Quiet hears nothing; the mode still
   only takes away. Two detectors on the server, one event per sale (see `docs/server.md`): the
   catalogue (`CatalogueSale` — at least 30% of what a pass read and at least 12 products marked
-  down, ending only under 10% and after three days, the first measurement a baseline) and the
+  down, ending only under 10% and after three days, the first measurement a baseline; the daily
+  scan measures the same share of the whole *buyable* catalogue, may start a sale on older stock
+  the poll cannot see, and holds one open until both readings are under 10%) and the
   announcement bar (`SaleBanner`, every 30–60 minutes; free shipping, somebody else's discount
   and "on sale Friday" are not sales). **The roadmap calls the brand-wide alert opt-in per brand,
   and the opt-in is the follow mode**: *Everything* and *Sales only* are two ways of asking for

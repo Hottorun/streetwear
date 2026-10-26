@@ -21,10 +21,19 @@ public enum CatalogueSale {
     /// moving back to the front plus whatever is new, so a real sale clears this comfortably
     /// — Motel Rocks' "up to 50% off dresses" rail is every product on it — while a brand
     /// that keeps an outlet corner of last season's leftovers sits well under it. It is a
-    /// share of the *read*, not of the stored catalogue: the store holds up to 2,500 products
-    /// per brand at whatever price they last had when somebody saw them, and a share over
-    /// stale prices would describe last month. The blind spot that leaves is named in the
-    /// roadmap: older stock nobody re-reads is invisible here until the daily full scan.
+    /// share of the *read*, not of the stored catalogue: between scans most stored products
+    /// are at whatever price something last read them at, and a share over stored prices
+    /// would describe yesterday.
+    ///
+    /// **The daily scan measures the same thirty per cent over the whole catalogue, of what
+    /// can be bought** (`decideScan`). Only buyable stock, because a whole catalogue carries
+    /// what the newest 250 mostly do not: products kept listed after they sold out, whose
+    /// price says nothing about a sale anybody can act on. Counted in, they move the share
+    /// either way — diluting a real sale, or, where an old sale's leftovers keep their
+    /// compare-at, holding the share over the line for good, and a brand that never drops
+    /// under it can never be seen going on sale again, since a start is a transition. Of what
+    /// *is* on the shelf, thirty per cent cut is a sale on any measure, and it is what a sale
+    /// on older stock looks like: exactly the sale the newest 250 cannot see.
     public static let startShare = 0.30
 
     /// …and the share it has to fall back under before the sale counts as over and the
@@ -47,6 +56,11 @@ public enum CatalogueSale {
     /// day apart. Three days is long enough that "further reductions" a week later is news
     /// again and short enough that the next season's sale always is.
     public static let minimumLength: TimeInterval = 3 * 86_400
+
+    /// How long a scan's measurement speaks for the catalogue. A scan that has not finished
+    /// for this long — a failing source, a storefront that stopped being read — says nothing,
+    /// rather than holding a sale open on a share from last week.
+    public static let catalogueFresh: TimeInterval = 3 * 86_400
 
     /// What one pass saw of a brand's prices.
     public struct Reading: Sendable, Equatable {
@@ -91,10 +105,30 @@ public enum CatalogueSale {
         public var measuredAt: Date?
         /// When the sale now running started, or nil when there is none.
         public var since: Date?
+        /// The share the last complete scan measured over the buyable catalogue, and when.
+        /// Nil until a scan has finished. The poll may not end a sale this still holds open —
+        /// see `decide`.
+        public var catalogueShare: Double?
+        public var catalogueMeasuredAt: Date?
 
-        public init(measuredAt: Date? = nil, since: Date? = nil) {
+        public init(
+            measuredAt: Date? = nil,
+            since: Date? = nil,
+            catalogueShare: Double? = nil,
+            catalogueMeasuredAt: Date? = nil
+        ) {
             self.measuredAt = measuredAt
             self.since = since
+            self.catalogueShare = catalogueShare
+            self.catalogueMeasuredAt = catalogueMeasuredAt
+        }
+
+        /// Whether a recent scan says the catalogue is still marked down past `endShare`.
+        public func catalogueHolds(now: Date) -> Bool {
+            guard let share = catalogueShare, let at = catalogueMeasuredAt,
+                  now.timeIntervalSince(at) < CatalogueSale.catalogueFresh
+            else { return false }
+            return share >= CatalogueSale.endShare
         }
     }
 
@@ -107,9 +141,17 @@ public enum CatalogueSale {
         case started(State)
     }
 
-    /// The one rule. Announces on the transition into a sale and never otherwise, re-arming
-    /// only once the share has fallen back under `endShare` and the sale is at least
+    /// The one rule, for a poll. Announces on the transition into a sale and never otherwise,
+    /// re-arming only once the share has fallen back under `endShare` and the sale is at least
     /// `minimumLength` old.
+    ///
+    /// **Two measurements feed one state, and only agreement ends a sale.** The poll reads the
+    /// newest 250 and the daily scan the whole catalogue, and they can disagree for weeks: a
+    /// brand marking down only last season's stock reads 40% to the scan and 5% to the poll.
+    /// Had either been allowed to end a sale the other was holding, it would end after three
+    /// days, the other would start it again on its next read, and the brand would be announced
+    /// on sale every few days for as long as it lasted. So either may *start* one, and the
+    /// poll ends it only when its own read and a fresh scan are both under the line.
     ///
     /// - Parameter isBaseline: whether the pass itself is a baseline (a source's first poll),
     ///   which settles state and announces nothing, like everything else on a first sight.
@@ -120,20 +162,59 @@ public enum CatalogueSale {
         now: Date = Date()
     ) -> Decision {
         guard reading.priced > 0 else { return .unchanged }
+        let held = state.catalogueHolds(now: now)
 
         if state.measuredAt == nil || isBaseline {
-            let settled = State(
-                measuredAt: state.measuredAt ?? now,
-                since: reading.isSale ? (state.since ?? now) : (isBaseline ? state.since : nil)
-            )
+            var settled = state
+            settled.measuredAt = state.measuredAt ?? now
+            settled.since = reading.isSale ? (state.since ?? now) : (isBaseline || held ? state.since : nil)
             return settled == state ? .unchanged : .record(settled)
         }
 
         guard let since = state.since else {
-            return reading.isSale ? .started(State(measuredAt: state.measuredAt, since: now)) : .unchanged
+            guard reading.isSale else { return .unchanged }
+            var started = state
+            started.since = now
+            return .started(started)
         }
-        let over = reading.share < endShare && now.timeIntervalSince(since) >= minimumLength
-        return over ? .record(State(measuredAt: state.measuredAt, since: nil)) : .unchanged
+        let over = reading.share < endShare && !held && now.timeIntervalSince(since) >= minimumLength
+        guard over else { return .unchanged }
+        var ended = state
+        ended.since = nil
+        return .record(ended)
+    }
+
+    /// The same rule, for a daily scan over the brand's buyable catalogue.
+    ///
+    /// **It may start a sale and never ends one** — see `decide` for why ending belongs to the
+    /// poll alone. It always records its share, which is the one write a scan makes to the
+    /// brand row: a day's measurement is worth one tuple a day.
+    ///
+    /// The first scan is a **baseline** whatever it sees, like every first sight here: a brand
+    /// whose older stock has been on sale for a month when the scan first reached it did not
+    /// just go on sale. So is a scan after a lapse (`isBaseline`), whose prices are not news. A
+    /// baseline that finds a sale records it as running, silently, so the poll cannot announce
+    /// it either.
+    public static func decideScan(
+        _ reading: Reading,
+        state: State,
+        isBaseline: Bool,
+        now: Date = Date()
+    ) -> Decision {
+        guard reading.priced > 0 else { return .unchanged }
+        var next = state
+        next.catalogueShare = (reading.share * 1000).rounded() / 1000
+        next.catalogueMeasuredAt = now
+
+        if isBaseline || state.catalogueMeasuredAt == nil {
+            if reading.isSale, next.since == nil { next.since = now }
+            return .record(next)
+        }
+        if reading.isSale, state.since == nil {
+            next.since = now
+            return .started(next)
+        }
+        return .record(next)
     }
 
     /// How the sale is said, in the feed and on the lock screen.

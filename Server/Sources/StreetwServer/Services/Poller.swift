@@ -12,12 +12,21 @@ import StreetwCore
 import Vapor
 
 actor Poller {
-    private let app: Application
-    private let http: any HTTPFetching
+    let app: Application
+    let http: any HTTPFetching
     private var isRunning = false
     /// The country storefronts being read this pass — `Storefronts.wanted`, asked once per tick.
     /// Kept for `enrich`, which reads product pages under the same rule the claim does.
     private var wantedStorefronts: Set<UUID> = []
+
+    /// Brands whose catalogue a merge is writing right now — see `holdBrand`.
+    private var busyBrands: Set<UUID> = []
+    private var brandWaiters: [UUID: [CheckedContinuation<Void, Never>]] = [:]
+    /// Whether a scan pass is running; the scan's own `isRunning`, so a slow pass is never
+    /// overlapped by the next one.
+    var isScanning = false
+    /// When the scanner last looked for Shopify sources without a scan row.
+    var lastScanEnrolment: Date?
 
     init(app: Application, http: any HTTPFetching = Net.live) {
         self.app = app
@@ -168,6 +177,31 @@ actor Poller {
         return polled
     }
 
+    // MARK: - One writer per brand
+
+    /// Waits until no other merge is writing this brand's catalogue, then claims it.
+    ///
+    /// **The poll and the daily scan read the same products and must not both judge one.**
+    /// They run on separate loops so the scan never holds the poll up, and both decide a
+    /// restock by comparing what they read with what is stored. Two merges of one product at
+    /// once would both find the size unavailable, both store it available and both write the
+    /// restock — one event twice. Held around the merge only, never the fetch, so the most a
+    /// poll waits is one page of a scan being written, and per brand because the sale state
+    /// they both settle is the brand's. In the actor, so nothing here needs to be `Sendable`;
+    /// one instance only — two instances are kept apart by their claims, which never hand one
+    /// source to both, but not from a poll and a scan of it at once.
+    func holdBrand(_ brandID: UUID) async {
+        while busyBrands.contains(brandID) {
+            await withCheckedContinuation { brandWaiters[brandID, default: []].append($0) }
+        }
+        busyBrands.insert(brandID)
+    }
+
+    func releaseBrand(_ brandID: UUID) {
+        busyBrands.remove(brandID)
+        for waiter in brandWaiters.removeValue(forKey: brandID) ?? [] { waiter.resume() }
+    }
+
     // MARK: - Product pages
 
     /// Pages read per pass, at most.
@@ -185,6 +219,32 @@ actor Poller {
     /// visible on the page — and six hours is a restock found the same day for four requests
     /// a day per watched product.
     static let recheckAfter: TimeInterval = 6 * 3600
+
+    /// Watched pages re-read per host per pass, at most.
+    ///
+    /// **Per item is only honest if it is per host too.** A retailer with four hundred watched
+    /// products would otherwise take every page of every pass, and its pages are the heaviest
+    /// requests this server makes. Two a pass, with the watched queue asked at most every
+    /// `backfillInterval`, is at most ~576 pages a day to one host; a host with more watched
+    /// products than that covers at `recheckAfter` is simply re-read less often, oldest first,
+    /// rather than read harder.
+    static let recheckPerHost = 2
+
+    /// How many watched rows are looked at to choose a pass's rechecks. Wider than the budget
+    /// so the per-host cap has something to choose between; a watch list is small.
+    static let recheckCandidates = 200
+
+    /// The product kinds whose stock only their own page can say again: a sitemap lists a
+    /// URL and nothing else, and a UCP search pages a bounded window with no order, so a
+    /// watched product outside it would never be read again. A Shopify product is the poll's
+    /// and the daily scan's.
+    static let recheckedPrefixes = ["sitemap:", "ucp:"]
+
+    /// A UCP product the protocol has read this recently is still in its window, and is left
+    /// to it: those reads carry prices and live stock already, and a page that prints the
+    /// price a little differently would otherwise argue with them every few hours.
+    /// `refresh` stamps `last_seen_at` at most once a day, so two days is "still being read".
+    static let ucpCoverage: TimeInterval = 2 * 86_400
 
     /// The queue beyond what is owed an announcement is a scan of the products table, and
     /// has no business running every thirty seconds.
@@ -244,20 +304,7 @@ actor Poller {
         else { return queue }
         lastBackfill = now
 
-        let watched = try await WatchModel.query(on: db)
-            .filter(\.$firedAt == nil)
-            .all()
-            .map(\.$product.id)
-        if !watched.isEmpty {
-            let stale = now.addingTimeInterval(-Self.recheckAfter)
-            queue += try await ProductModel.query(on: db)
-                .filter(\.$id ~~ Array(Set(watched)))
-                .filter(\.$externalID =~ "sitemap:")
-                .group(.or) { $0.filter(\.$enrichedAt == nil).filter(\.$enrichedAt < stale) }
-                .limit(limit - queue.count)
-                .with(\.$variants)
-                .all()
-        }
+        queue += try await watchedRechecks(limit: limit - queue.count, now: now)
 
         guard queue.count < limit else { return queue }
         let held = Set(queue.compactMap(\.id))
@@ -272,6 +319,51 @@ actor Poller {
             .all()
         queue += unread.filter { $0.id.map { !held.contains($0) } ?? false }.prefix(limit - queue.count)
         return queue
+    }
+
+    /// Watched products whose own page is the only way to see their stock again, due a re-read.
+    ///
+    /// **Watched, and not saved, because the server cannot know what is saved.** Saves never
+    /// leave the phone (`docs/collection.md`), so the per-item set is the watches — and
+    /// "Notify" on a save is what turns one into a watch. Anything a later opt-in sends would
+    /// join it here.
+    ///
+    /// Never read first, then the longest unread, at most `recheckPerHost` from one host. The
+    /// order is decided in Swift because `ORDER BY` puts NULLs first on SQLite and last on
+    /// Postgres, and "never read" is the one that must come first on both.
+    func watchedRechecks(limit: Int, now: Date = Date()) async throws -> [ProductModel] {
+        guard limit > 0 else { return [] }
+        let db = app.db
+        let watched = try await WatchModel.query(on: db)
+            .filter(\.$firedAt == nil)
+            .all()
+            .map(\.$product.id)
+        guard !watched.isEmpty else { return [] }
+
+        let wanted = wantedStorefronts
+        let stale = now.addingTimeInterval(-Self.recheckAfter)
+        let candidates = try await ProductModel.query(on: db)
+            .filter(\.$id ~~ Array(Set(watched)))
+            .group(.or) { kinds in
+                for prefix in Self.recheckedPrefixes { kinds.filter(\.$externalID =~ prefix) }
+            }
+            .group(.or) { shops in Self.readable(shops, wanted: wanted) }
+            .group(.or) { $0.filter(\.$enrichedAt == nil).filter(\.$enrichedAt < stale) }
+            .limit(Self.recheckCandidates)
+            .with(\.$variants)
+            .all()
+            .filter { !$0.externalID.hasPrefix("ucp:") || now.timeIntervalSince($0.lastSeenAt) > Self.ucpCoverage }
+            .sorted { ($0.enrichedAt ?? .distantPast) < ($1.enrichedAt ?? .distantPast) }
+
+        var perHost: [String: Int] = [:]
+        var chosen: [ProductModel] = []
+        for product in candidates where chosen.count < limit {
+            let host = product.linkURL.flatMap(URL.init(string:))?.host() ?? ""
+            guard perHost[host, default: 0] < Self.recheckPerHost else { continue }
+            perHost[host, default: 0] += 1
+            chosen.append(product)
+        }
+        return chosen
     }
 
     /// The main shop, or a country shop somebody there follows: the products whose pages may
@@ -296,8 +388,20 @@ actor Poller {
             return
 
         case .product(let page):
-            let item = page.applied(to: storedItem(product))
-            product.title = item.title
+            var item = page.applied(to: storedItem(product))
+            // **A page re-read never brings a second vocabulary of variants.** A sitemap
+            // product's variants came from this same page, so the ids agree; a UCP product's
+            // came from the catalogue protocol, which names them its own way, and taking the
+            // page's would store every size twice and never see one come back.
+            let held = Set(product.variants.map(\.externalID))
+            if !held.isEmpty, held.isDisjoint(with: item.variants.map(\.id)) {
+                item.variants = Self.translated(item.variants, onto: product.variants)
+            }
+            // The page names a sitemap product, whose own title is a slug or a hash; anything
+            // else was named by a catalogue, which is the better authority.
+            if product.externalID.hasPrefix("sitemap:") || SitemapSource.isProvisional(product.title) {
+                product.title = item.title
+            }
             if product.summary == nil { product.summary = item.summary }
             if item.imageURLStrings.count > product.imageURLs.count { product.imageURLs = item.imageURLStrings }
             if product.productType == nil { product.productType = item.productType }
@@ -307,7 +411,17 @@ actor Poller {
             // Price, stock and variants go through the poll's own `refresh`, so a watched
             // product read again raises the same restock and price-drop events a Shopify
             // poll would. A first read is a baseline: there is nothing to compare it with.
-            _ = try await refresh(product, with: item, brandID: product.$brand.id, isBaseline: firstRead)
+            //
+            // A UCP product's `last_seen_at` is left to the protocol's own reads, because it is
+            // how `watchedRechecks` tells a product the UCP poll still covers from one that
+            // has fallen out of its window.
+            _ = try await refresh(
+                product,
+                with: item,
+                brandID: product.$brand.id,
+                isBaseline: firstRead,
+                marksSeen: !product.externalID.hasPrefix("ucp:")
+            )
             try await product.save(on: db)
 
         case .notAProduct, .unreachable(retryable: false):
@@ -332,6 +446,39 @@ actor Poller {
                 kind: .product
             ).save(on: db)
         }
+    }
+
+    /// A page's variants, renamed to the ones already held, or none at all.
+    ///
+    /// Matched on size and colour, which is the only thing the two vocabularies share, and only
+    /// when every page variant names one held variant and no two name the same: a size watch
+    /// on a UCP product then fires from its page exactly as from the protocol. Anything less
+    /// than a clean match answers empty, which leaves the held variants alone and lets the
+    /// product's own price and stock speak — a markdown, and a whole-product restock. The held
+    /// variant's title, price text and photograph are kept, so a page that prints a price
+    /// differently does not rewrite the row on every read.
+    static func translated(_ page: [VariantInfo], onto held: [VariantModel]) -> [VariantInfo] {
+        func key(_ size: String?, _ color: String?) -> String? {
+            let parts = [size, color].map { $0?.trimmingCharacters(in: .whitespaces).lowercased() ?? "" }
+            return parts.allSatisfy(\.isEmpty) ? nil : parts.joined(separator: "|")
+        }
+        var byKey: [String: VariantModel] = [:]
+        var ambiguous: Set<String> = []
+        for variant in held {
+            guard let k = key(variant.size, variant.color) else { continue }
+            if byKey.updateValue(variant, forKey: k) != nil { ambiguous.insert(k) }
+        }
+        var used: Set<String> = []
+        var translated: [VariantInfo] = []
+        for variant in page {
+            guard let k = key(variant.size, variant.color), !ambiguous.contains(k),
+                  let match = byKey[k], used.insert(match.externalID).inserted
+            else { return [] }
+            var info = match.asVariantInfo
+            info.available = variant.available
+            translated.append(info)
+        }
+        return translated
     }
 
     private func outcomeIsProduct(_ outcome: ProductPage.Outcome) -> Bool {
@@ -530,7 +677,7 @@ actor Poller {
     /// Failure is silent and
     /// empty, for the reason a hint's is: the main shops are polled either way, and a queue
     /// that stopped because this could not be read would be the worse trade.
-    private func liveStorefrontIDs() async -> Set<UUID> {
+    func liveStorefrontIDs() async -> Set<UUID> {
         do {
             return try await Storefronts.wanted(enabled: app.storefrontCountries, on: app.db)
         } catch {
@@ -620,6 +767,9 @@ actor Poller {
             // seen, and without this a source baselined under the old rules would offer up a
             // poll's worth of long-listed products as drops. See `FetchResult.isBaseline`.
             if !result.notModified {
+                // The daily scan may be writing this brand's catalogue — see `holdBrand`.
+                await holdBrand(brandID)
+                defer { releaseBrand(brandID) }
                 hadEvent = try await merge(
                     result.items,
                     brand: brand,
@@ -864,10 +1014,26 @@ actor Poller {
     /// and rewriting it each time is the volume problem `refresh` guards against.
     private func settleSale(_ reading: CatalogueSale.Reading, of brand: BrandModel, isBaseline: Bool) async throws -> Bool {
         guard let brandID = brand.id else { return false }
-        let state = CatalogueSale.State(measuredAt: brand.saleMeasuredAt, since: brand.saleSince)
+        func state(of brand: BrandModel) -> CatalogueSale.State {
+            CatalogueSale.State(
+                measuredAt: brand.saleMeasuredAt,
+                since: brand.saleSince,
+                catalogueShare: brand.catalogueShare,
+                catalogueMeasuredAt: brand.catalogueMeasuredAt
+            )
+        }
+        var decision = CatalogueSale.decide(reading, state: state(of: brand), isBaseline: isBaseline)
+        guard decision != .unchanged else { return false }
+        // The row was loaded when the source was claimed, a fetch ago, and the daily scan may
+        // have recorded the catalogue's share or started a sale since. A transition is rare and
+        // is decided on the row as it is now, or this poll could end a sale the scan has just
+        // said holds — and the next scan would announce it again.
+        if let fresh = try await BrandModel.find(brandID, on: app.db) {
+            decision = CatalogueSale.decide(reading, state: state(of: fresh), isBaseline: isBaseline)
+        }
         let next: CatalogueSale.State
         let started: Bool
-        switch CatalogueSale.decide(reading, state: state, isBaseline: isBaseline) {
+        switch decision {
         case .unchanged: return false
         case .record(let recorded): (next, started) = (recorded, false)
         case .started(let recorded): (next, started) = (recorded, true)
@@ -880,7 +1046,7 @@ actor Poller {
         return try await SaleEvents.announce(on: app.db, brandID: brandID, title: said.title, summary: said.summary)
     }
 
-    private func insertVariants(_ variants: [VariantInfo], productID: UUID) async throws {
+    func insertVariants(_ variants: [VariantInfo], productID: UUID) async throws {
         for info in variants {
             try await VariantModel(productID: productID, info: info).save(on: app.db)
         }
@@ -888,11 +1054,17 @@ actor Poller {
 
     /// A product we already have. The one thing worth re-surfacing is a restock, and
     /// only for the variants that actually came back.
-    private func refresh(
+    ///
+    /// - Parameter marksSeen: whether this read keeps `last_seen_at` fresh. The daily scan
+    ///   passes false: the products it reads are judged by `unlisted_at` instead (`Reaper`),
+    ///   so stamping them would be a rewrite of every product in the catalogue once a day for
+    ///   a column nothing would read.
+    func refresh(
         _ product: ProductModel,
         with item: FetchedItem,
         brandID: UUID,
-        isBaseline: Bool
+        isBaseline: Bool,
+        marksSeen: Bool = true
     ) async throws -> Bool {
         let db = app.db
         guard let productID = product.id else { return false }
@@ -1000,8 +1172,15 @@ actor Poller {
         // (`PRODUCT_RETENTION_DAYS`, 180 by default) — per-poll precision on a field read at
         // 180-day granularity buys nothing and costs a rewrite of the entire catalogue every
         // twenty minutes. A day is still three orders of magnitude finer than the question.
-        if Date().timeIntervalSince(product.lastSeenAt) > 86_400 {
+        if marksSeen, Date().timeIntervalSince(product.lastSeenAt) > 86_400 {
             product.lastSeenAt = Date()
+            changed = true
+        }
+        // Read again, so listed again: one scan missing a row is a paging accident, and a
+        // product back on the shelf is no longer on its way out.
+        if product.missingSince != nil || product.unlistedAt != nil {
+            product.missingSince = nil
+            product.unlistedAt = nil
             changed = true
         }
 
