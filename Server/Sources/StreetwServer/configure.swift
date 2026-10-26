@@ -145,6 +145,8 @@ func configure(_ app: Application) async throws {
         app.logger.warning("admin: ADMIN_TOKEN not set — every /admin route will refuse")
     }
 
+    app.appleSignIn = AppleSignInConfiguration.make(for: app)
+
     let sender = app.configureAPNS()
     app.storage[APNSConfiguredKey.self] = sender != nil
     let notifier = Notifier(app: app, sender: sender)

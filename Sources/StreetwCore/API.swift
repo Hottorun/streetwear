@@ -301,6 +301,112 @@ public struct DeviceResponse: Codable, Sendable {
     }
 }
 
+// MARK: - Accounts
+
+/// `POST /v1/account/apple` — what `ASAuthorizationAppleIDCredential` hands the app.
+///
+/// **`nonce` is the raw value, not the hash.** The app puts `SHA256(nonce)` on the Apple
+/// request, Apple copies that into the identity token, and the server hashes what it is sent
+/// here and compares. Sending the hash instead would let anybody holding a token replay it:
+/// the claim is printed in the token itself, so knowing it proves nothing.
+///
+/// `authorizationCode` is optional because the code is only good for one exchange and the
+/// server only needs it to get the refresh token deletion will revoke — a deployment with no
+/// Sign in with Apple key ignores it.
+public struct AppleSignIn: Codable, Sendable {
+    public var identityToken: String
+    public var authorizationCode: String?
+    public var nonce: String
+
+    public init(identityToken: String, authorizationCode: String?, nonce: String) {
+        self.identityToken = identityToken
+        self.authorizationCode = authorizationCode
+        self.nonce = nonce
+    }
+}
+
+/// An account as its holder sees it. Deliberately nothing Apple said about the person — no
+/// email, no name — because the server stores neither, and the opaque `sub` is a lookup key
+/// rather than something to show anybody.
+public struct AccountDTO: Codable, Sendable, Hashable, Identifiable {
+    public var id: UUID
+    public var createdAt: Date?
+
+    public init(id: UUID, createdAt: Date?) {
+        self.id = id
+        self.createdAt = createdAt
+    }
+}
+
+/// What a sign-in did.
+public struct AccountSession: Codable, Sendable {
+    public var account: AccountDTO
+    /// This sign-in made the account.
+    public var isNew: Bool
+    /// This device's anonymous follows, watches and sizes were folded into an account that
+    /// already had a user — the reinstall, or the second phone.
+    public var merged: Bool
+    /// The account's size profile after the merge, which the app adopts. Without it the next
+    /// launch sync would push this phone's profile — empty, on a reinstall — over the one the
+    /// account kept, because the size push is destructive by design.
+    public var sizes: SizePayload
+
+    public init(account: AccountDTO, isNew: Bool, merged: Bool, sizes: SizePayload) {
+        self.account = account
+        self.isNew = isNew
+        self.merged = merged
+        self.sizes = sizes
+    }
+}
+
+/// `GET /v1/account` — whether the caller's device is signed in. `account` is nil for an
+/// anonymous device, which is every device until somebody signs in.
+public struct AccountStatus: Codable, Sendable {
+    public var account: AccountDTO?
+
+    public init(account: AccountDTO?) {
+        self.account = account
+    }
+}
+
+/// `POST /admin/accounts/:id/credits`. `monthlyCostCapMicros` nil clears the cap.
+public struct SetAccountCredits: Codable, Sendable {
+    public var unlimited: Bool
+    public var monthlyCostCapMicros: Int?
+
+    public init(unlimited: Bool, monthlyCostCapMicros: Int? = nil) {
+        self.unlimited = unlimited
+        self.monthlyCostCapMicros = monthlyCostCapMicros
+    }
+}
+
+/// One row of `GET /admin/accounts`: enough for the owner to find their own account right
+/// after signing in, and nothing about anybody that the operator does not already hold.
+public struct AdminAccount: Codable, Sendable, Hashable, Identifiable {
+    public var id: UUID
+    public var createdAt: Date?
+    public var userCount: Int
+    public var deviceCount: Int
+    public var unlimited: Bool
+    public var monthlyCostCapMicros: Int?
+
+    public init(
+        id: UUID,
+        createdAt: Date?,
+        userCount: Int,
+        deviceCount: Int,
+        unlimited: Bool,
+        monthlyCostCapMicros: Int?
+    ) {
+        self.id = id
+        self.createdAt = createdAt
+        self.userCount = userCount
+        self.deviceCount = deviceCount
+        self.unlimited = unlimited
+        self.monthlyCostCapMicros = monthlyCostCapMicros
+    }
+}
+
 /// How one place a brand is watched is doing, as far as a client needs to know.
 ///
 /// Deliberately *not* `BrandSource`, even though the server holds one of those per row and
@@ -1010,6 +1116,8 @@ public struct StatusResponse: Codable, Sendable {
     /// registered for remote notifications — usually a missing `aps-environment`
     /// entitlement — not that the server is misconfigured.
     public var devicesWithToken: Int?
+    /// Sign in with Apple accounts. Optional, like everything added here since 1.0.
+    public var accounts: Int?
 
     public init(
         database: String,
@@ -1026,7 +1134,8 @@ public struct StatusResponse: Codable, Sendable {
         nextPollAt: Date? = nil,
         apnsConfigured: Bool? = nil,
         pendingPushes: Int? = nil,
-        devicesWithToken: Int? = nil
+        devicesWithToken: Int? = nil,
+        accounts: Int? = nil
     ) {
         self.database = database
         self.environment = environment
@@ -1043,6 +1152,7 @@ public struct StatusResponse: Codable, Sendable {
         self.apnsConfigured = apnsConfigured
         self.pendingPushes = pendingPushes
         self.devicesWithToken = devicesWithToken
+        self.accounts = accounts
     }
 }
 

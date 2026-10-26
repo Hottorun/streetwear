@@ -97,6 +97,7 @@ func routes(_ app: Application) throws {
                 .filter(\.$apnsToken != nil)
                 .count()
             status.users = try await UserModel.query(on: req.db).count()
+            status.accounts = try await AccountModel.query(on: req.db).count()
             status.pendingPushes = try await EventModel.query(on: req.db)
                 .filter(\.$notifiedAt == nil)
                 .count()
@@ -198,6 +199,10 @@ func routes(_ app: Application) throws {
             hasToken: device.apnsToken?.isEmpty == false
         )
     }
+
+    // MARK: Accounts
+
+    accountRoutes(authed: authed, admin: admin)
 
     // MARK: Brands
 
