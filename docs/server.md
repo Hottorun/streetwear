@@ -5,8 +5,8 @@ Part of the streetw guidance set; see `CLAUDE.md` for the index and the build ru
 ## Server specifics
 
 - **The catalog is global.** Brands, sources, products and variants are one row per
-  real-world thing; only users, devices, follows, size profiles, watches and poll hints are
-  personal. Never add a `user_id` to a catalog table — polling once for everyone is the whole
+  real-world thing; only accounts, users, devices, follows, size profiles, watches and poll
+  hints are personal. Never add a `user_id` to a catalog table — polling once for everyone is the whole
   design. (`watches` points *at* a product without owning it, exactly as `follows` points at a
   brand, and `poll_hints` at a brand's *schedule* without owning that either — a hint changes
   cadence and is never read back to anybody but the device that wrote it.)
@@ -302,6 +302,68 @@ Part of the streetw guidance set; see `CLAUDE.md` for the index and the build ru
   kinds travel inside the continuation (`FeedContinuation.kinds`, nil in an older token, read as
   legacy) so one read is one window to its last page — the new client sends its kinds on every
   page, but a token stored across an app update must not change its window halfway.
+- **An account owns users; a device reaches it through its user** (`accounts`, `users.account_id`,
+  `CreateAccounts`, `Accounts`, `AccountRoutes.swift`). Sign in with Apple is optional, and 1.0
+  and 1.1 never call these routes, so `account_id` is null for nearly every user and nothing may
+  assume one. It is a plain index, not unique: Phase 2's profiles are one user each under one
+  account. The column cascades from `accounts`, and deletion still deletes every table by hand
+  in one transaction, so the promise does not rest on SQLite having foreign keys switched on.
+  Seven details are load-bearing:
+  - **The first sign-in adopts the device's user; a later one merges** (`Accounts.signIn`). The
+    reinstall and the second phone arrive with an anonymous user of their own. The device moves
+    onto the account's user, keeping its token, and the anonymous user is folded in and deleted,
+    all in one transaction. Follows are a union and the account's mode wins where both have one.
+    Watches are a union on (product, size, colour), compared in Swift because the unique
+    constraint cannot see two NULLs as equal. Poll hints and brand-check watchers move where the
+    account has none. Sizes are merged per ladder: the account's where set, else the device's,
+    and a gender of `everything` counts as unset. A device already on *another* account moves
+    alone; that user is the other person's data.
+  - **The sign-in answers with the merged sizes, and the app adopts them** (`AccountSession.sizes`).
+    Every sync pushes the phone's profile destructively, so without this a reinstall, whose
+    profile is empty, would erase the sizes signing in was meant to keep.
+  - **The nonce on the wire is the raw value.** The app puts `SHA256(nonce)` on the Apple request
+    and Apple copies it into the token. The server hashes what it is sent and compares. Sending
+    the hash would prove nothing, because the claim is printed in the token.
+  - **The production verifier refuses** (`UnavailableAppleIdentityVerifier`, 503 "Sign in with
+    Apple is not available on this server yet"). An identity token is RS256 against Apple's
+    JWKS, and RSA is not in anything this package links. `GET /v1/account` says
+    `signInAvailable: false`, and the app draws no button. The claim checks
+    (`AppleIdentityClaims.check`: issuer, audience = the bundle id, expiry, nonce, subject) are
+    real and tested. A real verifier is a signature check in front of them:
+    `.package(url: "https://github.com/apple/swift-crypto.git", "3.0.0"..<"5.0.0")` with
+    `.product(name: "_CryptoExtras", package: "swift-crypto")` on the target. Cache
+    `https://appleid.apple.com/auth/keys`, find the header's `kid`, verify with
+    `_RSA.Signing.PublicKey(n:e:)` and `.insecurePKCS1v1_5` over SHA-256 of `header.payload`,
+    then call `check`. `jwt-kit` would also work and brings more with it.
+  - **`SIWA_TEST_TOKENS=true` accepts unsigned tokens, outside production only.** Every claim
+    check still runs. It exists so the app's DEBUG-only `-fakeAppleSignIn <subject>` can drive
+    sign-in → merge → delete against a local server. On an environment named `production`,
+    which is what the Docker `CMD` passes, it is ignored and logged as critical.
+  - **Revocation is real and needs a key.** The client secret is an ES256 JWT
+    (`AppleClientSecret`). P-256 is in the `Crypto` that Vapor already re-exports, so this needs
+    no new dependency. It is read from `SIWA_KEY_ID`, `SIWA_TEAM_ID` (`JD6NETLE45`) and
+    `SIWA_PRIVATE_KEY` (the `.p8`'s PEM; escaped `\n` accepted, as for `APNS_KEY_P8`). With them,
+    sign-in trades the authorization code for a refresh token (`accounts.apple_refresh_token`,
+    never logged and never on the wire), and `DELETE /v1/account` revokes it. Without them,
+    both steps are skipped and logged as skipped. Either way the exchange runs after the merge
+    commits and the revocation runs after the data is gone, so neither depends on Apple's
+    uptime. Not yet encrypted at rest.
+  - **Deletion takes every device on the account, the caller's included.** The app then
+    registers a fresh anonymous device and re-follows the phone's own brands
+    (`RemoteSync.deleteAccount`, then `didRegisterAfresh`, which is persisted so a kill between
+    the two cannot strand it). The catalogue is never touched.
+- **The owner's unlimited credits are a flag on the account** (`accounts.unlimited_credits`,
+  `monthly_cost_cap_micros`). Nothing reads them until credits exist. To set them on your own
+  account, sign in on your phone, then:
+  ```bash
+  curl -H "Authorization: Bearer $ADMIN_TOKEN" https://app.streetw.hottorun.com/admin/accounts
+  # the newest row, with your device count, is yours
+  curl -X POST -H "Authorization: Bearer $ADMIN_TOKEN" -H 'Content-Type: application/json' \
+    -d '{"unlimited": true, "monthlyCostCapMicros": null}' \
+    https://app.streetw.hottorun.com/admin/accounts/<id>/credits
+  ```
+  The cap is in millionths of a dollar (`25000000` is $25), `null` clears it, and a negative
+  value is refused. The list shows counts only and nothing about what anybody follows.
 - **`HTTPFetching`, not `HTTPClient`** — Vapor re-exports `AsyncHTTPClient.HTTPClient` and
   an unqualified collision in the server target is nastier than the wordier name.
 - **Don't name a test helper `withApp`.** VaporTesting exports a generic `withApp<T>` that
