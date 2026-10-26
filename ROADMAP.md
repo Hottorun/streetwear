@@ -360,6 +360,19 @@ fit editor; the starter pack of six womenswear and six menswear shops. See
 - [ ] **Product search.** None exists — the only search is `ILIKE` on brand names. Postgres
       full-text plus pgvector embeddings of each product's text and photograph, built once per
       product. The same index serves "more like this", Shop's ranking, daily picks and the scan.
+      *Done, the full-text half:* a generated `simple` tsvector on `products` (title, type, tags,
+      weighted) with a GIN index, colourways through an expression index, brand names in Swift;
+      `GET /v1/products/search?scope=followed|all` runs the phone's own `ShopQuery` and
+      `ShopSearch` over the candidates, so price bounds, "no …", "in my size", the gender filter,
+      the ranking and the six failures mean the same on both ends; `GET /v1/products/:id/similar`.
+      Shop searches the server in server mode — your shops, then every shop we watch when asked —
+      and "more like this" asks it. 20–130ms on eight thousand products, release. See
+      `docs/server.md` and `docs/discover.md`.
+      *Ready and waiting:* `EmbeddingProvider`, `product_embeddings` keyed by model id, the
+      backfill and vector "more like this" — installed only where pgvector exists, tested with a
+      fake provider. **Waits on:** the move to a pgvector Postgres (above;
+      `docs/pgvector-migration.md`) and the client for the chosen provider (Marqo FashionSigLIP 2,
+      behind `EMBEDDING_URL`). Daily picks and the scan do not read the index yet.
 
 ### Phase 4 — AI
 

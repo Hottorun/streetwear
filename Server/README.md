@@ -63,6 +63,7 @@ an unchanged catalog produces nothing, and a failing source backs off.
 | `APNS_KEY_ID` | — | Key ID from the developer portal |
 | `APNS_TEAM_ID` | — | Team ID from the developer portal |
 | `APNS_TOPIC` | — | **Required** with the other `APNS_*`. The app's bundle ID (`com.kern.functional.streetw`); no default, because a stale one means every push is rejected by Apple rather than failing at boot |
+| `EMBEDDING_URL` | — | The embedding provider for semantic search. Unset: full-text only. No client is built yet, so set it is logged and ignored — see `docs/server.md` |
 | `EVENT_RETENTION_DAYS` | `30` | Events older than this, already notified, are pruned |
 | `PRODUCT_RETENTION_DAYS` | `180` | Products unseen this long *and* with no events left are pruned |
 

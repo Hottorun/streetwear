@@ -1,12 +1,13 @@
 // ShopSearch.swift
 // Finding what a `ShopQuery` asked for among the products already on the phone.
 //
-// **The scope is the whole of the honesty.** This searches the products from the shops
-// somebody follows that the app has already stored — the newest few hundred per shop, and in
-// server mode only what arrived as news — and the screen says so in those words. It is not
-// the shops' whole catalogues (Phase 3 stores those) and it is not the web (Phase 4 asks a
-// model to look). An answer from a narrow search presented as a broad one is the quiet lie
-// this project keeps a list of; the same answer labelled with its scope is simply useful.
+// **The scope is the whole of the honesty.** Standalone, this searches the products from the
+// shops somebody follows that the phone has stored — the newest few hundred per shop. In server
+// mode the server runs this same code over every product it holds (`ProductSearch`), handing
+// over the best candidates its index found and saying which words exist at all (`knows:`). The
+// screen names whichever it was. It is not the web (Phase 4 asks a model to look). An answer from
+// a narrow search presented as a broad one is the quiet lie this project keeps a list of; the
+// same answer labelled with its scope is simply useful.
 //
 // Three decisions worth knowing before changing anything here.
 //

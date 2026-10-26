@@ -522,3 +522,94 @@ Part of the streetw guidance set; see `CLAUDE.md` for the index and the build ru
   `test(...)`'s discardable return and silently pick that overload — the app comes up with
   no routes and everything 404s, while multi-statement closures resolve to yours and pass.
   The local helper is called `withServer`.
+
+## Product search
+
+`GET /v1/products/search` and `GET /v1/products/:id/similar` (`ProductRoutes.swift`,
+`ProductSearch`, `CatalogueText.swift`). The phone's half and the screen's rules are in
+`docs/discover.md` (*Shop*); these are the server's.
+
+- **One grammar, both ends.** The text is parsed by `ShopQuery` and matched, constrained, ranked
+  and explained by `ShopSearch.run` — the code the phone runs over its own store. The server only
+  adds what a phone does not need: an index to *find* candidates in a catalogue too large to load,
+  and the database's answer to which words exist at all. `ProductSearchTests.parity` runs the same
+  queries through the route and through `ShopSearch` over the same products and compares the
+  pages, the partial matches, the struck words, the outcome and the "cheaper" bound.
+- **The index finds; the grammar decides.** `CatalogueTextIndex.candidates` hands over the best
+  `ProductSearch.pool` (600) products in scope carrying any of the words — every word first, then
+  `ts_rank_cd`, then recency and id — and `ShopSearch` keeps what really matches. So it errs wide:
+  a category word looks for every token `GarmentClassifier.vocabulary` can place there, a compound
+  ("tshirt") for its parts in order, a shop's name by brand id. What can be said in SQL — a price
+  bound, a ruled-out word in the vector — narrows the candidates, and a second read of 200 without
+  them is what lets an empty answer still say how many matched and what the cheapest was.
+- **Which words exist is asked of the whole scope** (`existing`, one `EXISTS` per word), never read
+  off the candidates. A rare word crowded out of 600 would otherwise be "not in your shops" on the
+  server and required on the phone — `rareWordsAreRequired` reproduces exactly that. `ShopSearch.run`
+  takes it as `knows:`.
+- **`simple`, not `english`** (`AddProductSearch`). Product names are not prose: the English
+  configuration drops "on", "off" and "all" as stop words (On Running, Off-White, All Saints), and
+  stems "Vans" to "van" and "boxy" to "boxi". The grammar spells out a word's other number and its
+  synonyms itself, the same on both ends, so a stemmer would only add matches the phone never makes.
+- **`products.search` is a generated column** — `setweight` A title, B product type, D tags, through
+  `streetw_fold` (accents folded with `translate`, because `unaccent` is not `IMMUTABLE`) and
+  `streetw_join` (`array_to_string` is only `STABLE`). Nothing that writes a product changes; the
+  poller is untouched. A generated column sees one row of one table, so the brand's name is matched
+  in Swift and the colourways through an expression index on `variants`
+  (`idx_variants_color_search`), one index scan per word: an aggregate asking every word per variant
+  recomputed the vector each time, 68ms of an 80ms query.
+- **Ranking quality is a property of Postgres.** SQLite (`PortableTextIndex`) reads the same fields
+  with `LIKE`, newest first, no rank, and the candidates' vocabulary stands in for `existing`. It is
+  there so the tests drive the route, the scopes and the grammar end to end; tune nothing against it.
+  `ProductSearchPostgresTests` covers the rank, the spellings and `existing` against
+  `STREETW_TEST_POSTGRES_URL`.
+- **What is searched** (`CatalogueScope.predicate`): `kind = 'product'`, a photograph, the shop that
+  serves the caller (`Storefronts.serving` — one shop per brand, never both), announced
+  (`pending_announcement IS NULL`) and, where the full scan's column exists, still listed
+  (`unlisted_at IS NULL`). Scope `followed` is every follow whatever its mode — *Quiet* still shapes
+  search; `all` is every brand. The gender filter and "in my size" are applied by the grammar, so an
+  empty answer can say it was the filter.
+- **Candidates are read as columns, the page as models.** Hydrating 600 `ProductModel`s and four
+  thousand `VariantModel`s through Fluent was 380ms of a 650ms search; reading rows into values and
+  building `DiscoverCard`s for the page alone brought "black hoodie" to 105ms and the rest to 20–70ms,
+  measured in release on eight thousand products. The size context is worked out only for the
+  listings "in my size" is asked about.
+- **Paging is an offset into one query's ranking** (`cursor`, opaque). Total, with no randomness, so
+  the same query pages the same way; a catalogue that changes between two pages can repeat or skip a
+  product at the seam, which is the price of not holding a cursor's state.
+- **"More like this"** takes the product's id, or the external id the phone holds with `?brand=` —
+  percent-encoded as one segment, because a sitemap product's key is its whole URL. By vector where
+  this product has one under the current model, otherwise by its own words read as a query and
+  scored the way `SimilarItems` scores (the same slot, each shared word, half a point for the same
+  shop, at least two). `basis` says which.
+
+## Embeddings and pgvector
+
+Designed and tested, and switched off: there is no pgvector in production yet
+(`docs/pgvector-migration.md`) and no provider client (the owner chose Marqo FashionSigLIP 2,
+self-hosted beside the server; its client is built with that service).
+
+- **`EmbeddingProvider`** (`Embeddings.swift`): `model`, `dimension`, `embedsImages`,
+  `embed(texts:)` and `embed(imageURLs:)` → `[[Float]]`. The dimension is the provider's, never
+  hard-coded — SigLIP-base is 768. Configured by `EMBEDDING_URL`; unset is off, and set without a
+  client it says so at boot rather than doing nothing silently. Tests use `FakeEmbeddingProvider`.
+- **pgvector is installed only where it is available.** `AddProductEmbeddings` runs
+  `CREATE EXTENSION IF NOT EXISTS vector` only when `pg_available_extensions` lists it, and creates
+  `product_embeddings (product_id, model, text_embedding vector, image_embedding vector,
+  embedded_at)`. Where it is not — production today, and SQLite — the migration records itself and
+  does nothing, and boot logs `search: full-text; semantic search unavailable (…)`.
+- **The same work runs again at every boot** (`SemanticIndex.prepare`), and that is load-bearing:
+  the move to pgvector is a dump and restore, the restored `_fluent_migrations` says the migration
+  ran, and without the boot pass the new database would never get its table. Rehearsed.
+- **The model id is stored beside every vector**, so a new model is a re-embed and not a migration:
+  `EmbeddingBackfill` embeds what has no row or a row from another model, a batch at a time, and a
+  nearest-neighbour query names the model, so two models' vectors are never compared. The column is
+  a bare `vector`; the HNSW index is built per model on `text_embedding::vector(n)`, partial on the
+  model (`SemanticIndex.ensureIndex`), so another dimension is another index.
+- **A separate table, not a column on `products`**: the poller and the scan rewrite product rows,
+  and a few kilobytes of floats would ride along on every rewrite — the volume problem above.
+- **Query time needs the provider up.** A search embeds its words under a 1.5s timeout
+  (`withTimeout`); slow or down, the answer is the full-text one, which is complete on its own.
+  Vectors widen the candidates and add to their rank; they never make a match the grammar would not.
+- **`Application.semanticSearch`** is the one switch every semantic path asks — pgvector installed
+  *and* a provider — so nothing runs half on. The backfill loop starts only behind it and only where
+  the poller runs.
