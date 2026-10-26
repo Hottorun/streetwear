@@ -140,6 +140,10 @@ Dev-only launch flags (all read via `UserDefaults`, all no-ops when absent):
 | `-startTab style` | Opens straight to a tab, so screenshots need no UI automation. One of `feed`, `discover`, `saved`, `style` — anything else (including the retired `brands`) resolves to the feed via `Tabs.resolve` rather than drawing a blank page |
 | `-standalone YES` | Runs with no server, so `SyncEngine` polls from the phone |
 | `-seedSaves 8` | Files garments into the wardrobe, spread across `GarmentSlot.essential`. Independent of `-seedBrands`: it reads whatever brands the store holds, so in server mode it runs after the launch sync rather than at launch |
+| `-seedNews 400` | With `-seedBrands`, how many of each brand's newest products are made news after the baseline (default 12) — enough of Kith's to see its bursts and to measure the feed on a deep store |
+| `-feedLastVisitHours 5` | Pretends the last visit to the feed ended that long ago, for the launch's first visit, so the "since you were last here" line can be shot without waiting out `FeedVisit.resumeWindow` |
+| `-feedFilter upcoming` | Opens the feed narrowed — `all`, `drops`, `restocks`, `sales` or `upcoming` |
+| `-feedBrand "Ondo Club"` | Opens the feed narrowed to one followed brand, by name |
 
 **`-standalone YES` is the only way to get standalone mode.** `-serverBaseURL ""` used to do it
 and no longer does — see *The server address is not a setting* below.
@@ -201,7 +205,7 @@ plutil -p /tmp/streetw-dd/Build/Products/Debug-iphonesimulator/streetw.app/Info.
 ### Tests
 
 ```bash
-swift test                                    # all 610
+swift test                                    # all 640
 swift test --filter "Size normalisation"      # one suite
 swift test --filter relockFiresAgain          # one test
 ```
@@ -345,17 +349,34 @@ what was measured against real catalogues.
 
 ### Deliberate design decisions
 
-**Read `docs/design-decisions.md` before changing the feed, the tabs, the brand rail, any browsing
-filter, any unread count, collections, ordering, baselines, price/restock events, or push.**
+**Read `docs/design-decisions.md` before changing the feed, its cards or filters, the tabs, any
+browsing filter, any unread count, what marks a row seen, collections, ordering, baselines,
+price/restock events, or push.**
 Changing these silently breaks intended behaviour, and each rule there names the failure that
 bought it. The short form of the load-bearing ones:
 
 - Instagram is never scraped — a stored deep link only.
-- The feed's unit is the **event**, not the product; only a sudden kind earns the lead photograph,
-  and `UpdateKind.isSudden` **is** `Notifier.isWorthWaking`.
-- Every count on a spread opens the list it counts, and every visible count is subject to the same
-  filter as that list (`Brand.unseenCount(matching:)`, `BrandUpdate.passes`).
-- Brands is not a tab; the alphabetical brand rail at the head of `FeedView` replaced it.
+- **The feed is a two-column grid of event cards, newest first across brands** (Phase 1, replacing
+  1.0's spreads grouped by brand). A card is a photograph, the brand, **one** label and the price —
+  no product name. **Every event gets a picture** (1.0 gave only a sudden kind the lead photograph);
+  a product with none shows the brand's wordmark, a sale shows the brand's marked-down stock. A
+  release is one card, and so is a **burst**: three or more events of one kind from one brand
+  inside thirty minutes, anchored at the first (`FeedTimeline`). A restock in your size is never
+  folded into one. `UpdateKind.isSudden` still **is** `Notifier.isWorthWaking`.
+- **Order and the line are two stored dates.** Cards by their newest event (`publishedAt`, ties on
+  the id); the "since you were last here" line by `BrandUpdate.arrivedAt`, which is nil for history
+  — a baseline, a catch-up, what a follow mode keeps out — so history is never in the timeline.
+  Reading writes neither, so nothing moves under a thumb.
+- **No per-brand unread state** — no checkmarks, dots or counts on the feed. A visit is the feed on
+  screen with gaps under five minutes (`FeedVisit`); the line is where the last one ended, and
+  leaving the feed marks what it showed seen (`FeedHistory.markShown`), which is what keeps
+  `isSeen` meaningful for `FollowedSupply`, a brand page's UNREAD and pruning. Every visible count
+  that survives is subject to the same filter as its list (`Brand.unseenCount(matching:)`,
+  `BrandUpdate.passes`).
+- **One filter row** — All · Drops · Restocks · Sales · Upcoming · Brand ▾ — which never truncates;
+  it replaced the brand rail and the calendar, markdowns and watches icons. Brands live under You ›
+  Following; adding one is in the Brand menu and the empty feed. A drop inside two days is **one
+  line** above the feed, never a pinned card (`UpcomingLine`).
 - There is no refresh button — `scenePhase == .active` and pull-to-refresh, on two very different
   throttles (60s server, 20min standalone).
 - A brand's first sync is a baseline, and only a sync that reached something may spend it.
@@ -363,9 +384,9 @@ bought it. The short form of the load-bearing ones:
   between brands (`FeedPaging`) — one page per sync is how anything past the 200th event was lost.
 - A follow has a mode, and `FollowMode.admits` is the one rule: `Notifier` asks it before a push,
   and the phone asks it where a row is written — what the mode does not admit is stored already
-  read, so no count or list needs to know. A watch ignores every mode.
-- Ordering: brands by `lastActivityAt` (stored, never by newest *unread*); a brand's output by
-  `BrandUpdate.newestFirst`; one garment one row via `oncePerProduct`.
+  read and with no arrival, so no count or list needs to know. A watch ignores every mode.
+- Ordering: a brand's output by `BrandUpdate.newestFirst`; one garment one row via
+  `oncePerProduct`, in every list including the timeline.
 - Only a price *drop* past 5% is an event; restock outranks it; a lock fires on the transition. A
   markdown is measured from the brand's own `compare_at_price` where it published one
   (`FetchedItem.originalPriceAmount`, `PriceChange.base`), and old stock first seen marked down is a
@@ -654,13 +675,16 @@ four states `DropCalendarView.watchLine` prints.
   the next page change, which is precisely when it matters. It joins `inFlight`, so a page that
   catches up with its own warm-up awaits it rather than starting a second request.
 
-### Gestures: paging and quick-save share a direction
+### Gestures: horizontal belongs to photographs
 
-Horizontal swipe is claimed twice — paging through a product's photographs, and `quickSave`'s
-file/mark-read. Resolved **by region, not by screen**: `quickSave` offsets the whole card (it has
-to, or the hint appears beside a card that hasn't moved) while `quickSaveHandle()` marks the part
-that actually recognises the drag, which is the caption. Attaching the gesture at card level
-swallows the photograph's paging; attaching it nowhere loses the actions.
+1.0 claimed the horizontal swipe twice — paging a product's photographs, and `quickSave`'s swipe to
+file or mark a card read — and settled it by region. Phase 1 retired the quick-save swipe with the
+spreads: a half-width card in a two-column grid cannot be dragged sideways without covering its
+neighbour, and "mark read" has nothing left to do now that a visit is what reads the feed. **Saving
+from a card is the bookmark on its photograph and the long-press menu** (`SaveAction`,
+`UpdateMenu`); filing is the confirmation's Board or the menu's "Add to board" (`BoardPicker`).
+Feed cards carry one photograph and no pager, so a horizontal drag means paging only on the pages
+that show a gallery (`ImageGallery`). Don't add a swipe back to a grid card.
 
 ### Recommendations
 
@@ -686,8 +710,9 @@ the follows table.
 `Discovery.swift`, `DiscoverProductSheet` or `/v1/discover`.** It is the longest set of rules in the
 project and every one names what it fixed. The ones most easily broken by accident:
 
-- A discovery card is **never persisted with `isSeen == false`** — `FeedView` queries `!isSeen`, so a
-  stored page would empty thousands of products into the unread feed. Only a save writes a row.
+- A discovery card is **never persisted with `isSeen == false`** — anything unread is news to the
+  feed (`FeedHistory.adoptLegacy` gives it an arrival) and to `FollowedSupply`, so a stored page
+  would empty thousands of products into the feed. Only a save writes a row.
 - The ranking must not move the card being read (`DiscoverDeck.pinningRead`), and there is **no RNG**.
 - Diversity is a property of the query shape, not of tuning; the offset advances by
   `discoverPerBrand`, never by the fetch window.

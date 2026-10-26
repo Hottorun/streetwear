@@ -21,9 +21,8 @@ Part of the streetw guidance set; see `CLAUDE.md` for the index and the build ru
     `LazyVStack` and is routinely recycled or scrolled away before you act on the toast; so are
     the two sheets, which are presented from `ContentView` because the toast dismisses itself
     on the tap that opens them.
-  - **It clears the buy bar.** Anchored above the tab bar — `quickSave` owns the horizontal
-    drag on the lower half of a feed card, so anything laid over that region fights a gesture
-    for the same pixels — but a product page puts its buy button there, and covering it for
+  - **It clears the buy bar.** Anchored above the tab bar — over the cards it would cover the
+    next ones being read — but a product page puts its buy button there, and covering it for
     four seconds at the moment somebody decided they want the thing is the worst possible
     place for a confirmation. `bottomClearance` lifts it while that page is up.
   - **A share gets the same confirmation, and it is the main point of it.** The extension
