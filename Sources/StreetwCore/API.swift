@@ -1165,6 +1165,118 @@ public struct DiscoverResponse: Codable, Sendable {
     }
 }
 
+// MARK: - Product search
+
+/// Where `GET /v1/products/search` looks.
+///
+/// **Two scopes, and the screen names whichever it searched.** `followed` is the caller's
+/// shops — every product the server holds for the brands the acting profile follows, which
+/// is the whole catalogue rather than the few hundred a phone keeps. `all` is every shop the
+/// server watches, followed or not. A narrow search presented as a broad one is the quiet lie
+/// `ShopView` exists not to tell, so the scope travels back in the answer and the copy is
+/// printed from that, never from what was asked for.
+public enum ProductSearchScope: String, Codable, Sendable, CaseIterable {
+    case followed
+    case all
+
+    /// The query value. Anything else — absent, misspelt, a scope a newer client knows — is
+    /// the caller's own shops, the narrower and cheaper reading.
+    public init(query raw: String?) {
+        self = raw.flatMap(Self.init(rawValue:)) ?? .followed
+    }
+}
+
+/// One product a search found, and how.
+public struct ProductSearchHit: Codable, Sendable, Hashable, Identifiable {
+    /// The product, in the shape the deck already draws and saves: a product with its brand
+    /// and its sources, not an event. A search result has not *happened* to anybody, so
+    /// minting an event id for it would be `DiscoverCard`'s argument against `FeedItem` again.
+    public var card: DiscoverCard
+    /// The words it carried. Nil for an exact match, where the reading under the field
+    /// already says them; a partial match prints these because they are its whole reason.
+    public var matched: [String]?
+
+    public var id: String { card.productExternalID }
+    public var isExact: Bool { matched == nil }
+
+    public init(card: DiscoverCard, matched: [String]? = nil) {
+        self.card = card
+        self.matched = matched
+    }
+}
+
+/// The answer to one search: the results and, as importantly, why the list is what it is.
+///
+/// The phone parses the same text with the same `ShopQuery` and prints its own reading, so
+/// the two cannot disagree about what was understood; what only the server can say — which
+/// words exist in a catalogue the phone does not hold, and which constraint emptied the list —
+/// travels here, as `ShopSearch` worked it out.
+public struct ProductSearchResponse: Codable, Sendable {
+    /// What was searched. See `ProductSearchScope`.
+    public var scope: ProductSearchScope
+    public var exact: [ProductSearchHit]
+    /// Below a dozen exact matches, up to two dozen that carry some of the words. First page
+    /// only.
+    public var partial: [ProductSearchHit]
+    /// Words no product in the scope carries, set aside rather than required.
+    public var unknown: [String]
+    public var outcome: ShopSearch.Outcome
+    /// What "cheaper" settled on: the middle price of what matched.
+    public var cheaperThan: Double?
+    /// Exact matches before the page was cut.
+    public var total: Int
+    /// The candidates the index handed over reached their bound, so `total` is a floor —
+    /// "200+" rather than "200".
+    public var isCapped: Bool
+    /// How many products the scope holds, for the line under the field.
+    public var searched: Int
+    /// How many shops the scope covers. Zero for `followed` means the caller follows none,
+    /// which is a different empty from "nothing matched".
+    public var shops: Int
+    /// Pass back as `cursor` for the next page of exact matches; nil on the last.
+    public var nextCursor: String?
+
+    public init(
+        scope: ProductSearchScope,
+        exact: [ProductSearchHit] = [],
+        partial: [ProductSearchHit] = [],
+        unknown: [String] = [],
+        outcome: ShopSearch.Outcome = .nothingToSearch,
+        cheaperThan: Double? = nil,
+        total: Int = 0,
+        isCapped: Bool = false,
+        searched: Int = 0,
+        shops: Int = 0,
+        nextCursor: String? = nil
+    ) {
+        self.scope = scope
+        self.exact = exact
+        self.partial = partial
+        self.unknown = unknown
+        self.outcome = outcome
+        self.cheaperThan = cheaperThan
+        self.total = total
+        self.isCapped = isCapped
+        self.searched = searched
+        self.shops = shops
+        self.nextCursor = nextCursor
+    }
+}
+
+/// "More like this", from `GET /v1/products/:id/similar`.
+public struct SimilarProductsResponse: Codable, Sendable {
+    public var products: [DiscoverCard]
+    /// How they were found — `vectors` when both this product and the candidates have been
+    /// embedded, `text` otherwise. A string, so a third way of answering does not fail to
+    /// decode on a client that knows two.
+    public var basis: String
+
+    public init(products: [DiscoverCard], basis: String) {
+        self.products = products
+        self.basis = basis
+    }
+}
+
 /// Whether a push could reach **this** device.
 ///
 /// Replaces the app reading `/status`, which answered a global question — "does anybody

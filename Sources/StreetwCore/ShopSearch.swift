@@ -57,6 +57,12 @@ public struct ShopListing: Sendable, Hashable, Identifiable {
     /// Carried rather than applied at build time, so a search can say "your filter hides
     /// these" instead of claiming there are none.
     public var isShown: Bool
+    /// How strongly a full-text index ranked it, where one did — Postgres's `ts_rank_cd` on
+    /// the server. Zero on the phone, which has no such index, so there it changes nothing.
+    /// A tie-break *after* the field-weighted score and never before it, so the order a
+    /// query gives is the grammar's on both ends and the index only settles what the
+    /// grammar calls equal.
+    public var relevance: Double
 
     public init(
         id: String,
@@ -72,7 +78,8 @@ public struct ShopListing: Sendable, Hashable, Identifiable {
         price: Double? = nil,
         publishedAt: Date = Date(timeIntervalSince1970: 0),
         isAvailable: Bool = true,
-        isShown: Bool = true
+        isShown: Bool = true,
+        relevance: Double = 0
     ) {
         self.id = id
         self.brandKey = brandKey
@@ -93,6 +100,7 @@ public struct ShopListing: Sendable, Hashable, Identifiable {
         self.publishedAt = publishedAt
         self.isAvailable = isAvailable
         self.isShown = isShown
+        self.relevance = relevance
     }
 }
 
@@ -217,7 +225,10 @@ public enum ShopSearch {
     }
 
     /// Why the list is what it is — and, when it is empty, which constraint emptied it.
-    public enum Outcome: Sendable, Hashable {
+    ///
+    /// Codable because the server answers the same question for a catalogue the phone does
+    /// not hold, and the screen has to be able to say the same six things about either.
+    public enum Outcome: Codable, Sendable, Hashable {
         /// There are results that carry everything asked for.
         case found
         /// Nothing carries all of it; these carry some, most first.
@@ -287,17 +298,26 @@ public enum ShopSearch {
     ///   - fits: whether one listing is buyable in a size the reader wears, by
     ///     `SizeProfile.claims`. Asked only of listings that survived everything else, so a
     ///     caller may make it as expensive as a size context costs.
+    ///   - knows: whether anything *in the whole store* carries a word, for a caller whose
+    ///     index holds only part of it. The server searches a catalogue it cannot load, so
+    ///     it hands over the few hundred best candidates and asks its database which words
+    ///     exist at all — and that answer, not the candidates' vocabulary, has to decide what
+    ///     is required and what is set aside, or a rare word crowded out of the candidates
+    ///     would be "not in your shops" there and required here. Nil reads it off `index`,
+    ///     which on the phone is the whole store.
     public static func run(
         _ query: ShopQuery,
         in index: ShopIndex,
         hasSizes: Bool,
-        fits: (ShopListing) -> Bool
+        fits: (ShopListing) -> Bool,
+        knows: ((ShopQuery.Term) -> Bool)? = nil
     ) -> Result {
         var result = Result()
         guard !query.isEmpty else { return result }
 
-        let required = query.terms.filter(index.knows)
-        result.unknown = query.terms.filter { !index.knows($0) }.map(\.word)
+        let known = knows ?? index.knows
+        let required = query.terms.filter(known)
+        result.unknown = query.terms.filter { !known($0) }.map(\.word)
         let hasConstraint = query.ceiling != nil || query.floor != nil || query.inMySize
             || !query.excluded.isEmpty || query.cheaper || query.formal
 
@@ -453,6 +473,7 @@ public enum ShopSearch {
                 if x != y { return x > y }
             }
             if a.score != b.score { return a.score > b.score }
+            if one.relevance != other.relevance { return one.relevance > other.relevance }
             if one.publishedAt != other.publishedAt { return one.publishedAt > other.publishedAt }
             return one.id < other.id
         }
