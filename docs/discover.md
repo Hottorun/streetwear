@@ -293,8 +293,8 @@ nobody here follows, which is where it is worth the most.
   brands pointed at the wardrobe instead. **The reason moves with the anchor**, or the card
   prints a verdict about a garment it is no longer showing. `Pairing.best` is asked for eight
   rather than two so there is something to spread with; the truncation was always free.
-- **The fit opens on the piece the card just named** (`FitStudio.anchor`). The card says "goes
-  with your Kith Nylon Maverick Pant" and the studio then computed its own opening arrangement,
+- **The fit opens on the piece the card just named** (`FitProposal`'s `anchor`). The card says
+  "goes with your Kith Nylon Maverick Pant" and the fit then computed its own opening arrangement,
   so it could open on a different garment with a different name at the top — the app
   contradicting itself one tap apart, which is worse than either answer being wrong: the card
   makes a claim and the screen it opens is the demonstration of that claim. The named piece is
@@ -355,7 +355,8 @@ nobody here follows, which is where it is worth the most.
   over the photograph reading "GOES WITH · your Kith Mesh Donovan Jersey", and the argument for
   it — a claim with your own jacket beside it is checkable at a glance — was right and never
   required it to be *on the picture*. In the reading it sits next to the headline it belongs
-  with, and it is a button: `FitStudio`, built around the card's own garment. That was the
+  with, and it is a button: the fit canvas, opened around the card's own garment
+  (`FitCanvas.Opening.around`) — the same editor every other fit opens in. That was the
   missing route. The card says this piece goes with something you own, and the next question is
   always *what would the whole thing look like* — until this the answer lived behind a product
   page, two taps away, on a garment from a brand you would have had to follow first. It

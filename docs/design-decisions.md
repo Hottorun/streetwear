@@ -54,12 +54,10 @@ Changing these silently will break intended behavior:
   list of names, with no news in it and nothing that changes — beside three tabs that are
   all about change, while the feed below already grouped by brand and every wordmark in it
   already opened the brand page. Its only exclusive jobs were reaching a brand that has
-  published *nothing unread* (most of them, most of the time) and adding one. Both are now
-  the rail at the head of `FeedView`, and `BrandsView` survives behind "ALL" as a sheet
-  because it holds the one thing a mark cannot say: which sources a brand is watched with,
-  and whether any of them is failing. What is left is an honest set — **Feed** (what
-  happened) · **Discover** (what's new to you) · **Saved** (what's yours) · **Style** (what
-  that says about you). Notes on the rail: it is **alphabetical, never by activity**, because
+  published *nothing unread* (most of them, most of the time) and adding one. Both went to
+  the rail at the head of `FeedView`, and `BrandsView` survives because it holds the one thing
+  a mark cannot say: which sources a brand is watched with, and whether any of them is
+  failing — reached now from You › Following (see the next point). Notes on the rail: it is **alphabetical, never by activity**, because
   it is the one strip on the page whose job is to be aimed at and a rail that reorders as
   brands publish is a set of moving targets — `DiscoverDeck.pinningRead`'s lesson, met on a
   new surface. The unread mark is a **dot, not a number**: the spread below and the brand
@@ -75,6 +73,45 @@ Changing these silently will break intended behavior:
   moves relative to anything visible. At the head it is in the same place at every collection
   size. `Tabs.resolve` maps the now-dead `-startTab brands` onto the feed, because a
   `TabView` whose selection matches nothing draws a blank page.
+- **Three tabs, and everything about the person behind the avatar** (`ContentView`, `YouRoute`,
+  `YouView`; Phase 1). **Feed** (what happened at your shops) · **Shop** (what to get next) ·
+  **Saved** (what's yours) — and a person symbol top right on every tab (`.youButton()`). Style
+  was the fourth tab and was never a place: a reading of somebody's taste, two rows of fits and a
+  settings gear. Its fits are Saved › Fits (`docs/fits.md`), and the reading leads You, followed
+  by the sizes, the brands followed, what somebody is waiting for and then the settings that were
+  behind the gear — alerts with their delivery status, the style statement, about. The brand list,
+  the watches and the calendar were sheets behind icons and a link on the feed, a screen whose
+  subject is what has happened; none of them is news, and all of them are things the person set.
+  The decisions:
+  - **One page, presented once, from the root.** The avatar on any tab sets `YouRoute.isOpen` and
+    `ContentView` presents the sheet — not a sheet per tab — because a facet tapped in the taste
+    reading has to close You *and* change tab, and only the root knows there are tabs. Built in
+    `streetwApp.init` with the other routes, so a tab never reads an environment object that is not
+    there yet. `.youButton()` goes on a tab's root **before** its own `.toolbar`: SwiftUI lays a
+    trailing group out outermost-first, so applied after, the avatar came out ahead of Select. On
+    iOS 26 a `ToolbarSpacer` gives it a circle of its own: it is not one of the page's actions.
+  - **Set as type, not a settings form.** Paper, serif, mono and rules in a `ScrollView`; space
+    between sections, never a rule under a row that already ends in one — two hairlines a few
+    points apart read as a printing error.
+  - **Sizes are a summary and a door.** One row per filled ladder as it prints
+    (`SizeProfile.ladders`, which `summary` is made of), what is shown, and Edit sizes pushing the
+    existing editor. `SettingsSheet` survives as the sizes editor in a sheet of its own, because the
+    feed's lines about the profile are about these two settings and nothing else.
+  - **Following draws what needs attention, not the whole list.** Brands with a failing source get
+    a row each (`Brand.hasFailingSource`, read off `lastError`, which travels on the wire), then
+    "All brands" opens `BrandsView` and "Add a brand" the add flow. Somebody following forty shops
+    would otherwise scroll past forty rows to reach their alerts, and a shop that had quietly
+    stopped answering read exactly like one that had stopped publishing until somebody opened its
+    page. On `BrandsView` the failing source is said on its row — `CATALOG FAILING · COLLECTIONS`,
+    vermilion on the failing word alone — and the per-brand UNREAD count is gone: unread is "since
+    you were last here" on the feed, and a second tally of it on a list of follows is a number to
+    reconcile against a screen that no longer keeps one per brand.
+  - **Nothing that is not built.** Sign-in, profiles, location and credits are Phase 2, and a row
+    for each saying so would be four rows of the app talking about itself. The avatar is a symbol
+    for the same reason: there is nobody to put in it until there is an account.
+  - **Retired tab names still open something.** `Tabs.resolve` maps `discover` to Shop, `style` to
+    Saved on its Fits strip (`Tabs.opensOnFits`), and anything else to the feed. The usage counts
+    gained `tab.shop` and keep accepting `tab.discover` and `tab.style` from builds that have them.
 - **There is no refresh button, and the feed's toolbar is what it cost** (`FeedRefresh`). Four
   icons sat above a page whose whole subject is photographs, and only three of them were doors
   onto anything — the fourth was asking the reader to do the app's job, since a feed that has to
