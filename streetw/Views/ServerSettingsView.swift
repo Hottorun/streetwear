@@ -186,7 +186,8 @@ struct AboutSection: View {
             Text("""
                 Your saves, your boards, your fits and what you write about your style stay \
                 on this phone. Only the brands you follow and your sizes reach the server, \
-                so it knows what to watch and when to wake you.
+                so it knows what to watch and when to wake you. If you sign in with Apple, \
+                the server also keeps the anonymous ID Apple gives Dropwall — no name, no email.
                 """)
                 .font(.editorial(15))
                 .lineSpacing(3)

@@ -46,7 +46,22 @@ final class ServerSettings {
     /// and follows, but it is still a credential — Keychain is the right home once the
     /// app does anything more sensitive.
     var token: String? {
-        didSet { UserDefaults.standard.set(token, forKey: "serverToken") }
+        didSet {
+            UserDefaults.standard.set(token, forKey: "serverToken")
+            // An account hangs off the device the token names. A new token is a new
+            // anonymous device, whatever the old one was signed in as.
+            if token != oldValue { account = nil }
+        }
+    }
+
+    /// The Sign in with Apple account this device is on, as the server last said. Nil for
+    /// an anonymous device. A remembered answer, so the You page can draw without a
+    /// round trip; `RemoteSync.refreshAccount` corrects it, which is what notices a
+    /// deletion made from another phone.
+    var account: AccountDTO? {
+        didSet {
+            UserDefaults.standard.set(account.flatMap { try? JSONEncoder().encode($0) }, forKey: "serverAccount")
+        }
     }
 
     /// The deployed server. There is exactly one, and it is not user-configurable.
@@ -91,6 +106,8 @@ final class ServerSettings {
         let isStale = stored.isEmpty || Self.legacyBaseURLStrings.contains(stored)
         baseURLString = isStandalone ? "" : (isStale ? Self.defaultBaseURLString : stored)
         token = UserDefaults.standard.string(forKey: "serverToken")
+        account = UserDefaults.standard.data(forKey: "serverAccount")
+            .flatMap { try? JSONDecoder().decode(AccountDTO.self, from: $0) }
 
         // Assigning the stored property in `init` bypasses `didSet`, so persist here.
         if !baseURLString.isEmpty {
@@ -137,6 +154,20 @@ struct StreetwAPI: Sendable {
 
     func updateDevice(_ body: UpdateDevice) async throws {
         try await sendVoid(path: "v1/devices/me", method: "PATCH", body: body)
+    }
+
+    func account() async throws -> AccountStatus {
+        try await send(path: "v1/account", method: "GET", body: Optional<Never>.none)
+    }
+
+    func signInWithApple(_ body: AppleSignIn) async throws -> AccountSession {
+        try await send(path: "v1/account/apple", method: "POST", body: body)
+    }
+
+    /// Deletes the account and every device on it, this one included — the token this was
+    /// sent with stops working as it answers.
+    func deleteAccount() async throws {
+        try await sendVoid(path: "v1/account", method: "DELETE", body: Optional<Never>.none)
     }
 
     func discover(_ body: DiscoverBrand) async throws -> BrandDTO {

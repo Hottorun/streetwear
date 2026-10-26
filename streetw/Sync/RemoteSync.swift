@@ -143,7 +143,16 @@ final class RemoteSync {
     }
 
     /// Set by `ensureRegistered` when it had to mint a new device. Read once by `sync`.
-    private var didRegisterAfresh = false
+    ///
+    /// Persisted, because the registration and the sync that spends it are not always in
+    /// one process. Deleting an account registers afresh and then syncs; an app killed in
+    /// between came back to a device with no follows and nothing left to say so — the empty
+    /// list is refused by `FollowMerge`, so the phone went on showing brands the server was
+    /// watching for nobody. Measured that way on the simulator.
+    private var didRegisterAfresh: Bool {
+        get { UserDefaults.standard.bool(forKey: "didRegisterAfresh") }
+        set { UserDefaults.standard.set(newValue, forKey: "didRegisterAfresh") }
+    }
 
     /// Puts this device's follows back after a re-registration.
     ///
@@ -187,6 +196,68 @@ final class RemoteSync {
         } catch {
             lastError = error.localizedDescription
         }
+    }
+
+    // MARK: - Account
+
+    /// Asks whether this device is signed in, and believes the answer. A deletion made from
+    /// another phone deletes this device too, so the 401 path in `ensureRegistered` usually
+    /// gets there first; this covers the account being removed by the operator.
+    func refreshAccount() async {
+        guard settings.isRegistered, let api else { return }
+        guard let status = try? await api.account() else { return }
+        if settings.account != status.account { settings.account = status.account }
+        signInAvailable = status.signInAvailable ?? false
+    }
+
+    /// Whether the server can verify a Sign in with Apple token. False until it says so,
+    /// so a server that cannot — or that predates accounts — is never offered a sign-in it
+    /// would refuse.
+    private(set) var signInAvailable = false
+
+    /// Hands a Sign in with Apple credential to the server and adopts what comes back.
+    ///
+    /// **The sizes are adopted before anything else runs.** The server kept the account's
+    /// profile, or merged this phone's into it, and every sync pushes this phone's profile
+    /// destructively — so on a reinstall, where the phone's profile is empty, the next sync
+    /// would erase exactly the sizes signing in was meant to keep. The display scales stay
+    /// this phone's: they never leave it.
+    ///
+    /// - Parameter nonce: the raw nonce whose SHA-256 went on the Apple request.
+    func signInWithApple(
+        identityToken: String,
+        authorizationCode: String?,
+        nonce: String,
+        sizes: SizeProfileStore
+    ) async throws -> AccountSession {
+        try await ensureRegistered()
+        guard let api else { throw APIError.notConfigured }
+        let session = try await api.signInWithApple(
+            AppleSignIn(identityToken: identityToken, authorizationCode: authorizationCode, nonce: nonce)
+        )
+        settings.account = session.account
+
+        var adopted = session.sizes.asProfile
+        adopted.shoeScale = sizes.profile.shoeScale
+        adopted.dressScale = sizes.profile.dressScale
+        adopted.suitScale = sizes.profile.suitScale
+        if adopted != sizes.profile { sizes.profile = adopted }
+        return session
+    }
+
+    /// Deletes the account and everything the server holds under it, then registers this
+    /// phone again as a new anonymous device.
+    ///
+    /// The phone's own data — brands, saves, boards, fits — is untouched: it never belonged
+    /// to the account. The next sync re-follows this phone's brands on the new device
+    /// (`didRegisterAfresh`), which is what an install that never signed in has; without it
+    /// the empty follow list would read as "unfollowed everything" and empty the app.
+    func deleteAccount(sizes: SizeProfile) async throws {
+        guard let api else { throw APIError.notConfigured }
+        try await api.deleteAccount()
+        settings.token = nil
+        settings.account = nil
+        try await ensureRegistered(sizes: sizes)
     }
 
     // MARK: - Brands

@@ -26,5 +26,14 @@
 	-->
 	<key>aps-environment</key>
 	<string>development</string>
+	<!--
+	  Sign in with Apple. Without it `ASAuthorizationController` fails at once with error
+	  1000 and the sheet never appears. The App ID needs the capability switched on too;
+	  automatic signing adds it to the profile at archive.
+	-->
+	<key>com.apple.developer.applesignin</key>
+	<array>
+		<string>Default</string>
+	</array>
 </dict>
 </plist>
