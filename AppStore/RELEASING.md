@@ -161,27 +161,44 @@ xcrun simctl list devices available | grep -E '^--|iPhone'
 ### 4. Screenshots
 
 `AppStore/screenshots/` is scripted rather than captured by hand, for the same reason the app icon
-is code: a set re-shot by hand drifts from the app the first time a screen changes. The launch
-flags make it possible with no UI automation at all:
-
-```
--startTab feed|shop|saved             open straight to a tab (style opens Saved › Fits)
--didOfferStarterPack YES               skip onboarding deterministically
--seedBrands / -seedSizes / -seedSaves  populate the store
-```
-
-Server mode is what you want even though `-seedBrands` polls from the phone: `/v1/discover`
-returns cards for a device with no follows at all, and standalone mode has no equivalent — so the
-Discover deck in Shop is empty without a server. Set a marketing status bar first:
+is code: a set re-shot by hand drifts from the app the first time a screen changes. Two scripts:
 
 ```bash
-xcrun simctl status_bar "$DEV" override --time "9:41" --batteryState charged --batteryLevel 100 \
-  --cellularMode active --wifiMode active --wifiBars 3
+AppStore/demo/shoot.sh <udid>     # raw screens into AppStore/demo/raw/
+python3 AppStore/demo/compose.py  # headline + device frame → AppStore/screenshots/NN-name.jpg
 ```
 
-`-seedSizes` only takes effect on the **next** launch, so seed once, terminate, then capture.
+`shoot.sh` needs the app built into `/tmp/streetw-dd` and a booted 6.9" simulator (iPhone 18 Pro
+Max gives 1320×2868). `compose.py` renders with headless Chrome at `/Applications/Google Chrome.app`.
 
-- [ ] At least one 6.9" set (iPhone 17 Pro Max, 1320×2868). No iPad set is needed —
+**Standalone and the demo catalogue only — never a server.** Every brand on screen comes from
+`DemoCatalog` (`-demoCatalog <url>`, photographs served from `AppStore/demo/catalog/` by the
+script), because App Review flags screenshots showing real brands, and a debug build pointed at
+production writes a device and its follows into the real catalogue. The Discover deck is empty in
+standalone, which is why no shot shows it.
+
+**en_US, on the device and on every launch.** Prices print in the reader's locale, and a German
+simulator printed "135 US$". The script writes `AppleLocale`/`AppleLanguages` and passes
+`-AppleLocale en_US -AppleLanguages "(en)"`. It also overrides the status bar to 9:41.
+
+The set, and the flags that reach each screen with no UI automation:
+
+| File | Screen | Flags |
+|---|---|---|
+| `01-feed` | the feed grid and the since-line | `-startTab feed -feedLastVisitHours 5` |
+| `02-product` | the restock, your sizes picked out | `-demoOpen "restock:shopify:910001"` |
+| `03-search` | Shop, a described search and its reading | `-startTab shop -shopQuery "black trousers under 200"` |
+| `04-picks` | Shop, today's picks | `-startTab shop` |
+| `05-saved` | Saved, the wall | `-startTab saved` |
+| `06-fit` | the fit canvas | `-startTab style -demoSheet fit` |
+| `07-calendar` | Upcoming | `-startTab feed -feedFilter upcoming` |
+
+Every launch also carries `-standalone YES -didOfferStarterPack YES -seedSizes "M,L,10"`.
+`-seedSizes` only takes effect on the **next** launch, which is what the script's priming launch
+is for. The product page needs ~25s before its photograph is drawn; a shorter settle shoots an
+empty frame. Look at every raw and composed image before uploading.
+
+- [ ] At least one 6.9" set (1320×2868). No iPad set is needed —
       `TARGETED_DEVICE_FAMILY` is 1.
 
 ### 5. Archive, upload, and then actually test push

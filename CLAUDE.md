@@ -147,6 +147,7 @@ Dev-only launch flags (all read via `UserDefaults`, all no-ops when absent):
 | `-feedLastVisitHours 5` | Pretends the last visit to the feed ended that long ago, for the launch's first visit, so the "since you were last here" line can be shot without waiting out `FeedVisit.resumeWindow` |
 | `-feedFilter upcoming` | Opens the feed narrowed — `all`, `drops`, `restocks`, `sales` or `upcoming` |
 | `-feedBrand "Ondo Club"` | Opens the feed narrowed to one followed brand, by name |
+| `-shopQuery "black trousers under 200"` | DEBUG only. Types a description into Shop's field at launch, so a search and its reading can be shot without the keyboard. Pair with `-startTab shop` |
 | `-debugBackgroundPass YES` | Runs the background refresh's every-profile pass each time the app is backgrounded (DEBUG builds only) |
 
 **`-standalone YES` is the only way to get standalone mode.** `-serverBaseURL ""` used to do it

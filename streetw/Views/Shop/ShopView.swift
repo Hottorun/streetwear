@@ -3,7 +3,7 @@
 //
 // Three things on one page, in the order somebody arrives wanting them:
 //
-// - **A field that takes a description** — "a black suit under €400". Until Phase 3 stores
+// - **A field that takes a description** — "a black suit under $400". Until Phase 3 stores
 //   whole catalogues and Phase 4 puts a model behind it, it is read by a small grammar
 //   (`ShopQuery`) over the products from your shops already on this phone (`ShopCatalogue`),
 //   and the page says exactly that: "IN YOUR SHOPS", with the count. It never says AI, never
@@ -187,6 +187,15 @@ struct ShopView: View {
         .task(id: picksKey(day: day)) {
             await choosePicks(day: day)
         }
+        #if DEBUG
+        // Screenshot affordance: `-shopQuery "<text>"` types a description into the field at
+        // launch, so a search and its reading can be shot without driving the keyboard.
+        .task {
+            if text.isEmpty, let typed = UserDefaults.standard.string(forKey: "shopQuery"), !typed.isEmpty {
+                text = typed
+            }
+        }
+        #endif
         // A multi-line field so a long description wraps where it can be read, which makes
         // return a newline — so a newline is taken as "done", the way the keyboard's own
         // Search key reads.
@@ -207,6 +216,16 @@ struct ShopView: View {
 
     // MARK: - The field
 
+    /// The reader's own currency sign in the example, when it is one the grammar reads as a
+    /// price (`Lexer.currencySymbols` in `ShopQuery.swift`); otherwise "$". A euro in front of
+    /// somebody shopping in dollars reads as a shop in the wrong country, and an example that
+    /// does not parse — "CHF400" would be a name — teaches the wrong thing.
+    private static let promptCurrency: String = {
+        guard let symbol = Locale.current.currencySymbol, symbol.count == 1,
+              ["€", "$", "£", "¥"].contains(symbol) else { return "$" }
+        return symbol
+    }()
+
     private var field: some View {
         VStack(alignment: .leading, spacing: 10) {
             DataLabel(text: "DESCRIBE WHAT YOU WANT", size: 10, color: .ink)
@@ -218,7 +237,7 @@ struct ShopView: View {
                 TextField(
                     "",
                     text: $text,
-                    prompt: Text("A black suit under €400").foregroundStyle(Color.muted),
+                    prompt: Text("A black suit under \(Self.promptCurrency)400").foregroundStyle(Color.muted),
                     axis: .vertical
                 )
                 .font(.editorial(17))
