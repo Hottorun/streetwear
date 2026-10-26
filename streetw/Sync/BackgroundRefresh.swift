@@ -250,6 +250,28 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
     }
 }
 
+#if DEBUG
+extension AppDelegate {
+    /// `-debugBackgroundPass YES` runs the background refresh's pass every time the app is
+    /// backgrounded, under a background-task assertion and the same budget.
+    ///
+    /// The simulator offers no way to run a `BGAppRefreshTask` without a debugger attached —
+    /// `_simulateLaunchForTaskWithIdentifier:` needs lldb — and refuses a silent `simctl push`
+    /// as having no visible content, so neither real path can be driven from a script.
+    @MainActor
+    static func debugPassIfRequested() {
+        guard UserDefaults.standard.bool(forKey: "debugBackgroundPass") else { return }
+        let deadline = Date().addingTimeInterval(BackgroundServices.passBudget)
+        let work = Task { await BackgroundServices.syncProfiles(until: deadline) }
+        let assertion = UIApplication.shared.beginBackgroundTask { work.cancel() }
+        Task {
+            _ = await work.value
+            UIApplication.shared.endBackgroundTask(assertion)
+        }
+    }
+}
+#endif
+
 extension AppDelegate: UNUserNotificationCenterDelegate {
     /// Show the alert even with the app open — a drop is worth interrupting for, and the
     /// feed the user is looking at is exactly what just changed.
