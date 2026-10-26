@@ -259,4 +259,5 @@ func addMigrations(to app: Application) {
     app.migrations.add(CreateStorefronts())
     app.migrations.add(AddStorefrontColumns())
     app.migrations.add(AddUserProfiles())
+    app.migrations.add(CreateStorefrontCountries())
 }

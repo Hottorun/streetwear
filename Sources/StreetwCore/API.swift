@@ -506,16 +506,28 @@ public struct BrandSourceDTO: Codable, Sendable, Hashable, Identifiable {
 /// which is what every brand is to 1.0, to anybody whose country has no shop of its own, and
 /// to every brand that runs one shop for everybody.
 public struct StorefrontDTO: Codable, Sendable, Hashable {
-    /// ISO 3166-1 alpha-2.
+    /// ISO 3166-1 alpha-2: one of `countries` — the only one, for a shop that serves one.
+    /// Read `servedCountries` to say who it serves.
     public var country: String
     public var url: String
     /// ISO 4217, when the shop has said.
     public var currency: String?
+    /// Every country the shop serves, sorted. A regional shop serves several (`eu.kith.com`
+    /// serves Europe in euros). Optional so a client can still decode a server that predates
+    /// it, which meant `[country]` — read it through `servedCountries`.
+    public var countries: [String]?
 
-    public init(country: String, url: String, currency: String? = nil) {
+    public init(country: String, url: String, currency: String? = nil, countries: [String]? = nil) {
         self.country = country
         self.url = url
         self.currency = currency
+        self.countries = countries
+    }
+
+    /// Who the shop serves, from a server of any age.
+    public var servedCountries: [String] {
+        guard let countries, !countries.isEmpty else { return [country] }
+        return countries
     }
 }
 

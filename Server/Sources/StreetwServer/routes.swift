@@ -1502,7 +1502,7 @@ func routes(_ app: Application) throws {
     admin.get("catalog") { req async throws -> String in
         let brands = try await BrandModel.query(on: req.db)
             .with(\.$sources)
-            .with(\.$storefronts)
+            .with(\.$storefronts) { $0.with(\.$countries) }
             .sort(\.$name)
             .all()
 
@@ -1511,7 +1511,8 @@ func routes(_ app: Application) throws {
         struct Row: Decodable { var brand_id: UUID; var n: Int }
         func tally(_ table: String) async throws -> [UUID: Int] {
             guard let sql = req.db as? any SQLDatabase else { return [:] }
-            let rows = try await sql.raw("SELECT brand_id, COUNT(*)::int AS n FROM \(unsafeRaw: table) GROUP BY brand_id")
+            // `CAST`, not `::int`, which is Postgres's alone and made this route a 500 on SQLite.
+            let rows = try await sql.raw("SELECT brand_id, CAST(COUNT(*) AS INTEGER) AS n FROM \(unsafeRaw: table) GROUP BY brand_id")
                 .all(decoding: Row.self)
             return Dictionary(rows.map { ($0.brand_id, $0.n) }, uniquingKeysWith: { a, _ in a })
         }
@@ -1533,12 +1534,14 @@ func routes(_ app: Application) throws {
             let products = counts[id] ?? 0
             let host = brand.website.flatMap { URL(string: $0)?.host() } ?? brand.slug
             let kinds = brand.sources.filter { $0.$storefront.id == nil }.map(\.kind).joined(separator: "+")
-            // A country's shop, where one is attached, after the main shop's sources — with
-            // the kinds it is read by, so a storefront that found nothing shows as one.
-            let shops: String = brand.storefronts.sorted { $0.country < $1.country }.map { shop -> String in
+            // A country's shop, where one is attached, after the main shop's sources — every
+            // country it serves, then the kinds it is read by, so a storefront that found
+            // nothing shows as one. The whole set, not a count: this is read to find which
+            // shop a person in a given country is being served.
+            let shops: String = brand.storefronts.sorted { $0.homeCountry < $1.homeCountry }.map { shop -> String in
                 let read = brand.sources.filter { $0.$storefront.id == shop.id }.map(\.kind)
                 let host = URL(string: shop.url)?.host() ?? shop.url
-                return " · \(shop.country) \(host) \(read.joined(separator: "+"))"
+                return " · \(shop.countryCodes.joined(separator: ",")) \(host) \(read.joined(separator: "+"))"
             }.joined()
             let failing = brand.sources.compactMap(\.lastError).first
             let note = failing.map { " ⚠ \($0.prefix(50))" } ?? ""
@@ -1684,77 +1687,125 @@ func routes(_ app: Application) throws {
             + (replaced.isEmpty ? "" : " (replaced \(replaced.count))")
     }
 
-    /// Attach a brand's shop for one country, by URL — `?country=GB&url=https://…`.
+    /// Attach a brand's shop by URL, for the countries it serves —
+    /// `?url=https://…&countries=DE,FR,IT` (or `country=GB`, or a JSON body).
     ///
-    /// **By hand, because nothing finds these on its own.** A shop per country is the norm for
-    /// big retailers and the exception for streetwear labels, and where one exists it is
-    /// usually a different host (`eu.kith.com`), a different company, or both. Guessing at
-    /// them would mean probing every brand's every plausible host for every country, which is
-    /// a crawl, not a poll. So an operator names the shop, and this runs ordinary discovery on
-    /// it — through the poller's fetcher, robots.txt and spacing included.
+    /// **By hand, because nothing finds these on its own.** A shop per country or per region
+    /// is the norm for big retailers and the exception for streetwear labels, and where one
+    /// exists it is usually a different host (`eu.kith.com`), a different company, or both.
+    /// Guessing at them would mean probing every brand's every plausible host for every
+    /// country, which is a crawl, not a poll. So an operator names the shop, and this runs
+    /// ordinary discovery on it — through the poller's fetcher, robots.txt and spacing
+    /// included.
+    ///
+    /// **Naming no countries is the offer, and writes nothing**: every country the shop's own
+    /// `/meta.json` ships to, minus those another shop of the brand already serves.
+    /// `countries=all` takes it. An offer rather than a default because a shop's list is not
+    /// its market — `eu.kith.com` ships to the US and Canada, where Kith's main shop is — so
+    /// somebody reads it before it serves anybody.
     ///
     /// Refuses three mistakes rather than storing them:
     ///
     /// - **Nothing watchable there.** The same bar as adding a brand.
     /// - **A catalogue the brand already reads.** A Shopify Markets subfolder (`/en-gb/`) is
     ///   read off the host, so it would be the main shop again under another name, polled
-    ///   twice; and one country shop serving several countries (`eu.kith.com` ships to 48)
-    ///   can be attached for one of them, not read twice for two.
+    ///   twice. A shop already attached is given more countries with `…/add`, not attached
+    ///   twice.
     /// - **A shop that says it does not ship there**, from its own `/meta.json`, unless
     ///   `&force=true`. Palace's `www.` ships to five countries; serving it to somebody in
     ///   Germany would be serving a shop they cannot buy from.
     ///
-    /// Attaching a country that already has a shop replaces it, history and all. The new
-    /// sources start un-baselined, so their first read is context rather than news — and
-    /// nothing is read at all until the country is switched on and somebody there follows
-    /// the brand.
+    /// Attaching for a country another shop serves takes it off that shop; a shop left serving
+    /// nobody is removed, history and all, which is what replacing a one-country shop always
+    /// did. The new sources start un-baselined, so their first read is context rather than
+    /// news — and nothing is read at all until one of its countries is switched on and somebody
+    /// there follows the brand.
     admin.post("brands", ":brandID", "storefronts") { req async throws -> String in
         guard let brandID = req.parameters.get("brandID", as: UUID.self),
               let brand = try await BrandModel.query(on: req.db)
                   .filter(\.$id == brandID).with(\.$sources).first(),
-              let country = CountryCode.normalized(try? req.query.get(String.self, at: "country")),
               let raw = try? req.query.get(String.self, at: "url"),
               let base = BrandDiscovery.normalizedURL(raw)
-        else { throw Abort(.badRequest, reason: "pass ?country=<ISO code>&url=https://…") }
+        else { throw Abort(.badRequest, reason: "pass ?url=https://…&countries=<ISO codes, or all>") }
+        let requested = StorefrontAdmin.requested(req)
+        if case .invalid(let bad) = requested {
+            throw Abort(.badRequest, reason: "not country codes: \(bad.joined(separator: ","))")
+        }
         let force = (try? req.query.get(Bool.self, at: "force")) ?? false
+        let host = base.host() ?? raw
+        // Every `return` below is a refusal or the offer, and writes nothing — only the
+        // transaction at the end does.
 
         let found = await BrandDiscovery.discover(website: raw, instagramHandle: nil, http: req.application.fetcher)
         let usable = found.sources.filter { $0.kind.isAutomatic }
         guard !usable.isEmpty else {
-            return "refused: nothing watchable at \(base.host() ?? raw); \(brand.name) is unchanged"
+            return "refused: nothing watchable at \(host); \(brand.name) is unchanged"
         }
 
-        let replaced = try await StorefrontModel.query(on: req.db)
-            .filter(\.$brand.$id == brandID).filter(\.$country == country).first()
-        // Every catalogue the brand reads, less the one being replaced.
+        let shops = try await StorefrontModel.query(on: req.db)
+            .filter(\.$brand.$id == brandID).with(\.$countries).all()
+        let served = Set(shops.flatMap(\.countryCodes))
+        let offer = Set(found.shipsTo).subtracting(served)
+
+        let countries: Set<String>
+        switch requested {
+        case .unnamed:
+            guard !found.shipsTo.isEmpty else {
+                return "\(host) publishes no list of countries it ships to; name them with countries=. Nothing was attached."
+            }
+            return "offer: \(host) ships to \(found.shipsTo.count) countries; countries=all would attach "
+                + (offer.isEmpty ? "none" : "\(offer.count): \(offer.sorted().joined(separator: ","))")
+                + (served.isEmpty ? "" : " (another shop of \(brand.name) serves \(StorefrontAdmin.codes(served)))")
+                + ". Read it first: a shop's list can include the main shop's own market. Nothing was attached."
+        case .all:
+            guard !offer.isEmpty else {
+                return "refused: \(host) names no country it ships to that \(brand.name) has no shop for; "
+                    + "name them with countries="
+            }
+            countries = offer
+        case .these(let named):
+            countries = named
+        case .invalid:
+            throw Abort(.badRequest)
+        }
+
+        // A shop wholly taken over is replaced, so its catalogue is not "already read".
+        let replaced = Set(shops.filter { Set($0.countryCodes).isSubset(of: countries) }.compactMap(\.id))
         let read = Set(
             brand.sources
-                .filter { replaced == nil || $0.$storefront.id != replaced?.id }
+                .filter { $0.$storefront.id.map { !replaced.contains($0) } ?? true }
                 .map(\.url)
         )
         if let same = usable.first(where: { read.contains($0.url.absoluteString) }) {
+            let owner = brand.sources.first { $0.url == same.url.absoluteString }?.$storefront.id
+            if let owner, let shop = shops.first(where: { $0.id == owner }) {
+                return "refused: \(same.url.absoluteString) is the shop \(brand.name) already reads for "
+                    + "\(StorefrontAdmin.codes(shop.countryCodes)). One shop is read once: give it more countries with "
+                    + "POST /admin/brands/\(brandID)/storefronts/\(shop.homeCountry)/add?countries=…"
+            }
             return "refused: \(same.url.absoluteString) is a catalogue \(brand.name) already reads — "
-                + "the main shop, or another country's. One shop is read once."
+                + "the main shop. One shop is read once."
         }
-        if !found.shipsTo.isEmpty, !found.shipsTo.contains(country), !force {
-            return "refused: \(base.host() ?? raw) says it ships to \(found.shipsTo.count) "
-                + "countr\(found.shipsTo.count == 1 ? "y" : "ies") and not \(country) "
+        let unshipped = found.shipsTo.isEmpty ? [] : countries.subtracting(found.shipsTo)
+        if !unshipped.isEmpty, !force {
+            return "refused: \(host) says it ships to \(found.shipsTo.count) "
+                + "countr\(found.shipsTo.count == 1 ? "y" : "ies") and not \(StorefrontAdmin.codes(unshipped)) "
                 + "(\(found.shipsTo.prefix(8).joined(separator: ","))\(found.shipsTo.count > 8 ? ",…" : "")). "
                 + "Re-run with &force=true if that is wrong."
         }
 
+        let sorted = countries.sorted()
         let storefront = StorefrontModel(
             brandID: brandID,
-            country: country,
+            homeCountry: sorted[0],
             url: base.absoluteString,
             currency: found.currency
         )
-        let cleared = try await req.db.transaction { db -> Int in
-            var cleared = 0
-            if let replaced, let id = replaced.id {
-                cleared = try await Storefronts.remove(id, on: db)
-            }
+        let released = try await req.db.transaction { db -> Storefronts.Released in
+            // First, so neither unique constraint sees a country held twice mid-transaction.
+            let released = try await Storefronts.release(countries, brandID: brandID, on: db)
             try await storefront.save(on: db)
+            try await Storefronts.add(countries, to: storefront, on: db)
             let storefrontID = try storefront.requireID()
             for source in usable {
                 try await SourceModel(
@@ -1764,29 +1815,124 @@ func routes(_ app: Application) throws {
                     storefrontID: storefrontID
                 ).save(on: db)
             }
-            return cleared
+            return released
         }
-        let switchedOn = req.application.storefrontCountries.contains(country)
-        return "\(brand.name): \(country) shop is \(base.host() ?? raw)"
+        let replacedNote = released.removed.map { removed in
+            " (replaced \(URL(string: removed.url)?.host() ?? removed.url), \(removed.products) product(s) cleared)"
+        }.joined()
+        let narrowedNote = released.narrowed.map { narrowed in
+            " (took \(StorefrontAdmin.codes(narrowed.countries)) from \(URL(string: narrowed.url)?.host() ?? narrowed.url))"
+        }.joined()
+        return "\(brand.name): \(host) serves \(StorefrontAdmin.codes(countries))"
             + (found.currency.map { " in \($0)" } ?? "")
             + ", watched by \(usable.map(\.kind.rawValue).joined(separator: "+"))"
-            + (replaced == nil ? "" : " (replaced the last one, \(cleared) product(s) cleared)")
-            + (switchedOn ? "" : ". \(country) is not in STOREFRONT_COUNTRIES, so nothing is read yet")
+            + replacedNote + narrowedNote
+            + StorefrontAdmin.notSwitchedOn(countries, req.application)
     }
 
-    /// Remove a brand's shop for one country, with everything read from it. Its followers
-    /// there are served the main shop from the next request.
+    /// Give a shop more countries — `…/storefronts/DE/add?countries=IT,ES`, naming the shop by
+    /// any country it serves. `countries=all` adds every country its `/meta.json` ships to that
+    /// no shop of the brand serves.
+    ///
+    /// Nothing is re-read and nothing re-baselined: the shop is the same shop, and whoever is
+    /// in the new countries is served it from their next request once it is live there. A
+    /// country another shop of the brand serves is refused, not moved — taking it off that one
+    /// is `…/remove` there, said out loud, because the people in it would change shop. The
+    /// ships-to refusal is the attach route's, with the same `&force=true`.
+    admin.post("brands", ":brandID", "storefronts", ":country", "add") { req async throws -> String in
+        guard let brandID = req.parameters.get("brandID", as: UUID.self),
+              let country = CountryCode.normalized(req.parameters.get("country")),
+              let shop = try await StorefrontAdmin.storefront(of: brandID, serving: country, on: req.db)
+        else { throw Abort(.notFound) }
+        let force = (try? req.query.get(Bool.self, at: "force")) ?? false
+        let host = URL(string: shop.url)?.host() ?? shop.url
+        let requested = StorefrontAdmin.requested(req)
+
+        // The shop's own list, through the poller's fetcher — needed for `all`, and for the
+        // ships-to check unless forced. A shop with no `/meta.json` has none, and is not checked.
+        var shipsTo: [String] = []
+        if requested == .all || !force, let url = URL(string: shop.url) {
+            shipsTo = await ShopifySource.shopInfo(for: url, http: req.application.fetcher)?.shipsTo ?? []
+        }
+        let served = Set(
+            try await StorefrontCountryModel.query(on: req.db).filter(\.$brandID == brandID).all().map(\.country)
+        )
+
+        let wanted: Set<String>
+        switch requested {
+        case .unnamed:
+            throw Abort(.badRequest, reason: "pass ?countries=<ISO codes, or all>")
+        case .invalid(let bad):
+            throw Abort(.badRequest, reason: "not country codes: \(bad.joined(separator: ","))")
+        case .all:
+            wanted = Set(shipsTo).subtracting(served)
+        case .these(let named):
+            wanted = named
+        }
+
+        let mine = Set(shop.countryCodes)
+        let elsewhere = wanted.intersection(served).subtracting(mine)
+        if !elsewhere.isEmpty {
+            return "refused: another shop of this brand serves \(StorefrontAdmin.codes(elsewhere)); "
+                + "remove them there first. One shop per brand per country."
+        }
+        let unshipped = shipsTo.isEmpty ? [] : wanted.subtracting(shipsTo)
+        if !unshipped.isEmpty, !force {
+            return "refused: \(host) says it does not ship to \(StorefrontAdmin.codes(unshipped)). Re-run with &force=true if that is wrong."
+        }
+        let new = wanted.subtracting(mine)
+        guard !new.isEmpty else { return "\(host) already serves \(StorefrontAdmin.codes(mine)); nothing added" }
+        try await req.db.transaction { db in
+            try await Storefronts.add(new, to: shop, on: db)
+        }
+        return "\(host) now serves \(StorefrontAdmin.codes(mine.union(new))) (added \(StorefrontAdmin.codes(new)))"
+            + StorefrontAdmin.notSwitchedOn(new, req.application)
+    }
+
+    /// Take countries off a shop that keeps serving others — `…/storefronts/DE/remove?countries=IT`.
+    /// What was read from it stays, because it is still read for the rest; the people in the
+    /// countries taken off are served the main shop from their next request. Taking every
+    /// country off is refused: that is deleting the shop, and `…/delete` says so.
+    admin.post("brands", ":brandID", "storefronts", ":country", "remove") { req async throws -> String in
+        guard let brandID = req.parameters.get("brandID", as: UUID.self),
+              let country = CountryCode.normalized(req.parameters.get("country")),
+              let shop = try await StorefrontAdmin.storefront(of: brandID, serving: country, on: req.db)
+        else { throw Abort(.notFound) }
+        let host = URL(string: shop.url)?.host() ?? shop.url
+        let named: Set<String>
+        switch StorefrontAdmin.requested(req) {
+        case .these(let these): named = these
+        case .invalid(let bad): throw Abort(.badRequest, reason: "not country codes: \(bad.joined(separator: ","))")
+        case .unnamed, .all: throw Abort(.badRequest, reason: "pass ?countries=<ISO codes>")
+        }
+        let mine = Set(shop.countryCodes)
+        let removing = named.intersection(mine)
+        guard !removing.isEmpty else { return "\(host) serves \(StorefrontAdmin.codes(mine)) and none of \(StorefrontAdmin.codes(named)); nothing removed" }
+        let keeping = mine.subtracting(removing)
+        guard !keeping.isEmpty else {
+            return "refused: that is every country \(host) serves. Delete the shop instead: "
+                + "POST /admin/brands/\(brandID)/storefronts/\(shop.homeCountry)/delete"
+        }
+        try await req.db.transaction { db in
+            try await Storefronts.narrow(shop, removing: removing, keeping: Array(keeping), on: db)
+        }
+        return "\(host) now serves \(StorefrontAdmin.codes(keeping)) (removed \(StorefrontAdmin.codes(removing)))"
+    }
+
+    /// Remove a brand's shop, named by any country it serves, with everything read from it —
+    /// for every country it serves. Its followers are served the main shop from the next
+    /// request.
     admin.post("brands", ":brandID", "storefronts", ":country", "delete") { req async throws -> String in
         guard let brandID = req.parameters.get("brandID", as: UUID.self),
               let country = CountryCode.normalized(req.parameters.get("country")),
-              let storefront = try await StorefrontModel.query(on: req.db)
-                  .filter(\.$brand.$id == brandID).filter(\.$country == country).first(),
+              let storefront = try await StorefrontAdmin.storefront(of: brandID, serving: country, on: req.db),
               let id = storefront.id
         else { throw Abort(.notFound) }
+        let countries = storefront.countryCodes
         let cleared = try await req.db.transaction { db in
             try await Storefronts.remove(id, on: db)
         }
-        return "removed the \(country) shop (\(storefront.url)) — \(cleared) product(s)"
+        return "removed \(storefront.url), the shop for \(StorefrontAdmin.codes(countries)) — \(cleared) product(s)"
     }
 
     /// Correct a brand's name — the one trusted path, since the public one no longer exists.
