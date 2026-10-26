@@ -128,28 +128,49 @@ final class RemoteSync {
             }
         }
 
+        // **One registration at a time, across every session.** Two callers that both find no
+        // token — the account deletion re-registering while the session a profile switch just
+        // built runs its launch sync — each minted a device, and the phone held one while the
+        // server kept an orphan with the re-followed brands on the other. The second caller
+        // now waits for the first's answer.
+        if let inFlight = Self.registration {
+            _ = try await inFlight.value
+            return
+        }
         let anonymous = StreetwAPI(baseURL: baseURL, token: nil)
-        let response = try await anonymous.register(
-            RegisterDevice(
-                environment: BackgroundServices.apnsEnvironment,
-                // **Deliberately not sent.** This carried `Locale.current.identifier`, the
-                // server stored it on the device row, and nothing has ever read it — so it
-                // was a piece of information about somebody held for no purpose, and one
-                // the privacy policy's "what our server receives" list did not mention. The
-                // field stays on the DTO so an older server still decodes this body; the
-                // honest fix for an unused field is to stop collecting it, not to document
-                // it. If a regional storefront feature ever wants it, it can come back with
-                // the policy line that has to accompany it.
-                locale: nil,
-                sizes: payload
+        let settings = settings
+        let registering = Task { @MainActor in
+            let response = try await anonymous.register(
+                RegisterDevice(
+                    environment: BackgroundServices.apnsEnvironment,
+                    // **Deliberately not sent.** This carried `Locale.current.identifier`, the
+                    // server stored it on the device row, and nothing has ever read it — so it
+                    // was a piece of information about somebody held for no purpose, and one
+                    // the privacy policy's "what our server receives" list did not mention. The
+                    // field stays on the DTO so an older server still decodes this body; the
+                    // honest fix for an unused field is to stop collecting it, not to document
+                    // it. If a regional storefront feature ever wants it, it can come back with
+                    // the policy line that has to accompany it.
+                    locale: nil,
+                    sizes: payload
+                )
             )
-        )
-        settings.token = response.token
-        // The identity is new, so the follow list behind it is empty — and the brands on
-        // this phone are the only record of what was being watched. Re-follow them rather
-        // than letting the app look populated while the server sends nothing.
-        didRegisterAfresh = true
+            // Inside the shared task, so a caller that waited on it finds the token set.
+            settings.token = response.token
+            // The identity is new, so the follow list behind it is empty — and the brands on
+            // this phone are the only record of what was being watched. Re-follow them rather
+            // than letting the app look populated while the server sends nothing.
+            UserDefaults.standard.set(true, forKey: Self.registeredAfreshKey)
+        }
+        Self.registration = registering
+        defer { Self.registration = nil }
+        try await registering.value
     }
+
+    /// The registration in flight, shared by every session's `RemoteSync` — see
+    /// `ensureRegistered`.
+    private static var registration: Task<Void, any Error>?
+    private static let registeredAfreshKey = "didRegisterAfresh"
 
     /// Set by `ensureRegistered` when it had to mint a new device. Read once by `sync`.
     ///
@@ -159,8 +180,8 @@ final class RemoteSync {
     /// list is refused by `FollowMerge`, so the phone went on showing brands the server was
     /// watching for nobody. Measured that way on the simulator.
     private var didRegisterAfresh: Bool {
-        get { UserDefaults.standard.bool(forKey: "didRegisterAfresh") }
-        set { UserDefaults.standard.set(newValue, forKey: "didRegisterAfresh") }
+        get { UserDefaults.standard.bool(forKey: Self.registeredAfreshKey) }
+        set { UserDefaults.standard.set(newValue, forKey: Self.registeredAfreshKey) }
     }
 
     /// Puts this device's follows back after a re-registration.

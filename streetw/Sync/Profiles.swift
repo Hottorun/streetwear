@@ -406,7 +406,9 @@ final class ProfileStore {
 
     private static func pruneFiles(keeping kept: Set<UUID>) {
         let directory = URL.applicationSupportDirectory
-        let files = (try? FileManager.default.contentsOfDirectory(atPath: directory.path())) ?? []
+        // Not `path()`, which percent-encodes: "Application Support" became
+        // "Application%20Support", the listing failed, and no store was ever deleted.
+        let files = (try? FileManager.default.contentsOfDirectory(atPath: directory.path(percentEncoded: false))) ?? []
         var gone: Set<UUID> = []
         for file in files where file.hasPrefix("profile-") {
             let stem = file.dropFirst("profile-".count).prefix(36)
