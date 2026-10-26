@@ -137,7 +137,7 @@ Dev-only launch flags (all read via `UserDefaults`, all no-ops when absent):
 |---|---|
 | `-seedBrands kith.com,bbcicecream.com` | Populates the store from real sites, skipping the add flow |
 | `-seedSizes "M,L,9,9.5"` | Fills the size profile |
-| `-startTab style` | Opens straight to a tab, so screenshots need no UI automation. One of `feed`, `discover`, `saved`, `style` — anything else (including the retired `brands`) resolves to the feed via `Tabs.resolve` rather than drawing a blank page |
+| `-startTab saved` | Opens straight to a tab, so screenshots need no UI automation. One of `feed`, `shop`, `saved`. Retired names still open something via `Tabs.resolve` rather than a blank page: `discover` opens Shop, `style` opens Saved › Fits (where the Style tab's fits went), anything else — including `brands` — the feed |
 | `-standalone YES` | Runs with no server, so `SyncEngine` polls from the phone |
 | `-seedSaves 8` | Files garments into the wardrobe, spread across `GarmentSlot.essential`. Independent of `-seedBrands`: it reads whatever brands the store holds, so in server mode it runs after the launch sync rather than at launch |
 
@@ -356,6 +356,10 @@ bought it. The short form of the load-bearing ones:
 - Every count on a spread opens the list it counts, and every visible count is subject to the same
   filter as that list (`Brand.unseenCount(matching:)`, `BrandUpdate.passes`).
 - Brands is not a tab; the alphabetical brand rail at the head of `FeedView` replaced it.
+- Three tabs — Feed, Shop, Saved — and a **You** page behind the avatar top right on every tab
+  (`.youButton()`, `YouRoute`, presented once from `ContentView`): taste, sizes, Following with any
+  failing source called out, watches, the calendar and the settings. The Style tab is gone; its fits
+  are Saved › Fits. Nothing unbuilt (sign-in, profiles, credits) is drawn as a placeholder.
 - There is no refresh button — `scenePhase == .active` and pull-to-refresh, on two very different
   throttles (60s server, 20min standalone).
 - A brand's first sync is a baseline, and only a sync that reached something may spend it.
@@ -1008,8 +1012,8 @@ crops and does not invert: `Color.sweep` is the one fixed colour in the app, bec
 don't invert either.
 
 **Read `docs/collection.md` before touching `SavedView`, `SaveDetailView`, `SaveConfirmation`,
-`ImageTagger`, `Cutout`, `Seamless`, `Silhouette`, `VisualReading`, `ProductShot`, `ColorNamer` or
-`StyleView`.** The rules most easily broken: only saved items get image analysis and the pass
+`ImageTagger`, `Cutout`, `Seamless`, `Silhouette`, `VisualReading`, `ProductShot`, `ColorNamer`,
+`FitsPage` or `YouView`.** The rules most easily broken: only saved items get image analysis and the pass
 **drains** its backlog; a photograph that did not answer is not one that never will (`.gone` vs
 `.unavailable`); the first photograph is not necessarily a photograph of the product; a lift is
 verified before it is believed; bumping `Cutout.version` means bumping `VisualReading.version` with
@@ -1022,9 +1026,13 @@ slots did not die, they stopped being the interface (`GarmentSlot` still filters
 `FitSuggestions`). `Outfit` judges the whole thing — always on the **worst** pairwise verdict, never
 the average — because the rules people use looking at a finished fit are invisible from any pair
 inside it. Cutouts are what the screen depends on, and Vision does not run in the Simulator, so the
-canvas genuinely looks worse there.
+canvas genuinely looks worse there. **`FitCanvas` is the only fit editor**: every entry point —
+New fit, a selection, a suggestion, "Wear it with", a Discover card — opens it through
+`FitCanvas.Opening`, pre-filled where something was proposed (`FitProposal`, whose shortlist per
+position is a tray shelf that swaps in place), and a garment nobody has kept becomes a save only
+when the fit is saved.
 
-**Read `docs/fits.md` before touching `FitCanvas`, `FitPlacement`, `FitRender`, `FitStudio`,
+**Read `docs/fits.md` before touching `FitCanvas`, `FitPlacement`, `FitRender`, `FitProposal`,
 `FitSuggestions`, `FitArrangement`, `FitBackground`, `Outfit` or `Pairing`.** Load-bearing and easy
 to undo by accident: placements are **normalised, never points**; the ground belongs to the fit and
 is **fixed**, or a render bakes in whichever appearance the phone was in; `FitRender.warm` before
@@ -1087,7 +1095,7 @@ anything called per variant, per row or per pixel.** The headlines:
 - **Derive once per `body`, and pass it down** — a computed property in a SwiftUI view has no
   memory. Five screens were doing this at once.
 - **…and for the expensive ones, once per *change***, behind a cheap fingerprint
-  (`StyleView.ReadingMemo`).
+  (`YouView.TasteMemo`, `FitsPage.ReadingMemo`).
 - **A `@Query` with no predicate subscribes the view to the whole table.** Narrow it, cap it, or ask
   a `FetchDescriptor` once in a `.task`.
 - **Walking a to-many relationship faults the whole thing in.** Ask the *store* the narrow question.

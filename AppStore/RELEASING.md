@@ -165,14 +165,14 @@ is code: a set re-shot by hand drifts from the app the first time a screen chang
 flags make it possible with no UI automation at all:
 
 ```
--startTab feed|discover|saved|style    open straight to a tab
+-startTab feed|shop|saved             open straight to a tab (style opens Saved › Fits)
 -didOfferStarterPack YES               skip onboarding deterministically
 -seedBrands / -seedSizes / -seedSaves  populate the store
 ```
 
 Server mode is what you want even though `-seedBrands` polls from the phone: `/v1/discover`
 returns cards for a device with no follows at all, and standalone mode has no equivalent — so the
-Discover tab is empty without a server. Set a marketing status bar first:
+Discover deck in Shop is empty without a server. Set a marketing status bar first:
 
 ```bash
 xcrun simctl status_bar "$DEV" override --time "9:41" --batteryState charged --batteryLevel 100 \

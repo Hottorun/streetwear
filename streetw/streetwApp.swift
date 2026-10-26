@@ -42,8 +42,11 @@ struct streetwApp: App {
     /// `LazyVStack` and is routinely recycled or scrolled off before the confirmation has
     /// been acted on.
     @State private var confirmation: SaveConfirmation
-    /// How the Style tab asks the collection to open at a facet.
+    /// How your taste, on You, asks the collection to open at a facet.
     @State private var collection: CollectionRoute
+    /// Whether the You page is up. One for the app, so the page is presented once from the
+    /// root whichever tab's avatar was tapped — see `YouRoute`.
+    @State private var you: YouRoute
     /// What the server said about each poll hint, so the drop calendar can say per row
     /// whether anything is actually going to be watching. See `DropHintStore`.
     @State private var hints: DropHintStore
@@ -100,6 +103,7 @@ struct streetwApp: App {
         _route = State(initialValue: route)
         _confirmation = State(initialValue: MainActor.assumeIsolated { SaveConfirmation() })
         _collection = State(initialValue: MainActor.assumeIsolated { CollectionRoute() })
+        _you = State(initialValue: MainActor.assumeIsolated { YouRoute() })
         _hints = State(initialValue: MainActor.assumeIsolated { DropHintStore() })
 
         // The app delegate is built by UIKit and can't be handed these, so they are
@@ -129,6 +133,7 @@ struct streetwApp: App {
                 .environment(route)
                 .environment(confirmation)
                 .environment(collection)
+                .environment(you)
                 .environment(hints)
                 .task {
                     await DevSeed.runIfRequested(in: sharedModelContainer.mainContext)

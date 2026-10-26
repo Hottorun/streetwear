@@ -10,14 +10,28 @@ import SwiftUI
 
 /// The tabs, and what an unrecognised name resolves to.
 enum Tabs {
-    static let all = ["feed", "discover", "saved", "style"]
+    static let all = ["feed", "shop", "saved"]
 
-    /// `-startTab brands` still exists in muscle memory and in screenshot scripts, and
-    /// Brands is no longer a tab. It resolves to the feed, which is where the brand rail
-    /// and the add-a-brand control live — the closest honest answer, and never a blank page.
+    /// Names that were tabs once, and where what they held lives now. They still exist in
+    /// muscle memory and in screenshot scripts, and a `TabView` whose selection matches nothing
+    /// draws a blank page — so each lands on the closest honest answer instead:
+    ///
+    /// - `discover` is part of Shop.
+    /// - `style` held the fits, kept and proposed, which are Saved › Fits now (`opensOnFits`).
+    ///   Its taste reading is on You, which is not a tab.
+    /// - `brands`, and anything else, is the feed.
     static func resolve(_ name: String?) -> String {
-        guard let name, all.contains(name) else { return "feed" }
-        return name
+        switch name {
+        case let name? where all.contains(name): name
+        case "discover": "shop"
+        case "style": "saved"
+        default: "feed"
+        }
+    }
+
+    /// Whether the launch asked for the retired Style tab, which Saved answers on its Fits strip.
+    static var opensOnFits: Bool {
+        UserDefaults.standard.string(forKey: "startTab") == "style"
     }
 }
 
@@ -29,9 +43,10 @@ struct ContentView: View {
     @Environment(PushRoute.self) private var route: PushRoute
     @Environment(SaveConfirmation.self) private var confirmation: SaveConfirmation
     @Environment(CollectionRoute.self) private var collection: CollectionRoute
+    @Environment(YouRoute.self) private var you: YouRoute
     @Environment(\.scenePhase) private var scenePhase
 
-    /// Dev affordance, matching `-seedBrands` / `-seedSizes`: `-startTab style`
+    /// Dev affordance, matching `-seedBrands` / `-seedSizes`: `-startTab saved`
     /// opens straight to a tab so screenshots don't need UI automation.
     ///
     /// Resolved through `Tabs.resolve` because the set has changed: `-startTab brands` names
@@ -66,26 +81,23 @@ struct ContentView: View {
     @State private var openedBrand: Brand?
 
     var body: some View {
+        // **Three tabs, and everything about the person behind the avatar on each.**
+        //
+        // What happened at your shops · what to get next · what is yours. Style was the fourth,
+        // and it was never a place: it was a reading of your taste, two rows of fits and a
+        // settings gear. The fits are Saved › Fits, the reading is on You, and the settings
+        // with it (see `YouView`) — beside the brands you follow, the things you are waiting
+        // on and the calendar, which were sheets behind icons on the feed. Brands stopped
+        // being a tab before this for the same reason: a directory of names with no news in
+        // it, beside tabs that are all about change.
         TabView(selection: $selection) {
             Tab("Feed", systemImage: "square.stack", value: "feed") {
                 FeedView()
             }
-            // **Brands is not a tab, and that is the point of four.**
-            //
-            // It was a directory — a list of names, with no news in it and nothing that
-            // changes — sitting beside three tabs that are all about change. Every wordmark
-            // in the feed already opens the brand page, and the feed itself is grouped by
-            // brand, so the tab's only exclusive jobs were reaching a brand with nothing
-            // unread and adding one. Both are on `FeedView`'s brand rail now, and the full
-            // index (which sources, and whether any is failing) is a sheet behind it.
-            //
-            // What is left is an honest set: what happened · what is new to you · what is
-            // yours · what that says about you.
-            //
             // Between the brands you chose and the things you kept, which is where it
             // belongs: it is the way *in* to the first and the way *out* of the second.
-            Tab("Discover", systemImage: "safari", value: "discover") {
-                DiscoverFeedView()
+            Tab("Shop", systemImage: "magnifyingglass", value: "shop") {
+                ShopView()
                     // **The one tab whose foot is deliberately near-black.** A card there is
                     // a poster with its own fixed ground (see `DiscoverCardView`), and the
                     // floating tab bar takes its material from what is behind it — so in the
@@ -96,9 +108,6 @@ struct ContentView: View {
             }
             Tab("Saved", systemImage: "bookmark", value: "saved") {
                 SavedView()
-            }
-            Tab("Style", systemImage: "chart.pie", value: "style") {
-                StyleView()
             }
         }
         // Ink, not the system blue: the accent is reserved for things that are happening
@@ -114,12 +123,16 @@ struct ContentView: View {
         // The four largest settings still get the largest type the layout can actually hold.
         .dynamicTypeSize(...DynamicTypeSize.accessibility2)
         // Tapping a facet in the taste summary is a question about the collection, so it
-        // is answered in the collection. Keyed on the request count rather than on the
+        // is answered in the collection — which means closing You, the page it was asked
+        // from, as well as changing tab. Keyed on the request count rather than on the
         // facet: asking for the one you are already looking at is a legitimate way to get
         // back to the Saved tab, and an unchanged value publishes nothing.
         .onChange(of: collection.requests) { _, _ in
+            you.isOpen = false
             selection = "saved"
         }
+        // Presented once, here, whichever tab's avatar asked — see `YouRoute`.
+        .sheet(isPresented: Bindable(you).isOpen) { YouView() }
         // Above the tab bar rather than over the card that was saved. `quickSave` claims
         // the horizontal drag on the lower half of a feed card, so anything laid over that
         // region is competing with a gesture for the same pixels — and the card in

@@ -29,7 +29,7 @@ upload as-is.
 
 # Dropwall — Privacy Policy
 
-**Last updated: 24 October 2026**
+**Last updated: 25 October 2026**
 
 Dropwall is made by KERN AG, Germany. Questions about this
 policy go to hottorun@pm.me.
@@ -90,7 +90,7 @@ So that we can tell which parts of the app people actually use, the app counts a
 things, per day:
 
 - opening the app
-- opening each of its tabs (Feed, Discover, Saved, Style)
+- opening each of its tabs (Feed, Shop, Saved)
 - running a brand search
 - asking us to check a shop nobody has added yet
 - following a brand

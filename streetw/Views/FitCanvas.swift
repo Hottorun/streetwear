@@ -31,6 +31,14 @@
 //
 // Slots do not disappear; they just stop being the interface. `GarmentSlot` still filters
 // the tray and still drives `FitSuggestions`. Canvas for the person, slots for the machine.
+//
+// **This is the only fit editor.** There used to be two: "Wear it with" on a product page and
+// "See the fit" on a Discover card opened `FitStudio`, a builder with its own preview and its
+// own save, while the fit row, a selection on the wall and "+ New fit" opened this — so which
+// editor somebody met depended on where they happened to tap, and the studio's best button was
+// "save and arrange it by hand", which opened this anyway. Every entry point now lands here,
+// opened with whatever it was proposing (see `Opening`), and the studio's one good idea — a
+// ranked shortlist for each position, one tap from being swapped in — is a shelf in the tray.
 
 import StreetwCore
 import SwiftData
@@ -39,6 +47,7 @@ import SwiftUI
 struct FitCanvas: View {
     @Environment(\.modelContext) private var context
     @Environment(\.dismiss) private var dismiss
+    @Environment(StyleStatementStore.self) private var statement: StyleStatementStore
 
     @Query(sort: \SavedItem.savedAt, order: .reverse) private var saves: [SavedItem]
     @Query(sort: [SortDescriptor(\Board.sortIndex), SortDescriptor(\Board.createdAt)])
@@ -47,28 +56,78 @@ struct FitCanvas: View {
     /// Nil when composing a new fit.
     let fit: Fit?
 
-    /// What a new fit opens with, when it was begun from a selection on the wall.
-    ///
-    /// Laid out by `FitArrangement`, the one table everything that arranges a fit by machine
-    /// reads, and **nothing is stored until Save** — the same contract as any other new fit.
-    /// Starting one and closing the canvas leaves nothing behind, which is the failure
-    /// `StyleView.keep` once had: a fit written before anybody agreed to it.
-    let starting: [SavedItem]
+    /// What a new fit opens with. **Nothing is stored until Save**, whichever it is — the
+    /// contract every one of these used to break in its own way: `StyleView.keep` wrote a fit
+    /// before anybody had agreed to it, and the studio saved one first so the canvas had
+    /// something to edit. Closing the canvas leaves nothing behind.
+    enum Opening {
+        /// Pieces chosen by hand — a selection on the wall, or nothing at all.
+        case pieces([SavedItem])
+        /// A proposal off the fit row, which may borrow a garment from the catalogue to fill a
+        /// slot the wardrobe cannot.
+        case suggestion(SuggestedFit)
+        /// An outfit built around one garment — "Wear it with" on a product or a saved item, and
+        /// a Discover card's pairing. Opens on `FitProposal.opening`, with the shortlist for each
+        /// position in the tray. `anchor` is the wardrobe piece the card was already naming.
+        case around(FitSubject, anchor: String?)
+    }
+
+    let starting: Opening
     /// The board a fit begun from a board's selection is filed on, which is where somebody
     /// looking at that board would expect to find it. Still changeable before saving.
     let startingBoard: Board?
 
-    init(fit: Fit?, starting: [SavedItem] = [], board: Board? = nil) {
+    init(fit: Fit?, starting: Opening = .pieces([]), board: Board? = nil) {
         self.fit = fit
         self.starting = starting
         self.startingBoard = board
     }
 
+    /// One garment on the canvas: something already kept, or something that becomes a save
+    /// only when the fit does.
+    ///
+    /// The second case is what lets every entry point open here. A fit is made of `SavedItem`s
+    /// and has to be — that is what makes an outfit a list of things you own — but a proposal
+    /// built around a product page's garment, a Discover card, or a catalogue piece filling a
+    /// gap in the wardrobe is about something nobody has kept yet. Keeping it on the way *in*
+    /// would put a garment in the collection for opening a sheet, and for a Discover card would
+    /// write a row the deck's no-pollution rule forbids. So it waits on the canvas as what it
+    /// is, and `save()` is the one moment it becomes a save.
+    enum Piece {
+        case kept(SavedItem)
+        case pending(FitSubject)
+
+        /// What `Outfit` judges the finished fit on. Taken before anything is materialised,
+        /// because a discovery card's measured colour lives on the card, not on the row.
+        var garment: Garment? {
+            switch self {
+            case .kept(let save): return save.update?.garment
+            case .pending(let subject): return subject.garment
+            }
+        }
+
+        func resolve(in context: ModelContext) -> SavedItem? {
+            switch self {
+            case .kept(let save): return save.isGone ? nil : save
+            case .pending(let subject): return subject.materialise(in: context)
+            }
+        }
+    }
+
+    /// What the tray is showing.
+    private enum Shelf: Hashable {
+        /// The proposal's shortlist, every position's best first. Only there when the canvas
+        /// was opened around a garment and the wardrobe has something to put with it.
+        case proposal
+        case all
+        case slot(GarmentSlot)
+    }
+
     @State private var name = ""
     @State private var placements: [FitPlacement] = []
-    @State private var chosen: [UUID: SavedItem] = [:]
+    @State private var chosen: [UUID: Piece] = [:]
     @State private var selected: UUID?
-    @State private var trayFilter: GarmentSlot?
+    @State private var shelf: Shelf = .all
     @State private var board: Board?
     /// The ground, held here so a change is live on the canvas and written on save. See
     /// `FitBackground`.
@@ -78,6 +137,15 @@ struct FitCanvas: View {
     @State private var isNamingBoard = false
     @State private var newBoardName = ""
 
+    /// The outfit this canvas was opened around, ranked once when it opened — see
+    /// `FitProposal` for why the shelves must never re-sort while somebody is choosing.
+    @State private var proposal: FitProposal?
+    /// Which position on the body each machine-placed piece stands in, so choosing another
+    /// from the same shelf *swaps* it — taking its place, size and layer — rather than adding a
+    /// second pair of trousers beside the first. Pieces placed from the rest of the tray are not
+    /// in here: the canvas is free, and a jacket somebody added by hand is theirs to keep.
+    @State private var positions: [UUID: FitPosition] = [:]
+
     /// Only ever grows. Sparse z values mean bringing something to the front is one write
     /// rather than renumbering everything behind it.
     @State private var topZ = 0
@@ -85,11 +153,11 @@ struct FitCanvas: View {
 
     /// What the tray is made of, worked out **once** per render.
     ///
-    /// The same correction `StyleView` and `FeedView` already carry, and this screen needed
-    /// it more than either: these were four computed properties reading each other, on a
-    /// view whose `@Query` is unpredicated — so every `context.save()` anywhere in the app,
-    /// including each batch of the photograph analysis draining in the background, rebuilt
-    /// the lot while somebody was arranging a fit.
+    /// The same correction `FeedView` carries, and this screen needed it more: these were
+    /// four computed properties reading each other, on a view whose `@Query` is unpredicated
+    /// — so every `context.save()` anywhere in the app, including each batch of the
+    /// photograph analysis draining in the background, rebuilt the lot while somebody was
+    /// arranging a fit.
     ///
     /// `wearable` filters the whole collection and faults `save.update` per row. It was read
     /// by `trayItems`, by `traySlots` and again by `drop`. And `traySlots` runs
@@ -119,16 +187,19 @@ struct FitCanvas: View {
             .filter { $0 != .unknown }
             .sorted { $0.stackOrder < $1.stackOrder }
 
-        let items = trayFilter.map { filter in
-            classified.filter { $0.slot == filter }.map(\.item)
-        } ?? wearable
+        let items: [SavedItem]
+        switch shelf {
+        case .proposal: items = []
+        case .all: items = wearable
+        case .slot(let filter): items = classified.filter { $0.slot == filter }.map(\.item)
+        }
 
         return Tray(wearable: wearable, items: items, slots: slots)
     }
 
-    private var placedItems: [(item: SavedItem, placement: FitPlacement)] {
+    private var placedPieces: [(piece: Piece, placement: FitPlacement)] {
         placements
-            .compactMap { placement in chosen[placement.itemID].map { (item: $0, placement: placement) } }
+            .compactMap { placement in chosen[placement.itemID].map { (piece: $0, placement: placement) } }
             .sorted { $0.placement.z < $1.placement.z }
     }
 
@@ -146,7 +217,7 @@ struct FitCanvas: View {
             .toolbarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
-                    Button("Close", systemImage: "xmark") { cancel() }
+                    Button("Close", systemImage: "xmark") { dismiss() }
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     Menu("More", systemImage: "ellipsis") {
@@ -168,7 +239,13 @@ struct FitCanvas: View {
                         }
                         if !placements.isEmpty {
                             Button("Clear canvas", systemImage: "trash", role: .destructive) {
+                                // Everything that says what is on the canvas, not only the
+                                // placements: the tray reads `chosen` to mark what is down,
+                                // and clearing the picture alone left every tile dimmed as
+                                // if it were still placed.
                                 placements = []
+                                chosen = [:]
+                                positions = [:]
                                 selected = nil
                             }
                         }
@@ -196,6 +273,14 @@ struct FitCanvas: View {
             } message: {
                 Text("Boards are private. Nothing is shared anywhere.")
             }
+            // **The stickers are lifted here too.** The pass runs where its results are about
+            // to be used, and this is the screen built out of them — reachable from a product
+            // page, a Discover card or the fit row without the Saved wall ever having been
+            // opened, which left the pieces un-lifted for exactly the person about to need
+            // them. Concurrent calls are safe: a second one waits on the drain in flight.
+            .task(id: ImageTagger.backlog(in: saves)) {
+                await ImageTagger.analyzePending(in: context)
+            }
         }
         .tint(.ink)
         .onAppear(perform: load)
@@ -212,9 +297,9 @@ struct FitCanvas: View {
                     .contentShape(.rect)
                     .onTapGesture { selected = nil }
 
-                ForEach(placedItems, id: \.placement.itemID) { entry in
+                ForEach(placedPieces, id: \.placement.itemID) { entry in
                     PlacedPiece(
-                        item: entry.item,
+                        piece: entry.piece,
                         placement: binding(for: entry.placement.itemID),
                         canvas: geometry.size,
                         space: Self.space,
@@ -272,13 +357,19 @@ struct FitCanvas: View {
             FitGroundPicker(selection: $background)
                 .padding(.horizontal, 20)
 
-            if !tray.slots.isEmpty {
+            if !tray.slots.isEmpty || proposal?.isEmpty == false {
                 ScrollView(.horizontal) {
                     HStack(spacing: 16) {
-                        trayChip(label: "ALL", isOn: trayFilter == nil) { trayFilter = nil }
+                        // First, and selected on the way in, when there is one: it is what the
+                        // canvas was opened to show — what goes with the garment it is built
+                        // around — and the whole wardrobe is one chip along.
+                        if proposal?.isEmpty == false {
+                            trayChip(label: "GOES WITH IT", isOn: shelf == .proposal) { shelf = .proposal }
+                        }
+                        trayChip(label: "ALL", isOn: shelf == .all) { shelf = .all }
                         ForEach(tray.slots, id: \.self) { slot in
-                            trayChip(label: slot.label.uppercased(), isOn: trayFilter == slot) {
-                                trayFilter = trayFilter == slot ? nil : slot
+                            trayChip(label: slot.label.uppercased(), isOn: shelf == .slot(slot)) {
+                                shelf = shelf == .slot(slot) ? .all : .slot(slot)
                             }
                         }
                     }
@@ -287,7 +378,9 @@ struct FitCanvas: View {
                 .scrollIndicators(.hidden)
             }
 
-            if tray.wearable.isEmpty {
+            if shelf == .proposal, let proposal {
+                proposalShelf(proposal)
+            } else if tray.wearable.isEmpty {
                 Text("Save a few things first — a fit is made from your collection.")
                     .font(.editorial(14))
                     .foregroundStyle(Color.muted)
@@ -320,6 +413,33 @@ struct FitCanvas: View {
         .padding(.bottom, 8)
         .frame(height: 204)
         .background(Color.wash.opacity(0.5))
+    }
+
+    /// The shortlist for every position the proposal can fill, head down, each position's best
+    /// first — the studio's rows, laid end to end in the tray.
+    ///
+    /// A tap **swaps**: the piece takes the place, size and layer of whatever stood in that
+    /// position, so trying three pairs of trousers is three taps rather than three removals and
+    /// three re-arrangements. Tapping the one already down takes it off, which is the only way
+    /// to say "no jacket" without hunting for a control that says so. Each tile says which
+    /// position it stands in and the line `Pairing` gave it, because the row runs one position
+    /// into the next and a suggestion nobody can account for is indistinguishable from a
+    /// shuffle.
+    private func proposalShelf(_ proposal: FitProposal) -> some View {
+        ScrollView(.horizontal) {
+            LazyHStack(alignment: .top, spacing: 10) {
+                ForEach(proposal.shelves) { shelf in
+                    ForEach(shelf.options) { option in
+                        Button { choose(option) } label: {
+                            ShelfTile(option: option, isPlaced: chosen[option.id] != nil)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+            .padding(.horizontal, 20)
+        }
+        .scrollIndicators(.hidden)
     }
 
     private func trayChip(label: String, isOn: Bool, action: @escaping () -> Void) -> some View {
@@ -403,6 +523,36 @@ struct FitCanvas: View {
         place(item, x: spot.x, y: spot.y)
     }
 
+    /// A piece off the proposal's shelf: into its position, in place of whatever stood there.
+    private func choose(_ option: FitProposal.Option) {
+        let id = option.id
+        if chosen[id] != nil {
+            remove(id)
+            return
+        }
+        if let occupant = positions.first(where: { $0.value == option.position })?.key,
+           let index = placements.firstIndex(where: { $0.itemID == occupant }) {
+            // The swap keeps the placement — where it was, how big, which way up, what it is
+            // layered under — because those are what somebody may already have adjusted, and
+            // the question being asked is only *which* trousers.
+            placements[index].itemID = id
+            chosen[occupant] = nil
+            positions[occupant] = nil
+        } else {
+            // An empty position takes the spot the arrangement table gives it, so a cap added
+            // from its shelf lands where a cap goes rather than at the next free drop spot.
+            let layered = FitArrangement.isLayered(Array(positions.values) + [option.position])
+            let spot = FitArrangement.spot(for: option.position, layered: layered)
+            topZ += 1
+            placements.append(
+                FitPlacement(itemID: id, x: spot.x, y: spot.y, scale: spot.scale, rotation: 0, z: topZ)
+            )
+        }
+        chosen[id] = .kept(option.save)
+        positions[id] = option.position
+        selected = id
+    }
+
     /// A garment dragged out of the tray and let go over the canvas.
     ///
     /// Dropping something that is already placed **moves** it instead of adding a second
@@ -434,7 +584,7 @@ struct FitCanvas: View {
 
     private func place(_ item: SavedItem, x: Double, y: Double) {
         topZ += 1
-        chosen[item.id] = item
+        chosen[item.id] = .kept(item)
         placements.append(
             FitPlacement(itemID: item.id, x: x, y: y, scale: 0.8, rotation: 0, z: topZ)
         )
@@ -480,6 +630,7 @@ struct FitCanvas: View {
     private func remove(_ id: UUID) {
         placements.removeAll { $0.itemID == id }
         chosen[id] = nil
+        positions[id] = nil
         if selected == id { selected = nil }
     }
 
@@ -505,9 +656,14 @@ struct FitCanvas: View {
             arrangeStarting()
             return
         }
+        // Once, for the reason `arrangeStarting` gives: `onAppear` fires again whenever
+        // something presented over the canvas goes away, and reloading would undo every move.
+        guard !didArrangeStarting else { return }
+        didArrangeStarting = true
+
         name = fit.name
         placements = fit.placements
-        chosen = Dictionary(fit.items.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        chosen = Dictionary(fit.items.map { ($0.id, Piece.kept($0)) }, uniquingKeysWith: { first, _ in first })
         board = fit.board
         background = fit.ground
         topZ = placements.map(\.z).max() ?? 0
@@ -530,19 +686,34 @@ struct FitCanvas: View {
         }
     }
 
-    /// Lays out the pieces a selection began this fit with, once.
+    /// Lays out whatever this fit was opened with, once.
     ///
     /// Once, because `onAppear` fires again whenever something presented over the canvas goes
-    /// away, and re-running this would undo every move made since. Two pieces that belong in
-    /// the same position — two pairs of trousers selected together — are stepped apart rather
-    /// than stacked exactly, or the second is invisible under the first and the canvas looks
-    /// as if it dropped one.
+    /// away, and re-running this would undo every move made since. Every machine arrangement
+    /// goes through `FitArrangement`, the one table that lays a fit out — the studio had a
+    /// private table and `StyleView.keep` had none, and the two disagreed about the same
+    /// outfit.
     private func arrangeStarting() {
         guard !didArrangeStarting else { return }
         didArrangeStarting = true
         board = startingBoard
 
-        let garments = starting.compactMap { item in item.update.map { (item: item, garment: $0.garment) } }
+        switch starting {
+        case .pieces(let items):
+            arrange(items)
+        case .suggestion(let suggestion):
+            arrange(suggestion)
+        case .around(let subject, let anchor):
+            arrange(around: subject, anchor: anchor)
+        }
+        topZ = placements.map(\.z).max() ?? 0
+    }
+
+    /// A selection from the wall. Two pieces that belong in the same position — two pairs of
+    /// trousers selected together — are stepped apart rather than stacked exactly, or the
+    /// second is invisible under the first and the canvas looks as if it dropped one.
+    private func arrange(_ items: [SavedItem]) {
+        let garments = items.compactMap { item in item.update.map { (item: item, garment: $0.garment) } }
         guard !garments.isEmpty else { return }
         let splitting = garments.count { $0.garment.slot == .top } > 1
         let arranged = garments.map {
@@ -558,18 +729,94 @@ struct FitCanvas: View {
             stepped.y = min(max(placement.y + step * 0.05, 0.1), 0.9)
             return stepped
         }
-        chosen = Dictionary(garments.map { ($0.item.id, $0.item) }, uniquingKeysWith: { first, _ in first })
-        topZ = placements.map(\.z).max() ?? 0
+        chosen = Dictionary(garments.map { ($0.item.id, Piece.kept($0.item)) }, uniquingKeysWith: { first, _ in first })
+    }
+
+    /// A proposal off the fit row, laid out as the card drew it. A garment it borrowed from
+    /// the catalogue waits on the canvas unsaved — see `Piece` — so trying a proposal and
+    /// closing it keeps nothing, where tapping the card used to keep the fit *and* the
+    /// borrowed piece in one go.
+    private func arrange(_ suggestion: SuggestedFit) {
+        let ordered = suggestion.ordered
+        // Split tops only when the proposal actually holds two, so a fit of one tee and one
+        // pair of trousers is laid out exactly as it always was.
+        let splitting = ordered.filter { $0.update.garment.slot == .top }.count > 1
+        var arranged: [(position: FitPosition, itemID: UUID)] = []
+        for piece in ordered {
+            let subject = FitSubject.product(piece.update)
+            if let save = piece.save ?? subject.existingSave {
+                chosen[save.id] = .kept(save)
+                arranged.append((FitArrangement.position(for: piece.update.garment, splittingTops: splitting), save.id))
+            } else {
+                let key = UUID()
+                chosen[key] = .pending(subject)
+                arranged.append((FitArrangement.position(for: piece.update.garment, splittingTops: splitting), key))
+            }
+        }
+        placements = FitArrangement.placements(for: arranged)
+    }
+
+    /// An outfit around one garment: the subject in its position, the proposal's opening in
+    /// theirs, and the tray turned to the shortlist.
+    private func arrange(around subject: FitSubject, anchor: String?) {
+        let built = FitProposal(
+            around: subject,
+            anchor: anchor,
+            saves: saves,
+            boards: boards,
+            statement: statement.statement
+        )
+        proposal = built
+
+        // Something already kept goes down as itself; anything else waits to be kept.
+        let key = subject.existingSave?.id ?? UUID()
+        chosen[key] = subject.existingSave.map(Piece.kept) ?? .pending(subject)
+        var arranged: [(position: FitPosition, itemID: UUID)] = [(built.subjectPosition, key)]
+        for option in built.opening {
+            chosen[option.id] = .kept(option.save)
+            arranged.append((option.position, option.id))
+        }
+        placements = FitArrangement.placements(for: arranged)
+        positions = Dictionary(arranged.map { ($0.itemID, $0.position) }, uniquingKeysWith: { first, _ in first })
+        if !built.isEmpty { shelf = .proposal }
     }
 
     private func save() {
-        let items = placements.compactMap { chosen[$0.itemID] }
+        // **Every piece becomes a save here and nowhere earlier** — a garment borrowed from a
+        // product page, a Discover card or the catalogue is kept at the moment the outfit is,
+        // which is the honest reading of the tap and the one moment the deck's no-pollution
+        // rule allows a discovery card a row. Its placement is re-keyed onto the save it became.
+        var items: [SavedItem] = []
+        var stored: [FitPlacement] = []
+        var garments: [Garment] = []
+        for placement in placements {
+            guard let piece = chosen[placement.itemID] else { continue }
+            // Read before resolving: a discovery card's measured colour is on the card.
+            let garment = piece.garment
+            guard let item = piece.resolve(in: context),
+                  !items.contains(where: { $0.id == item.id })
+            else { continue }
+            items.append(item)
+            var keyed = placement
+            keyed.itemID = item.id
+            stored.append(keyed)
+            if let garment { garments.append(garment) }
+        }
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
 
         let target = fit ?? Fit()
+        // **What the card under it says when nobody has named it** (`Fit.verdict`), worked out
+        // by the one editor whichever way the fit was begun. It used to be written only by the
+        // two machine paths, so a fit arranged here by hand went nameless while the same
+        // garments kept off the row said "Olive against neutrals". Rewritten only when the
+        // garments change: it is a sentence about which clothes are in the fit, and moving
+        // them about says nothing new.
+        if fit == nil || Set(target.items.map(\.id)) != Set(items.map(\.id)) {
+            target.verdict = Outfit.score(garments, statement: statement.statement).reason
+        }
         target.name = trimmed
         target.items = items
-        target.placements = placements
+        target.placements = stored
         target.board = board
         target.backgroundName = background.rawValue
         if fit == nil { context.insert(target) }
@@ -607,17 +854,6 @@ struct FitCanvas: View {
         try? context.save()
         dismiss()
     }
-
-    /// A fit created by keeping a suggestion is inserted *before* this sheet opens, so
-    /// cancelling has to undo it — otherwise backing out leaves an outfit you never
-    /// confirmed.
-    private func cancel() {
-        if let fit, fit.name.isEmpty, fit.placements.isEmpty, fit.renderFile == nil {
-            context.delete(fit)
-            try? context.save()
-        }
-        dismiss()
-    }
 }
 
 // MARK: - One piece on the canvas
@@ -636,7 +872,7 @@ struct FitCanvas: View {
 /// on a big jacket and specks on a small ring. Framing the piece at its drawn size leaves
 /// the chrome in screen units, where a touch target has to live.
 private struct PlacedPiece: View {
-    let item: SavedItem
+    let piece: FitCanvas.Piece
     @Binding var placement: FitPlacement
     let canvas: CGSize
     let space: String
@@ -675,7 +911,7 @@ private struct PlacedPiece: View {
 
     var body: some View {
         ZStack {
-            FitPieceImage(item: item)
+            CanvasPieceImage(piece: piece)
                 .frame(width: drawn, height: drawn)
             if isSelected {
                 chrome.frame(width: drawn, height: drawn)
@@ -1023,6 +1259,92 @@ private struct TrayTile: View {
                 .foregroundStyle(Color.muted)
                 .lineLimit(1)
                 .frame(width: 76, alignment: .leading)
+        }
+    }
+}
+
+/// One candidate on the proposal's shelf: where it would go, and why it is in the running.
+///
+/// The position rather than the title, because the shelf runs one position into the next and
+/// the photograph already says what the garment is. The reason is the line `Pairing` actually
+/// used — the contract `PairingTile` holds — and prints nothing rather than filler when nothing
+/// has been measured, which in the Simulator is always.
+private struct ShelfTile: View {
+    let option: FitProposal.Option
+    let isPlaced: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            FitPieceImage(update: option.update)
+                .frame(width: 76, height: 76)
+                .background(Color.paper)
+                .overlay {
+                    if isPlaced { Rectangle().stroke(Color.ink, lineWidth: 1.5) }
+                }
+                .padding(.bottom, 2)
+
+            DataLabel(
+                text: option.position.label.uppercased(),
+                size: 9,
+                color: isPlaced ? .ink : .muted
+            )
+            .lineLimit(1)
+            if let reason = option.reason {
+                DataLabel(text: reason.uppercased(), size: 8)
+                    .lineLimit(1)
+            }
+        }
+        .frame(width: 76, alignment: .leading)
+        .contentShape(.rect)
+    }
+}
+
+/// A piece on the canvas, drawn as whatever the app actually has of it.
+private struct CanvasPieceImage: View {
+    let piece: FitCanvas.Piece
+
+    var body: some View {
+        switch piece {
+        case .kept(let save): FitPieceImage(item: save)
+        case .pending(let subject): FitSubjectImage(subject: subject)
+        }
+    }
+}
+
+/// A garment nobody has kept yet, drawn as whatever the app has of it.
+///
+/// A `BrandUpdate` goes through `FitPieceImage`, which is what every other surface uses. A
+/// discovery card has no row and therefore no cutout file — but `DiscoveryAnalysis` lifts a
+/// sticker in memory for the cards at the viewport, so where that ran the piece lands on the
+/// canvas cut out, exactly like the wardrobe pieces beside it. Where it did not — the
+/// photograph is still decoding, or this is the Simulator, where Vision's subject lifting does
+/// not run at all — it degrades to the photograph, which is what `FitPieceImage` does too.
+///
+/// **The fallback is the packshot, not the lead shot**, for the reason `FitPieceImage` prefers
+/// `packshotURL`. A gallery's order is a merchandising decision: Stüssy leads with four model
+/// shots, so falling back to the first frame drops a whole person in trousers and boots into
+/// somebody's outfit as a stand-in for a t-shirt. The *card* still shows the lead — on a model
+/// is how the brand wants the garment seen.
+private struct FitSubjectImage: View {
+    let subject: FitSubject
+
+    var body: some View {
+        switch subject {
+        case .product(let update):
+            FitPieceImage(update: update)
+        case .discovery(let card, let sticker, _, let packshot):
+            if let sticker {
+                Image(uiImage: sticker).resizable().scaledToFit()
+            } else {
+                UpdateImage(
+                    url: packshot ?? card.imageURLs.first.flatMap(URL.init(string:)),
+                    aspect: 1,
+                    contentMode: .fit,
+                    drawnWidth: FitPieceImage.drawnWidth,
+                    backdrop: .clear,
+                    mark: card.brand.name
+                )
+            }
         }
     }
 }

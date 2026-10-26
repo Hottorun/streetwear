@@ -1,5 +1,8 @@
 // BrandsView.swift
-// The brand list and the add-brand flow.
+// Every brand being followed, how each is watched, and whether any of that is failing.
+//
+// Reached from You › Following. It was behind "ALL" at the head of the feed's brand rail
+// until the rail went, and before that it was a tab.
 
 import StreetwCore
 import SwiftData
@@ -12,41 +15,13 @@ struct BrandsView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(ServerSettings.self) private var settings: ServerSettings
     @Environment(BrandSuggestions.self) private var suggestions: BrandSuggestions
-    @Environment(SizeProfileStore.self) private var sizes: SizeProfileStore
 
     @Query(sort: \Brand.name) private var brands: [Brand]
 
-    /// The unread queue, narrowed by the store — the same correction `FeedView` made.
-    ///
-    /// `BrandRow` asked `Brand.unseenCount(matching:)` for itself, which walks that brand's
-    /// **entire** catalogue — every product ever synced, read or not — to count the unread
-    /// few, and builds a `Set<String>` doing it. `List` is lazy, but with eight rows on
-    /// screen that is eight full catalogue walks, re-run on every `context.save()` anywhere
-    /// in the app.
-    ///
-    /// One indexed query answers it for every row at once. `unseenCount(matching:)` stays
-    /// for callers that are not drawing a list.
-    @Query(filter: #Predicate<BrandUpdate> { !$0.isSeen })
-    private var unseen: [BrandUpdate]
-
     @State private var isAdding = false
 
-    /// Unread garments per brand, counted the way the feed counts: through `passes`, and
-    /// deduplicated per product, so this row and the brand page agree.
-    private func unreadByBrand() -> [UUID: Int] {
-        let profile = sizes.profile
-        var seen: [UUID: Set<String>] = [:]
-        for update in unseen {
-            guard let id = update.brand?.id, update.passes(profile) else { continue }
-            seen[id, default: []].insert(update.productExternalID ?? update.externalID)
-        }
-        return seen.mapValues(\.count)
-    }
-
     var body: some View {
-        let unread = unreadByBrand()
-
-        return NavigationStack {
+        NavigationStack {
             Group {
                 if brands.isEmpty {
                     EditorialEmptyState(
@@ -57,7 +32,7 @@ struct BrandsView: View {
                     List {
                         ForEach(brands) { brand in
                             NavigationLink(value: BrandRoute(brand: brand)) {
-                                BrandRow(brand: brand, unread: unread[brand.id] ?? 0)
+                                BrandRow(brand: brand)
                             }
                             .listRowBackground(Color.paper)
                             .listRowSeparatorTint(Color.hairline)
@@ -89,13 +64,12 @@ struct BrandsView: View {
                 }
             }
             .background(Color.paper)
-            .navigationTitle("Brands")
+            .navigationTitle("Following")
             .toolbarTitleDisplayMode(.inlineLarge)
             .appDestinations()
             .toolbar {
-                // Presented as a sheet from the feed's brand rail, and it was the one sheet
-                // in the app with no way out but a swipe — every other one has a Done or a
-                // Close.
+                // A sheet, and it was once the one sheet in the app with no way out but a
+                // swipe — every other one has a Done or a Close.
                 ToolbarItem(placement: .topBarLeading) {
                     Button("Done") { dismiss() }
                 }
@@ -135,29 +109,47 @@ struct BrandsView: View {
     }
 }
 
-/// A brand, set as an index entry: wordmark, what we watch it with, and the count —
-/// the count printed rather than badged, because this is a list of things you follow,
-/// not a set of notifications to clear.
+/// A brand, set as an index entry: wordmark, and what we watch it with — including which of
+/// those is failing.
+///
+/// **No unread count.** It printed one, labelled UNREAD, from when this list was a tab and
+/// unread was something every screen kept per brand. Unread is "since you were last here" on
+/// the feed now, and a second tally of it on a list of follows is a count to reconcile against
+/// a screen that no longer keeps one per brand. What this list can say that nothing else can is
+/// how each brand is watched, and whether that is working.
 struct BrandRow: View {
     let brand: Brand
-    /// Counted by the list rather than by the row, out of one indexed query — see
-    /// `BrandsView.unreadByBrand`. Asking per row made every visible row walk that brand's
-    /// whole catalogue.
-    let unread: Int
-
-    private var watching: String {
-        let kinds = brand.sources.filter(\.enabled).map { $0.kind.label.uppercased() }
-        return kinds.isEmpty ? "NOT WATCHED" : kinds.joined(separator: " · ")
-    }
 
     /// What the row says under the wordmark, led by the mode when it is not the default.
     ///
     /// This list is where a quiet brand is *reachable* from — it is not on the feed by
     /// definition — so it has to be recognisable as quiet here, or a brand you silenced reads
     /// as one that stopped publishing.
-    private var status: String {
-        let state = brand.isLockedForDrop ? "LOCKED · DROP IMMINENT" : watching
-        return brand.followMode.listLabel.map { "\($0) · \(state)" } ?? state
+    ///
+    /// **The accent on the failing source alone**, where the feed would raise its voice and
+    /// where the brand page already does: a failing source is drops going unseen, and in muted
+    /// ink it read exactly like a list of source names. Only that word, though — the healthy
+    /// source beside it is not news, and a whole line in vermilion says the brand is broken.
+    private var status: Text {
+        var parts: [Text] = []
+        if let mode = brand.followMode.listLabel { parts.append(Text(mode)) }
+        if brand.isLockedForDrop {
+            parts.append(
+                Text("LOCKED · DROP IMMINENT")
+                    .foregroundStyle(brand.isAnnouncingLock ? Color.signal : Color.muted)
+            )
+        } else if brand.watchedSources.isEmpty {
+            parts.append(Text("NOT WATCHED"))
+        } else {
+            for source in brand.watchedSources {
+                parts.append(
+                    source.isFailing
+                        ? Text("\(source.label) FAILING").foregroundStyle(Color.signal)
+                        : Text(source.label)
+                )
+            }
+        }
+        return parts.dropFirst().reduce(parts[0]) { line, part in line + Text(" · ") + part }
     }
 
     var body: some View {
@@ -166,28 +158,36 @@ struct BrandRow: View {
 
             VStack(alignment: .leading, spacing: 5) {
                 Wordmark(name: brand.name, size: 14)
-                DataLabel(
-                    text: status,
-                    size: 10,
-                    // The accent only where the feed would raise its voice too.
-                    color: brand.isAnnouncingLock ? .signal : .muted
-                )
+                status
+                    .font(.data(10))
+                    .tracking(0.4)
+                    .foregroundStyle(Color.muted)
+                    .lineLimit(1)
             }
 
             Spacer(minLength: 8)
-
-            // Labelled, because a bare "390" beside a wordmark says nothing about what
-            // is being counted — and the brand page one tap away calls the same figure
-            // UNREAD, so borrowing the word costs nothing and makes the two agree.
-            if unread > 0 {
-                HStack(spacing: 5) {
-                    Text("\(unread)")
-                        .font(.data(12, .medium))
-                        .foregroundStyle(Color.ink)
-                    DataLabel(text: "UNREAD", size: 9)
-                }
-            }
         }
+    }
+}
+
+extension Brand {
+    /// Whether a source this brand is watched with failed on its last check.
+    ///
+    /// `lastError` travels on the wire (`BrandSourceDTO`), so in server mode this is the
+    /// poller's answer, and standalone it is the phone's own.
+    var hasFailingSource: Bool {
+        watchedSources.contains(where: \.isFailing)
+    }
+
+    /// Each source the brand is watched with, by name, and whether its last check failed. The
+    /// brand page carries the error itself.
+    var watchedSources: [(label: String, isFailing: Bool)] {
+        sources.filter(\.enabled).map { ($0.kind.label.uppercased(), $0.lastError != nil) }
+    }
+
+    /// Only the sources that are failing — what a row about a brand that needs attention says.
+    var failingSources: String {
+        watchedSources.filter(\.isFailing).map(\.label).joined(separator: " · ") + " FAILING"
     }
 }
 

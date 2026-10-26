@@ -11,7 +11,7 @@ thing and are invisible from any pair inside it. `Outfit` is those rules, and ea
 against a real collection the pairwise scoring had already passed.
 
 - **The base is the *worst* pairwise verdict, never the average** — the rule
-  `FitSuggestions.accompaniment` and `FitStudio` already followed. A jacket that goes with the
+  `FitSuggestions.accompaniment` and `FitProposal` already followed. A jacket that goes with the
   trousers and fights the shirt is not a good jacket for this outfit, and an average lets one
   strong agreement hide one real clash.
 - **One colour among neutrals beats monochrome, and the margin is deliberate.**
@@ -192,8 +192,10 @@ snapping**, because a grid turns a collage back into a form.
   is stale, and gets one more look. It is stamped even when nothing was lifted (a flat-lay has no
   subject and must not be re-cut every launch), so a nil `cutoutFile` at the current version means
   "there is nothing here", not "nobody asked". Bump the version whenever the lift changes.
-  `StyleView` runs the pass as well as `SavedView` — a fit is composed from the Style tab, and
-  requiring a visit to Saved first denied stickers to exactly the person about to need them.
+  `FitCanvas` runs the pass as well as `SavedView` — a fit is begun from a product page, a
+  Discover card or the fit row as often as from the wall, and requiring a visit to the wall first
+  denied stickers to exactly the person about to need them. Two passes at once are safe: the second
+  waits on the drain in flight (`ImageTagger.drain`).
 - **A suggestion looks at the clothes, not only at the schema.** Every rule in `FitSuggestions` was
   structural — one top, one bottom, both things you kept — so a pair could satisfy all of them and
   be obviously wrong to anyone with eyes. `ColorHarmony` reads the dominant colour `ImageTagger`
@@ -256,8 +258,14 @@ snapping**, because a grid turns a collage back into a form.
   setting — and inspiration only when it counts. The mood's pieces sort first within each slot, so
   they reach the bounded search at all, and a proposal is lifted by `moodLean` times the share of it
   that is the mood; the header says which board it is leaning towards.
-- **The Style tab is not a settings screen.** Sizes and the gender filter moved to Settings; what
-  is left is a reading of your taste and things to do with it.
+- **The Style tab is gone, and what it held went where it is used** (Phase 1). It was never a
+  place: a reading of your taste, two rows of fits and a settings gear. The fits — kept and
+  proposed — are **Saved › Fits**, beside Inspiration and Wardrobe, because a fit is made of the
+  collection (`FitsPage`). The reading is the first section of **You** (`YouView`), with the
+  settings that were behind the gear. "What's missing" is read by Shop's picks, and on Fits it
+  survives as the line that says why the suggestion row is empty — its best use all along.
+  `-startTab style` opens Saved › Fits (`Tabs.resolve`, `Tabs.opensOnFits`), because a launch flag
+  naming a tab that is gone must still open on what it used to show.
   - **`StyleReading` holds every threshold that turns a measurement into a word**, because two
   copies would drift and the symptom is specific: a facet reading "Graphic · 12" that opens
   onto nine items, which reads as the count being broken. `StyleProfile.build` counts with
@@ -268,7 +276,9 @@ snapping**, because a grid turns a collage back into a form.
     nouns and ended there — the app's own reading of what you like, with nothing to do about it, on
     the page whose whole subject is you. Each word is now its own control and opens the collection
     narrowed to it, via `CollectionRoute` (the `PushRoute` shape, built in `streetwApp.init` for the
-    same reason: a view that reads it appears before anything could have set it). Two details are
+    same reason: a view that reads it appears before anything could have set it). Asked from You,
+    the root closes the page and changes tab in one go (`YouRoute`), and a Saved tab sitting on Fits
+    turns to the wall, since a facet narrows saves and Fits shows outfits. Two details are
     load-bearing. `CollectionFacet.matches` **mirrors how `StyleProfile.build` counted**, including
     the photograph-then-text order — if they drift, a facet reading "Black · 12" opens onto nine
     items and the count looks broken. And the route carries a request *counter* as well as the
@@ -276,22 +286,21 @@ snapping**, because a grid turns a collage back into a form.
     Saved tab, and an unchanged value publishes nothing. The chip in `SavedView` is always visible
     while it applies and always removable: a filter set from another tab that you cannot see is
     indistinguishable from a collection that has lost things.
-  - **"What's missing" is the one thing this tab can say that no other screen can.** The feed knows
+  - **"What's missing" is an observation, and on Fits it answers the empty row.** The feed knows
     what is new and the collection knows what you kept; neither can tell you that you have six tops
     and nothing to put with them — which is also the reason the suggestion row is sometimes empty
-    for no visible reason. Counted over `SaveType.wardrobe` when there is one, since the question is
-    about what you own, falling back to everything saved because most people never split the two.
-    Only over `GarmentSlot.essential`: saying somebody is short of headwear is a fashion opinion,
-    and this is meant to be an observation.
-  - **The tab about you ends with you, and there is no Discover block on it.** `StyleView`
-    carried the same `BrandRecommendations` the feed does, headed "Discover". That was right
-    while Discover was not a tab of its own; it is one now, so the page was making the same
-    offer twice and in the weaker voice — a strip of six brand cards under a reading of
-    somebody's wardrobe, against a full-bleed tab whose every card argues from the clothes
-    they already own. The note that used to sit here said the block belonged *below* the taste
-    reading so the tab about you did not open as a shop. Right instinct, applied to something
-    that should not have been on the page at all. The recommendation block now lives on the
-    feed's tail and inside `BrandsView`, both of which are about brands.
+    for no visible reason, so `FitsPage.nothingYet` says which of a top or a bottom nothing you
+    saved reads as. Only over `GarmentSlot.essential` (`FitCandidates.gaps`): saying somebody is
+    short of headwear is a fashion opinion, and this is meant to be an observation.
+  - **The reading about you has no shop on it.** The Style tab once carried the same
+    `BrandRecommendations` the feed does, making the same offer twice in the weaker voice — a
+    strip of brand cards under a reading of somebody's wardrobe. You keeps that rule: it is a page
+    about the person, and the recommendations live with brands (`BrandsView`, the feed's tail) and
+    in Shop.
+  - **The taste reading is built once per change** (`YouView.TasteMemo`), and the fit row the same
+    way (`FitsPage.ReadingMemo`) — the memo `StyleView.ReadingMemo` was, split in two along the
+    line the tab was split on, with one shared digest (`CollectionDigest`) so the two pages agree
+    about what counts as a change. See `docs/performance.md`.
 
 - **"Wear it with" is the one thing an archive can say that a catalogue cannot** (`GoesWith`,
   `Pairing`). It reads both ways round: on something you haven't kept it is the argument for
@@ -304,31 +313,51 @@ snapping**, because a grid turns a collage back into a form.
   has. Note also that a *fabric* is not a season: `wool` and `linen` and `mesh` were in the
   seasonal lists and the tests took them out, because a wrong refusal is invisible — the
   suggestion never appears and nobody can tell it was suppressed.
-- **…and the row expands into the whole outfit** (`FitStudio`). `GoesWith` answers the question
-  it was built for — *is this worth keeping* — and then stops, one tile short of the question
-  everybody asks next: **what is the actual fit?** Four tiles side by side are four separate
-  suggestions, and two of them are usually tops, of which only one can be worn. So the header is
-  a button: the subject is fixed, every other position on the body is filled with the best thing
-  the wardrobe has for it, each is one tap from becoming something else, and the result can be
-  kept. Four things it inherits rather than reinvents.
-  **The judgement is `Pairing`'s**, so this cannot disagree with the row it opened from.
-  **The candidates are ranked once, against the subject, and swapping never re-sorts them** —
-  the property `FeedView` learned the hard way; what a swap does change is the picture, which is
+- **…and the row opens the whole outfit, in the one editor** (`FitProposal`, `FitCanvas`).
+  `GoesWith` answers the question it was built for — *is this worth keeping* — and then stops, one
+  tile short of the question everybody asks next: **what is the actual fit?** Four tiles side by
+  side are four separate suggestions, and two of them are usually tops, of which only one can be
+  worn. So the header is a button: the canvas opens with the subject in its position, every other
+  essential position filled with the best thing the wardrobe has for it, and the tray turned to
+  **GOES WITH IT** — each position's shortlist, best first, where a tap swaps that piece in.
+  This used to be `FitStudio`, a second builder with its own preview and its own save, reached
+  from here and from a Discover card while every other way into a fit reached the canvas — so
+  which editor somebody met depended on where they happened to tap, and the studio's best button
+  was "save and arrange it by hand", which opened the canvas anyway. Its judgement moved to
+  `FitProposal` unchanged; its rows became a shelf. What it inherits rather than reinvents:
+  **The judgement is `Pairing`'s**, so the fit cannot disagree with the row it opened from.
+  **Ranked once, against the subject, when the canvas opens, and swapping never re-sorts a shelf**
+  — the property `FeedView` learned the hard way; what a swap does change is the picture, which is
   the thing you asked to change.
-  **The preview *is* the arrangement.** It draws from the same `FitPlacement`s that get written,
-  with `FitCanvasSurface`'s geometry, so saving cannot produce a different picture from the one
-  that was agreed to. Every spot is inset far enough that a piece's own frame stays inside the
-  canvas — the shoe sat at 0.86 and lost its sole off the bottom of the render.
-  **A fit is made of things you kept**, so anything in it that has not been is kept first, as
-  `.inspiration` — the same reading `StyleView.keep` gives the same tap, and the honest one: the
-  subject is what you were looking at when you decided to build an outfit around it.
+  **A swap keeps the placement.** The new piece takes the old one's centre, size, turn and layer,
+  because those are what somebody may already have adjusted and the question is only *which*
+  trousers; tapping the piece already down takes it off, which is the only way to say "no jacket".
+  Only machine-placed pieces are swappable (`positions`) — a jacket added by hand from the rest of
+  the tray is theirs, and the canvas stays free.
+  **The arrangement is `FitArrangement`'s**, the one table, so the opening layout and anything the
+  machine places later agree. Every spot is inset far enough that a piece's own frame stays
+  inside the canvas — the shoe sat at 0.86 and lost its sole off the bottom of the render.
+  **A fit is made of things you kept, and nothing is kept until Save.** A subject or a borrowed
+  catalogue piece waits on the canvas as `FitCanvas.Piece.pending` and becomes a `.inspiration`
+  save only when the fit does — the honest reading of the tap, since the subject is what you were
+  looking at when you decided to build around it, and the only one that keeps closing the canvas
+  free. The studio kept the fit first so the canvas had something to edit, which was a second,
+  quieter definition of what a fit is.
   The opening arrangement is greedy over `GarmentSlot.essential` and scores a candidate on the
   **worst** of its verdicts against the pieces already chosen, never the average, exactly as
   `FitSuggestions.accompaniment` does — a jacket that goes with the trousers and fights the shirt
-  is not a good jacket for this outfit. Headwear and accessories are *offered* but never
-  proposed unasked, which is the line between a fit and a costume. "Save and arrange it by hand"
-  saves first and then opens `FitCanvas`, because the canvas edits a stored `Fit` and handing it
-  a draft would be a second, quieter definition of what a fit is.
+  is not a good jacket for this outfit. Headwear and accessories are on their shelves but never
+  proposed unasked, which is the line between a fit and a costume.
+- **Every fit is named the same way, whichever way it was begun** (`Fit.verdict`). The verdict —
+  `Outfit.score`'s one sentence about the whole outfit — was written only by the two machine
+  paths, so a fit arranged by hand went nameless (falling back to its brands) while the same
+  garments kept off the row said "Olive against neutrals". The canvas writes it on every new fit,
+  and on an edit only when the garments changed: it is a sentence about which clothes are in the
+  fit, and moving them about says nothing new.
+- **Closing the canvas never deletes anything.** It used to delete a fit with no name, no stored
+  placements and no render on the way out, for a path that inserted the fit before opening the
+  editor. That path is gone, and a fit made before the canvas existed matches all three — opening
+  one and closing it would have deleted it.
 - **…and its subject is not always something in the store** (`FitSubject`). Opened from a
   product page it has a `BrandUpdate`; opened from the Discover feed it has a card from an
   unfollowed brand, and **must not be given a row on the way in** — the deck's whole
@@ -343,6 +372,8 @@ snapping**, because a grid turns a collage back into a form.
   which frame has nobody in it, and falling back to `imageURLs.first` drops a whole model in
   trousers and boots into somebody's outfit as a stand-in for a t-shirt — the exact failure
   `ProductShot` exists to stop, reached by the back door. The *card* still shows the lead shot.
+  The packshot is also written onto the row when the card is kept, because the render is drawn
+  from the stored row and not from the sticker the canvas showed.
 - **A position on the body is not a `GarmentSlot`** (`FitPosition`, `FitArrangement`). A fit can
   hold two tops — a hoodie with a tee under it, which is how a hoodie is worn — and the studio
   picked into a `[GarmentSlot: String]`, which can hold one. So the base layer the suggestion
@@ -353,12 +384,15 @@ snapping**, because a grid turns a collage back into a form.
   hoodie needs. `Outfit.isLayeredPair` is asked before `Pairing`, whose gate refuses same-slot
   pairs by design and would otherwise refuse every layered fit the engine exists to produce.
 - **One arrangement table, read by everything that lays a fit out by machine.** The studio had
-  a private one and `StyleView.keep` had **none**: it wrote a `Fit` with an empty `placements`
+  a private one and the Style tab's keep had **none**: it wrote a `Fit` with an empty `placements`
   array, so a kept suggestion drew as a blank square on the wall and rendered as one. Worse, it
   pushed the editor immediately afterwards, so closing that without saving left the blank square
   behind anyway — a fit somebody had explicitly *not* kept, sitting in the collection with
-  nothing in it. The row says "TAP TO KEEP ONE" and that is now exactly what a tap does;
-  arranging by hand is what tapping the card in "Your fits" is for. The layout is a **flat-lay**
+  nothing in it. **Trying a suggestion now opens it on the canvas, arranged by this table, and
+  Save keeps it** — the row says "TAP ONE TO TRY IT". A one-tap keep had nowhere to show what it
+  was keeping, and kept any garment the proposal borrowed from the catalogue in the same tap. A
+  selection on the wall, a proposal around one garment and a suggestion all open through
+  `FitCanvas.Opening` and lay out through here. The layout is a **flat-lay**
   and the positions are chosen to sit clear of each other at their stored scales — the base
   layer is the one exception, tucked smaller under the mid layer when there is one and taking
   the ordinary top spot at full size when it is the only top, because a lone tee drawn small in
@@ -403,5 +437,5 @@ snapping**, because a grid turns a collage back into a form.
   belongs with the first. `FitCanvas`'s board menu in particular used to be behind
   `if !boards.isEmpty`, so somebody who had never made a board was shown no way to file anything
   and no hint that filing was possible; a menu that hides the thing you would open it for is worse
-  than no menu. Filing a fit is also on the `StyleView` card's context menu, since that is where
-  fits are looked at — the editor is where they are made.
+  than no menu. Filing a fit is also on the card's context menu in Saved › Fits, since that is
+  where fits are looked at — the editor is where they are made.

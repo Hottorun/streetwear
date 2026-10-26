@@ -501,7 +501,7 @@ struct DiscoverCardView: View {
     ///
     /// And it is now a **way in** rather than a caption. The card says this piece goes with
     /// something you own; the next question is always *what would the whole thing look like*,
-    /// and until now the answer was nowhere — `FitStudio` existed only behind a product page
+    /// and until now the answer was nowhere — the whole-outfit builder existed only behind a product page
     /// two taps away, on a garment from a brand you would have had to follow first. This is
     /// the shortest honest route to it: the chip that makes the claim opens the fit that
     /// demonstrates it.

@@ -90,8 +90,8 @@ struct DiscoverFeedView: View {
     /// `inspecting`, because the destination is a different screen — see `openBrand`.
     @State private var openedBrand: Brand?
 
-    /// A subject plus the anchor the card was already showing, so the studio opens on the
-    /// same garment the chip named. See `FitStudio.anchor`.
+    /// A subject plus the anchor the card was already showing, so the fit opens on the
+    /// same garment the chip named. See `FitProposal`'s `anchor`.
     struct FitRequest: Identifiable {
         var subject: FitSubject
         var anchor: String?
@@ -336,8 +336,8 @@ struct DiscoverFeedView: View {
         .onAppear { confirmation.bottomClearance = DiscoverCardView.actionsHeight }
         .onDisappear { confirmation.bottomClearance = 0 }
         // The anchor travels with it, so the fit opens on the piece the card just named —
-        // see `FitStudio.anchor`.
-        .sheet(item: $fitting) { FitStudio(subject: $0.subject, anchor: $0.anchor) }
+        // see `FitProposal`'s `anchor`. The same editor every other fit opens in.
+        .sheet(item: $fitting) { FitCanvas(fit: nil, starting: .around($0.subject, anchor: $0.anchor)) }
         // The garment, properly: the size run, the colourways, the description and the way
         // to the storefront — everything the card deliberately does not carry.
         .sheet(item: $viewing) { card in
