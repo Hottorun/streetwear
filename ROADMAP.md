@@ -294,9 +294,18 @@ rebuilding anything.
       - Turn on the Sign in with Apple capability for the App ID.
       - Set `SIWA_KEY_ID`, `SIWA_TEAM_ID` and `SIWA_PRIVATE_KEY` on Railway.
       - Name the account in the privacy policy.
-- [ ] **Profiles**, each with its own sizes, gender filter, follows, saves and taste — one server
+- [x] **Profiles**, each with its own sizes, gender filter, follows, saves and taste — one server
       user per profile under the account. Alerts are labelled, and each profile can turn its own
       off.
+      *Done:* `users.display_name` and `users.alerts_enabled`; `/v1/account/profiles` to list,
+      add, rename, switch alerts and delete (the holder goes only with the account); every other
+      route acts for the profile `X-Profile-ID` names, checked against the device's account, and
+      is unchanged without it. `Notifier.audience` sends every profile's alerts to the account's
+      phones, "For Anna: …" when it is not the holder's, collapsed per profile. On the phone, one
+      SwiftData store and one set of `UserDefaults` keys per profile, the holder's being the ones
+      that already existed; Profiles on You when signed in; shares, local alerts and reminders
+      follow the current profile. Location must be read from the holder's user when it lands.
+      See `docs/profiles.md`.
 - [ ] **The location setting** and the region-aware price model (see *Decided*), defaulting to the
       phone's region.
 - [ ] **Cost metering and credits.** Every AI action records its real cost; consumable packs via

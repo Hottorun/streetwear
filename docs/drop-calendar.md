@@ -35,7 +35,11 @@ gone. The countdown was doing a notification's job, and only while you were look
   row would sit there looking armed and the drop would pass without a word.
 - **It clears only its own `drop-` prefixed requests.** `WatchNotifier` schedules `watch-<uuid>`
   into the same notification centre and a blanket `removeAllPendingNotificationRequests()` takes
-  those with it.
+  those with it. **And only its own profile's**: the holder's are `drop-`, as before profiles, and
+  a profile's are `drop@<id>-`, which the holder's prefix does not match — each profile's planned
+  drops are in its own store, so a rewrite from one store must not cancel another's. A profile's
+  reminders are labelled "For Anna: …" and carry its id, so the tap opens in that profile. See
+  `docs/profiles.md`.
 - **The payload carries `brand.remoteID`, not `Brand.id`.** `ContentView.follow` resolves a tapped
   notification against `remoteID`; the local id finds nothing and drops the tap on the feed.
 - **A manual date now tightens the poller too, and that is the only thing about it that leaves

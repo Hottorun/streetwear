@@ -5,8 +5,8 @@ Part of the streetw guidance set; see `CLAUDE.md` for the index and the build ru
 ## Server specifics
 
 - **The catalog is global.** Brands, sources, products and variants are one row per
-  real-world thing; only accounts, users, devices, follows, size profiles, watches and poll
-  hints are personal. Never add a `user_id` to a catalog table — polling once for everyone is the whole
+  real-world thing; only accounts, users (a profile is one), devices, follows, size profiles,
+  watches and poll hints are personal. Never add a `user_id` to a catalog table — polling once for everyone is the whole
   design. (`watches` points *at* a product without owning it, exactly as `follows` points at a
   brand, and `poll_hints` at a brand's *schedule* without owning that either — a hint changes
   cadence and is never read back to anybody but the device that wrote it.)
@@ -352,6 +352,23 @@ Part of the streetw guidance set; see `CLAUDE.md` for the index and the build ru
     registers a fresh anonymous device and re-follows the phone's own brands
     (`RemoteSync.deleteAccount`, then `didRegisterAfresh`, which is persisted so a kill between
     the two cannot strand it). The catalogue is never touched.
+- **A first sign-in settles its account before it merges** (`Accounts.findOrCreate`). Two first
+  sign-ins for one Apple ID both missed the lookup and both inserted, and the second hit the
+  unique constraint on `apple_subject` — not an `AbortError`, so a 500. Inside the transaction
+  there was no answer, because Postgres refuses every statement after an error until the
+  transaction ends; outside it, the loser reads the winner's row. The merge transaction then
+  takes `SELECT … FOR UPDATE` on the account row (Postgres only), so the second sign-in waits
+  and merges into the first's user instead of both adopting their own — which, with profiles,
+  would have left a nameless second user that looks like a profile. `SignInRaceTests`.
+- **Profiles are users under the account, and `X-Profile-ID` says which one a request acts for**
+  (`ActingProfile`, `ProfileRoutes.swift`, `AddUserProfiles`). Read `docs/profiles.md` before
+  touching them. In short: the holder is the account's oldest user and goes only with the
+  account; a profile's follows, watches, hints and sizes are its own rows, deleted with it
+  (`Accounts.deleteProfile`), never the catalogue; a header naming a user off the device's
+  account is refused with `ProfileHeader.refusal`; every push path reaches the account's
+  devices through `Notifier.audience`, labels another profile's alerts, honours its
+  `alerts_enabled` and collapses per profile. **Profiles hold no balance and no location**:
+  read location from `Accounts.holder(of:)`, never the profile's own row.
 - **The owner's unlimited credits are a flag on the account** (`accounts.unlimited_credits`,
   `monthly_cost_cap_micros`). Nothing reads them until credits exist. To set them on your own
   account, sign in on your phone, then:

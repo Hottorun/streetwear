@@ -165,6 +165,21 @@ A store per profile makes partitioning a property of the container, which no que
   (that would re-follow Anna's brands as the holder) and falls back to the holder instead.
 - **Tapping an alert for another profile switches first** (`PushPayload.profileID`), then syncs
   and opens the item in that profile's store.
+- **Each profile's watches come back from the server** (`RemoteSync.mergeWatches`). A watch the
+  server holds and the store does not — a reinstall signing in, a profile opened for the first
+  time on this phone — is rebuilt against the store's row for that product, or against a row made
+  from what `GET /v1/watches` now says about the product (title, photographs, link, price,
+  variants), stored read. A deletion still being sent is remembered (`pendingWatchDeletes`) so the
+  restore cannot undo it. Before this, a reinstall's watches kept firing server-side while the
+  Watching page was empty. A watch is sent by its product's id (`productExternalID`), never the
+  feed row's `event:` key, which the route could never find.
+- **A signed-in phone must launch signed in.** `ServerSettings.init` reads the token and the
+  account before assigning either: on an `@Observable` class the token's `didSet` runs in `init`,
+  and it cleared the account on every launch — invisible until profiles, which need the account
+  at launch to restore the current one.
+- **One registration at a time, across sessions.** A switch builds a session whose launch sync
+  can race the old session's work; two callers that both find no token used to mint two devices.
+  `RemoteSync.ensureRegistered` shares the one in flight.
 
 ### Known gaps
 
