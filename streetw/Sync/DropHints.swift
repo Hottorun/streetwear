@@ -43,6 +43,8 @@ enum DropHints {
     /// fingerprint because re-registering issues a new device and the server's hints belong
     /// to the old one: without it, a reinstall would look "already sent" forever and the
     /// hints would silently never exist.
+    ///
+    /// Per profile: each profile's hints are its own server rows.
     private static let sentKey = "pollHintsFingerprint"
 
     /// Reads the planned drops and sends whatever the server will take.
@@ -58,6 +60,7 @@ enum DropHints {
         let hints = build(from: context)
         let fingerprint = fingerprint(of: hints, token: remote.hintIdentity)
 
+        let sentKey = remote.scope.key(Self.sentKey)
         guard fingerprint != UserDefaults.standard.string(forKey: sentKey) else { return }
 
         guard let response = await remote.pushPollHints(hints) else {
@@ -165,10 +168,11 @@ final class DropHintStore {
     /// from "nobody has asked yet", which are different sentences.
     private(set) var lastReplyAt: Date?
 
-    private static let key = "pollHintState"
+    private let key: String
 
-    init() {
-        guard let data = UserDefaults.standard.data(forKey: Self.key),
+    init(scope: ProfileScope = .holder) {
+        key = scope.key("pollHintState")
+        guard let data = UserDefaults.standard.data(forKey: key),
               let stored = try? JSONDecoder().decode(Stored.self, from: data)
         else { return }
         accepted = stored.accepted
@@ -238,7 +242,7 @@ final class DropHintStore {
             accepted: accepted, refused: refused,
             windowBefore: windowBefore, lastReplyAt: lastReplyAt
         )
-        UserDefaults.standard.set(try? JSONEncoder().encode(stored), forKey: Self.key)
+        UserDefaults.standard.set(try? JSONEncoder().encode(stored), forKey: key)
     }
 
     /// Decoded leniently, by hand-written defaults on every field — the same rule

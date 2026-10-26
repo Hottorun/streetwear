@@ -389,6 +389,13 @@ final class UserModel: Model, @unchecked Sendable {
     /// `sizeProfile`: it says nothing about what fits, and it is set by its own field on
     /// `UpdateDevice`. See `Storefronts`.
     @OptionalField(key: "country") var country: String?
+    /// What a profile is called, printed at the start of its alerts ("For Anna: …"). Nil for
+    /// every anonymous user and for the holder until they name themselves. See
+    /// `AddUserProfiles` and `docs/profiles.md`.
+    @OptionalField(key: "display_name") var displayName: String?
+    /// The profile's own switch for every push about it — summaries, watches, markdowns and
+    /// replies alike. A watch still fires and is still spent with it off.
+    @Field(key: "alerts_enabled") var alertsEnabled: Bool
 
     init() {
         self.apparelSizes = []
@@ -398,6 +405,7 @@ final class UserModel: Model, @unchecked Sendable {
         self.suitSizes = []
         self.suitLengths = []
         self.includeOneSize = true
+        self.alertsEnabled = true
     }
 
     /// The display scales (`shoeScale`, `dressScale`, `suitScale`) have no column on

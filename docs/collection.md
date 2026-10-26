@@ -4,6 +4,10 @@ Part of the streetw guidance set; see `CLAUDE.md` for the index and the build ru
 
 ## The collection
 
+- **The collection is one profile's.** Each profile has its own SwiftData store, so saves, boards,
+  fits, the style statement and everything `TasteScope` counts are partitioned by the container
+  rather than by a predicate — no query here needs to know profiles exist, and none can forget
+  to. The holder's is the store every earlier build wrote. See `docs/profiles.md`.
 - **A save is confirmed, not interrogated.** Filing used to be reachable only through the
   left-swipe board picker, and a watch only from a product page — so the app's best idea was
   three taps from the moment you wanted it. The fix is *not* to ask "which board?" on every

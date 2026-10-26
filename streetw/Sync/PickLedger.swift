@@ -22,8 +22,10 @@ import Foundation
 
 @MainActor
 enum PickLedger {
-    private static let todayKey = "shopPicksToday"
-    private static let refusedKey = "shopPicksRefused"
+    /// Per profile. Read at the moment of use rather than captured: Shop is rebuilt on a
+    /// switch, and nothing here awaits.
+    private static var todayKey: String { ProfileScope.active.key("shopPicksToday") }
+    private static var refusedKey: String { ProfileScope.active.key("shopPicksRefused") }
 
     /// How many refusals are remembered.
     static let refusedLimit = 500

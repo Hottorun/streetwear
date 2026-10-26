@@ -145,16 +145,16 @@ enum Storefronts {
         return serving
     }
 
-    /// The caller's storefronts, for a route that has the device in hand.
+    /// The caller's storefronts: those of the profile the request acts for, whose country is
+    /// its account's (`Accounts.setCountry`) — so every profile is served where its holder is.
     static func serving(
         _ req: Request,
-        device: DeviceModel,
         brandIDs: [UUID]? = nil
     ) async throws -> [UUID: StorefrontModel] {
         let enabled = req.application.storefrontCountries
         // Nothing switched on is the common case, and it must not cost even the user row.
         guard !enabled.isEmpty else { return [:] }
-        let user = try await device.$user.get(on: req.db)
+        let user = try await req.actingUser()
         return try await serving(country: user.country, enabled: enabled, brandIDs: brandIDs, on: req.db)
     }
 

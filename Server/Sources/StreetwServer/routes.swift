@@ -158,6 +158,9 @@ func routes(_ app: Application) throws {
     let authed = v1
         .grouped(DeviceAuthenticator())
         .grouped(RequireDevice())
+        // After the device, because it checks the profile against the device's account.
+        // See `ActingProfile` — every route below reads `actingUserID()`, never the header.
+        .grouped(ActingProfile())
         .grouped(RateLimit(store: app.rateLimits.standard, identity: .device, name: "standard"))
 
     /// The two routes that spend *outbound* budget: they make this server fetch a storefront
@@ -180,12 +183,13 @@ func routes(_ app: Application) throws {
             try await claimAPNsToken(token, for: try device.requireID(), on: req.db)
         }
 
+        // The token is the device's; the sizes are the acting profile's; the country is the
+        // account's, whichever profile sent it. See `Accounts.setCountry`.
         if body.sizes != nil || body.country != nil {
-            let user = try await device.$user.get(on: req.db)
-            var changed = false
+            let user = try await req.actingUser()
             if let sizes = body.sizes {
                 user.sizeProfile = sizes.asProfile
-                changed = true
+                try await user.save(on: req.db)
             }
             // Absent says nothing, empty clears, a code sets — and a code that is not one is
             // ignored rather than refused: this body is the first authenticated call of every
@@ -193,12 +197,10 @@ func routes(_ app: Application) throws {
             // `UpdateDevice.country`.
             if let raw = body.country {
                 let country = raw.isEmpty ? nil : CountryCode.normalized(raw)
-                if raw.isEmpty || country != nil, user.country != country {
-                    user.country = country
-                    changed = true
+                if raw.isEmpty || country != nil {
+                    try await Accounts.setCountry(country, for: user, on: req.db)
                 }
             }
-            if changed { try await user.save(on: req.db) }
         }
         return .noContent
     }
@@ -219,6 +221,7 @@ func routes(_ app: Application) throws {
     // MARK: Accounts
 
     accountRoutes(authed: authed, admin: admin)
+    profileRoutes(authed: authed)
 
     // MARK: Brands
 
@@ -261,7 +264,7 @@ func routes(_ app: Application) throws {
             .all()
         // The caller's shop for each, as on every route that hands over a brand: the phone
         // stores one row per brand whichever route it arrived on.
-        let serving = try await Storefronts.serving(req, device: device, brandIDs: brands.compactMap(\.id))
+        let serving = try await Storefronts.serving(req, brandIDs: brands.compactMap(\.id))
         return brands.map { BrandDTO($0, sources: $0.sources, storefront: $0.id.flatMap { serving[$0] }) }
     }
 
@@ -278,7 +281,7 @@ func routes(_ app: Application) throws {
     let previewFetchPerBrand = 30
 
     authed.get("brands", "popular") { req async throws -> [PopularBrand] in
-        let device = try await req.authenticatedDevice()
+        let userID = try await req.actingUserID()
         let limit = min((try? req.query.get(Int.self, at: "limit")) ?? 12, 40)
 
         let follows = try await FollowModel.query(on: req.db).all()
@@ -288,7 +291,7 @@ func routes(_ app: Application) throws {
         // Exclude what this user already has — recommending someone their own brands is
         // the one thing this list must never do.
         let mine = Set(
-            follows.filter { $0.$user.id == device.$user.id }.map(\.$brand.id)
+            follows.filter { $0.$user.id == userID }.map(\.$brand.id)
         )
         let candidates = counts.filter { !mine.contains($0.key) }
         guard !candidates.isEmpty else { return [] }
@@ -342,7 +345,7 @@ func routes(_ app: Application) throws {
             .with(\.$sources)
             .all()
         let byID = Dictionary(brands.compactMap { b in b.id.map { ($0, b) } }, uniquingKeysWith: { a, _ in a })
-        let serving = try await Storefronts.serving(req, device: device, brandIDs: ranked.map(\.key))
+        let serving = try await Storefronts.serving(req, brandIDs: ranked.map(\.key))
 
         // Recent images per brand, so a recommendation shows the clothes rather than
         // asking someone to take a wordmark on faith.
@@ -435,7 +438,7 @@ func routes(_ app: Application) throws {
         let domain = BrandDiscovery.registrableDomain(of: base.host() ?? body.url)
         if let existing = try await BrandCatalog.existing(domain: domain, on: req.db) {
             let serving = try await Storefronts.serving(
-                req, device: try await req.authenticatedDevice(), brandIDs: existing.id.map { [$0] } ?? []
+                req, brandIDs: existing.id.map { [$0] } ?? []
             )
             return BrandDTO(existing, sources: existing.sources, storefront: existing.id.flatMap { serving[$0] })
         }
@@ -479,45 +482,45 @@ func routes(_ app: Application) throws {
     /// Starts looking at a site and answers at once — or joins the look somebody already
     /// started at the same shop. See `BrandChecks`.
     outbound.post("brands", "checks") { req async throws -> BrandCheck in
-        let device = try await req.authenticatedDevice()
+        let userID = try await req.actingUserID()
         let body = try req.content.decode(StartBrandCheck.self)
         guard let checks = req.application.brandChecks else { throw Abort(.serviceUnavailable) }
         let check = try await checks.start(url: body.url)
-        return try await checks.response(for: check, userID: device.$user.id)
+        return try await checks.response(for: check, userID: userID)
     }
 
     /// Asked every couple of seconds while a check runs, so it is on the standard budget
     /// rather than the outbound one: it fetches nothing.
     authed.get("brands", "checks", ":checkID") { req async throws -> BrandCheck in
-        let device = try await req.authenticatedDevice()
+        let userID = try await req.actingUserID()
         guard let id = req.parameters.get("checkID", as: UUID.self) else { throw Abort(.badRequest) }
         guard let checks = req.application.brandChecks else { throw Abort(.serviceUnavailable) }
         guard let check = try await BrandCheckModel.find(id, on: req.db) else {
             throw Abort(.notFound, reason: "No check with that id.")
         }
-        return try await checks.response(for: check, userID: device.$user.id)
+        return try await checks.response(for: check, userID: userID)
     }
 
     /// Follow this shop now if the check found something to watch, or as soon as it does.
     /// Outbound, because it is the call that can create a brand the poller then visits
     /// every twenty minutes.
     outbound.post("brands", "checks", ":checkID", "watch") { req async throws -> BrandCheck in
-        let device = try await req.authenticatedDevice()
+        let userID = try await req.actingUserID()
         guard let id = req.parameters.get("checkID", as: UUID.self) else { throw Abort(.badRequest) }
         guard let checks = req.application.brandChecks else { throw Abort(.serviceUnavailable) }
         let body = try req.content.decode(WatchBrandCheck.self)
-        let check = try await checks.watch(checkID: id, userID: device.$user.id, instagram: body.instagram)
-        return try await checks.response(for: check, userID: device.$user.id)
+        let check = try await checks.watch(checkID: id, userID: userID, instagram: body.instagram)
+        return try await checks.response(for: check, userID: userID)
     }
 
     // MARK: Follows
 
     authed.post("follows") { req async throws -> HTTPStatus in
-        let device = try await req.authenticatedDevice()
+        let userID = try await req.actingUserID()
         let body = try req.content.decode(FollowBrand.self)
 
         let existing = try await FollowModel.query(on: req.db)
-            .filter(\.$user.$id == device.$user.id)
+            .filter(\.$user.$id == userID)
             .filter(\.$brand.$id == body.brandID)
             .first()
         if existing == nil {
@@ -530,7 +533,7 @@ func routes(_ app: Application) throws {
                 throw Abort(.notFound, reason: "No brand with that id.")
             }
             try await FollowModel(
-                userID: device.$user.id,
+                userID: userID,
                 brandID: body.brandID,
                 mode: body.mode ?? .everything
             ).save(on: req.db)
@@ -552,13 +555,13 @@ func routes(_ app: Application) throws {
     /// rather than quietly starting to, which is the difference between a setting and a
     /// side effect.
     authed.patch("follows", ":brandID") { req async throws -> HTTPStatus in
-        let device = try await req.authenticatedDevice()
+        let userID = try await req.actingUserID()
         guard let brandID = req.parameters.get("brandID", as: UUID.self) else {
             throw Abort(.badRequest)
         }
         let body = try req.content.decode(UpdateFollow.self)
         guard let follow = try await FollowModel.query(on: req.db)
-            .filter(\.$user.$id == device.$user.id)
+            .filter(\.$user.$id == userID)
             .filter(\.$brand.$id == brandID)
             .first()
         else { throw Abort(.notFound, reason: "You don't follow that brand.") }
@@ -572,12 +575,12 @@ func routes(_ app: Application) throws {
     }
 
     authed.delete("follows", ":brandID") { req async throws -> HTTPStatus in
-        let device = try await req.authenticatedDevice()
+        let userID = try await req.actingUserID()
         guard let brandID = req.parameters.get("brandID", as: UUID.self) else {
             throw Abort(.badRequest)
         }
         try await FollowModel.query(on: req.db)
-            .filter(\.$user.$id == device.$user.id)
+            .filter(\.$user.$id == userID)
             .filter(\.$brand.$id == brandID)
             .delete()
         // A poll hint requires a follow, so unfollowing must take it — enforced here rather
@@ -587,7 +590,7 @@ func routes(_ app: Application) throws {
         // on the next foreground anyway; this closes the gap in between and the case where
         // it never comes back.
         try await PollHintModel.query(on: req.db)
-            .filter(\.$user.$id == device.$user.id)
+            .filter(\.$user.$id == userID)
             .filter(\.$brand.$id == brandID)
             .delete()
         return .noContent
@@ -596,15 +599,15 @@ func routes(_ app: Application) throws {
     /// What this device follows. The client needs this to hydrate its local brand
     /// list; `/v1/brands` is a global search and would not tell it what's mine.
     authed.get("follows") { req async throws -> [BrandDTO] in
-        let device = try await req.authenticatedDevice()
+        let userID = try await req.actingUserID()
         let follows = try await FollowModel.query(on: req.db)
-            .filter(\.$user.$id == device.$user.id)
+            .filter(\.$user.$id == userID)
             // Nested, because the brand's sources are what tell the phone how each brand
             // is being watched — the client cannot know that on its own in server mode,
             // since it does no polling and never discovered these itself.
             .with(\.$brand) { $0.with(\.$sources) }
             .all()
-        let serving = try await Storefronts.serving(req, device: device, brandIDs: follows.map(\.$brand.id))
+        let serving = try await Storefronts.serving(req, brandIDs: follows.map(\.$brand.id))
         // With the mode, because this is the only list that is about the caller's follows
         // and the phone decides the feed with it — see `FollowMode.admits`. And with the shop
         // serving the caller, whose sources and currency are the brand page's.
@@ -777,11 +780,11 @@ func routes(_ app: Application) throws {
     /// saturation history, none of which are or should be here. This only has to hand over a
     /// page that isn't one storefront.
     authed.get("discover") { req async throws -> DiscoverResponse in
-        let device = try await req.authenticatedDevice()
+        let userID = try await req.actingUserID()
 
         let mine = Set(
             try await FollowModel.query(on: req.db)
-                .filter(\.$user.$id == device.$user.id)
+                .filter(\.$user.$id == userID)
                 .all()
                 .map(\.$brand.id)
         )
@@ -815,7 +818,7 @@ func routes(_ app: Application) throws {
         // The caller's country shop for each brand that has one being read, and the main shop
         // for the rest. Every brand rather than the page's slice: one query either way, and
         // none at all while no country is switched on.
-        let serving = try await Storefronts.serving(req, device: device)
+        let serving = try await Storefronts.serving(req)
 
         /// One page's worth, or nil when this group is exhausted at this depth.
         func build(page: Int) async throws -> (cards: [DiscoverCard], sawRows: Bool) {
@@ -1007,8 +1010,8 @@ func routes(_ app: Application) throws {
     /// keeps the kinds its first page was asked for, carried in the token, so a read is one
     /// window from its first page to its last even across an app update.
     authed.get("feed") { req async throws -> FeedResponse in
-        let device = try await req.authenticatedDevice()
-        let user = try await device.$user.get(on: req.db)
+        let user = try await req.actingUser()
+        let userID = try user.requireID()
         let limit = min((try? req.query.get(Int.self, at: "limit")) ?? 100, 200)
 
         var resumed: FeedContinuation?
@@ -1025,7 +1028,7 @@ func routes(_ app: Application) throws {
             ?? FeedKinds.accepted(try? req.query.get(String.self, at: FeedKinds.parameter))
 
         let followed = try await FollowModel.query(on: req.db)
-            .filter(\.$user.$id == device.$user.id)
+            .filter(\.$user.$id == userID)
             .all()
             .map(\.$brand.id)
         guard !followed.isEmpty else { return FeedResponse(items: [], nextCursor: nil) }
@@ -1117,8 +1120,7 @@ func routes(_ app: Application) throws {
     /// same breath as `POST /v1/follows` and the two are separate round trips, so requiring
     /// the follow to have landed first would make the order of two requests load-bearing.
     authed.get("brands", ":brandID", "feed") { req async throws -> FeedResponse in
-        let device = try await req.authenticatedDevice()
-        let user = try await device.$user.get(on: req.db)
+        let user = try await req.actingUser()
         guard let brandID = req.parameters.get("brandID", as: UUID.self) else {
             throw Abort(.badRequest)
         }
@@ -1161,7 +1163,7 @@ func routes(_ app: Application) throws {
     /// holds — it is what dedupes the feed, so the client never needs a second identity
     /// for the same thing.
     authed.post("watches") { req async throws -> WatchDTO in
-        let device = try await req.authenticatedDevice()
+        let userID = try await req.actingUserID()
         let body = try req.content.decode(CreateWatch.self)
 
         guard let product = try await ProductModel.query(on: req.db)
@@ -1171,7 +1173,6 @@ func routes(_ app: Application) throws {
         else { throw Abort(.notFound, reason: "No such product") }
 
         let productID = try product.requireID()
-        let userID = device.$user.id
 
         // Idempotent: tapping the button twice is a mis-tap, not a request for two
         // notifications. Returns the existing row rather than 409ing, because from the
@@ -1209,24 +1210,27 @@ func routes(_ app: Application) throws {
     }
 
     authed.get("watches") { req async throws -> [WatchDTO] in
-        let device = try await req.authenticatedDevice()
+        let userID = try await req.actingUserID()
         let watches = try await WatchModel.query(on: req.db)
-            .filter(\.$user.$id == device.$user.id)
+            .filter(\.$user.$id == userID)
             .sort(\.$createdAt, .descending)
-            .with(\.$product)
+            // With variants, because this list is also how a phone that has never seen the
+            // product — a reinstall, a profile opened on a second phone — puts the watch back
+            // on its Watching page. See `WatchDTO.variants`.
+            .with(\.$product) { $0.with(\.$variants) }
             .all()
-        return watches.map { WatchDTO($0, product: $0.product) }
+        return watches.map { WatchDTO($0, product: $0.product, describing: true) }
     }
 
     authed.delete("watches", ":watchID") { req async throws -> HTTPStatus in
-        let device = try await req.authenticatedDevice()
+        let userID = try await req.actingUserID()
         guard let watchID = req.parameters.get("watchID", as: UUID.self) else {
             throw Abort(.badRequest)
         }
         // Scoped to the caller's own rows: the id alone must not be enough to delete
         // somebody else's watch.
         try await WatchModel.query(on: req.db)
-            .filter(\.$user.$id == device.$user.id)
+            .filter(\.$user.$id == userID)
             .filter(\.$id == watchID)
             .delete()
         return .noContent
@@ -1262,8 +1266,7 @@ func routes(_ app: Application) throws {
     /// Nothing here is readable by anybody else, and no hint produces an event, a product or
     /// a notification. The most a hinted brand can do is get looked at sooner.
     authed.put("poll-hints") { req async throws -> PollHintsResponse in
-        let device = try await req.authenticatedDevice()
-        let userID = device.$user.id
+        let userID = try await req.actingUserID()
         let body = try req.content.decode(PollHintSync.self)
         let now = Date()
 
@@ -1347,9 +1350,9 @@ func routes(_ app: Application) throws {
     /// What this device currently has standing. Its own rows and no one else's — there is
     /// deliberately no route that reads across users here, unlike `/v1/brands/popular`.
     authed.get("poll-hints") { req async throws -> [PollHint] in
-        let device = try await req.authenticatedDevice()
+        let userID = try await req.actingUserID()
         return try await PollHintModel.query(on: req.db)
-            .filter(\.$user.$id == device.$user.id)
+            .filter(\.$user.$id == userID)
             .sort(\.$releaseAt)
             .all()
             .map(\.asPollHint)

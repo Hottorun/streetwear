@@ -18,8 +18,16 @@ Part of the streetw guidance set; see `CLAUDE.md` for the index and the build ru
 - **Adding the App Group silently moved the SwiftData store.** A default
   `ModelConfiguration` puts the store in the *shared group container* once the app has an
   App Group entitlement, so the app opens an empty database and every brand and save
-  appears wiped while the real data sits in the old location. `streetwApp` now pins the
-  store URL explicitly to `URL.applicationSupportDirectory`. Don't remove that.
+  appears wiped while the real data sits in the old location. `ProfileSession.container(for:)`
+  now pins the store URL explicitly to `URL.applicationSupportDirectory`. Don't remove that.
+- **A share belongs to the profile that was current when it was shared** (`SharedSave.profileID`,
+  `SharedInbox.currentProfile`). The app writes the current profile into a file in the group
+  container on every switch — a file, because the privacy manifest says no
+  `UserDefaults(suiteName:)` exists — and the extension stamps each share with it. The drain
+  files only the current profile's shares and leaves the rest in the inbox for when their
+  profile is current; a share for a profile this phone no longer has goes to the holder rather
+  than waiting forever. A share from an older extension has no id and is the holder's. See
+  `docs/profiles.md`.
 - The App Group id must be identical in `streetw.entitlements` and
   `ShareExtension.entitlements`. A mismatch fails silently — the container URL is nil and
   every share vanishes without an error.

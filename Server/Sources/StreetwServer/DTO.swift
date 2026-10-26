@@ -215,7 +215,11 @@ extension DiscoverCard {
 extension WatchDTO {
     /// Takes the product rather than just its title: the client keys its local watches on
     /// `externalID`, so a response without one cannot be matched back to anything.
-    init(_ watch: WatchModel, product: ProductModel) {
+    ///
+    /// - Parameter describing: whether to carry what the product looks like and its stock, for
+    ///   a phone that has to rebuild the watch from nothing. Only when the product was loaded
+    ///   with its variants — `$variants` traps otherwise.
+    init(_ watch: WatchModel, product: ProductModel, describing: Bool = false) {
         self.init(
             id: watch.id ?? UUID(),
             brandID: watch.$brand.id,
@@ -225,7 +229,11 @@ extension WatchDTO {
             color: watch.color,
             createdAt: watch.createdAt ?? Date(),
             firedAt: watch.firedAt,
-            firedSizes: watch.firedSizes
+            firedSizes: watch.firedSizes,
+            productURL: describing ? product.linkURL : nil,
+            imageURLs: describing ? product.imageURLs : nil,
+            priceText: describing ? product.priceText : nil,
+            variants: describing ? product.variants.map(\.asVariantInfo) : nil
         )
     }
 }

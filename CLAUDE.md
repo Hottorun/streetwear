@@ -65,6 +65,7 @@ cost.
 | `docs/share-extension.md` | The App Group inbox, enrichment, brand attribution |
 | `docs/drop-calendar.md` | `PlannedDrop`, local reminders, and poll hints |
 | `docs/recommendations.md` | `BrandVector`, similarity, popularity, dismissals |
+| `docs/profiles.md` | Profiles: one server user and one local store per person, the profile header, labelled alerts |
 | `docs/ucp.md` | Reading a storefront that has closed its catalogue |
 | `docs/credits.md` | Credits, the ledger, StoreKit purchases and refunds, and AI cost metering |
 
@@ -444,6 +445,15 @@ bought it. The short form of the load-bearing ones:
   destination. `PushRoute` is built in `streetwApp.init` alongside everything else, because a push
   that cold-launches the app delivers its tap **before any view exists**; a notification-centre
   broadcast at that moment reaches nobody.
+- **A device on an account hears every profile on it, and another profile's alerts say whose they
+  are** (`Notifier.audience`). "For Anna: …" on the body (`ProfileAlert.labelled`, shared with the
+  app's local alerts); the holder's read as they always did. Each profile has its own alerts switch
+  (`users.alerts_enabled`) — off, nothing is sent for it on any path, and a watch is still spent.
+  The cooldown is still the brand's, so each profile hears about a brand once per cooldown.
+  **`collapseID` is per profile** (the holder keeps the brand id, another profile appends eight hex
+  digits — APNs caps the id at 64 bytes), or Anna's alert would replace the holder's unread one;
+  `threadID` stays one for the app. `PushPayload.profileID` names the recipient so a tap switches
+  to that profile first. See `docs/profiles.md`.
 
 ### Heuristics carry a version
 
@@ -783,7 +793,7 @@ the catalogue (`/products/<handle>.js`, which has `available`) over Open Graph.
 
 **Read `docs/share-extension.md` before touching `SharedInbox`, `SharedSaveImporter`, the App Group,
 or anything about entitlements.** Notably: adding the App Group silently moved the SwiftData store,
-so `streetwApp` pins the store URL explicitly — don't remove that. Also covered: one file per save
+so `ProfileSession.container(for:)` pins the store URL explicitly — don't remove that. Also covered: one file per save
 with reading separate from deleting, `enrichmentVersion` giving a bad landing another chance,
 `registrableDomain` matching a brand across its hostnames, `brandLabel` when there is no brand, and
 why the sold-out prompt is asked by the app rather than the extension.
@@ -822,8 +832,14 @@ why the sold-out prompt is asked by the app rather than the extension.
   keep it that way, and add new fields the same way. `SizeProfile` has the same hand-written
   lenient `init(from:)` for the same reason — it lives in `UserDefaults` on real phones.
 - The schema is `Brand`, `BrandUpdate`, `SavedItem`, `Board`, `StockWatch`, `Fit`,
-  `BrandDismissal`, `PlannedDrop`. A new `@Model` that isn't listed in `streetwApp.init` simply
-  doesn't exist at runtime.
+  `BrandDismissal`, `PlannedDrop`. A new `@Model` that isn't listed in `ProfileSession.schema`
+  simply doesn't exist at runtime.
+- **There is one store per profile, not a profile id on every model** (`ProfileSession`,
+  `docs/profiles.md`). The holder's is `default.store` and their `UserDefaults` keys are the
+  unscoped ones, so data from before profiles is the holder's with nothing moved; a profile's is
+  `profile-<id>.store` and `<key>.<id>`. A new `UserDefaults` key that describes a person goes
+  through `ProfileScope.key` and into `ProfileScope.scopedKeys`; one that describes the phone does
+  not. Anything long-running captures its scope at the start rather than reading the current one.
 - **`Fit.items` ↔ `SavedItem.fits` is many-to-many and cascades in neither direction.** Deleting a
   fit must not delete the clothes, and un-saving something leaves the fits it was in rather than
   silently rewriting them.
@@ -882,7 +898,15 @@ Three tiers, and the middle one is the part that was wrong for a long time.
   reached *through* a device, so signing in needs a registered device first, and the token
   keeps working after it. There is no account-level credential. Credits additionally need the
   device's user to have an account: without one, a spend or a purchase answers
-  `403 Sign in to use credits`.
+  `403 Sign in to use credits`. **`X-Profile-ID` chooses which of the account's users a request
+  acts for** (`ActingProfile`, in the authed group): absent, the device's own user — every
+  older client, every device with no account, the holder; present, it must name a user on the
+  device's account or the request is refused with `ProfileHeader.refusal`. Routes ask
+  `req.actingUserID()`, never the header, and the device-level ones (APNs token, delivery,
+  usage, credits, the account and profile routes) act on the device. **Credits and the country
+  are the account's whichever profile asks**: the credit routes read the device's own user, so
+  every profile spends from one ledger, and `PATCH /v1/devices/me`'s country goes through
+  `Accounts.setCountry` to every user on the account. See `docs/profiles.md`.
 - **`ADMIN_TOKEN`** — everything under `/admin`, including `/status`, `/admin/accounts` and
   the owner's unlimited-credits switch.
 
@@ -949,8 +973,9 @@ the local path in the `else`. Adding a new one means adding both halves:
 | country (You › Location) | `PATCH /v1/devices/me` (`country`; also sent at registration) — standalone stores it and changes nothing |
 | APNs token / environment | `PATCH /v1/devices/me` |
 | Sign in with Apple (optional; hidden standalone and when the server says it cannot verify) | `GET /v1/account`, `POST /v1/account/apple` — the first sign-in adopts this device's user, a later one merges it into the account's |
-| delete the account | `DELETE /v1/account`, then a fresh `POST /v1/devices` and a re-follow of this phone's brands |
-| stock watches | `POST` / `GET` / `DELETE /v1/watches` |
+| delete the account | `DELETE /v1/account`, then a fresh `POST /v1/devices` and a re-follow of this phone's brands; other profiles' local stores are deleted |
+| profiles (signed in only) | `GET` / `POST /v1/account/profiles`, `PATCH` / `DELETE /v1/account/profiles/:id`; every other route acts for the current profile through `X-Profile-ID` (none for the holder) |
+| stock watches | `POST` / `GET` / `DELETE /v1/watches` — `GET` also restores watches this store does not have (a reinstall, a profile on a second phone) |
 | poll hints from the drop calendar | `PUT /v1/poll-hints` (whole set; no-op standalone) |
 | anonymous usage counts | `POST /v1/usage` (daily tallies; standalone counts and sends nothing) — read back with `GET /admin/usage`, see `docs/server.md` |
 | recommendations | `GET /v1/brands/popular` |

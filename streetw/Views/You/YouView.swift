@@ -13,10 +13,11 @@
 // `List`: this is where somebody comes to see what the app thinks of them, and a grouped
 // settings form is the one shape that says "this is the app's plumbing".
 //
-// Nothing here is a placeholder. Profiles are planned and not built, and a row saying so would
-// be the app talking about itself. Sign-in leads the page, quietly, because it is the one
-// setting about whether any of the rest survives a reinstall — see `AccountSection`. Credits are
-// drawn only for an account (`CreditsSection`).
+// Nothing here is a placeholder. Sign-in leads the page, quietly, because it is the one setting
+// about whether any of the rest survives a reinstall — see `AccountSection` — and profiles follow
+// it, because everything below them is about whichever profile is current (`ProfilesSection`).
+// Credits are drawn only for an account (`CreditsSection`), and they and the location are the
+// account's, whichever profile is current.
 
 import StreetwCore
 import SwiftData
@@ -29,6 +30,7 @@ struct YouView: View {
     @Environment(RemoteSync.self) private var remote: RemoteSync
     @Environment(CreditStore.self) private var credits: CreditStore
     @Environment(LocationSetting.self) private var location: LocationSetting
+    @Environment(ProfileStore.self) private var profiles: ProfileStore
 
     @Query(sort: \SavedItem.savedAt, order: .reverse) private var saves: [SavedItem]
     /// Only the boards with a taste setting — see `Board.shapingTaste`. Usually none.
@@ -56,6 +58,7 @@ struct YouView: View {
                 // is division enough.
                 VStack(alignment: .leading, spacing: 40) {
                     AccountSection()
+                    ProfilesSection()
                     taste(reading)
                     sizesSection
                     locationSection
@@ -75,10 +78,15 @@ struct YouView: View {
             // Keyed on the token: the page can appear before registration finishes, and a
             // `.task` that fires once, gets a 401 and swallows it would leave the account
             // section missing for the whole session.
-            .task(id: settings.token) { await remote.refreshAccount() }
+            .task(id: settings.token) {
+                await remote.refreshAccount()
+                await profiles.refresh()
+            }
             // Whether there is a Credits section at all is the server's answer, so it is asked
             // every time the page opens, and again when signing in or out on this page changes
-            // the account — otherwise the section appears only once You is reopened.
+            // the account — otherwise the section appears only once You is reopened. **Not keyed
+            // on the profile**: the balance is the account's, and a switch rebuilds this page,
+            // which asks again anyway — the same answer, from the same ledger.
             .task(id: CreditsKey(token: settings.token, account: settings.account?.id)) {
                 await credits.refresh()
             }

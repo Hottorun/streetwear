@@ -58,7 +58,7 @@ private func meta(currency: String, shipsTo: [String] = ["US", "GB", "DE"]) -> S
 private let catalogPath = "/products.json?limit=250&page=1"
 
 /// A brand on `example.com`, and optionally its British shop on `uk.example.com`.
-private func seedBrand(
+func seedBrand(
     _ app: Application,
     storefront: Bool,
     baselined: Bool = false
@@ -275,7 +275,7 @@ private func reader(_ app: Application, country: String?, follows brandID: UUID?
 
 /// A brand with one product and one event in each shop: "US Tee" in the main shop, stored
 /// before currencies were, and "UK Tee" in its British shop, in pounds.
-private func seedBothShops(_ app: Application, shopBaselined: Bool = true) async throws -> UUID {
+func seedBothShops(_ app: Application, shopBaselined: Bool = true) async throws -> UUID {
     let (brandID, main, shop, shopSource) = try await seedBrand(app, storefront: true, baselined: true)
     if !shopBaselined, let shopSource {
         shopSource.baselinedAt = nil
