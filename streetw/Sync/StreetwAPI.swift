@@ -292,6 +292,39 @@ struct StreetwAPI: Sendable {
         )
     }
 
+    /// Shop's field, answered over the catalogue the server holds. The chips travel as their
+    /// own flags so the server's reading is the phone's; the cursor is echoed back as it came.
+    func searchProducts(
+        _ text: String,
+        scope: ProductSearchScope,
+        cheaper: Bool,
+        formal: Bool,
+        inMySize: Bool,
+        cursor: String? = nil
+    ) async throws -> ProductSearchResponse {
+        var query = [
+            URLQueryItem(name: "q", value: text),
+            URLQueryItem(name: "scope", value: scope.rawValue)
+        ]
+        if cheaper { query.append(URLQueryItem(name: "cheaper", value: "true")) }
+        if formal { query.append(URLQueryItem(name: "formal", value: "true")) }
+        if inMySize { query.append(URLQueryItem(name: "inMySize", value: "true")) }
+        if let cursor { query.append(URLQueryItem(name: "cursor", value: cursor)) }
+        return try await send(path: "v1/products/search", method: "GET", body: Optional<Never>.none, query: query)
+    }
+
+    /// "More like this" for a product the phone knows by its external id.
+    func similarProducts(productExternalID: String, brandID: UUID) async throws -> SimilarProductsResponse {
+        // One segment whatever the id holds: a sitemap product's is its whole URL.
+        let segment = productExternalID.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? productExternalID
+        return try await send(
+            path: "v1/products/\(segment)/similar",
+            method: "GET",
+            body: Optional<Never>.none,
+            query: [URLQueryItem(name: "brand", value: brandID.uuidString)]
+        )
+    }
+
     func createWatch(_ body: CreateWatch) async throws -> WatchDTO {
         try await send(path: "v1/watches", method: "POST", body: body)
     }
@@ -403,10 +436,16 @@ struct StreetwAPI: Sendable {
         query: [URLQueryItem],
         authenticated: Bool
     ) async throws -> Data {
-        guard var components = URLComponents(
-            url: baseURL.appendingPathComponent(path),
-            resolvingAgainstBaseURL: false
-        ) else { throw APIError.notConfigured }
+        // The path is taken as already percent-encoded, so a segment a caller escaped — an
+        // external id holding a whole URL, `sitemap:https://…` — stays one segment.
+        // `appendingPathComponent` escaped the escapes, and the server read `%253A`.
+        guard var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false) else {
+            throw APIError.notConfigured
+        }
+        let base = components.percentEncodedPath.hasSuffix("/")
+            ? String(components.percentEncodedPath.dropLast())
+            : components.percentEncodedPath
+        components.percentEncodedPath = base + "/" + path
         if !query.isEmpty { components.queryItems = query }
         guard let url = components.url else { throw APIError.notConfigured }
 
