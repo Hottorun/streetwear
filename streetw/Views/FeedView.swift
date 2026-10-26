@@ -125,8 +125,16 @@ struct FeedView: View {
             // `FeedRefresh`: coming back to the app is what refreshes the feed, and this is
             // the gesture for not waiting. A pull is somebody saying "look now", so it is
             // never throttled.
+            //
+            // **The sync runs in its own task, and the pull only waits for it.** SwiftUI cancels
+            // a refresh action's task when the content under it changes mid-refresh — and a sync
+            // changes it at once: the trouble line goes, the pill comes, cards arrive. Run inside
+            // the action, every pull on the grid ended "Kith: cancelled" while TRY AGAIN, which
+            // is not a refresh, synced fine. Awaiting `.value` keeps the spinner honest.
             .refreshable {
-                await FeedRefresh.run(remote: remote, engine: engine, settings: settings, sizes: sizes)
+                await Task {
+                    await FeedRefresh.run(remote: remote, engine: engine, settings: settings, sizes: sizes)
+                }.value
             }
             .overlay(alignment: .bottom) { syncStatus }
             .sheet(isPresented: $isAddingBrand) { AddBrandView() }
