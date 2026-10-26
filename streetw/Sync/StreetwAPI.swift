@@ -111,9 +111,18 @@ final class ServerSettings {
         // value only wins while it is still one we ship — see `legacyBaseURLStrings`.
         let isStale = stored.isEmpty || Self.legacyBaseURLStrings.contains(stored)
         baseURLString = isStandalone ? "" : (isStale ? Self.defaultBaseURLString : stored)
-        token = UserDefaults.standard.string(forKey: "serverToken")
-        account = UserDefaults.standard.data(forKey: "serverAccount")
+        // **Both read before either is assigned, and the account after the token.** On an
+        // `@Observable` class an assignment here goes through the generated setter, `didSet`
+        // included, once every stored property has a value — so the token's "a new token is a
+        // new device" rule ran on every launch, cleared the account and deleted its key before
+        // the next line could read it. A signed-in phone launched as signed out until You
+        // asked the server again, and the current profile, which needs an account, fell back
+        // to the holder on every launch.
+        let storedToken = UserDefaults.standard.string(forKey: "serverToken")
+        let storedAccount = UserDefaults.standard.data(forKey: "serverAccount")
             .flatMap { try? JSONDecoder().decode(AccountDTO.self, from: $0) }
+        token = storedToken
+        account = storedAccount
 
         // Assigning the stored property in `init` bypasses `didSet`, so persist here.
         if !baseURLString.isEmpty {
