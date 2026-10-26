@@ -186,8 +186,11 @@ struct BrandDetailView: View {
 
             VStack(alignment: .leading, spacing: 6) {
                 Wordmark(name: brand.name, size: 17)
-                if let host = brand.websiteURL?.host()?.replacingOccurrences(of: "www.", with: "") {
+                if let host = brand.shopURL?.host()?.replacingOccurrences(of: "www.", with: "") {
                     DataLabel(text: host.uppercased(), size: 10)
+                }
+                if let shop = shopLine {
+                    DataLabel(text: shop, size: 9)
                 }
                 DataLabel(
                     text: brand.lastSyncedAt.map { "CHECKED \(Stamp.short($0).uppercased())" }
@@ -198,6 +201,19 @@ struct BrandDetailView: View {
             Spacer(minLength: 0)
         }
         .padding(.horizontal, 20)
+    }
+
+    /// Which of the brand's shops this page is showing, and what it prices in — "UNITED
+    /// KINGDOM SHOP · GBP" where a country's shop serves this phone, "MAIN SHOP · USD"
+    /// otherwise. The one place the location setting is visible, so it is said where it
+    /// changes something rather than promised on the setting. See `LocationSetting`.
+    private var shopLine: String? {
+        if let country = brand.storefrontCountry {
+            return ["\(LocationSetting.name(of: country).uppercased()) SHOP", brand.currencyCode]
+                .compactMap { $0 }
+                .joined(separator: " · ")
+        }
+        return brand.currencyCode.map { "MAIN SHOP · \($0)" }
     }
 
     /// The one thing on this page allowed to be loud. A storefront going dark usually means
@@ -365,7 +381,7 @@ struct BrandDetailView: View {
     @ViewBuilder
     private var links: some View {
         let destinations: [(label: String, symbol: String, url: URL)] = [
-            brand.websiteURL.map { ("SHOP", "arrow.up.right", $0) },
+            brand.shopURL.map { ("SHOP", "arrow.up.right", $0) },
             brand.instagramURL.map { ("INSTAGRAM", "arrow.up.right", $0) }
         ].compactMap { $0 }
 
@@ -711,7 +727,7 @@ private struct CatalogueTile: View {
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
 
-            if let price = update.priceText {
+            if let price = update.priceLabel {
                 Text([price, update.percentOffText].compactMap { $0 }.joined(separator: " "))
                     .font(.data(12, .medium))
                     .foregroundStyle(Color.ink)

@@ -106,10 +106,10 @@ struct FeedCard: View {
         return Face(
             photos: row.primaryImageURL.map { [$0] } ?? [],
             label: FeedLabel.single(kind, isYours: isYours, percentOff: Self.cut(row), title: row.title),
-            price: isGarment ? row.priceText : nil,
+            price: isGarment ? row.priceLabel : nil,
             // Any garment the brand itself has marked down says so, a launch at a discount
             // included — the cut comes from the tag, and the "was" is how to check it.
-            was: isGarment && row.priceText != nil ? row.wasPriceText : nil,
+            was: isGarment && row.priceText != nil ? row.wasPriceLabel : nil,
             subject: row.title,
             garment: isGarment ? row : nil
         )
@@ -137,11 +137,11 @@ struct FeedCard: View {
         PriceChange.percentOff(previous: row.previousPriceAmount, original: row.originalPriceAmount, now: row.priceAmount)
     }
 
-    /// The cheapest way into several pieces, as the brand prints it.
+    /// The cheapest way into several pieces, in its own currency.
     private static func cheapest(_ rows: [BrandUpdate]) -> String? {
         rows.filter { $0.priceAmount != nil && $0.priceText != nil }
             .min { $0.priceAmount! < $1.priceAmount! }?
-            .priceText
+            .priceLabel
     }
 
     // MARK: - Drawing

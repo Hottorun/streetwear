@@ -129,7 +129,7 @@ struct DiscoverProductSheet: View {
                 .fixedSize(horizontal: false, vertical: true)
 
             HStack(spacing: 9) {
-                if let price = card.priceText {
+                if let price = card.priceLabel {
                     Text(price)
                         .font(.data(14, .semibold))
                         .foregroundStyle(Color.ink)

@@ -95,6 +95,7 @@ enum DiscoverSave {
             productType: card.productType,
             variants: card.variants ?? []
         )
+        update.currencyCode = card.currency
 
         // **Seen, always.** See the file header — this is the rule the whole feed depends on.
         update.isSeen = true

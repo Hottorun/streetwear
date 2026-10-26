@@ -209,7 +209,7 @@ private struct SimilarTile: View {
                 .frame(width: 132, alignment: .leading)
                 .fixedSize(horizontal: false, vertical: true)
 
-            if let price = update.priceText {
+            if let price = update.priceLabel {
                 DataLabel(text: price, size: 10)
             }
         }

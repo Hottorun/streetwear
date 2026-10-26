@@ -725,7 +725,7 @@ struct DiscoverCardView: View {
     private var metaTokens: [String] {
         switch entry.presentation {
         case .pairing:
-            return card.priceText.map { [$0] } ?? []
+            return card.priceLabel.map { [$0] } ?? []
         case .brand:
             return card.brand.website
                 .flatMap { URL(string: $0)?.host() }
@@ -1164,5 +1164,13 @@ private struct DiscoverSticker: View {
             }
         }
         .frame(width: side, height: side)
+    }
+}
+
+extension DiscoverCard {
+    /// The price to print, in the card's own currency and written the reader's way — the same
+    /// rule as `BrandUpdate.priceLabel`, for a card that is not a stored row.
+    var priceLabel: String? {
+        PriceFormat.display(text: priceText, amount: priceAmount, currency: currency)
     }
 }

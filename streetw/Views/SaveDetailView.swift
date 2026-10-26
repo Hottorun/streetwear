@@ -295,14 +295,14 @@ struct SaveDetailView: View {
                 .fixedSize(horizontal: false, vertical: true)
 
             HStack(alignment: .firstTextBaseline, spacing: 10) {
-                if let price = update?.priceText {
+                if let price = update?.priceLabel {
                     Text(price)
                         .font(.data(15, .medium))
                         .foregroundStyle(Color.ink)
                 }
                 // A markdown since you kept it is worth knowing on this page more than on
                 // any other — it is the answer to "should I finally buy this".
-                if let was = update?.wasPriceText {
+                if let was = update?.wasPriceLabel {
                     Text(was)
                         .font(.data(12))
                         .foregroundStyle(Color.muted)

@@ -73,8 +73,23 @@ final class Brand {
     /// here" reads — that is one line for every brand, see `FeedVisit`.
     var lastOpenedAt: Date?
 
-    /// From the storefront's /meta.json. Prices are meaningless without it.
+    /// From the storefront's /meta.json — the currency of the shop that serves this phone,
+    /// which in server mode can be a country's shop rather than the main one.
+    ///
+    /// **Never used to print a row's price.** Once somebody changes country it names a
+    /// different shop from the one an older row came from, and a dollar price would print with
+    /// a pound sign; a row carries its own (`BrandUpdate.currencyCode`).
     var currencyCode: String?
+
+    /// The country shop the server serves this phone for this brand, or nil for the brand's
+    /// main shop — `BrandDTO.storefront`. Only ever set in server mode; it is what lets the
+    /// brand page say which shop it is showing.
+    var storefrontCountry: String?
+    var storefrontURLString: String?
+
+    /// The shop to send somebody to: the country's that serves this phone, else the brand's
+    /// own site.
+    var shopURL: URL? { storefrontURLString.flatMap(URL.init(string:)) ?? websiteURL }
 
     /// Server-side brand id when this brand came from a synced account. Nil for brands
     /// added in standalone mode, which is what keeps both modes working side by side.

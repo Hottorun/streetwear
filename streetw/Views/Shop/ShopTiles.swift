@@ -269,7 +269,7 @@ struct ShopPrice: View {
     var size: CGFloat = 11
 
     var body: some View {
-        if let price = update.priceText {
+        if let price = update.priceLabel {
             Text([price, update.percentOffText].compactMap { $0 }.joined(separator: " "))
                 .font(.data(size, .medium))
                 .foregroundStyle(Color.ink)

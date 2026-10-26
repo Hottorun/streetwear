@@ -2,7 +2,7 @@
 // Everything about the person rather than about the shops, on one page behind the avatar.
 //
 // In the order somebody would look for it: what the app has read of your taste, the sizes it
-// marks things in, the brands it is watching for you, the things you are waiting on, and then
+// marks things in, the country it shops in, the brands it is watching for you, the things you are waiting on, and then
 // the settings — alerts, the sentence you wrote about how you dress, and what the app is. Each
 // of these used to be somewhere else: the reading was the tail of the Style tab, the settings a
 // sheet behind its gear, the brand list a sheet behind "ALL" on the feed's brand rail, the
@@ -13,8 +13,8 @@
 // `List`: this is where somebody comes to see what the app thinks of them, and a grouped
 // settings form is the one shape that says "this is the app's plumbing".
 //
-// Nothing here is a placeholder. Sign-in, profiles, location and credits are planned and not
-// built, and a row for each saying so would be four rows of the app talking about itself.
+// Nothing here is a placeholder. Sign-in, profiles and credits are planned and not built, and
+// a row for each saying so would be three rows of the app talking about itself.
 
 import StreetwCore
 import SwiftData
@@ -23,6 +23,7 @@ import SwiftUI
 struct YouView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(SizeProfileStore.self) private var sizes: SizeProfileStore
+    @Environment(LocationSetting.self) private var location: LocationSetting
 
     @Query(sort: \SavedItem.savedAt, order: .reverse) private var saves: [SavedItem]
     /// Only the boards with a taste setting — see `Board.shapingTaste`. Usually none.
@@ -51,6 +52,7 @@ struct YouView: View {
                 VStack(alignment: .leading, spacing: 40) {
                     taste(reading)
                     sizesSection
+                    locationSection
                     following
                     waitingFor
                     NotificationsSection()
@@ -168,6 +170,38 @@ struct YouView: View {
                     SizesPage()
                 } label: {
                     YouRow(title: profile.isEmpty ? "Set your sizes" : "Edit sizes", chevron: true)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+    }
+
+    // MARK: - Location
+
+    /// Which country's shops a brand is read from, and what that does — said in the note rather
+    /// than left to be guessed, because it is the kind of setting people assume does more than
+    /// it does. It never converts a price and never hides a brand; where a brand runs no shop
+    /// for the country, nothing changes at all. See `LocationSetting`.
+    private var locationSection: some View {
+        let name = location.country.map(LocationSetting.name(of:))
+        return VStack(alignment: .leading, spacing: 12) {
+            SettingsHeader(
+                title: "Location",
+                note: location.country.map {
+                    "Prices and shops for \(LocationSetting.inSentence($0)) where a brand runs one; elsewhere the brand's main shop."
+                } ?? "Every brand's main shop. Choose a country to see a brand's shop there, where it runs one."
+            )
+
+            VStack(spacing: 0) {
+                NavigationLink {
+                    LocationPage()
+                } label: {
+                    YouRow(
+                        title: "Country",
+                        detail: name?.uppercased() ?? "NOT SET",
+                        detailColor: .ink,
+                        chevron: true
+                    )
                 }
                 .buttonStyle(.plain)
             }

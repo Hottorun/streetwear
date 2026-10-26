@@ -241,7 +241,7 @@ struct FeedState {
         case .priceDrop:
             // The cut first, measured from the brand's own tag where it published one —
             // "−33%" is the claim, and the "was" is how to check it.
-            let was = update.wasPriceText.map { "WAS \($0.uppercased())" }
+            let was = update.wasPriceLabel.map { "WAS \($0.uppercased())" }
             self.text = [update.percentOffText ?? "PRICE DROP", was].compactMap { $0 }.joined(separator: " · ")
             // A markdown on something you can't buy in your size isn't yours either.
             self.isForMe = profile.isEmpty || update.isInMySize(profile)

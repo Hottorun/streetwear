@@ -34,6 +34,7 @@ final class RemoteSync {
 
     private let context: ModelContext
     private let settings: ServerSettings
+    private let location: LocationSetting
 
     /// Cursor of the newest event already merged. Kept out of the model store because it
     /// belongs to the *connection*, not to the data.
@@ -58,9 +59,10 @@ final class RemoteSync {
     /// back on the page for a minute. A mode set after the list was asked for wins.
     private var modeChangedAt: [UUID: Date] = [:]
 
-    init(context: ModelContext, settings: ServerSettings) {
+    init(context: ModelContext, settings: ServerSettings, location: LocationSetting) {
         self.context = context
         self.settings = settings
+        self.location = location
     }
 
     private var api: StreetwAPI? {
@@ -111,7 +113,10 @@ final class RemoteSync {
 
         if settings.token != nil {
             do {
-                try await api?.updateDevice(UpdateDevice(sizes: payload))
+                // The country goes up on every one of these, unlike the sizes: it is the
+                // setting itself, never a stand-in for it, so there is no caller that could
+                // send a wrong one — and sending it every launch heals a server that lost it.
+                try await api?.updateDevice(UpdateDevice(sizes: payload, country: location.wireValue))
                 return
             } catch APIError.unauthorized {
                 Self.log.info("server rejected the stored device token; registering again")
@@ -132,7 +137,10 @@ final class RemoteSync {
                 // it. If a regional storefront feature ever wants it, it can come back with
                 // the policy line that has to accompany it.
                 locale: nil,
-                sizes: payload
+                sizes: payload,
+                // So the very first feed is already from the right shop. The privacy policy
+                // says so, beside the sizes.
+                country: location.wireValue
             )
         )
         settings.token = response.token
@@ -175,6 +183,23 @@ final class RemoteSync {
             try await api.updateDevice(
                 UpdateDevice(apnsToken: token, environment: BackgroundServices.apnsEnvironment)
             )
+        } catch {
+            lastError = error.localizedDescription
+        }
+    }
+
+    /// Tells the server which country's shops to serve, after somebody changes it — then
+    /// reads the follow list again, so each brand page names the shop it is now showing.
+    ///
+    /// Forward only: what this phone already holds stays the shop it came from. See
+    /// `docs/design-decisions.md`.
+    func pushCountry() async {
+        guard settings.isRegistered, let api else { return }
+        do {
+            try await api.updateDevice(UpdateDevice(country: location.wireValue))
+            let listedAt = Date()
+            mergeBrands(try await api.follows(), isCompleteList: true, listedAt: listedAt)
+            try? context.save()
         } catch {
             lastError = error.localizedDescription
         }
@@ -737,6 +762,12 @@ final class RemoteSync {
                 let name = Self.displayName(dto.name)
                 if brand.name != name { brand.name = name }
                 if brand.currencyCode != dto.currency { brand.currencyCode = dto.currency }
+                if brand.storefrontCountry != dto.storefront?.country {
+                    brand.storefrontCountry = dto.storefront?.country
+                }
+                if brand.storefrontURLString != dto.storefront?.url {
+                    brand.storefrontURLString = dto.storefront?.url
+                }
                 if brand.isLockedForDrop != dto.lockedForDrop {
                     brand.isLockedForDrop = dto.lockedForDrop
                 }
@@ -764,6 +795,8 @@ final class RemoteSync {
                 )
                 brand.remoteID = id
                 brand.currencyCode = dto.currency
+                brand.storefrontCountry = dto.storefront?.country
+                brand.storefrontURLString = dto.storefront?.url
                 brand.isLockedForDrop = dto.lockedForDrop
                 brand.logoURLString = dto.logoURL
                 brand.sources = dto.sources.map(Self.source(from:))
@@ -901,6 +934,9 @@ final class RemoteSync {
                 productType: item.productType
             )
             update.restockedSizes = item.restockedSizes
+            // The shop's own currency, from the row rather than from the brand — see
+            // `BrandUpdate.currencyCode`. Nil from a server that predates the field.
+            update.currencyCode = item.currency
             // What it was marked down from. Without this a server-backed markdown could
             // say "cheaper" and nothing else — no "was", and no way to rank one cut
             // against another, which is the whole ordering of the markdowns list.
@@ -1024,6 +1060,11 @@ final class RemoteSync {
         // measurable cut at all.
         if update.priceAmount == nil, let amount = item.priceAmount {
             update.priceAmount = amount
+            changed = true
+        }
+        // A currency only ever fills in: an event is in the currency it happened in.
+        if update.currencyCode == nil, let currency = item.currency {
+            update.currencyCode = currency
             changed = true
         }
         if update.originalPriceAmount == nil, let original = item.originalPriceAmount {

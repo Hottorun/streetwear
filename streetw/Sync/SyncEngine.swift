@@ -156,6 +156,7 @@ final class SyncEngine {
                 kind: update.kind,
                 priceText: update.priceText,
                 priceAmount: update.priceAmount,
+                currency: update.currencyCode,
                 isAvailable: update.isAvailable,
                 tags: update.tags,
                 productType: update.productType,
@@ -310,6 +311,8 @@ final class SyncEngine {
             variants: item.variants
         )
         update.releaseDate = item.releaseDate
+        // The shop's own currency, on the row: see `BrandUpdate.currencyCode`.
+        update.currencyCode = item.currency
         update.originalPriceAmount = item.originalPriceAmount
         update.originalPriceText = item.originalPriceText
         // A markdown met for the first time has no earlier sync to have fallen from, so what
@@ -359,7 +362,10 @@ final class SyncEngine {
         // A markdown on something already in the catalogue. Checked before the restock
         // branch overwrites `kind`, but ranked below it: a thing coming *back* matters
         // more than the same thing getting cheaper, so a restock wins when both happen.
-        let dropped = PriceChange.isDrop(from: update.priceAmount, to: item.priceAmount)
+        let dropped = PriceChange.isDrop(
+            from: update.priceAmount, in: update.currencyCode,
+            to: item.priceAmount, in: item.currency
+        )
 
         // A restock and a markdown are events, so they move the brand's activity date the
         // same way a new product does — see `Brand.lastActivityAt`. They are written by
@@ -418,6 +424,11 @@ final class SyncEngine {
         }
         update.priceAmount = item.priceAmount ?? update.priceAmount
         update.priceText = item.priceText ?? update.priceText
+        // The currency follows the price it belongs to, and only a read that priced the row
+        // may change it.
+        if item.priceAmount != nil, let currency = item.currency, update.currencyCode != currency {
+            update.currencyCode = currency
+        }
         if update.imageURLStrings.isEmpty { update.imageURLStrings = item.imageURLStrings }
         if update.tags.isEmpty { update.tags = item.tags }
         // A collection stored before the membership was read has none, and nothing else
