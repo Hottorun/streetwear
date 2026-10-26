@@ -964,8 +964,8 @@ private struct DiscoverMosaic: View {
                                     // cards realised at a time: the cache thrashed
                                     // continuously and evicted the feed behind it, which
                                     // reads as the whole app getting slower the longer it
-                                    // is used. 130 matches what `FeedTile` already asks for
-                                    // and the ladder has a 400px rung for it.
+                                    // is used. 130 is about the tile's own width, and
+                                    // the ladder has a 400px rung for it.
                                     drawnWidth: 130,
                                     backdrop: .sweep,
                                     mark: mark

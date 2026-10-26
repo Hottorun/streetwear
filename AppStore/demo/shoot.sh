@@ -49,12 +49,12 @@ shot() {  # name, settle seconds, extra launch args...
   echo "shot $name"
 }
 
-shot feed     10 -startTab feed
+shot feed     10 -startTab feed -feedLastVisitHours 5
 shot product  10 -startTab feed -demoOpen "restock:shopify:910001"
 shot discover 14 -startTab shop
 shot saved    40 -startTab saved
 shot style    12 -startTab style    # Saved › Fits
-shot calendar 10 -startTab feed -demoSheet calendar
+shot calendar 10 -startTab feed -feedFilter upcoming
 shot fit      14 -startTab style -demoSheet fit
 
 xcrun simctl terminate "$DEV" $BUNDLE || true

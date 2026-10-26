@@ -10,6 +10,13 @@
 //
 // While the flag is set nothing polls: the sources below name storefronts that do not
 // exist, and a sync would stamp every brand with a failure. See the guard in `SyncEngine`.
+//
+// **It holds every shape the feed draws**, because the Phase 1 feed is judged by what its
+// cards look like: single products, a restock in the reader's size and one not, a markdown
+// with its "was", a release of six pieces (`Alpine Capsule`, which absorbs its garments into
+// one card), a brand-wide sale with a code, and a date written down for tomorrow so the line
+// above the feed has something to say. Everything arrives as news when it was published, so
+// `-feedLastVisitHours 5` puts the line through the middle of it.
 
 import Foundation
 import StreetwCore
@@ -86,6 +93,23 @@ enum DemoCatalog {
               summary: "Dense boiled wool with horn buttons."),
         Piece(brand: 2, file: "ondo-ringer-tee", title: "Ringer Tee — Washed Red", type: "T-Shirt",
               price: 48, kind: .product, hoursAgo: 14, summary: "Garment-dyed jersey, contrast rib."),
+        Piece(brand: 4, file: "rivet-western-shirt", title: "Western Shirt — Faded Black", type: "Shirt",
+              price: 145, kind: .product, hoursAgo: 7, summary: "Overdyed 10oz denim with pearl snaps."),
+        Piece(brand: 3, file: "papermoth-breton", title: "Breton Crew — Navy and Cream", type: "Sweater",
+              price: 120, kind: .product, hoursAgo: 20, summary: "Hand-linked cotton knit."),
+
+        // The rest of Ashgrove's Alpine Capsule, shelved in the same poll as the Storm Shell
+        // above — a second apart, the way a storefront writes a drop.
+        Piece(brand: 5, file: "ashgrove-fleece", title: "High-Pile Fleece Half-Zip — Heather", type: "Fleece",
+              price: 165, kind: .product, hoursAgo: 2.5 + 1 / 3600, summary: "Deep-pile recycled fleece with a stand collar."),
+        Piece(brand: 5, file: "ashgrove-trail-runner", title: "Ridge Trail Runner — Granite", type: "Shoes",
+              price: 150, kind: .product, hoursAgo: 2.5 + 2 / 3600, sizes: shoes, summary: "Lugged trail shoe on a rock plate."),
+        Piece(brand: 5, file: "ashgrove-sling", title: "Packable Sling Bag — Black", type: "Bag",
+              price: 78, kind: .product, hoursAgo: 2.5 + 3 / 3600, sizes: ["One Size"]),
+        Piece(brand: 5, file: "ashgrove-cap", title: "Nylon Five-Panel Cap — Mustard", type: "Hat",
+              price: 45, kind: .product, hoursAgo: 2.5 + 4 / 3600, sizes: ["One Size"]),
+        Piece(brand: 5, file: "ashgrove-beanie", title: "Ribbed Wool Beanie — Rust", type: "Hat",
+              price: 38, kind: .product, hoursAgo: 2.5 + 5 / 3600, sizes: ["One Size"]),
 
         Piece(brand: 0, file: "halden-cargo-pant", title: "Ripstop Cargo Pant — Tan", type: "Pants",
               price: 150, kind: .product, hoursAgo: 60, owned: true, sizes: waists),
@@ -160,12 +184,47 @@ enum DemoCatalog {
                 update.previousPriceText = "$\(Int(was))"
                 update.previousPriceAmount = was
             }
+            // News when it was published, read or not — the owned pieces have been seen, and
+            // sit below the line with everything else that has.
+            update.arrive(at: published)
             update.isSeen = piece.owned
             context.insert(update)
             if brand.lastActivityAt.map({ $0 < published }) ?? true { brand.lastActivityAt = published }
             byFile[piece.file] = update
             installCutout(named: piece.file, from: base, on: update)
         }
+
+        // A release of six pieces: the Storm Shell and the five shelved beside it.
+        let capsule = pieces.indices.filter { pieces[$0].brand == 5 }.map { "shopify:\(910_000 + $0)" }
+        let released = now.addingTimeInterval(-2.5 * 3600 + 1)
+        let release = BrandUpdate(
+            externalID: "collection:ashgrove-alpine-capsule",
+            brand: brands[5],
+            title: "Alpine Capsule",
+            summary: "Six pieces for wet trails and cold summits.",
+            linkURL: URL(string: "https://\(labels[5].host)/collections/alpine-capsule"),
+            publishedAt: released,
+            kind: .collection
+        )
+        release.memberExternalIDs = capsule
+        release.arrive(at: released)
+        context.insert(release)
+        brands[5].noteActivity(released)
+
+        // A brand-wide sale, in the words the announcement-bar detector writes (`SaleBanner`).
+        let saleAt = now.addingTimeInterval(-1.8 * 3600)
+        let sale = BrandUpdate(
+            externalID: "sale:\(labels[1].host)",
+            brand: brands[1],
+            title: "25% OFF · CODE AUTUMN",
+            summary: "25% off everything with code AUTUMN.",
+            linkURL: URL(string: "https://\(labels[1].host)"),
+            publishedAt: saleAt,
+            kind: .sale
+        )
+        sale.arrive(at: saleAt)
+        context.insert(sale)
+        brands[1].noteActivity(saleAt)
 
         // Bookmarked out of the feed, so the Inspiration wall — the tab Saved opens on —
         // is not empty. The rest of what is saved is owned.
@@ -197,11 +256,12 @@ enum DemoCatalog {
             context.insert(fit)
         }
 
-        // Two dates written down by hand, so the calendar has something ahead of it.
+        // Dates written down by hand, so the calendar has something ahead of it — and one
+        // tomorrow, inside the two days that earn the line above the feed.
         let calendar = Calendar.current
         let morning = calendar.startOfDay(for: now)
         context.insert(PlannedDrop(brand: brands[2], title: "Summer capsule",
-                                   releaseAt: morning.addingTimeInterval(2 * 86_400 + 11 * 3600)))
+                                   releaseAt: morning.addingTimeInterval(1 * 86_400 + 10 * 3600)))
         context.insert(PlannedDrop(brand: brands[4], title: "Indigo 14oz restock",
                                    releaseAt: morning.addingTimeInterval(4 * 86_400 + 10 * 3600)))
         context.insert(PlannedDrop(brand: brands[0], title: "Fall canvas collection",

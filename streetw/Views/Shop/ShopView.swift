@@ -201,7 +201,7 @@ struct ShopView: View {
             if !searching { cheaper = false; formal = false; inMySize = false }
         }
         .sheet(item: $fitting) { pick in
-            FitStudio(subject: .product(pick.update), anchor: pick.partner?.pairingID)
+            FitCanvas(fit: nil, starting: .around(.product(pick.update), anchor: pick.partner?.pairingID))
         }
     }
 

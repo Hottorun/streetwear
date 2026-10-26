@@ -133,11 +133,9 @@ struct ContentView: View {
         }
         // Presented once, here, whichever tab's avatar asked — see `YouRoute`.
         .sheet(isPresented: Bindable(you).isOpen) { YouView() }
-        // Above the tab bar rather than over the card that was saved. `quickSave` claims
-        // the horizontal drag on the lower half of a feed card, so anything laid over that
-        // region is competing with a gesture for the same pixels — and the card in
-        // question has usually been scrolled past by the time you decide to amend it
-        // anyway.
+        // Above the tab bar rather than over the card that was saved: a half-width card has
+        // no room for it, and the card in question has usually been scrolled past by the
+        // time you decide to amend it anyway.
         .overlay(alignment: .bottom) {
             SaveToast()
                 .padding(.bottom, 92 + confirmation.bottomClearance)

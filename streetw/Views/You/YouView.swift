@@ -378,8 +378,8 @@ private struct FailingBrandRow: View {
 ///
 /// What the feed's lines about the profile open — "SET YOUR SIZES", "FILTERED TO MENSWEAR" —
 /// which are about these two settings and nothing else, so they open onto these and not onto
-/// the whole of You. The name is from when this sheet held every setting; the rest are on You.
-struct SettingsSheet: View {
+/// the whole of You.
+struct SizesSheet: View {
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {

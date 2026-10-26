@@ -770,7 +770,7 @@ private struct SelectionBarLabel: View {
 
 /// Filing a selection: every board, and whether all, some or none of the selection is on it.
 ///
-/// The left-swipe picker's rows, for the same reason the two share `BoardRow` — filing is one
+/// The board picker's rows, for the same reason the two share `BoardRow` — filing is one
 /// act whether it is one thing or twenty. A tap on a board files the whole selection on it, or
 /// takes it all off when it is already all there (`CollectionEdit.toggle`).
 struct BulkBoardSheet: View {

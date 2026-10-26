@@ -86,7 +86,7 @@ this section is still the deck's, unchanged.
   counts for somebody who never filed anything as owned — and leans towards the slots the
   wardrobe has nothing in (`WardrobeGap`, and `DailyPicks.missing`, the Style tab's "what's
   missing": only once three things are owned, only over essential slots). The card prints that
-  pairing with a photograph of your own piece beside it, and the row opens `FitStudio` anchored
+  pairing with a photograph of your own piece beside it, and the row opens `FitCanvas` around the pick, anchored
   on that piece. "You own no outerwear yet" is said once, on the first pick that fills the gap.
 - **Different picks point at different things you own**, the `spreadAnchors` rule: each takes
   its best partner no earlier pick used, and the reason moves with the partner.
@@ -286,8 +286,9 @@ nobody here follows, which is where it is worth the most.
   a composite with somebody's clothes in it under a card chosen at random would be the card
   telling a story the ranking never told. Same rule as `sharedTraits`.
 - **A discovery card is never persisted with `isSeen == false`, and mostly never persisted at
-  all.** `FeedView` queries `#Predicate<BrandUpdate> { !$0.isSeen }`, so a stored page would empty
-  several thousand products from unfollowed brands into somebody's unread feed. Only a *save*
+  all.** An unread row is news: `FeedHistory.adoptLegacy` gives any row written unread an arrival,
+  so a stored page would empty several thousand products from unfollowed brands into somebody's
+  feed above the line. Only a *save*
   writes a row (`DiscoverSave`), keyed `shopify:<id>` with `productExternalID` beside it so a
   later follow merges rather than minting a second card. Verified by driving the app: saving from
   the deck took updates 800→801 and saves 8→9 while **unseen stayed at 12**.
