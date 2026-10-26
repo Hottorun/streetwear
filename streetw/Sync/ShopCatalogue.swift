@@ -101,7 +101,12 @@ final class ShopCatalogue {
             // The read yields every few hundred rows so a large store does not hold the main
             // actor for the whole walk — and a yield is a point where a sync may have deleted
             // what is next, so every row is checked before it is read.
-            if position % 400 == 399 { await Task.yield() }
+            if position % 400 == 399 {
+                await Task.yield()
+                // A newer read has been asked for — a sync landed mid-walk — and will do this
+                // properly; finishing this one would only be overwritten.
+                guard !Task.isCancelled else { return }
+            }
             guard !update.isDeleted, update.modelContext != nil, let brand = update.brand else { continue }
             let copy = CatalogueRow(update: update, brand: brand, profile: profile)
             copies.append(copy)
@@ -111,6 +116,7 @@ final class ShopCatalogue {
         let built = await Task.detached(priority: .userInitiated) {
             ShopIndex(copies.map(\.listing))
         }.value
+        guard !Task.isCancelled else { return }
 
         rows = found
         index = built

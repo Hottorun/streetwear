@@ -335,9 +335,10 @@ struct ShopView: View {
                 .tracking(0.4)
                 .foregroundStyle(Color.ink)
             }
-            if !result.unknown.isEmpty {
-                // Set aside, and said: the search went on without these rather than
-                // returning nothing because one word of a sentence is in no product title.
+            // Set aside, and said: the search went on without these rather than returning
+            // nothing because one word of a sentence is in no product title. Not when every
+            // word was unknown — the empty state under this says exactly that, larger.
+            if !result.unknown.isEmpty, result.outcome != .notInYourShops(result.unknown) {
                 DataLabel(
                     text: "NO " + result.unknown.map { "“\($0.uppercased())”" }.joined(separator: ", ")
                         + " IN YOUR SHOPS — LEFT OUT",
@@ -715,13 +716,13 @@ struct ShopView: View {
             .overlay(alignment: .topTrailing) {
                 Button { isBrowsing = false } label: {
                     Image(systemName: "xmark")
-                        .font(.system(size: 13, weight: .semibold))
+                        .font(.system(size: 12, weight: .semibold))
                         .foregroundStyle(Color.sweepInk)
-                        .frame(width: 34, height: 34)
                         // Fixed sweep, like the deck's own chips: it sits on the card's ground,
-                        // which does not invert.
+                        // which does not invert. Small, and in the filter row, so it neither
+                        // crowds the save circle on the card below nor covers a chip.
+                        .frame(width: 28, height: 28)
                         .background(Color.sweep, in: Circle())
-                        .overlay(Circle().stroke(Color.sweepInk.opacity(0.12), lineWidth: 0.5))
                         .frame(width: 44, height: 44)
                         .contentShape(.rect)
                 }
