@@ -20,9 +20,11 @@ struct SharedSave: Codable, Sendable, Hashable {
     var url: URL
     var title: String?
     var sharedAt: Date
-    /// The profile that was current when this was shared — its server user id — or nil for
-    /// the holder, which is every share an older extension wrote. Optional, so those still
-    /// decode. The app files a share only into this profile's store. See `docs/profiles.md`.
+    /// The store that was current when this was shared — `ProfileScope.home`: a profile's
+    /// server user id, or the account's id for the holder of an Apple ID that has a store of
+    /// its own — or nil for `default.store`, which is every share an older extension wrote.
+    /// Optional, so those still decode. The app files a share only into this store, and never
+    /// while it belongs to an account that is not signed in. See `docs/profiles.md`.
     var profileID: UUID?
 
     init(url: URL, title: String? = nil, sharedAt: Date = Date(), profileID: UUID? = nil) {
@@ -93,6 +95,14 @@ enum SharedInbox {
     /// Called once a save is committed to the store.
     static func remove(_ id: URL) {
         try? FileManager.default.removeItem(at: id)
+    }
+
+    /// Drops every waiting share filed for one of `owners` — the stores of an account whose
+    /// data is being removed from the phone. Nil is the store the holder had before the field.
+    static func discard(for owners: Set<UUID?>) {
+        for item in pending() where owners.contains(item.save.profileID) {
+            remove(item.id)
+        }
     }
 
     /// Whether the App Group is wired up at all. Used to show an honest error in the

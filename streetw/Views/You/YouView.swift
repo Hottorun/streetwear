@@ -60,6 +60,7 @@ struct YouView: View {
                 VStack(alignment: .leading, spacing: 40) {
                     AccountSection()
                     ProfilesSection()
+                    OtherAccountsRow()
                     taste(reading)
                     sizesSection
                     locationSection

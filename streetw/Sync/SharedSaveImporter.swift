@@ -75,9 +75,12 @@ enum SharedSaveImporter {
     ) async -> Int {
         let scope = scope ?? ProfileScope.active
         let known = ProfileScope.known
+        // By store, never by "whoever is current": a share filed while another Apple ID was
+        // signed in waits for that account rather than landing in this one's wall.
         let pending = SharedInbox.pending().filter { item in
-            guard let owner = item.save.profileID, known.contains(owner) else { return scope.isHolder }
-            return owner == scope.id
+            guard let owner = item.save.profileID else { return scope.home == nil }
+            guard known.contains(owner) else { return scope.isHolder }
+            return owner == scope.home
         }
         log.info("inbox: container \(SharedInbox.isAvailable ? "ok" : "MISSING"), \(pending.count) pending")
         guard !pending.isEmpty else { return 0 }

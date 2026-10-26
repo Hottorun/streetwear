@@ -2,7 +2,8 @@
 
 Part of the streetw guidance set; see `CLAUDE.md` for the index and the build rules.
 
-**Read this before touching `ProfileStore`, `ProfileSession`, `ProfileScope`, `ActingProfile`,
+**Read this before touching `ProfileStore`, `ProfileStores`, `ProfileSession`, `ProfileScope`,
+`BackgroundServices.syncProfiles`, `ActingProfile`,
 `ProfileRoutes.swift`, `Accounts.deleteProfile`, `Notifier`'s audience, or anything that reads a
 key out of `UserDefaults`.**
 
@@ -122,8 +123,10 @@ A store per profile makes partitioning a property of the container, which no que
   that has never signed in, which is the implicit one profile — or a profile's user id.
 - **The holder's store is `default.store`, unchanged, and its `UserDefaults` keys are the
   unscoped ones.** That is the whole upgrade: nothing moves, nothing is migrated, and the 1.1
-  data simply *is* the holder's profile. A profile's store is `profile-<id>.store` beside it,
-  and its keys are `<key>.<id>` (`ProfileScope.key`).
+  data simply *is* the holder's profile. Every other store is filed under its account —
+  `Accounts/<account>/profile-<id>.store` — and its keys are `<key>.<home>`
+  (`ProfileScope.key`, `ProfileScope.home`). See *Another Apple ID on the same phone* below for
+  the one holder that does not get `default.store`.
 - **`ProfileSession` holds everything that is about one person** — the container, sizes, the
   style statement, `RemoteSync`, `SyncEngine`, the Discover deck, recommendations, the save
   confirmation, the collection route and the drop-hint status — and **a switch builds a new one
@@ -147,10 +150,44 @@ A store per profile makes partitioning a property of the container, which no que
   usage tally, the saved-price-drop alert setting and every dev flag. A new key has to be put in
   one list or the other (`ProfileScope.scopedKeys`), which is also what deletion clears.
 - **Local alerts carry the label too.** `WatchNotifier`, `PriceAlerts` and `DropReminders` run on
-  the current store and label for a non-holder scope with the same `ProfileAlert.labelled`. Drop
-  reminders are prefixed per profile (`drop-` for the holder, unchanged; `drop@<id>-` for a
-  profile), so rewriting one profile's set never clears another's. Watches and price drops of a
-  profile that is not current are said by the server; locally they wait until it is.
+  one profile's store and label for a non-holder scope with the same `ProfileAlert.labelled`, and
+  carry its `profileID`, so tapping one switches to that profile through the same
+  `ProfileStore.adopt(pushedFor:)` a server push uses. They run for every profile on the
+  account, not only the current one — see *The background pass* below. Drop reminders are
+  prefixed per **store** (`drop-` for `default.store`, unchanged; `drop@<home>-` for any other),
+  so rewriting one profile's set never clears another's, and the holder of a second Apple ID
+  does not share `drop-` with the first one's holder.
+
+### The background pass
+
+- **A background refresh or a push wake syncs every profile on the account, each into its own
+  store** (`BackgroundServices.syncProfiles`). It used to sync the current store only, so another
+  profile's feed was as old as the last switch to it, and the alerts said on the phone —
+  `PriceAlerts` on that profile's saves, `WatchNotifier` — waited for the same switch.
+- **One merge path.** Each profile goes through the very `RemoteSync.sync` the foreground uses,
+  built over the container this launch already holds for that store, with that profile's keys,
+  sizes and `X-Profile-ID` (`ProfileStore.syncer`). The current profile's is the session's own.
+  Not the full `ProfileSession`: the deck, the suggestions and the confirmation are a screen's,
+  and nobody is looking.
+- **The order is the budget.** iOS allows about thirty seconds. The profile a push names goes
+  first, then the current one, then the rest by when a pass last reached them
+  (`backgroundPassAt`, a phone key). The pass starts nothing new after `passBudget` (22s) and
+  stops at once when iOS expires the task; whoever it missed is first in line next time, because
+  only a sync that finished is stamped. A push that arrives with the app open syncs the one
+  profile it names, because the banner waits on it.
+- **One writer per store.** `RemoteSync.sync` takes a per-store lock across every instance
+  (`StoreWriters`): a background pass **skips** a store the foreground is syncing, and a
+  foreground sync **waits** for a background one on the store it was just switched to. Two
+  merges interleaving on one context at every `await` would each decide what is new from rows
+  the other is halfway through writing.
+- **Drop reminders are rewritten from each store in the pass too**, so a profile that is not
+  current still has its reminders armed after permission was granted while another was on
+  screen.
+- **Verified on the simulator with `-debugBackgroundPass YES`**, which runs the same pass when the
+  app is backgrounded, under a background-task assertion. The simulator cannot run a
+  `BGAppRefreshTask` without lldb attached (`_simulateLaunchForTaskWithIdentifier:`), and refuses
+  a silent `simctl push` as having no visible content. With the holder current, four events for a
+  profile's brand landed in that profile's store, unread and arrived.
 
 ### Switching, adding and losing a profile
 
@@ -160,16 +197,58 @@ A store per profile makes partitioning a property of the container, which no que
 - **Adding a profile does not switch to it.** The row appears and says *Switch*. Switching to a
   new profile lands on onboarding, because its store has no brands and its starter-pack latch is
   its own — which is the right first screen for setting somebody else up.
-- **The share extension saves into the profile that was current when it ran**
+- **The share extension saves into the store that was current when it ran**
   (`SharedInbox.currentProfile`, a file in the App Group container rather than a
   `UserDefaults(suiteName:)`, which the privacy manifest says does not exist). Each share carries
-  its `profileID`, and the app drains only the current profile's items, so a share filed while
-  Anna was current lands in Anna's wall whenever Anna is next current. A share for a profile this
-  phone no longer has lands in the holder's, rather than waiting forever.
+  that store's `home` in `profileID`, and the app drains only the current store's items, so a
+  share filed while Anna was current lands in Anna's wall whenever Anna is next current — and a
+  share filed while another Apple ID was signed in waits for that account, never landing in a
+  hidden account's wall or in this one's. A share for a store this phone no longer has lands in
+  the current holder's, rather than waiting forever.
 - **A profile's local store goes with the profile.** Deleting it on this phone deletes its store
   and its scoped keys; a list from the server that no longer names a profile (deleted on another
-  phone) does the same. Deleting the account deletes every profile's store and keeps the holder's,
-  which was the phone's before there was an account and stays the phone's after.
+  phone) does the same — **only the signed-in account's list, and only in that account's
+  directory**. Deleting the account deletes every store filed under it. `default.store` stays
+  when the account owned it — it was the phone's before there was an account and stays the
+  phone's after, free for the next account to sign in — and the confirmation says which of the
+  two the holder's saves are (`ProfileStore.accountDeletionKeepsSaves`).
+
+### Another Apple ID on the same phone
+
+The phone used to hold only the signed-in account's stores: signing into a second Apple ID
+pruned the first one's profile stores the moment its list arrived, so Anna's saves, boards and
+fits were gone from the phone for good because somebody else had signed in. Now:
+
+- **Stores are filed by account and hidden, not deleted** (`ProfileStores`). Signed in, the app
+  shows only that account's stores; the rest wait in their directories, untouched by any list, and
+  come back with their saves, boards and fits when that account signs in again. Only three things
+  delete a store: deleting its profile, deleting its account from this phone, and Remove (below).
+- **`default.store` belongs to the first account that signs in** (`ProfileStores.owner`, a phone
+  key). What was on the phone signed out becomes that account's holder profile — the rule from
+  before, kept. **A later Apple ID gets an empty holder store of its own**,
+  `Accounts/<account>/holder.store`, whose `home` is the account's id. It still sends no header:
+  it is the holder.
+- **Signed out, the phone shows `default.store`, whoever owns it.** There is no sign-out in the
+  app: a phone is signed out by deleting the account (which releases `default.store`) or by a
+  token the server no longer knows, which re-registers as nobody. The latter is the owner's own
+  phone more often than not, and it keeps working on the phone's data as it did before accounts.
+  `ServerSettings.accountChanged` moves the app off any account's own store the moment that
+  happens, and `RemoteSync.sync` refuses to sync a store filed under an account that is not
+  signed in — before both, a lapsed token left the phone on the second account's store and
+  re-followed its brands on the new anonymous device.
+- **Unowned again after Remove.** If Remove deletes `default.store`, the next account to sign in
+  without a holder store of its own takes the empty one; an account that has one keeps it.
+- **Hidden accounts' drop reminders are cancelled** (`DropReminders.retain`), because "Supreme
+  drops today" on somebody else's phone session is the first account's calendar read out to
+  them. They are a rewrite from each store, so `ProfileStore.signIn` reschedules every visible
+  profile's on the way back.
+- **Remove** is one quiet row on You, drawn only when another account's stores are on the phone
+  (`OtherAccountsRow`, `ProfileStore.removeOtherAccounts`), and confirmed. It deletes every store
+  of every account but the one shown — signed out, the one shown is `default.store`'s owner —
+  with its scoped keys and its waiting shares. Profile stores written before stores were filed by
+  account, which no list has claimed, count as another account's: nothing says whose they are.
+  Such a store is moved into an account's directory the first time that account's list names it
+  (`ProfileStores.adoptLegacy`).
 - **A refused profile falls back to the holder** (`APIError.profileRefused`): deleted elsewhere,
   account deleted elsewhere, or the device re-registered. The store is not deleted on a refusal —
   only a list that omits the profile does that — so a misread refusal costs a switch, not data.
@@ -196,9 +275,12 @@ A store per profile makes partitioning a property of the container, which no que
 
 ### Known gaps
 
-- Background refresh and push wakes sync the current profile only. Other profiles' feeds catch
-  up when they are next current; their alerts are the server's and do not depend on it.
-- `PriceAlerts` reads saves, which never leave the phone, so a markdown on a save of a profile
-  that is not current is said when that profile is next current.
-- A phone holds the stores of the account it is signed into. Signing into a different Apple ID
-  on the same phone prunes the previous account's profile stores once its list arrives.
+- **A second Apple ID's follows can start with the phone's.** Signing in folds the anonymous
+  device's follows and empty size ladders into the account (`Accounts.merge`, the server's rule
+  for a reinstall). A phone signed out on the first account's `default.store` has re-followed
+  that store's brands on its anonymous device, so the second account's empty holder store fills
+  with those brands — never the saves, boards or fits — on its first sync. Fixing it is a
+  server change (a sign-in that does not merge) or a re-registration before signing in, which
+  orphans a device row holding the phone's APNs token.
+- A background pass reaches only the signed-in account's profiles; a hidden account's feeds and
+  local alerts wait for it to sign in again. Standalone has one implicit profile and no pass.

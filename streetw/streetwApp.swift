@@ -122,6 +122,9 @@ struct streetwApp: App {
             if phase == .background {
                 AppDelegate.schedule()
                 UsageCounts.reportOnTheWayOut()
+                #if DEBUG
+                AppDelegate.debugPassIfRequested()
+                #endif
             }
 
             // The Discover ledger is written in batches rather than once per card — see
