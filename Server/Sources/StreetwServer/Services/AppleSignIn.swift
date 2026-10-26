@@ -41,6 +41,9 @@ struct AppleIdentity: Sendable, Equatable {
 }
 
 protocol AppleIdentityVerifying: Sendable {
+    /// Whether this verifier can accept anything. Told to the app (`AccountStatus`), so it
+    /// does not offer a button the server will refuse.
+    var isAvailable: Bool { get }
     func verify(identityToken: String, nonce: String, now: Date) async throws -> AppleIdentity
 }
 
@@ -151,6 +154,7 @@ struct AppleIdentityClaims: Decodable, Sendable {
 /// What a deployment uses until RS256 is available: a refusal, with the reason.
 struct UnavailableAppleIdentityVerifier: AppleIdentityVerifying {
     static let reason = "Sign in with Apple is not available on this server yet"
+    var isAvailable: Bool { false }
 
     func verify(identityToken: String, nonce: String, now: Date) async throws -> AppleIdentity {
         throw Abort(.serviceUnavailable, reason: Self.reason)
@@ -160,6 +164,8 @@ struct UnavailableAppleIdentityVerifier: AppleIdentityVerifying {
 /// Accepts an **unsigned** token and checks everything else. Local development only — see the
 /// file header and `AppleSignInConfiguration.make`.
 struct UnsignedAppleIdentityVerifier: AppleIdentityVerifying {
+    var isAvailable: Bool { true }
+
     func verify(identityToken: String, nonce: String, now: Date) async throws -> AppleIdentity {
         do {
             return try AppleIdentityClaims.decode(identityToken).check(nonce: nonce, now: now)

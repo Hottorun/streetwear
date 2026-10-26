@@ -28,11 +28,12 @@ func accountRoutes(authed: any RoutesBuilder, admin: any RoutesBuilder) {
     /// another phone is reflected rather than remembered.
     authed.get("account") { req async throws -> AccountStatus in
         let device = try await req.authenticatedDevice()
+        let available = req.application.appleSignIn.verifier.isAvailable
         let user = try await UserModel.find(device.$user.id, on: req.db)
         guard let accountID = user?.$account.id,
               let account = try await AccountModel.find(accountID, on: req.db)
-        else { return AccountStatus(account: nil) }
-        return AccountStatus(account: try AccountDTO(account))
+        else { return AccountStatus(account: nil, signInAvailable: available) }
+        return AccountStatus(account: try AccountDTO(account), signInAvailable: available)
     }
 
     /// Sign in with Apple. See `Accounts.signIn` for what happens to the device's user.

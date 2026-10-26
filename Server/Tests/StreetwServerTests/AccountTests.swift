@@ -11,6 +11,8 @@ import VaporTesting
 /// Apple. Each token is the subject itself — the claim rules are tested separately on
 /// `AppleIdentityClaims`, where they live.
 private struct StubVerifier: AppleIdentityVerifying {
+    var isAvailable: Bool { true }
+
     func verify(identityToken: String, nonce: String, now: Date) async throws -> AppleIdentity {
         guard nonce == "raw-nonce" else { throw Abort(.unauthorized, reason: "nonce") }
         return AppleIdentity(subject: identityToken)
@@ -246,6 +248,10 @@ struct AccountTests {
                 #expect(res.body.string.contains(UnavailableAppleIdentityVerifier.reason))
             })
             #expect(try await AccountModel.query(on: app.db).count() == 0)
+            // And the app is told, so it does not offer the button.
+            try await app.testing().test(.GET, "v1/account", headers: headers) { res async throws in
+                #expect(try res.content.decode(AccountStatus.self).signInAvailable == false)
+            }
         }
     }
 
@@ -265,7 +271,9 @@ struct AccountTests {
             let (headers, device) = try await register(app, sizes: SizePayload(apparel: ["M"], shoe: []))
 
             try await app.testing().test(.GET, "v1/account", headers: headers) { res async throws in
-                #expect(try res.content.decode(AccountStatus.self).account == nil)
+                let status = try res.content.decode(AccountStatus.self)
+                #expect(status.account == nil)
+                #expect(status.signInAvailable == true)
             }
 
             let session = try await signIn(app, as: "alice", headers: headers)

@@ -363,9 +363,15 @@ public struct AccountSession: Codable, Sendable {
 /// anonymous device, which is every device until somebody signs in.
 public struct AccountStatus: Codable, Sendable {
     public var account: AccountDTO?
+    /// Whether this server can verify a Sign in with Apple token at all. The app offers the
+    /// button only when it can: a deployment without a verifier refuses every sign-in, and a
+    /// button that always fails is worse than no button. Optional so the app reads a server
+    /// that predates it as "no".
+    public var signInAvailable: Bool?
 
-    public init(account: AccountDTO?) {
+    public init(account: AccountDTO?, signInAvailable: Bool? = nil) {
         self.account = account
+        self.signInAvailable = signInAvailable
     }
 }
 
