@@ -662,3 +662,46 @@ Part of the streetw guidance set; see `CLAUDE.md` for the index and the build ru
   `test(...)`'s discardable return and silently pick that overload — the app comes up with
   no routes and everything 404s, while multi-statement closures resolve to yours and pass.
   The local helper is called `withServer`.
+
+## Embeddings
+
+Phase 3's search, "find similar" and photo matching all compare vectors, and the vectors come
+from one place: **`Embeddings/`, a Python service running Marqo FashionSigLIP, deployed as a
+second Railway service beside this one.** The server sends it text or image URLs and gets back
+unit vectors. It stores nothing, and nothing in either Swift package refers to it.
+
+- **What runs where.** The sidecar holds the model, fetches the photos it is asked about, and
+  returns vectors. The server decides what to embed and when, stores each vector with the model
+  id that produced it, and does the comparing in Postgres. `SidecarEmbeddingProvider`
+  (`Services/Embeddings.swift`) is the server's half of the wire. The phone never talks to the
+  sidecar.
+- **Self-hosted, not an API.** A query embedding is on the path of every search, and an image
+  embedding on every product the poller sees. A third-party API would put a stranger's uptime
+  in front of the search box and a per-call bill on the catalogue. It would also send every
+  query a person typed to somebody else, which `StyleStatement` was kept local to avoid. The
+  model is 200M parameters and runs on CPU at roughly 3–10 images a second on 2 vCPU
+  (measured in Docker and natively; Railway's own number is still to be taken), and embedding
+  100k products once costs well under a dollar. There is nothing to buy. `Embeddings/README.md` and `Embeddings/eval/README.md` have the
+  measurements.
+- **Python, in its own service.** torch has no Swift equivalent worth the port, and putting it
+  in the server's image would put a 2 GB toolchain into every server deploy. A separate service
+  also lets the model's memory be sized and restarted on its own.
+- **FashionSigLIP v1, because v2 is not public.** Marqo offers v2 only commercially ("Contact
+  Marqo"). v1 is Apache-2.0 and pinned by revision in `download_model.py`. On our catalogues
+  it beat the base SigLIP it was tuned from by only a few points, within the noise of a
+  100-query eval (`Embeddings/eval/README.md`). The case for it is that it costs nothing over
+  the base: same architecture, same speed.
+- **`modelID` is stored beside every vector, and includes the revision.** Two models, or two
+  revisions of one, do not share a space. A vector from one compared with a query from the
+  other still produces a ranking, and the ranking is noise. If an answer names a different
+  model from the one `modelID` reported, the provider throws `modelChanged` rather than
+  return the vectors under the old id.
+- **Unset is off, and off is a supported state.** With `EMBEDDING_URL` or `EMBEDDING_TOKEN`
+  unset, `SidecarEmbeddingProvider.make` returns nil and search is full-text. Every failure
+  is an `EmbeddingError` naming which one it was (unreachable, refused, malformed, model
+  changed, unreadable photos), so search can fall back without guessing. Text timeouts are
+  3 s: a person is waiting on the box, and full-text beats a spinner.
+- **The sidecar fetches URLs, so it is an SSRF surface, and it sits next to Postgres.** It
+  refuses non-public addresses on every hop and pins the connection to the address it
+  checked. It requires a token, compared in constant time, and refuses everything without
+  one, like `ADMIN_TOKEN`. It has no public domain.

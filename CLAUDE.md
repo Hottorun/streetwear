@@ -25,7 +25,8 @@ of the entire push chain. So:
 When renaming anything, remember **`streetwear` contains `streetw`** — match on a word boundary or
 you will rename the product category the app is about.
 
-The repo holds **three things** — a shared library, an iOS app, and a server:
+The repo holds **four things** — a shared library, an iOS app, a server, and the server's
+embedding sidecar:
 
 ```
 Package.swift            StreetwCore library + tests
@@ -37,6 +38,7 @@ ShareExtension/          share-sheet extension target
 streetw.xcodeproj        app + ShareExtension targets; links StreetwCore as a local package
 Tools/AppIcon/           renders the app icon — the PNGs in the catalogue are generated
 Server/                  SEPARATE SwiftPM package: Vapor + Fluent poller and API
+Embeddings/              SEPARATE deployable, Python: the FashionSigLIP embedding sidecar + its eval
 docs/                    the long-form rules for one area each — see below
 ```
 
@@ -45,6 +47,12 @@ root dependency, opening the iOS app in Xcode would resolve and build the whole 
 tree. Run `swift build`/`swift test` from `Server/` for it, from the root for the library,
 and `xcodebuild` for the app. `Server/README.md` covers running it; `BACKEND.md` covers why
 it exists.
+
+`Embeddings/` is a second Railway service, reachable only from the server over the private
+network. Nothing in either Swift package refers to it, and it must stay that way: the server
+speaks to it over HTTP (`SidecarEmbeddingProvider`), so torch never enters a Swift build. Run
+`pytest` from `Embeddings/`; `Embeddings/README.md` covers deploying it, and `docs/server.md`
+(*Embeddings*) covers why it is self-hosted.
 
 ### The docs set
 

@@ -1,0 +1,72 @@
+[
+ {
+  "model": "marqo-fashionsiglip",
+  "threads": 1,
+  "load_s": 7.7,
+  "rss_after_load_mb": 1404,
+  "image_1_ms": 81.5,
+  "image_8_ms": 799.4,
+  "image_32_ms": 7667.9,
+  "text_1_ms": 57.5,
+  "text_32_ms": 1653.8,
+  "image_per_s_batched": 4.2,
+  "peak_rss_mb": 1404,
+  "steady_rss_mb": 404
+ },
+ {
+  "model": "marqo-fashionsiglip",
+  "threads": 2,
+  "load_s": 13.3,
+  "rss_after_load_mb": 652,
+  "image_1_ms": 101.9,
+  "image_8_ms": 1075.4,
+  "image_32_ms": 3284.4,
+  "text_1_ms": 47.2,
+  "text_32_ms": 905.5,
+  "image_per_s_batched": 9.7,
+  "peak_rss_mb": 1231,
+  "steady_rss_mb": 492
+ },
+ {
+  "model": "marqo-fashionsiglip",
+  "threads": 4,
+  "load_s": 8.5,
+  "rss_after_load_mb": 1892,
+  "image_1_ms": 87.0,
+  "image_8_ms": 538.7,
+  "image_32_ms": 3219.0,
+  "text_1_ms": 194.7,
+  "text_32_ms": 1476.8,
+  "image_per_s_batched": 9.9,
+  "peak_rss_mb": 1892,
+  "steady_rss_mb": 494
+ },
+ {
+  "model": "marqo-fashionsiglip",
+  "threads": 6,
+  "load_s": 8.8,
+  "rss_after_load_mb": 1675,
+  "image_1_ms": 121.9,
+  "image_8_ms": 855.0,
+  "image_32_ms": 4472.0,
+  "text_1_ms": 148.0,
+  "text_32_ms": 973.9,
+  "image_per_s_batched": 7.2,
+  "peak_rss_mb": 1675,
+  "steady_rss_mb": 670
+ },
+ {
+  "model": "zooclaw-fashionsiglip2",
+  "threads": 4,
+  "load_s": 3.2,
+  "rss_after_load_mb": 945,
+  "image_1_ms": 270.4,
+  "image_8_ms": 2194.0,
+  "image_32_ms": 16406.1,
+  "text_1_ms": 48.4,
+  "text_32_ms": 818.5,
+  "image_per_s_batched": 2.0,
+  "peak_rss_mb": 1761,
+  "steady_rss_mb": 637
+ }
+]
