@@ -386,7 +386,11 @@ struct AppleClientSecret: AppleClientSecretSigning {
     let keyID: String
     let teamID: String
     let clientID: String
-    let key: P256.Signing.PrivateKey
+    /// The key's raw scalar, not the key. swift-crypto's `P256.Signing.PrivateKey` is
+    /// `Sendable` on Apple platforms (it is CryptoKit's there) and not on Linux, so holding one
+    /// in a `Sendable` struct compiles on the Mac and fails the deploy's build. The key is
+    /// rebuilt per secret, which is once per sign-in or deletion.
+    let keyData: Data
     var lifetime: TimeInterval = 300
 
     init(keyID: String, teamID: String, clientID: String = AppleSignInConstants.clientID, pem: String) throws {
@@ -395,14 +399,15 @@ struct AppleClientSecret: AppleClientSecretSigning {
         self.clientID = clientID
         // Deployment platforms mangle multi-line values; the escaped form is accepted for the
         // same reason `APNS_KEY_P8` is.
-        self.key = try P256.Signing.PrivateKey(pemRepresentation: pem.replacingOccurrences(of: "\\n", with: "\n"))
+        self.keyData = try P256.Signing.PrivateKey(pemRepresentation: pem.replacingOccurrences(of: "\\n", with: "\n"))
+            .rawRepresentation
     }
 
     init(keyID: String, teamID: String, clientID: String = AppleSignInConstants.clientID, key: P256.Signing.PrivateKey) {
         self.keyID = keyID
         self.teamID = teamID
         self.clientID = clientID
-        self.key = key
+        self.keyData = key.rawRepresentation
     }
 
     func clientSecret(now: Date) throws -> String {
@@ -428,6 +433,7 @@ struct AppleClientSecret: AppleClientSecretSigning {
         let signingInput = "\(header).\(claims)"
         // `rawRepresentation` is r‖s, 64 bytes — what JWS calls an ES256 signature. The DER
         // form is the other encoding of the same thing, and Apple refuses it.
+        let key = try P256.Signing.PrivateKey(rawRepresentation: keyData)
         let signature = try key.signature(for: Data(signingInput.utf8)).rawRepresentation
         return "\(signingInput).\(signature.base64URLEncodedString())"
     }
