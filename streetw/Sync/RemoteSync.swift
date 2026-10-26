@@ -836,6 +836,12 @@ final class RemoteSync {
         do {
             try await ensureRegistered(sizes: sizes)
             guard let api else { return true }
+            // **A store filed under an account that is not signed in does not sync.** The
+            // registration above can be the one that signed the phone out; this session is
+            // then about to be replaced (`ServerSettings.accountChanged`), and spending
+            // `didRegisterAfresh` here would re-follow that account's brands on a device that
+            // is nobody's — or, after another sign-in, somebody else's.
+            if let owner = scope.account, owner != settings.account?.id { return true }
 
             if didRegisterAfresh {
                 // **The holder's to spend.** A new anonymous device has no account, so it has

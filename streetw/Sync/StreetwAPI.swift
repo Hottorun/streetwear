@@ -67,8 +67,16 @@ final class ServerSettings {
     var account: AccountDTO? {
         didSet {
             UserDefaults.standard.set(account.flatMap { try? JSONEncoder().encode($0) }, forKey: "serverAccount")
+            if account?.id != oldValue?.id { accountChanged?() }
         }
     }
+
+    /// Told when the account changes — a sign-in, a deletion, or a token the server no longer
+    /// knows, which re-registers as nobody — so `ProfileStore` can move the app onto a store
+    /// the new account may see. Without it a lapsed token left the phone signed out on the
+    /// previous account's own store, and its first sync re-followed that account's brands on
+    /// the new anonymous device.
+    @ObservationIgnored var accountChanged: (() -> Void)?
 
     /// The deployed server. There is exactly one, and it is not user-configurable.
     ///

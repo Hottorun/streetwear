@@ -319,12 +319,12 @@ final class ProfileStore {
         // and still in the list. Anything else is the holder — so `-standalone YES`, a signed-out
         // install and an older server all behave exactly as they did before profiles.
         let account = Self.signedIn(settings)
-        let listedFor = UserDefaults.standard.string(forKey: Self.listAccountKey).flatMap(UUID.init(uuidString:))
+        let cachedFor = UserDefaults.standard.string(forKey: Self.listAccountKey).flatMap(UUID.init(uuidString:))
         let cached = UserDefaults.standard.data(forKey: Self.listKey)
             .flatMap { try? JSONDecoder().decode([ProfileDTO].self, from: $0) } ?? []
         // A list written before it was stamped with its account is the signed-in one's: until
         // now nothing else could have written it.
-        let list = account != nil && (listedFor == nil || listedFor == account) ? cached : []
+        let list = account != nil && (cachedFor == nil || cachedFor == account) ? cached : []
         profiles = list
         if let account {
             ProfileStores.adoptLegacy(Set(list.map(\.id)), into: account)
@@ -356,8 +356,24 @@ final class ProfileStore {
         session = ProfileSession(scope: opened, container: container, settings: settings, location: location)
         containers[opened.storeURL] = container
         ProfileScope.known = ProfileStores.allHomes()
+        listedFor = list.isEmpty ? nil : account
         adopt(session)
         noteOtherAccounts()
+        // After the first view update rather than inside whatever set the account — a sync's
+        // registration, a sign-in — so the switch never lands halfway through a property write.
+        settings.accountChanged = { [weak self] in
+            Task { @MainActor in self?.accountDidChange() }
+        }
+    }
+
+    /// Which account `profiles` is the list of.
+    @ObservationIgnored private var listedFor: UUID?
+
+    /// The phone is on a different account, or on none: another account's list is not this
+    /// one's, and the store on screen may not be one it can see.
+    private func accountDidChange() {
+        if !profiles.isEmpty, listedFor != account { setList([], for: nil) }
+        settle()
     }
 
     var current: ProfileScope { session.scope }
@@ -604,6 +620,7 @@ final class ProfileStore {
 
     private func setList(_ list: [ProfileDTO], for account: UUID?) {
         profiles = list
+        listedFor = list.isEmpty ? nil : account
         if list.isEmpty {
             UserDefaults.standard.removeObject(forKey: Self.listKey)
             UserDefaults.standard.removeObject(forKey: Self.listAccountKey)
