@@ -1,0 +1,62 @@
+{
+  "siglip-base": {
+    "model": "siglip-base",
+    "repo": "hf-hub:timm/ViT-B-16-SigLIP",
+    "dimension": 768,
+    "load_seconds": 7.5,
+    "corpus_seconds_per_image_batched": 0.0655,
+    "peak_rss_mb": 1727,
+    "text_to_product": {
+      "recall@1": 0.48,
+      "recall@10": 0.91,
+      "mrr": 0.6356920190579696,
+      "queries": 100
+    },
+    "image_to_product": {
+      "recall@1": 0.71,
+      "recall@10": 0.9,
+      "mrr": 0.7794911704263526,
+      "queries": 100
+    }
+  },
+  "marqo-fashionsiglip": {
+    "model": "marqo-fashionsiglip",
+    "repo": "hf-hub:Marqo/marqo-fashionSigLIP",
+    "dimension": 768,
+    "load_seconds": 7.3,
+    "corpus_seconds_per_image_batched": 0.177,
+    "peak_rss_mb": 1584,
+    "text_to_product": {
+      "recall@1": 0.5,
+      "recall@10": 0.92,
+      "mrr": 0.6418547806146457,
+      "queries": 100
+    },
+    "image_to_product": {
+      "recall@1": 0.75,
+      "recall@10": 0.9,
+      "mrr": 0.8114841160539257,
+      "queries": 100
+    }
+  },
+  "zooclaw-fashionsiglip2": {
+    "model": "zooclaw-fashionsiglip2",
+    "repo": "srpone/zooclaw-fashionsiglip2",
+    "dimension": 768,
+    "load_seconds": 7.7,
+    "corpus_seconds_per_image_batched": 0.6722,
+    "peak_rss_mb": 1547,
+    "text_to_product": {
+      "recall@1": 0.61,
+      "recall@10": 0.92,
+      "mrr": 0.7126317681988007,
+      "queries": 100
+    },
+    "image_to_product": {
+      "recall@1": 0.78,
+      "recall@10": 0.92,
+      "mrr": 0.8407065924788442,
+      "queries": 100
+    }
+  }
+}
