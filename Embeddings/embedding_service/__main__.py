@@ -1,4 +1,5 @@
 import logging
+import socket
 
 import uvicorn
 
@@ -12,14 +13,24 @@ def load(settings: Settings) -> OpenCLIPEmbedder:
                             batch_size=settings.batch_size)
 
 
+def dual_stack_socket(port: int) -> socket.socket:
+    """One socket for IPv6 and IPv4. Railway's private network is IPv6, and the health
+    check and anything port-forwarded arrive over IPv4. Handing uvicorn `host="::"` is not
+    the same thing: asyncio sets IPV6_V6ONLY on it, and every IPv4 connection is refused."""
+    sock = socket.socket(socket.AF_INET6, socket.SOCK_STREAM)
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    sock.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 0)
+    sock.bind(("::", port))
+    return sock
+
+
 def main() -> None:
     logging.basicConfig(level=logging.INFO)
     settings = Settings.from_env()
     if not settings.token:
         logging.warning("EMBEDDING_TOKEN is not set: every embed request will be refused")
-    # "::" listens on IPv6 and, on Linux, IPv4 too. Railway's private network is IPv6.
-    uvicorn.run(create_app(settings, load), host="::", port=settings.port,
-                proxy_headers=False, server_header=False)
+    config = uvicorn.Config(create_app(settings, load), proxy_headers=False, server_header=False)
+    uvicorn.Server(config).run(sockets=[dual_stack_socket(settings.port)])
 
 
 if __name__ == "__main__":

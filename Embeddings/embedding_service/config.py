@@ -8,6 +8,11 @@ def _int(name: str, default: int) -> int:
     return int(value) if value else default
 
 
+def _float(name: str, default: float) -> float:
+    value = os.environ.get(name, "").strip()
+    return float(value) if value else default
+
+
 @dataclass(frozen=True)
 class Settings:
     # Empty means unset, and unset refuses every embed request: an open endpoint that makes
@@ -32,6 +37,6 @@ class Settings:
             batch_size=_int("EMBEDDING_BATCH_SIZE", cls.batch_size),
             max_items=_int("EMBEDDING_MAX_ITEMS", cls.max_items),
             max_image_bytes=_int("EMBEDDING_MAX_IMAGE_BYTES", cls.max_image_bytes),
-            fetch_timeout=float(os.environ.get("EMBEDDING_FETCH_TIMEOUT", cls.fetch_timeout)),
+            fetch_timeout=_float("EMBEDDING_FETCH_TIMEOUT", cls.fetch_timeout),
             port=_int("PORT", cls.port),
         )
