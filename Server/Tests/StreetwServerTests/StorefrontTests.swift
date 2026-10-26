@@ -1,4 +1,5 @@
 import Fluent
+import FluentPostgresDriver
 import Foundation
 import StreetwCore
 import Testing
@@ -806,6 +807,67 @@ struct MultiCountryStorefrontTests {
             await #expect(throws: (any Error).self) {
                 try await Storefronts.add(["FR"], to: other, on: app.db)
             }
+        }
+    }
+}
+
+/// The claim itself, which only Postgres runs: SQLite has neither `SKIP LOCKED` nor `= ANY`, so
+/// on SQLite the poller takes `dueWithoutClaim` and the suites above never reach the statement
+/// that decides which shops are fetched. Runs only when `STREETW_TEST_POSTGRES_URL` names a
+/// scratch database — the whole migration chain is applied and reverted, as `CreditRaceTests`
+/// does.
+@Suite(
+    "Storefront claims on Postgres",
+    .enabled(if: ProcessInfo.processInfo.environment["STREETW_TEST_POSTGRES_URL"] != nil),
+    .serialized
+)
+struct StorefrontPostgresClaimTests {
+    private func withPostgres(_ body: (Application) async throws -> Void) async throws {
+        let url = try #require(ProcessInfo.processInfo.environment["STREETW_TEST_POSTGRES_URL"])
+        let app = try await Application.make(.testing)
+        var config = try SQLPostgresConfiguration(url: url)
+        config.coreConfiguration.tls = .disable
+        app.databases.use(.postgres(configuration: config, maxConnectionsPerEventLoop: 8), as: .psql)
+        addMigrations(to: app)
+        do {
+            try await app.autoMigrate()
+            try await body(app)
+            try await app.autoRevert()
+        } catch {
+            try? await app.autoRevert()
+            try await app.asyncShutdown()
+            throw error
+        }
+        try await app.asyncShutdown()
+    }
+
+    @Test("The claim reads a regional shop once for all its followers, and never for a country that is off")
+    func claimsTheShopOnce() async throws {
+        try await withPostgres { app in
+            app.storefrontCountries = ["DE", "FR"]
+            let http = HostHTTP()
+            http.stub("example.com", catalogPath, body: shopifyCatalog(id: 1, title: "US Tee"))
+            http.stub("example.com", "/meta.json", body: meta(currency: "USD"))
+            http.stub("eu.example.com", catalogPath, body: shopifyCatalog(id: 1, title: "EU Tee", price: "170.00"))
+            http.stub("eu.example.com", "/meta.json", body: meta(currency: "EUR"))
+            let (brandID, shop, shopSource) = try await seedEurope(app, baselined: false)
+
+            // Only Italy follows, and Italy is off: the main shop is claimed, the European one not.
+            try await follower(app, of: brandID, country: "IT")
+            let poller = Poller(app: app, http: http)
+            await poller.tick()
+            #expect(http.requested.contains("example.com" + catalogPath))
+            #expect(!http.requested.contains { $0.hasPrefix("eu.example.com") })
+            #expect(try await SourceModel.find(shopSource.id, on: app.db)?.lastCheckedAt == nil)
+
+            // Germany and France follow: one claim, one read.
+            try await follower(app, of: brandID, country: "DE")
+            try await follower(app, of: brandID, country: "FR")
+            await poller.tick()
+            #expect(http.requested.filter { $0 == "eu.example.com" + catalogPath }.count == 1)
+            let read = try #require(try await SourceModel.find(shopSource.id, on: app.db))
+            #expect(read.baselinedAt != nil)
+            #expect(try await ProductModel.query(on: app.db).filter(\.$storefrontID == shop.id).count() == 1)
         }
     }
 }
