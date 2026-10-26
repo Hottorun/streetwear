@@ -2,6 +2,124 @@
 
 Part of the streetw guidance set; see `CLAUDE.md` for the index and the build rules.
 
+## Shop
+
+Phase 1 made Discover the lower half of a tab. `ShopView` is three things on one page, in the
+order somebody arrives wanting them: a field that takes a description, **today's picks** while
+the field is empty, and one row under the picks that opens the Discover deck. Everything below
+this section is still the deck's, unchanged.
+
+### The field searches your shops, and says so
+
+- **The scope is the honesty.** Until Phase 3 stores whole catalogues and Phase 4 puts a model
+  behind the field, it searches the products from the shops you follow **that are already on
+  this phone** (`ShopCatalogue`) — the newest few hundred per shop (`retentionPerBrand`), and in
+  server mode only what arrived as news. Under the box, always: "IN YOUR SHOPS · 398 PRODUCTS ON
+  THIS PHONE". It never says AI and never says the web, and it draws a magnifying glass rather
+  than a sparkle, because a sparkle is the platform's promise of a model. A narrow search
+  presented as a broad one is a quiet lie; the same search labelled with its scope is useful.
+- **The grammar is small and written down** (`ShopQuery`, in the core, tested). Words are
+  matched as **whole tokens** against title, product type, tags, colourways, the measured colour
+  and the shop's name — "shorts" must not find a short-sleeve shirt, the substring bug every
+  classifier here was bitten by. A word's other number counts, except where it is a different
+  garment (`fixedNumber`: short/shorts); so do true synonyms (trousers/pants, jumper/sweater),
+  and a broader word finds its kinds but not the reverse (a coat query finds an overcoat).
+  Anything looser — "suit" finding trousers, "warm" finding wool — is a guess at what was meant,
+  and guessing is the model's job. A colour also matches a photograph `ImageTagger` measured as
+  that colour, and never matches a shop's name unless the word *is* the whole name ("white"
+  must not answer with everything Off-White makes). A category word ("shoes", "outerwear")
+  also matches what `GarmentClassifier` placed there. Prices: "under €400", "below 100",
+  "over 50", "between 100 and 200", "100-200", or an amount with a currency and no cue, which is
+  a ceiling; **a bare number is a name** ("990", "1017"). "in my size" goes through
+  `SizeProfile.claims` in each product's own `SizeContext` — it is a claim about the reader,
+  so `matches`' optimism would answer yes to every size it cannot read. "no …"/"not …"/"without
+  …" rules out the next word that means something, and is the one filter here that hides,
+  because it was asked for in words. "cheap" and "formal"/"smart" set the same flags as the
+  CHEAPER and MORE FORMAL chips, so typing it and tapping it are one query and one reading. A
+  named size ("size 10") is set aside and said, since the only size it can read is yours.
+- **Prices are compared unconverted, and the reading prints no currency.** Each shop prices
+  in its own currency and nothing fetches rates; a guessed rate is a wrong answer presented as
+  a right one. "UNDER 400" says what was compared; "UNDER €400" would claim a conversion that
+  never happened. Region-aware prices are Phase 2.
+- **It prints what it understood** (`ShopQuery.reading`), in the data voice under the box —
+  the `StyleStatement` rule. The reading is printed from the query the results answer, not
+  from the text as it is typed, so the two always agree and it does not flicker word by word.
+- **A word no product carries is set aside and named, not required.** "a black suit for a
+  wedding" would otherwise find nothing, because no title says "wedding". The word is struck
+  through in the reading (struck, the way a size that is gone is struck in a run) and a line
+  says it was left out. That is also the seam where the model slots in: a word the rules
+  cannot place is the question it is for. If *every* word is unknown the answer is "No
+  “tuxedo” in your shops", never everything under the price.
+- **A failed search says which failure it was** (`ShopSearch.Outcome`). The constraints run in
+  a fixed order and the first to empty the list is named: nothing to search for; not in your
+  shops; everything that matched is ruled out by a "no …"; your gender filter hides them; none
+  inside the price (and the cheapest one's price); your sizes aren't set; none in your size
+  today. Each has a different fix. The counts it prints are of what carried every word, where
+  anything did.
+- **Ranked, not sorted by date.** A title outweighs a type, a type a colourway, a colourway a
+  tag or the shop's name. Sold-out goes last, never away — a sold-out size is a restock
+  tomorrow. Below twelve exact matches, up to twenty-four partial ones follow under ALSO PARTLY
+  MATCHING, each saying which words it carried. CHEAPER is the cheaper half of what matched,
+  printed as a number ("CHEAPER — UNDER 168"), because a bare re-sort looks like nothing
+  happened. MORE FORMAL **reorders by a tailoring vocabulary and never hides** — `Pairing`
+  still has no formality rule and that note stands; this is somebody asking for the dressier
+  end of a list, not a verdict on what goes together. Ties break on recency, then id.
+- **Fast on a large store, by the performance rules.** No `@Query` on `BrandUpdate`: one
+  bounded fetch (12,000 rows, said on screen if reached), re-read only when a cheap stamp —
+  row count, newest row, followed shops, gender filter — moves. Models are read once each into
+  values; classifying and tokenising run detached (`ShopIndex`), and the per-keystroke search
+  never touches SwiftData. Measured on 12,000 synthetic listings in release: index 0.18s off
+  the main actor, a search 3–10ms. "Has a photograph" is checked in Swift — a predicate over
+  `imageURLStrings` is a crash, not a narrowing.
+
+### Today's picks
+
+`DailyPicks` (core, tested) chooses five; `PickLedger` remembers the day's set.
+
+- **What may be picked**: from a followed shop, shown by the gender filter, buyable, an
+  essential garment, not saved, not turned down, not from a shop refused on Discover, and in
+  your size **where the product's run says what that is** — `matches`, not `claims`, because
+  this decides whether something may be offered and a one-size beanie or an unreadable run is
+  no reason to withhold it. The card's size run is where the claim is made, in vermilion.
+- **The reason is the real one.** Each candidate is scored by `Pairing` against what you own,
+  through `TasteScope.pairingPool` — the wardrobe whatever its taste setting, or every save that
+  counts for somebody who never filed anything as owned — and leans towards the slots the
+  wardrobe has nothing in (`WardrobeGap`, and `DailyPicks.missing`, the Style tab's "what's
+  missing": only once three things are owned, only over essential slots). The card prints that
+  pairing with a photograph of your own piece beside it, and the row opens `FitStudio` anchored
+  on that piece. "You own no outerwear yet" is said once, on the first pick that fills the gap.
+- **Different picks point at different things you own**, the `spreadAnchors` rule: each takes
+  its best partner no earlier pick used, and the reason moves with the partner.
+- **Nothing is picked without a true sentence.** A wardrobe with that slot covered and nothing
+  that goes with it: not picked. With no wardrobe at all the picks still work, on what the store
+  knows — back in your size (the one vermilion reason, because it is about now), marked down
+  past the feed's 5%, new this week — or "From Kith, a shop you follow". A line under the header
+  says how to make them pair with your clothes.
+- **No RNG, and still a different set tomorrow.** Variety comes from a hash of the local
+  date and the product (`jitter`, FNV-1a, since `Hasher` is seeded per process) — a nudge
+  among near-equals worth a fifth of a verdict's range, never a lottery. A large catalogue is
+  sampled the same way: the newest forty always, the rest by the day's hash, 240 scored.
+  Spread across shops (one each, then two, then whatever fills the set).
+- **The day's set is kept, not recomputed** (`PickLedger`, `UserDefaults`, local). Saving a
+  pick changes the wardrobe, which changes every score; a set that re-ranked under the thumb
+  that saved a card would be `pinningRead`'s failure on a new screen. So today's ids are
+  written down when first chosen, a saved pick stays with its bookmark filled, and the set only
+  grows (a thin catalogue topped up) or loses one somebody turned down. An empty set is never
+  written, or a first launch before the sync would hold the day empty.
+- **"Not for me" is about the garment**, not the shop — `BrandDismissal` refuses a whole brand
+  and everything like it, the wrong verdict on a shop you chose to follow. Bounded at 500, never
+  leaves the phone.
+
+### The deck is drawn in place, not as a cover
+
+"More from brands like yours" opens `DiscoverFeedView` **over the Shop tab, inside it** — not as
+a `fullScreenCover`. Every confirmation a save raises (the toast, the board picker, the watch
+editor, the question before un-saving) is hosted at the root, under any cover, so a deck in a
+cover would have confirmed nothing and its Board button would have opened nothing; and the deck
+was laid out for a tab bar at its foot. Drawn in place it is exactly the screen the Discover tab
+was, with `.toolbarColorScheme(.dark, for: .tabBar)` while open and a close control in the filter
+row. Its supply, ranking and every rule below are untouched.
+
 ## Discover
 
 The Discover tab is a full-bleed vertical scroll of garments — mostly from brands you **don't**

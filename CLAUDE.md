@@ -57,7 +57,7 @@ cost.
 | Doc | Covers |
 |---|---|
 | `docs/design-decisions.md` | The feed, the tabs, browsing filters, counts, ordering, baselines, events, push |
-| `docs/discover.md` | The Discover deck, its supply, ranking, presentation and card |
+| `docs/discover.md` | Shop's search and daily picks; the Discover deck, its supply, ranking, presentation and card |
 | `docs/fits.md` | The fit canvas, the studio, suggestions, and judging a whole outfit |
 | `docs/collection.md` | Saves, boards, the archive page, and everything the photograph is asked |
 | `docs/server.md` | The poller, the schema, migrations, retention, `Notifier` |
@@ -201,7 +201,7 @@ plutil -p /tmp/streetw-dd/Build/Products/Debug-iphonesimulator/streetw.app/Info.
 ### Tests
 
 ```bash
-swift test                                    # all 610
+swift test                                    # all 670
 swift test --filter "Size normalisation"      # one suite
 swift test --filter relockFiresAgain          # one test
 ```
@@ -694,6 +694,29 @@ project and every one names what it fixed. The ones most easily broken by accide
 - Three voices (`DeckPresentation`), decided by what the app can back up — never a rotation.
 - The card is a column on one fixed sweep-to-ink ground; nothing but the wordmark is laid over the
   photograph; the pager is a `ScrollView`, and the double-tap save goes *inside* it.
+
+### Shop
+
+Discover with a search field on top (`ShopView`): a field that takes a description, today's picks
+while it is empty, and the deck one row below. **Read `docs/discover.md` (*Shop*) before touching
+`ShopView`, `ShopCatalogue`, `PickLedger`, `ShopQuery`, `ShopSearch` or `DailyPicks`.** The rules
+most easily broken:
+
+- **It searches your shops, on this phone, and says so** — "IN YOUR SHOPS · N PRODUCTS ON THIS
+  PHONE" under the box, never AI or the web, a magnifying glass and not a sparkle. Phase 3 widens
+  the catalogue and Phase 4 puts a model behind the same field; until then the copy must not
+  promise either.
+- **The grammar is small, in the core, and printed back**: whole-token words over title, type,
+  tags, colourways, measured colour and shop name; price bounds (a bare number is a name); "in my
+  size" by `claims`; "no …" rules out; "cheap"/"formal" set the chips' own flags. Prices are
+  compared unconverted and the reading prints no currency. A word no product carries is struck
+  and left out, never required; a failed search names the constraint that emptied it.
+- **Picks are a kept set with a true reason**: `Pairing` against `TasteScope.pairingPool`,
+  leaning to what is missing, anchors spread, varied by a hash of the local date (no RNG), written
+  down for the day so saving one cannot re-rank the page. Never saved, refused or unbuyable when
+  chosen; "not for me" refuses the garment, not the shop.
+- **The deck is drawn in place over the tab, not as a cover** — the save confirmations are hosted
+  at the root, under any cover.
 
 ### Saying it in words
 
