@@ -208,7 +208,7 @@ plutil -p /tmp/streetw-dd/Build/Products/Debug-iphonesimulator/streetw.app/Info.
 ### Tests
 
 ```bash
-swift test                                    # all 706
+swift test                                    # all 709
 swift test --filter "Size normalisation"      # one suite
 swift test --filter relockFiresAgain          # one test
 ```

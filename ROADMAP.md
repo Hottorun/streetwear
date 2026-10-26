@@ -258,23 +258,29 @@ Mostly things that hurt people using 1.0 today.
 Prototype the new feed and Shop tab on the demo catalogue first, beside the current app, before
 rebuilding anything.
 
-- [ ] **Three tabs and a You button.** *Feed* — what happened at your shops. *Shop* — Discover with
+- [x] **Three tabs and a You button.** *Feed* — what happened at your shops. *Shop* — Discover with
       the AI search on top and daily picks when the field is empty. *Saved* — Inspiration,
       Wardrobe and **Fits**. Your avatar, top right on every tab, opens *You*: taste, sizes,
       location, following, profiles, credits, sign-in, settings. The Style tab goes: kept and
       suggested fits move to Saved › Fits, "what's missing" drives Shop's picks, "your taste"
       moves to You. Today a fit can be started from three tabs and two detail pages and lands in
       one of two editors; it should start in one place and land in one.
-- [ ] **One picture per event.** Photograph, brand, one label — "NEW", "BACK IN YOUR SIZE",
+- [x] **One picture per event.** Photograph, brand, one label — "NEW", "BACK IN YOUR SIZE",
       "−30%", "SALE 25% OFF · CODE AUTUMN", "DROPS FRIDAY" — and the price. A drop of many pieces
       is one card with a few photographs and "24 pieces". Today's first screen shows five counters
       and markers and three lines of links before its one photograph, whose name and price sit
       under the tab bar.
-- [ ] **"Since you were last here"**, a line rather than per-brand unread state.
-- [ ] **One filter row** — All · Drops · Restocks · Sales · Upcoming · Brand ▾ — replacing the
+- [x] **"Since you were last here"**, a line rather than per-brand unread state.
+- [x] **One filter row** — All · Drops · Restocks · Sales · Upcoming · Brand ▾ — replacing the
       brand rail and the two unlabelled icons (the calendar, and markdowns with its system badge).
-- [ ] **Onboarding and App Store copy for all of fashion.** The starter pack and the listing say
+- [x] **Onboarding and App Store copy for all of fashion.** The starter pack and the listing say
       streetwear.
+
+*Done* in PR #2 (merged 2026-10-26): Feed, Shop and Saved with You behind the avatar; the grid of
+event cards with bursts and releases as one card; the "since you were last here" line
+(`BrandUpdate.arrivedAt`, `FeedVisit`); the filter row; Shop's local search and daily picks; one
+fit editor; the starter pack of six womenswear and six menswear shops. See
+`docs/design-decisions.md`, `docs/discover.md` and `docs/fits.md`.
 
 ### Phase 2 — accounts and paying
 
