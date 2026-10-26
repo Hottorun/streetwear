@@ -84,6 +84,7 @@ func configure(_ app: Application) async throws {
     app.migrations.add(AddProductEnrichment())
     app.migrations.add(AddProductOriginalPrice())
     app.migrations.add(AddSaleLedgers())
+    app.migrations.add(CreateAccounts())
     if Environment.get("AUTO_MIGRATE") != "false" {
         try await app.autoMigrate()
     }

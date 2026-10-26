@@ -317,6 +317,10 @@ final class UserModel: Model, @unchecked Sendable {
     /// Nullable: absent means "everything", which is the default for a new profile and
     /// the honest reading of someone who has never expressed a preference.
     @OptionalField(key: "gender") var gender: String?
+    /// The Sign in with Apple account this user belongs to, or nil for an anonymous one —
+    /// which is every user 1.0 and 1.1 make, and every user until somebody signs in. See
+    /// `CreateAccounts`.
+    @OptionalParent(key: "account_id") var account: AccountModel?
 
     init() {
         self.apparelSizes = []
@@ -353,6 +357,42 @@ final class UserModel: Model, @unchecked Sendable {
             includeOneSize = true
             gender = newValue.gender.rawValue
         }
+    }
+}
+
+/// The identity that survives a reinstall: one Sign in with Apple subject.
+///
+/// Personal, and above `users` rather than beside it — an account owns its users (one now,
+/// one per profile later), and every device reaches it through its user. Holds nothing a
+/// person typed: Apple's opaque `sub`, the credit settings the operator sets by hand, and
+/// the refresh token deletion has to revoke. See `CreateAccounts`.
+final class AccountModel: Model, @unchecked Sendable {
+    static let schema = "accounts"
+
+    @ID(key: .id) var id: UUID?
+    /// Apple's `sub` claim — stable per developer team, opaque, and the only lookup key.
+    @Field(key: "apple_subject") var appleSubject: String
+    @Timestamp(key: "created_at", on: .create) var createdAt: Date?
+    /// The owner's switch: this account is never charged. Means nothing until credits
+    /// exist, and is stored now so the owner can flip it on their own account the day they
+    /// sign in. Set only by `POST /admin/accounts/:id/credits`.
+    @Field(key: "unlimited_credits") var unlimitedCredits: Bool
+    /// A ceiling on what this account may cost in a month, in millionths of a dollar. Nil
+    /// is no account-specific cap.
+    @OptionalField(key: "monthly_cost_cap_micros") var monthlyCostCapMicros: Int64?
+    /// What `/auth/revoke` needs on deletion. Never logged, never on the wire. Nil when the
+    /// deployment has no Sign in with Apple key, so the exchange was skipped.
+    @OptionalField(key: "apple_refresh_token") var appleRefreshToken: String?
+
+    @Children(for: \.$account) var users: [UserModel]
+
+    init() {
+        self.unlimitedCredits = false
+    }
+
+    init(appleSubject: String) {
+        self.appleSubject = appleSubject
+        self.unlimitedCredits = false
     }
 }
 
