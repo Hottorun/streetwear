@@ -344,11 +344,16 @@ fit editor; the starter pack of six womenswear and six menswear shops. See
 
 ### Phase 3 — the catalogue and search behind the AI
 
-- [ ] **Railway Pro, and a Postgres with pgvector.** Hobby caps a volume at 5 GB, which the full
-      scan will pass. The default Postgres has no pgvector and Railway does not plan to add it, so
-      this is the pgvector template plus a dump and restore — a planned migration with a new
-      `DATABASE_URL`, not a toggle. Turn on daily snapshots, and keep the server on the private
-      database URL; over the public one, the traffic is billed as egress.
+- [ ] **A Postgres with pgvector, and the embedding service beside it.** The default Postgres has
+      no pgvector and Railway does not plan to add it, so this is the pgvector template plus a dump
+      and restore — a planned migration with a new `DATABASE_URL`, not a toggle — and then the
+      `embeddings` service and two variables on the server (`docs/pgvector-migration.md`). The
+      template runs on Hobby; what Hobby limits is the volume, 5 GB, and measured storage is about
+      16 MB per 1,000 products with both vectors, so **Pro is not needed for storage yet** — move
+      when `databaseBytes` passes half the cap. On cost Pro meets Hobby once usage passes $20 a
+      month, which the embedding service's memory alone nearly does. Turn on daily snapshots, and
+      keep the server on the private database URL; over the public one, the traffic is billed as
+      egress.
 - [x] **Catalogues at two speeds.** The fast "what's new" poll stays as it is. A daily full scan
       stores every product with its price and stock; for Shopify a 5,000-product shop is ~20
       requests. Today a Shopify brand's baseline is its newest 2,500 and only the newest ~250 are
@@ -380,11 +385,15 @@ fit editor; the starter pack of six womenswear and six menswear shops. See
       Shop searches the server in server mode — your shops, then every shop we watch when asked —
       and "more like this" asks it. 20–130ms on eight thousand products, release. See
       `docs/server.md` and `docs/discover.md`.
-      *Ready and waiting:* `EmbeddingProvider`, `product_embeddings` keyed by model id, the
-      backfill and vector "more like this" — installed only where pgvector exists, tested with a
-      fake provider. **Waits on:** the move to a pgvector Postgres (above;
-      `docs/pgvector-migration.md`) and the client for the chosen provider (Marqo FashionSigLIP 2,
-      behind `EMBEDDING_URL`). Daily picks and the scan do not read the index yet.
+      *Built and off in production:* one `EmbeddingProvider`, its sidecar client
+      (`SidecarEmbeddingProvider`, on with `EMBEDDING_URL` and `EMBEDDING_TOKEN`),
+      `product_embeddings` keyed by model id, the backfill (unreadable photographs written off,
+      not retried forever) and vector "more like this" — proven end to end against the real
+      service and a pgvector Postgres. **Waits on:** the move to a pgvector Postgres and the
+      `embeddings` service deployed (`docs/pgvector-migration.md`, both parts). Marqo
+      FashionSigLIP v1 by default; the ZooClaw SigLIP2 fine-tune is one build variable away
+      (`Embeddings/README.md`). Daily picks and the scan do not read the index yet, and no query
+      reads the image vectors yet.
 
 ### Phase 4 — AI
 

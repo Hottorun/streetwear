@@ -114,8 +114,23 @@ Two models can go in the image, each pinned to a commit in `download_model.py` (
 | Loader | open_clip | transformers `SiglipModel` |
 | Weights | 813 MB | 1.5 GB |
 | Text R@1 / image R@1 (`eval/`) | 0.50 / 0.75 | **0.61** / **0.78** |
-| CPU per image | 1× | about 4× slower |
+| CPU per image, 2 vCPU | 0.30 s | 1.09 s (3.7× slower; *Measured*) |
 | Licence | Apache-2.0 | Apache-2.0 |
+
+**Why the default is still Marqo.** The owner chose ZooClaw, on the condition that its licence
+file allows commercial use. Its repository has no licence file at the pinned commit (or at any
+commit on `main`) — the Apache-2.0 grant is only in the model card's metadata and badge, below — so
+the condition is not met as stated and the default stays Marqo v1 until the owner accepts the
+metadata as the grant, or the authors add the file. Switching is the two variables below, or
+changing the two `ARG` defaults at the top of the Dockerfile.
+
+**What the eval did not measure.** It scored text against photographs and photographs against
+photographs. The server's semantic search and "more like this" compare *text with text* — the
+query, or one product's title, type, colours and tags, with every product's (`docs/server.md`,
+*Embeddings*). On the 565-product rehearsal "more like this" from Drake's Brown Tweed Games
+Blazer gave, under Marqo, the two other Games Blazers, a herringbone jacket and a tweed coat;
+under ZooClaw, a waxed jacket, three pocket squares and three hiking T-shirts. One spot check,
+not an eval — but worth running the eval for text with text before switching.
 
 **Licences, as checked on 2026-10-26.** Neither model repository carries a `LICENSE` file;
 each declares `license: apache-2.0` in its model card's metadata. For Marqo, its code repository
@@ -146,8 +161,8 @@ every vector, and vectors from two models are never compared. The server reads t
 the first answer, and from then on every product is due again (`EmbeddingBackfill`). Until the
 backfill has caught up, semantic search answers from the products already re-embedded and
 full-text covers the rest, so nothing breaks; it just gets better as it goes. Budget for it: at
-about four times the per-image cost, 100k products is a day or two on 2 vCPU rather than hours,
-and the resident memory roughly doubles (allow 4 GB). Each new model also builds its own HNSW
+3.7 times the per-image cost (measured below), 100k products is about two days on 2 vCPU rather than hours,
+while the resident memory stays about the same (1.2 GB serving, 1.9 GB peak, measured). Each new model also builds its own HNSW
 index; the old model's rows are overwritten as they are re-embedded, and its index can be dropped
 once none are left (`DROP INDEX idx_product_embeddings_…`, named in `pg_indexes`).
 
@@ -174,7 +189,7 @@ network.
 4. **Resources.** Under *Settings → Deploy → Resources*, allow 2 vCPU and 3 GB memory. The
    process holds about 1.3 GB once serving and peaks at about 1.6 GB while loading the
    weights, so 2 GB fits with little headroom. Railway bills what is used, not the limit, so
-   the extra headroom costs nothing. See *Measured* below. With the ZooClaw model, allow 4 GB.
+   the extra headroom costs nothing. See *Measured* below. With the ZooClaw model 3 GB is still enough (peak 1.9 GB, measured).
 5. **Health check.** *Settings → Deploy → Healthcheck Path* `/health`. It answers 503
    until the model is loaded and a token is set, so a misconfigured deploy never replaces a
    working one.
@@ -213,6 +228,24 @@ The model alone, in the same image without HTTP, on 1 / 2 / 4 vCPU: 3.2 / 3.1 / 
 images a second batched, and 131 / 159 / 85 ms per single text. The same model natively
 on the Mac does about 10 images a second (`eval/README.md`). Railway's x86 vCPUs will be
 somewhere else again, so **measure once deployed** before planning a backfill.
+
+**The ZooClaw image, measured the same way** (built with the two build arguments, run under
+colima at `--cpus 2 --memory 3g`, `EMBEDDING_THREADS=2`, on 2026-10-26):
+
+| | ZooClaw | Marqo v1, above |
+|---|---|---|
+| Boot to ready | 8 s (warm page cache) | ~20 s |
+| Memory once serving | 1.2 GB (cgroup peak 1.9 GB) | 1.3 GB (peak 1.6 GB) |
+| One text query, over HTTP | 123 ms median | 108 ms |
+| 32 texts | 3.3 s | 3.0 s |
+| One image, posted as bytes | 1,087 ms median | 296 ms |
+| 16 image URLs from Shopify's CDN, fetch + embed | 25.4 s | 12.8 s |
+
+So about **0.9 images a second** for the model alone and 0.6 with fetching, on 2 vCPU — 3.7 times
+slower per image than Marqo, and text costs the same. 100k products is then about two days on
+2 vCPU rather than hours; 3 GB of memory is enough. The image is 1.5 GB of weights instead of
+0.8 GB. Natively on the Mac the same model re-embedded the 565-product rehearsal, fetches
+included, in 5½ minutes.
 
 **Embedding 100k products once** at 3–10 images a second is 3–9 hours on 2 vCPU,
 which costs about $0.20–0.80 in CPU and memory at Railway's usage rates ($20 per

@@ -218,7 +218,9 @@ plutil -p /tmp/streetw-dd/Build/Products/Debug-iphonesimulator/streetw.app/Info.
 ### Tests
 
 ```bash
-swift test                                    # all 716
+swift test                                    # all 720
+cd Server && swift test                       # 362, of which 11 need STREETW_TEST_POSTGRES_URL
+cd Embeddings && pytest                       # 63; -m slow adds 3 against real weights
 swift test --filter "Size normalisation"      # one suite
 swift test --filter relockFiresAgain          # one test
 ```

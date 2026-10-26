@@ -1,11 +1,18 @@
-# Moving the database to a Postgres with pgvector
+# Moving the database to a Postgres with pgvector, and switching embeddings on
 
 Part of the streetw guidance set; see `CLAUDE.md` for the index and the build rules.
 
-This is the owner's runbook for the one-off move in `ROADMAP.md` Phase 3: Railway Pro, and a
-Postgres that has the pgvector extension. Nothing in the app or the server has to change for it —
-the server works on both databases, and says at boot which one it is on. It is written for
-somebody who has never done a dump and restore; every command is meant to be pasted as it is.
+This is the owner's runbook for the one-off move in `ROADMAP.md` Phase 3, in two parts that are
+done in this order and checked in between:
+
+1. **The database** (steps 1–12): a Postgres that has the pgvector extension, by dump and restore.
+2. **The embedding service** (steps 13–17): `Embeddings/` deployed as a second Railway service,
+   and the server pointed at it.
+
+Nothing in the app or the server has to change for either — the server works on both databases
+and with or without the service, and says at boot which it has. One change at a time, so that
+whatever goes wrong has one cause. It is written for somebody who has never done a dump and
+restore; every command is meant to be pasted as it is.
 
 **Why a move and not a setting.** Railway's default Postgres has no pgvector and Railway does not
 plan to add it. The pgvector template is a different Postgres service, so the data is copied into
@@ -22,7 +29,7 @@ refresh — and nothing is lost on the phones.
 - The Railway project, and permission to change its plan.
 - A Mac with Homebrew. The Postgres command-line tools must be **the same major version as the
   database or newer** — `pg_dump` refuses to dump a newer server. Step 3 checks the version.
-- `ADMIN_TOKEN`, to read `/status` before and after. It is in the server service's variables on
+- `ADMIN_TOKEN`, to read `/admin/status` before and after. It is in the server service's variables on
   Railway; copy it into your terminal, not into a document.
 - Half an hour, at a quiet time. Drops are announced around 10:00–11:00 local time on weekdays;
   late evening is quietest.
@@ -31,22 +38,47 @@ refresh — and nothing is lost on the phones.
 every device's tokens. Keep both in your terminal and on your own disk, never in a chat, a ticket
 or a shared folder, and delete the dump at the end (step 12).
 
-## 1. Upgrade to Railway Pro
+## 1. Decide the plan: Hobby is enough to start
 
-Railway → your workspace → **Settings → Plans → Pro**. Pro is what lifts the 5 GB volume cap the
-full catalogue scan will pass, and it is what makes scheduled backups available (step 10).
+**The pgvector template runs on Hobby.** Railway's docs put no plan restriction on templates or
+databases (checked 2026-10-26); the template is the `pgvector/pgvector` Docker image with a volume,
+deployed like any other service. What a plan changes here is how big that volume may be — **5 GB
+on Hobby**, 1 TB on Pro — and, per service, 48 GB of memory and 48 vCPU on Hobby, far more than
+Postgres or the embedding service need.
+
+**Storage is not the reason to move yet.** Measured on Postgres 17: products and their variants
+take about 3.2 MB per 1,000 products, and both vectors with their index about 12.7 MB more — so
+roughly 16 MB per 1,000 products, before events. Hobby's 5 GB holds a few hundred thousand
+products. Check where you are before choosing:
+
+```bash
+curl -s -H "Authorization: Bearer $ADMIN_TOKEN" https://app.streetw.hottorun.com/admin/status
+```
+
+`databaseBytes` is the number the cap is measured against. Under about 2.5 GB, stay on Hobby and
+set the new volume's size to the most it allows. Move to Pro when `databaseBytes` passes half the
+cap — a re-embed for a new model briefly needs about twice the vectors' space — or when you want
+other people in the workspace.
+
+**On cost the two meet at $20 a month.** Hobby is $5 with $5 of usage included; Pro is $20 with
+$20 included, per Railway's pricing page. The embedding service alone is about $13 a month of
+resident memory (`Embeddings/README.md`, *Measured*), which with the server and Postgres puts the
+project past $20 of usage — at which point Pro costs the same as Hobby. Railway's backup docs name
+no plan for scheduled backups; check that step 10 is offered on your plan before relying on it.
+
+To change plan: Railway → your workspace → **Settings → Plans**.
 
 ## 2. Add the pgvector Postgres
 
 In the project: **+ Create → Template**, search for **pgvector**, and deploy the template named
-pgvector (it runs the `pgvector/pgvector` image with a volume). When it has deployed:
+pgvector (on 2026-10-26 it ran `pgvector/pgvector:pg18`, Postgres 18). When it has deployed:
 
 - Open the new service → **Settings** and give it a clear name, for example `pgvector`. The name
   is what the server's variable will refer to in step 8.
-- Note its Postgres **major version** — it is in the image tag on the service page (`pg17` means
-  17).
-- **Settings → Volume**: set the size to what Pro allows and the catalogue needs. 20 GB is ample
-  for now.
+- Note its Postgres **major version** — it is in the image tag on the service page (`pg18` means
+  18). Step 3 needs it.
+- **Settings → Volume**: check one is attached, and set its size — 5 GB on Hobby, which is the
+  most it allows; on Pro, 20 GB is ample for now.
 
 Leave the old Postgres service alone. Nothing below changes it.
 
@@ -66,16 +98,17 @@ export OLD_URL NEW_URL
 Check both versions:
 
 ```bash
-brew install postgresql@17          # skip if already installed
-export PATH="/opt/homebrew/opt/postgresql@17/bin:$PATH"
+brew install postgresql@18          # the new server's major version, from step 2
+export PATH="/opt/homebrew/opt/postgresql@18/bin:$PATH"
 psql "$OLD_URL" -tAc "SHOW server_version"
 psql "$NEW_URL" -tAc "SHOW server_version"
 pg_dump --version
 ```
 
-If either server is newer than 17 — say `18.1` — install that one instead
-(`brew install postgresql@18`, and `@18` in the `PATH` line). `pg_dump` must be at least the old
-server's major version; `pg_restore` at least the new one's.
+Use the newer of the two servers' major versions — if the template has moved on to 19, install
+`postgresql@19` and put `@19` in the `PATH` line. `pg_dump` must be at least the old server's
+major version; `pg_restore` at least the new one's. Restoring a 17 dump into 18 is a supported
+upgrade.
 
 Check pgvector is really there on the new one:
 
@@ -91,7 +124,7 @@ stop here.
 So there is something to compare against after the restore:
 
 ```bash
-curl -s -H "Authorization: Bearer $ADMIN_TOKEN" https://app.streetw.hottorun.com/status
+curl -s -H "Authorization: Bearer $ADMIN_TOKEN" https://app.streetw.hottorun.com/admin/status
 psql "$OLD_URL" -tAc "SELECT 'brands', count(*) FROM brands UNION ALL
   SELECT 'products', count(*) FROM products UNION ALL SELECT 'variants', count(*) FROM variants UNION ALL
   SELECT 'events', count(*) FROM events UNION ALL SELECT 'users', count(*) FROM users UNION ALL
@@ -174,21 +207,21 @@ deployment's logs, find these lines:
 
 ```
 database: postgres (DATABASE_URL), host=<something>.railway.internal, tls=disable
-search: full-text; pgvector 0.8.x installed — semantic search waits for a provider
+embeddings: off — EMBEDDING_URL and EMBEDDING_TOKEN are not set
+search: full-text; pgvector 0.8.x installed — semantic search off until EMBEDDING_URL and EMBEDDING_TOKEN are set
 Server started on http://0.0.0.0:8080
 ```
 
-The second line is the one this move is for. "waits for a provider" is right — no embedding
-provider is switched on yet (`EMBEDDING_URL`, see `docs/server.md`). If it says
-`semantic search unavailable (this Postgres has no pgvector)`, the variable points at the old
-database. If it says `pgvector could not be installed`, look for the `embeddings:` error line just
-before it.
+The third line is the one this move is for, and "off until …" is right: the embedding service is
+part 2. If it says `semantic search unavailable (this Postgres has no pgvector)`, the variable
+points at the old database. If it says `pgvector could not be installed`, look for the
+`embeddings:` error line just before it.
 
 Then check it from outside:
 
 ```bash
 curl -s https://app.streetw.hottorun.com/health
-curl -s -H "Authorization: Bearer $ADMIN_TOKEN" https://app.streetw.hottorun.com/status
+curl -s -H "Authorization: Bearer $ADMIN_TOKEN" https://app.streetw.hottorun.com/admin/status
 ```
 
 `databaseConnected` must be `true` and the counts must match step 4 (events and products may have
@@ -216,9 +249,90 @@ unset OLD_URL NEW_URL
 
 The dump holds device tokens and everybody's sizes; it has no business staying on a laptop.
 
+## 13. Deploy the embedding service
+
+Only once part 1 has been healthy for a while — a day is plenty. The build takes several minutes
+and touches nothing else, so it can be started earlier; only step 14 changes the server.
+
+Follow `Embeddings/README.md` (*Deploy on Railway*), steps 1–5 and 7: a new service from this repo
+with **Root Directory** `Embeddings`, named `embeddings`, **no public domain**, the variables
+`EMBEDDING_TOKEN` (`openssl rand -hex 32`, pasted straight into Railway, nowhere else),
+`EMBEDDING_THREADS=2` and `PORT=8080`, 2 vCPU and 3 GB under *Resources*, and `/health` as the
+health check.
+
+**The model.** Leave `EMBEDDING_MODEL_REPO` and `EMBEDDING_MODEL_REVISION` unset for Marqo
+FashionSigLIP v1, the default. To start on the ZooClaw model instead, set both now, before the
+first build — *Choosing the model* in `Embeddings/README.md` has the values and what it costs.
+Choosing now is cheaper than switching later: a switch re-embeds everything.
+
+When it is deployed, from the **server** service's shell (*⋯ → Shell*, or `railway ssh`):
+
+```bash
+curl -s http://embeddings.railway.internal:8080/health
+```
+
+It must print the model id, `"dimension":768` and `"ready":true`.
+
+## 14. Point the server at it
+
+Server service → **Variables**, add:
+
+```
+EMBEDDING_URL=http://embeddings.railway.internal:8080
+EMBEDDING_TOKEN=${{embeddings.EMBEDDING_TOKEN}}
+```
+
+The reference keeps the two tokens in step; `embeddings` is the service's name from step 13. Plain
+`http` is right on the private network. Let it redeploy, and find in the boot log:
+
+```
+embeddings: sidecar at http://embeddings.railway.internal:8080
+search: full-text; pgvector 0.8.x installed — semantic search on
+```
+
+`embeddings: off — EMBEDDING_URL and EMBEDDING_TOKEN must both be set` means one is missing or the
+URL is not `http(s)://…`.
+
+## 15. Watch the backfill
+
+The server embeds the catalogue by itself, newest first, 32 products a batch, logging each batch
+as `embeddings: embedded 32 (31 with a photograph, 0 written off, 1 to ask again) under …`. It
+does not hold anything up: until a product is embedded, search finds it by its words as before.
+At the measured 3–10 images a second it is hours for a large catalogue; Railway's own speed is
+still to be measured, so note how many batches the first hour does.
+
+To see progress at any time:
+
+```bash
+curl -s -X POST -H "Authorization: Bearer $ADMIN_TOKEN" "https://app.streetw.hottorun.com/admin/embed?batches=1"
+```
+
+This runs one batch now and says what it did; `embedded 0 … under <model>` means the backlog is
+empty. A line saying `semantic search unavailable` or `no embedding provider` names which half of
+step 14 or part 1 is missing. Photographs that cannot be read are expected — a few per brand,
+storefront CDNs time out and 404 — and are logged as `photograph written off: <url>`; the
+product is still searchable by its words.
+
+## 16. Check it on a phone
+
+Search Shop for something described rather than named ("cream knit sweater"), and open a product's
+"more like this". The results should be visibly closer than full-text's. If the embedding service
+is redeploying or down, search says nothing different and answers by its words alone, at most one
+search in thirty seconds waiting 1.5 s — that is the designed behaviour, not a fault.
+
+## 17. Look at the volume again
+
+A day after the backfill finishes, read `databaseBytes` on `/admin/status` again (step 1). Expect about
+12.7 MB per 1,000 products more than before part 2. If it is past half of the plan's cap, this is
+the time to move to Pro, not when it is full.
+
 ## Rolling back
 
-If anything after step 8 is wrong and cannot be fixed quickly:
+**Part 2** is one variable: delete `EMBEDDING_URL` on the server service and let it redeploy.
+Search goes back to full-text, said at boot; the vectors stay in the database for when it comes
+back, and nothing else changes. The `embeddings` service can then be removed or left.
+
+**Part 1** — if anything after step 8 is wrong and cannot be fixed quickly:
 
 1. Server service → **Variables** → set `DATABASE_URL` back to `${{Postgres.DATABASE_URL}}`
    (the old service's name; it was this before step 8).
@@ -238,3 +352,14 @@ removed, `AddProductEmbeddings` still recorded as applied — dumped with the co
 database on a Postgres **with** pgvector — every count matched, `search` was filled on all eight
 thousand rows — and the server booted on it saying `pgvector 0.8.7 installed`, with
 `product_embeddings` created by the boot rather than by a migration.
+
+Part 2 was rehearsed on this Mac against the same kind of scratch database: the real
+`Embeddings/` service (FashionSigLIP v1, 2 threads) and the server with `EMBEDDING_URL` and
+`EMBEDDING_TOKEN` set and the poller off, over 600 real products from Drake's, Aimé Leon Dore and
+Billionaire Boys Club. Boot said `semantic search on`; `POST /admin/embed` embedded all 565
+garments in under ten minutes, wrote off one photograph (over the size cap) and asked again about
+119 that timed out or did not resolve, 105 of which answered on the retry. Search re-ranked by
+vector at 100–190 ms, "more like this" answered by vector at 35–50 ms, a frozen service cost one
+search 1.6 s and the next ones nothing, and swapping the service's model to ZooClaw under the
+running server made it say `model changed`, re-embed all 565 under the new id, and compare no
+vector across the two.

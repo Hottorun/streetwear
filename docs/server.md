@@ -754,7 +754,10 @@ set on this service.
   **The model is a build argument of the image** (`EMBEDDING_MODEL_REPO`, `_REVISION`), so the
   owner can switch to the third-party `srpone/zooclaw-fashionsiglip2` — Apache-2.0, eleven points
   better on text R@1 in the same eval, about four times slower per image — without a code change.
-  `Embeddings/README.md` (*Choosing the model*) has the switch and its cost.
+  The owner has chosen it; it is not the default yet because its repository carries no licence
+  file, only `license: apache-2.0` in the card's metadata, and the eval never measured text
+  against text, which is what the server compares. `Embeddings/README.md` (*Choosing the model*)
+  has the switch, its cost and both caveats.
 - **The model id names the repository and the revision**, and is stored beside every vector. Two
   models, or two revisions of one, do not share a space: a vector from one compared with a query
   from the other still produces a ranking, and the ranking is noise. If an answer names a
@@ -795,9 +798,14 @@ set on this service.
   model (`SemanticIndex.ensureIndex`), so another dimension is another index. A half-finished
   re-embed answers from fewer products, never from a mix.
 - **A separate table, not a column on `products`**: the poller and the scan rewrite product rows,
-  and a few kilobytes of floats would ride along on every rewrite — the volume problem above. At
-  768 floats a vector is about 3 KB, so text and image together are roughly 6–7 MB per 1,000
-  products, twice what the scan measured for the products themselves.
+  and a few kilobytes of floats would ride along on every rewrite — the volume problem above.
+  **Measured on Postgres 17 with pgvector 0.8.7**, 565 real products embedded by FashionSigLIP:
+  7.2 MB after `VACUUM FULL`, **about 12.7 MB per 1,000 products** — 3,076 bytes per 768-wide
+  vector, two per product, out of line in TOAST, and 4.2 KB per product of HNSW index on the text
+  vector. That is four times what the scan measured for the products themselves (3.2 MB), so a
+  catalogue's whole footprint is roughly 16 MB per 1,000 products before events. A re-embed
+  rewrites every row, so until autovacuum reuses the space the table is briefly twice that, and the
+  old model's index stays until dropped.
 - **What is compared is text with text.** A search embeds its own words and is matched against
   each product's *text* vector (title, type, brand, colourways, tags — the fields the grammar
   reads), and "more like this" compares two products' text vectors. The image vector is stored
@@ -822,6 +830,14 @@ set on this service.
   an event loop does not hear cancellation, so a group-based timeout over the sidecar returned
   when the request's own timeout fired. The abandoned request ends by its own timeout
   (`textTimeout`, 10 s, sized for the backfill's batches of 32).
+- **…and one failure rests semantic search for 30 s** (`SemanticRest`). The deadline bounds one
+  search, not an outage: with the sidecar down, AsyncHTTPClient retries the refused connection
+  until the deadline, so every search was 1.6 s instead of 50–80 ms for as long as the sidecar was
+  redeploying. Now the first search after a failure waits, and the next thirty seconds of searches
+  are full-text without asking. In memory, per process, reset whenever the provider is set — a
+  pause, not a verdict. "More like this" asks the same pause, and needs the sidecar only for the
+  model id, which is cached after its first answer; with the vectors in Postgres it keeps
+  answering by vector while the sidecar is merely slow.
 - **`Application.semanticSearch`** is the one switch every semantic path asks — pgvector installed
   *and* a provider — so nothing runs half on. The backfill loop starts only behind it and only where
   the poller runs; `POST /admin/embed?batches=` runs batches by hand (and is how a server with
