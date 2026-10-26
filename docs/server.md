@@ -331,7 +331,8 @@ Part of the streetw guidance set; see `CLAUDE.md` for the index and the build ru
     polls a paused storefront, so the first read after a pause compares against whatever it
     knew months ago — and would announce every product and restock since as news to the first
     follower back. Nothing else ever leaves a source unread for a day: the longest backoff is
-    six hours.
+    six hours. The baseline is *un-spent* (`baselined_at` cleared) rather than this one read
+    declared one, so a resumed read that fails still owes it — the rule a first poll keeps.
   - **A caller is served a country's storefront only when it is live** — the country is
     switched on, somebody there follows the brand, and it has been baselined
     (`Storefronts.serving`). Otherwise the main shop, exactly as before. One rule for
@@ -369,8 +370,13 @@ Part of the streetw guidance set; see `CLAUDE.md` for the index and the build ru
   prices in EUR and ships to 48, and Palace's `www.` prices in GBP and ships to five — GB, GG,
   IM, JE, PH. `/meta.json`'s own `country` is where the *merchant* is (`eu.kith.com` says FR), not
   who it sells to, and is not read. Attaching a country that already has one replaces it;
-  `POST /admin/brands/:id/storefronts/:country/delete` removes one, cascading its sources,
-  products and events. Nothing discovers country storefronts automatically.
+  `POST /admin/brands/:id/storefronts/:country/delete` removes one with its sources, products and
+  events — the products by hand (`Storefronts.remove`), because `products.source_id` is `ON DELETE
+  SET NULL` from the initial schema and the cascade from the storefront stops at its sources.
+  Nothing discovers country storefronts automatically. **Known gap: one storefront, one country.**
+  `eu.kith.com` is one shop for 48 countries; it can be attached for one of them, and attaching
+  it for a second is refused as a catalogue already read rather than polled twice. Serving
+  several countries from one read is the next step when a second one is switched on.
 - **`HTTPFetching`, not `HTTPClient`** — Vapor re-exports `AsyncHTTPClient.HTTPClient` and
   an unqualified collision in the server target is nastier than the wordier name.
 - **Don't name a test helper `withApp`.** VaporTesting exports a generic `withApp<T>` that

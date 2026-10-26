@@ -60,7 +60,7 @@ cost.
 | `docs/discover.md` | Shop's search and daily picks; the Discover deck, its supply, ranking, presentation and card |
 | `docs/fits.md` | The fit canvas, the studio, suggestions, and judging a whole outfit |
 | `docs/collection.md` | Saves, boards, the archive page, and everything the photograph is asked |
-| `docs/server.md` | The poller, the schema, migrations, retention, `Notifier` |
+| `docs/server.md` | The poller, the schema, migrations, retention, `Notifier`, storefronts per country |
 | `docs/performance.md` | Every rule written after measuring — queries, bodies, decoding, sorts |
 | `docs/share-extension.md` | The App Group inbox, enrichment, brand attribution |
 | `docs/drop-calendar.md` | `PlannedDrop`, local reminders, and poll hints |
@@ -932,6 +932,7 @@ the local path in the `else`. Adding a new one means adding both halves:
 | delete / unfollow | `DELETE /v1/follows/:id` |
 | follow mode (Everything / Sales only / Quiet) | `PATCH /v1/follows/:id` — the server first, the phone only once it took it; standalone, `Brand.followModeRaw` alone |
 | size and gender profile | `PATCH /v1/devices/me` |
+| country (You › Location) | `PATCH /v1/devices/me` (`country`; also sent at registration) — standalone stores it and changes nothing |
 | APNs token / environment | `PATCH /v1/devices/me` |
 | stock watches | `POST` / `GET` / `DELETE /v1/watches` |
 | poll hints from the drop calendar | `PUT /v1/poll-hints` (whole set; no-op standalone) |
@@ -1030,6 +1031,22 @@ Renaming the checkout, or building in a differently-named directory, fails with
 Related: SwiftPM validates that every declared target directory exists when it loads the
 graph, so the Docker image must copy `Tests/` and `Server/Tests/` too even though it only
 builds the executable. Omitting them yields a confusing "overlapping sources" error.
+
+### Countries and currencies
+
+**A brand's main shop is the brand row; a country's shop is a `storefronts` row**, and
+`storefront_id` is null on every source, product and event of the main shop — which is every row
+written before storefronts existed, so nothing was backfilled or re-polled. A country is switched
+on by `STOREFRONT_COUNTRIES`; its shop is polled only while somebody there follows the brand, and
+a person is served **one shop per brand** — their country's when it is switched on, attached,
+followed there and baselined, otherwise the main shop exactly as before. Every stored price
+carries its currency (`FetchedItem.currency`, `products.currency`, `FeedItem.currency`), nothing
+converts, and the app prints a row in its own currency in the reader's locale
+(`PriceFormat`, `BrandUpdate.priceLabel`) — **never with the brand's currency**, which names the
+serving shop, not the one an older row came from. Shops are attached by hand
+(`POST /admin/brands/:id/storefronts?country=&url=`). **Read the storefront rules in
+`docs/server.md` and the location rules in `docs/design-decisions.md` before touching
+`Storefronts`, `StorefrontModel`, the claim query, `LocationSetting` or a price print.**
 
 ### Server specifics
 

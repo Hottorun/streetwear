@@ -54,6 +54,7 @@ an unchanged catalog produces nothing, and a failing source backs off.
 | `AUTO_MIGRATE` | on | `false` to skip migrations at boot |
 | `DISABLE_POLLER` | off | `true` to run the API without polling |
 | `POLITE_INTERVAL` | `2.0` | Minimum seconds between requests to one host |
+| `STOREFRONT_COUNTRIES` | — | Countries whose shops are read and served, e.g. `GB,DE`. Unset: every brand's main shop for everybody. See `docs/server.md` |
 | `PORT` | 8080 | Read in `configure.swift`; hosts assign this at runtime |
 | `HOST` | `0.0.0.0` | Must not be localhost inside a container |
 | `APNS_KEY_P8` | — | Contents of the `.p8`. `\n` escapes are accepted, so it pastes as one line |
