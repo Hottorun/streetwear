@@ -210,6 +210,13 @@ public struct ShopIndex: Sendable {
     }
 
     func tokens(at index: Int) -> Dictionary<String, Field>.Keys { fields[index].keys }
+
+    /// Whether listing `index` carries the word, by exactly the rule a search uses — for a
+    /// caller scoring resemblance rather than running a search, so "shares a word" means the
+    /// same whole-token thing in both.
+    public func carries(_ term: ShopQuery.Term, at index: Int) -> Bool {
+        weight(of: term, at: index) != nil
+    }
 }
 
 public enum ShopSearch {

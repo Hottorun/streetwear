@@ -223,6 +223,10 @@ func routes(_ app: Application) throws {
     accountRoutes(authed: authed, admin: admin)
     profileRoutes(authed: authed)
 
+    // MARK: Products
+
+    productRoutes(authed: authed)
+
     // MARK: Brands
 
     /// Search the shared catalog by name *or* address.
