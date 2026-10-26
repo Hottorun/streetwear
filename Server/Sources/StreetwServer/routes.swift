@@ -106,6 +106,19 @@ func routes(_ app: Application) throws {
                 .sort(\.$nextCheckAt).first() {
                 status.nextPollAt = next.nextCheckAt
             }
+            status.scansFinishedToday = try await CatalogueScanModel.query(on: req.db)
+                .filter(\.$finishedAt >= Date().addingTimeInterval(-86_400))
+                .count()
+            status.scansInProgress = try await CatalogueScanModel.query(on: req.db)
+                .filter(\.$startedAt != nil)
+                .count()
+            status.unlistedProducts = try await ProductModel.query(on: req.db)
+                .filter(\.$unlistedAt != nil)
+                .count()
+            if let sql = req.db as? any SQLDatabase, sql.dialect.name == "postgresql" {
+                status.databaseBytes = try await sql.raw("SELECT pg_database_size(current_database()) AS bytes")
+                    .first(decodingColumn: "bytes", as: Int64.self)
+            }
         } catch {
             // Reported rather than thrown: "what exactly is wrong" beats a 500.
             status.databaseConnected = false
@@ -860,6 +873,8 @@ func routes(_ app: Application) throws {
                     // main shop otherwise — never both, or a jacket would be dealt twice in
                     // two currencies.
                     .filter(\.$storefrontID == shop?.id)
+                    // A garment the shop no longer lists cannot be bought from the card.
+                    .filter(\.$unlistedAt == nil)
                     .sort(\.$publishedAt, .descending)
                     .offset(offset)
                     .limit(discoverFetchPerBrand)

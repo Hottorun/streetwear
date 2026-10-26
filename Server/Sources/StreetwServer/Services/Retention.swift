@@ -9,8 +9,8 @@
 // - **Deleting a product the source still lists re-creates it as new.** The next poll
 //   would see an unknown `external_id` and write a `.product` event — retention would be
 //   manufacturing fake drops. Only products the poller hasn't seen for a long time are
-//   eligible, which for a Shopify catalog means they have fallen out of the incremental
-//   window entirely.
+//   eligible — and for a Shopify catalog the daily scan sees all of them, so there it is
+//   products two complete scans no longer found (`unlisted_at`), six months on.
 // - **The server is the archive, the phone is the window.** These bounds are deliberately
 //   generous; the client keeps far less (400 per brand) and pages the rest from here.
 //
@@ -78,18 +78,31 @@ actor Reaper {
 
             // `NOT EXISTS` rather than `NOT IN`: it is index-friendly, and it does not
             // choke on the NULL `product_id` a lock event carries.
-            result.products = try await sql.raw("""
-                SELECT COUNT(*) AS count FROM products \
-                WHERE last_seen_at < \(bind: productCutoff) \
-                AND NOT EXISTS (SELECT 1 FROM events WHERE events.product_id = products.id)
-                """).first(decodingColumn: "count", as: Int.self) ?? 0
+            //
+            // **Gone for six months, by whichever reading knows.** A product the daily scan
+            // reads is judged by `unlisted_at` — two complete scans in a row did not find it —
+            // and counted from then, because the scan does not stamp `last_seen_at` (that
+            // would rewrite the whole catalogue a day) and a product it still finds must
+            // never age out. Everything else — a source no scan has completed within the
+            // window, a sitemap, a feed — keeps the old reading, unseen for six months. A
+            // listed product deleted here would come back as a new row on the next read;
+            // that is why this asks the scan rather than the clock.
+            let eligible: SQLQueryString = """
+                NOT EXISTS (SELECT 1 FROM events WHERE events.product_id = products.id) \
+                AND ( \
+                    (unlisted_at IS NOT NULL AND unlisted_at < \(bind: productCutoff)) \
+                    OR (unlisted_at IS NULL AND last_seen_at < \(bind: productCutoff) \
+                        AND NOT EXISTS (SELECT 1 FROM catalogue_scans \
+                            WHERE catalogue_scans.source_id = products.source_id \
+                            AND catalogue_scans.completed_at >= \(bind: productCutoff))) \
+                )
+                """
+            result.products = try await sql.raw(
+                "SELECT COUNT(*) AS count FROM products WHERE \(eligible)"
+            ).first(decodingColumn: "count", as: Int.self) ?? 0
 
             if result.products > 0 {
-                try await sql.raw("""
-                    DELETE FROM products \
-                    WHERE last_seen_at < \(bind: productCutoff) \
-                    AND NOT EXISTS (SELECT 1 FROM events WHERE events.product_id = products.id)
-                    """).run()
+                try await sql.raw("DELETE FROM products WHERE \(eligible)").run()
 
                 // Belt and braces. Variants cascade from products *if* foreign keys are
                 // enforced, which is a driver-level setting rather than something this
