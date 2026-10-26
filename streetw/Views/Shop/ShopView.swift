@@ -41,9 +41,7 @@ struct ShopView: View {
 
     @State private var catalogue = ShopCatalogue()
 
-    /// Dev affordance, like `-startTab`: `-shopQuery "black hoodie"` opens Shop already
-    /// searching, so a search can be shot without typing into the simulator.
-    @State private var text = UserDefaults.standard.string(forKey: "shopQuery") ?? ""
+    @State private var text = ""
     @State private var cheaper = false
     @State private var formal = false
     @State private var inMySize = false
@@ -95,8 +93,7 @@ struct ShopView: View {
     @State private var served = Served()
     /// "Also look in every shop we watch" was asked for, so a new query asks it too. Cleared
     /// with the field, like the chips.
-    /// `-shopEverywhere YES` asks it from the start, beside `-shopQuery`.
-    @State private var looksElsewhere = UserDefaults.standard.bool(forKey: "shopEverywhere")
+    @State private var looksElsewhere = false
     /// How many products the server holds for your shops, from the last answer — the count
     /// under the field.
     @State private var searchedCount: Int?
