@@ -163,8 +163,11 @@ GET    /v1/poll-hints           this device's own hints, and nobody else's
 ```
 
 Auth starts as an opaque device token — no login, no PII, and it matches how the app is used today.
-Sign in with Apple gets added when cross-device sync is wanted; the `users` row already exists to
-hang it off.
+Sign in with Apple is hung off the `users` row, as planned: an optional `accounts` row (Apple's
+`sub`, nothing else about the person) owns users, and a device reaches it through its user. The
+device token stays the only credential. Signing in moves this device's user onto the account, or
+merges it into the account's existing user. `DELETE /v1/account` removes all of it. See
+`docs/server.md`.
 
 ## Client migration
 

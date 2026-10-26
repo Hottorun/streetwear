@@ -278,11 +278,22 @@ rebuilding anything.
 
 ### Phase 2 — accounts and paying
 
-- [ ] **Sign in with Apple, optional until it is needed.** StoreKit cannot restore consumable
+- [x] **Sign in with Apple, optional until it is needed.** StoreKit cannot restore consumable
       purchases, so a credit balance must live on the server under an identity that survives a
       reinstall — and today every reinstall is a new user. Required only for credits and profiles.
       Existing follows, sizes and watches move onto the account at first sign-in, and accounts can
       be deleted in the app, as Apple requires. Planned in `BACKEND.md` from the start.
+      *Done:* the `accounts` table and `users.account_id`. `POST /v1/account/apple`: the first
+      sign-in adopts the device's user, and a later one merges the anonymous user into the
+      account's in one transaction. `DELETE /v1/account` revokes Apple's token when a key is
+      set. `GET`/`POST /admin/accounts` hold the owner's unlimited-credits flag. On You, the
+      section is hidden standalone and whenever the server says it cannot verify.
+      **Before it ships:**
+      - Approve the RSA dependency and write the verifier, which is the only refusal left (see
+        `docs/server.md`).
+      - Turn on the Sign in with Apple capability for the App ID.
+      - Set `SIWA_KEY_ID`, `SIWA_TEAM_ID` and `SIWA_PRIVATE_KEY` on Railway.
+      - Name the account in the privacy policy.
 - [ ] **Profiles**, each with its own sizes, gender filter, follows, saves and taste — one server
       user per profile under the account. Alerts are labelled, and each profile can turn its own
       off.

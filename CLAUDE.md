@@ -139,6 +139,7 @@ Dev-only launch flags (all read via `UserDefaults`, all no-ops when absent):
 | `-seedSizes "M,L,9,9.5"` | Fills the size profile |
 | `-startTab saved` | Opens straight to a tab, so screenshots need no UI automation. One of `feed`, `shop`, `saved`. Retired names still open something via `Tabs.resolve` rather than a blank page: `discover` opens Shop, `style` opens Saved › Fits (where the Style tab's fits went), anything else — including `brands` — the feed |
 | `-standalone YES` | Runs with no server, so `SyncEngine` polls from the phone |
+| `-fakeAppleSignIn alice` | DEBUG only. Replaces Apple's button with "Sign in as alice (debug)", which sends an unsigned identity token for that subject. Offered only against a server on `127.0.0.1`/`localhost`, and accepted only by one started with `SIWA_TEST_TOKENS=true` outside production. This is how sign-in → merge → delete is driven in a simulator with no Apple ID |
 | `-seedSaves 8` | Files garments into the wardrobe, spread across `GarmentSlot.essential`. Independent of `-seedBrands`: it reads whatever brands the store holds, so in server mode it runs after the launch sync rather than at launch |
 | `-seedNews 400` | With `-seedBrands`, how many of each brand's newest products are made news after the baseline (default 12) — enough of Kith's to see its bursts and to measure the feed on a deep store |
 | `-feedLastVisitHours 5` | Pretends the last visit to the feed ended that long ago, for the launch's first visit, so the "since you were last here" line can be shot without waiting out `FeedVisit.resumeWindow` |
@@ -873,8 +874,12 @@ Three tiers, and the middle one is the part that was wrong for a long time.
   not fail the deploy when the database blinks; the second has to be fetchable by a merchant
   before it will answer a catalogue query, and is a fixed statement about the software naming
   no device, user or brand.
-- **Device token** — everything under `/v1` except registration.
-- **`ADMIN_TOKEN`** — everything under `/admin`, including `/status`.
+- **Device token** — everything under `/v1` except registration. The account routes
+  (`/v1/account`) are device routes too: an account is reached *through* a device, so signing
+  in needs a registered device first, and the token keeps working after it. There is no
+  account-level credential.
+- **`ADMIN_TOKEN`** — everything under `/admin`, including `/status`, `/admin/accounts` and
+  the owner's unlimited-credits switch.
 
 - **`grouped(DeviceAuthenticator())` does not require a device.** It only *offers* to find
   one, so every route under it was protected purely because its handler happened to call
@@ -883,6 +888,10 @@ Three tiers, and the middle one is the part that was wrong for a long time.
   write a row into a catalogue everybody shares. `RequireDevice` now sits in the group, so
   membership *is* the guarantee it looks like and a new route cannot be accidentally public
   by forgetting a line inside its body.
+- **A server that cannot verify Apple's signature refuses every sign-in**, for the same reason
+  as the admin key below. It does not accept the token on trust. Until the RSA dependency is
+  approved, that means every deployment. `SIWA_TEST_TOKENS=true` (unsigned tokens, every claim
+  still checked) is ignored on a `production` environment. See `docs/server.md`.
 - **A missing `ADMIN_TOKEN` refuses rather than allows.** `/admin/poll` makes the server
   fetch fifty storefronts, `/admin/push-test` wakes every phone holding a token, and
   `delete?force=true` removes a brand and cascades away every follow on it. "Open when unset
@@ -933,6 +942,8 @@ the local path in the `else`. Adding a new one means adding both halves:
 | follow mode (Everything / Sales only / Quiet) | `PATCH /v1/follows/:id` — the server first, the phone only once it took it; standalone, `Brand.followModeRaw` alone |
 | size and gender profile | `PATCH /v1/devices/me` |
 | APNs token / environment | `PATCH /v1/devices/me` |
+| Sign in with Apple (optional; hidden standalone and when the server says it cannot verify) | `GET /v1/account`, `POST /v1/account/apple` — the first sign-in adopts this device's user, a later one merges it into the account's |
+| delete the account | `DELETE /v1/account`, then a fresh `POST /v1/devices` and a re-follow of this phone's brands |
 | stock watches | `POST` / `GET` / `DELETE /v1/watches` |
 | poll hints from the drop calendar | `PUT /v1/poll-hints` (whole set; no-op standalone) |
 | anonymous usage counts | `POST /v1/usage` (daily tallies; standalone counts and sends nothing) — read back with `GET /admin/usage`, see `docs/server.md` |
@@ -1034,8 +1045,8 @@ builds the executable. Omitting them yields a confusing "overlapping sources" er
 ### Server specifics
 
 **The catalog is global** — brands, sources, products and variants are one row per real-world thing;
-only users, devices, follows, size profiles, watches and poll hints are personal. Never add a
-`user_id` to a catalog table. `usage_counts` is neither: totals per day per event, with no user or
+only accounts, users, devices, follows, size profiles, watches and poll hints are personal. Never
+add a `user_id` to a catalog table. `usage_counts` is neither: totals per day per event, with no user or
 device id ever — the one per-device usage fact is `devices.active_on`, overwritten.
 
 **Read `docs/server.md` before touching the poller, the schema, migrations or `Notifier`.** The
