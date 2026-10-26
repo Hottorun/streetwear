@@ -190,15 +190,27 @@ struct PostgresTextIndex: CatalogueTextIndex {
         // Summed, so what carries every word is ranked before what carries some, which is the
         // order `ShopSearch` reads them in: the exact matches must not be crowded out by rows
         // that rank well on one word.
+        //
+        // The colourways are one index scan per word, each a set of product ids. Asking every
+        // word of one aggregate over the variants instead recomputed the colour vector per
+        // variant per word: 68ms of an 80ms query for "black hoodie" on eight thousand
+        // products, against 34ms this way.
         var colours: [SQLQueryString] = []
+        var joins: [SQLQueryString] = []
+        var anyColour: [SQLQueryString] = []
         var hits: [SQLQueryString] = []
         var brands = Set<UUID>()
         for (index, word) in words.enumerated() {
             let column = "c\(index)"
-            colours.append("bool_or(\(Self.colourVector) @@ to_tsquery('simple', \(bind: Self.tsquery(word)))) AS \(ident: column)")
+            colours.append("""
+                \(ident: column) AS (SELECT DISTINCT v.product_id FROM variants v \
+                WHERE \(Self.colourVector) @@ to_tsquery('simple', \(bind: Self.tsquery(word))))
+                """)
+            joins.append("LEFT JOIN \(ident: column) ON \(ident: column).product_id = p.id")
+            anyColour.append("\(ident: column).product_id IS NOT NULL")
             var carried: [SQLQueryString] = [
                 "p.search @@ to_tsquery('simple', \(bind: Self.tsquery(word)))",
-                "coalesce(c.\(ident: column), false)"
+                "\(ident: column).product_id IS NOT NULL"
             ]
             if !word.brands.isEmpty { carried.append("p.brand_id IN (\(binds: word.brands))") }
             hits.append("(" + carried.joined(separator: " OR ") + ")::int")
@@ -207,18 +219,13 @@ struct PostgresTextIndex: CatalogueTextIndex {
         let byBrand: SQLQueryString = brands.isEmpty ? "" : " OR p.brand_id IN (\(binds: Array(brands)))"
 
         let rows = try await sql.raw("""
-            WITH c AS (
-              SELECT v.product_id, \(colours.joined(separator: ", "))
-              FROM variants v
-              WHERE \(Self.colourVector) @@ to_tsquery('simple', \(bind: any))
-              GROUP BY v.product_id
-            )
+            WITH \(colours.joined(separator: ", "))
             SELECT p.id AS id,
                    ts_rank_cd(p.search, to_tsquery('simple', \(bind: any))) AS rank,
                    \(hits.joined(separator: " + ")) AS hits
-            FROM products p LEFT JOIN c ON c.product_id = p.id
+            FROM products p \(joins.joined(separator: " "))
             WHERE \(scope.predicate)\(extra)\(excluded)
-              AND (p.search @@ to_tsquery('simple', \(bind: any)) OR c.product_id IS NOT NULL\(byBrand))
+              AND (p.search @@ to_tsquery('simple', \(bind: any)) OR \(anyColour.joined(separator: " OR "))\(byBrand))
             ORDER BY hits DESC, rank DESC, p.published_at DESC, p.id
             LIMIT \(literal: limit)
             """).all()

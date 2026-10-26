@@ -132,7 +132,7 @@ enum ProductSearch {
         let existing = try await index.existing(words, scope: scope, on: sql)
 
         // 3. Match.
-        let listings = try await load(found, scope: scope, profile: user.sizeProfile, on: db)
+        let listings = try await load(found, scope: scope, profile: user.sizeProfile, on: sql)
         let profile = user.sizeProfile
         let byID = Dictionary(listings.map { ($0.listing.id, $0) }, uniquingKeysWith: { a, _ in a })
         let result = ShopSearch.run(
@@ -199,40 +199,77 @@ enum ProductSearch {
 
     // MARK: - Reading the candidates
 
-    /// One candidate, read once: the listing the grammar reasons about, and what the size
-    /// question and the card need.
+    /// One candidate, read once into values: the listing the grammar reasons about, and what
+    /// the size question needs. The card is built later, for the page alone.
     struct Loaded: Sendable {
         var listing: ShopListing
-        var product: ProductModel
-        var variants: [VariantModel]
-        var context: SizeContext
+        var productID: UUID
+        var brandID: UUID
+        var title: String
+        var productType: String?
+        var tags: [String]
+        var linkURL: String?
+        var variants: [VariantInfo]
 
         /// Buyable in a size the reader wears — `claims`, never `matches`, for the reason
-        /// `ShopCatalogue.fits` gives: "in my size" is a statement about the reader.
+        /// `ShopCatalogue.fits` gives: "in my size" is a statement about the reader. The size
+        /// context costs two classifier runs, so it is worked out here, where only the
+        /// listings that survived every other constraint are asked.
         func fits(_ profile: SizeProfile) -> Bool {
-            variants.contains { $0.available && profile.claims($0.asVariantInfo, in: context) }
+            let context = ProductModel.sizeContext(
+                title: title, productType: productType, tags: tags, linkURL: linkURL,
+                sizes: variants.map(\.displaySize)
+            )
+            return variants.contains { $0.available && profile.claims($0, in: context) }
         }
     }
 
     /// The candidates as listings, the way `ShopCatalogue` builds them on the phone.
+    ///
+    /// **Columns, not models.** Hydrating six hundred `ProductModel`s and their four thousand
+    /// `VariantModel`s through Fluent was most of a search — 380ms of 650 measured on eight
+    /// thousand products, in release — for a page that shows forty. The candidates are read
+    /// as rows into values, and only the page becomes models (`cards`).
     static func load(
         _ candidates: [IndexCandidate],
         scope: CatalogueScope,
         profile: SizeProfile,
-        on db: any Database
+        on sql: any SQLDatabase
     ) async throws -> [Loaded] {
         var relevance: [UUID: Double] = [:]
         for candidate in candidates { relevance[candidate.id, default: 0] += candidate.relevance }
         let ids = Array(relevance.keys)
         guard !ids.isEmpty else { return [] }
 
-        let products = try await ProductModel.query(on: db).filter(\.$id ~~ ids).all()
-        let variants = Dictionary(
-            grouping: try await VariantModel.query(on: db).filter(\.$product.$id ~~ ids).all(),
-            by: { $0.$product.id }
-        )
-        return products.compactMap { product in
-            guard let id = product.id, let brandName = scope.brands[product.$brand.id] else { return nil }
+        var variants: [UUID: [VariantInfo]] = [:]
+        for row in try await sql.raw("""
+            SELECT product_id, external_id, title, size, color, available, price, image_index
+            FROM variants WHERE product_id IN (\(binds: ids))
+            """).all() {
+            variants[try row.decode(column: "product_id", as: UUID.self), default: []].append(VariantInfo(
+                id: try row.decode(column: "external_id", as: String.self),
+                title: try row.decode(column: "title", as: String.self),
+                available: try row.decode(column: "available", as: Bool.self),
+                price: try row.decode(column: "price", as: String?.self),
+                size: try row.decode(column: "size", as: String?.self),
+                color: try row.decode(column: "color", as: String?.self),
+                imageIndex: try row.decode(column: "image_index", as: Int?.self)
+            ))
+        }
+
+        let rows = try await sql.raw("""
+            SELECT id, brand_id, title, product_type, tags, price_amount, published_at, is_available,
+                   image_urls, link_url
+            FROM products WHERE id IN (\(binds: ids))
+            """).all()
+        return try rows.compactMap { row in
+            let id = try row.decode(column: "id", as: UUID.self)
+            let brandID = try row.decode(column: "brand_id", as: UUID.self)
+            guard let brandName = scope.brands[brandID] else { return nil }
+            let title = try row.decode(column: "title", as: String.self)
+            let productType = try row.decode(column: "product_type", as: String?.self)
+            let tags = try row.decode(column: "tags", as: [String].self)
+            let linkURL = try row.decode(column: "link_url", as: String?.self)
             let own = variants[id] ?? []
             var colourways: [String] = []
             for variant in own {
@@ -240,38 +277,55 @@ enum ProductSearch {
                       !colourways.contains(colour) else { continue }
                 colourways.append(colour)
             }
-            let infos = own.map(\.asVariantInfo)
-            // Shown by the reader's gender filter, and clothing at all — `BrandUpdate.passes`:
-            // a gift card is not a garment. Carried rather than applied, so the answer can say
-            // "your filter hides these" instead of claiming there are none.
-            let isGarment = PreviewImages.isGarment(title: product.title, imageURL: product.imageURLs.first)
-            let shown = isGarment && (profile.gender == .everything || profile.allows(product.gender))
+            // Shown by the reader's gender filter, and clothing at all — `BrandUpdate.passes`,
+            // which does not run the classifier when the filter is off. Carried rather than
+            // applied, so the answer can say "your filter hides these" instead of claiming
+            // there are none.
+            let image = try row.decode(column: "image_urls", as: [String].self).first
+            let shown = PreviewImages.isGarment(title: title, imageURL: image)
+                && (profile.gender == .everything
+                    || profile.allows(ProductModel.gender(title: title, productType: productType, tags: tags, linkURL: linkURL)))
             return Loaded(
                 listing: ShopListing(
                     id: id.uuidString,
-                    brandKey: product.$brand.id.uuidString,
+                    brandKey: brandID.uuidString,
                     brandName: brandName,
-                    title: product.title,
-                    productType: product.productType,
-                    tags: product.tags,
+                    title: title,
+                    productType: productType,
+                    tags: tags,
                     colourways: colourways,
-                    price: product.priceAmount,
-                    publishedAt: product.publishedAt,
-                    isAvailable: own.isEmpty ? (product.isAvailable ?? true) : own.contains(where: \.available),
+                    price: try row.decode(column: "price_amount", as: Double?.self),
+                    publishedAt: try row.decode(column: "published_at", as: Date.self),
+                    isAvailable: own.isEmpty
+                        ? (try row.decode(column: "is_available", as: Bool?.self) ?? true)
+                        : own.contains(where: \.available),
                     isShown: shown,
                     relevance: relevance[id] ?? 0
                 ),
-                product: product,
-                variants: own,
-                context: product.sizeContext(sizes: infos.map(\.displaySize))
+                productID: id,
+                brandID: brandID,
+                title: title,
+                productType: productType,
+                tags: tags,
+                linkURL: linkURL,
+                variants: own
             )
         }
     }
 
     /// The page, as cards: each product with its brand, its sources and the shop serving it.
     static func cards(for page: [Loaded], scope: CatalogueScope, on db: any Database) async throws -> [String: DiscoverCard] {
-        let brandIDs = Array(Set(page.map { $0.product.$brand.id }))
-        guard !brandIDs.isEmpty else { return [:] }
+        guard !page.isEmpty else { return [:] }
+        let ids = page.map(\.productID)
+        let products = Dictionary(
+            try await ProductModel.query(on: db).filter(\.$id ~~ ids).all().compactMap { product in product.id.map { ($0, product) } },
+            uniquingKeysWith: { a, _ in a }
+        )
+        let variants = Dictionary(
+            grouping: try await VariantModel.query(on: db).filter(\.$product.$id ~~ ids).all(),
+            by: { $0.$product.id }
+        )
+        let brandIDs = Array(Set(page.map(\.brandID)))
         let brands = Dictionary(
             try await BrandModel.query(on: db).filter(\.$id ~~ brandIDs).with(\.$sources).all()
                 .compactMap { brand in brand.id.map { ($0, brand) } },
@@ -279,13 +333,12 @@ enum ProductSearch {
         )
         var out: [String: DiscoverCard] = [:]
         for loaded in page {
-            guard let brand = brands[loaded.product.$brand.id] else { continue }
-            let shop = scope.serving[loaded.product.$brand.id]
+            guard let product = products[loaded.productID], let brand = brands[loaded.brandID] else { continue }
             out[loaded.listing.id] = DiscoverCard(
-                loaded.product,
-                brand: BrandDTO(brand, sources: brand.sources, storefront: shop),
+                product,
+                brand: BrandDTO(brand, sources: brand.sources, storefront: scope.serving[loaded.brandID]),
                 mainCurrency: brand.currency,
-                variants: loaded.variants,
+                variants: variants[loaded.productID] ?? [],
                 spread: [],
                 vector: nil
             )
@@ -326,7 +379,7 @@ enum ProductSearch {
             let near = try await SemanticIndex.nearest(
                 to: vector, provider: provider, scope: scope.predicate, excluding: subjectID, limit: 60, on: sql
             )
-            let loaded = try await load(near.map { IndexCandidate(id: $0.id, relevance: $0.similarity) }, scope: scope, profile: profile, on: db)
+            let loaded = try await load(near.map { IndexCandidate(id: $0.id, relevance: $0.similarity) }, scope: scope, profile: profile, on: sql)
                 .filter(\.listing.isShown)
                 .sorted { a, b in
                     a.listing.relevance != b.listing.relevance
@@ -348,7 +401,7 @@ enum ProductSearch {
         let found = try await scope.index.candidates(
             for: words, narrowing: "p.id <> \(bind: subjectID)", ruledOut: [], scope: scope, limit: 300, on: sql
         )
-        let loaded = try await load(found, scope: scope, profile: profile, on: db).filter(\.listing.isShown)
+        let loaded = try await load(found, scope: scope, profile: profile, on: sql).filter(\.listing.isShown)
         let index = ShopIndex(loaded.map(\.listing))
         let slot = GarmentClassifier.classify(title: subject.title, productType: subject.productType, tags: subject.tags)
 
@@ -357,7 +410,7 @@ enum ProductSearch {
             var score = 0.0
             if slot != .unknown, candidate.listing.slot == slot { score += 1.5 }
             score += Double(own.terms.count { index.carries($0, at: position) })
-            if candidate.product.$brand.id == subject.$brand.id { score += 0.5 }
+            if candidate.brandID == subject.$brand.id { score += 0.5 }
             if score >= minimumResemblance { scored.append((candidate, score)) }
         }
         scored.sort { a, b in
