@@ -183,8 +183,8 @@ struct CreditRuleTests {
         let unset = PurchasePolicy.make(environment: .development, logger: logger, unverifiedFlag: nil, sandboxFlag: nil)
         #expect(unset.verifier is AppStoreVerifier)
 
-        // And the production verifier refuses rather than allows.
-        await #expect(throws: SignedPayloadError.verifierUnavailable) {
+        // And the production verifier does not believe what the double does.
+        await #expect(throws: SignedPayloadError.untrusted) {
             try await AppStoreVerifier().verifiedPayload(of: try transaction())
         }
     }
@@ -438,18 +438,71 @@ struct CreditPurchaseTests {
         }
     }
 
-    @Test("Until a verifier is deployed, a purchase is refused with a reason, not lost")
+    @Test("A transaction Apple did not sign is refused with a reason, and credits nothing")
     func verifierRefuses() async throws {
         try await withServer { app in
             // What every server gets without the local flag.
             #expect(app.purchasePolicy.verifier is AppStoreVerifier)
             let (headers, account, _) = try await signedInDevice(app)
             let (status, _, body) = try await post(app, try transaction(), headers: headers)
-            #expect(status == .serviceUnavailable)
-            #expect(body.contains("Purchases can't be verified on this server yet"))
+            #expect(status == .badRequest)
+            #expect(body.contains("That transaction's signature doesn't verify"))
             #expect(try await CreditLedger.balance(of: account, on: app.db) == 0)
 
-            #expect(try await notify(app, try notification("REFUND", transaction: try transaction())) == .serviceUnavailable)
+            #expect(try await notify(app, try notification("REFUND", transaction: try transaction())) == .badRequest)
+        }
+    }
+
+    @Test("Signed end to end: a purchase credits, and its refund takes the credits back")
+    func signedEndToEnd() async throws {
+        try await withServer { app in
+            let chain = try TestStoreChain()
+            app.purchasePolicy = PurchasePolicy(verifier: chain.verifier, isProductionServer: true, allowsSandbox: false)
+            let (headers, account, _) = try await signedInDevice(app)
+            let purchase: [String: Any] = [
+                "transactionId": "9000",
+                "originalTransactionId": "9000",
+                "bundleId": AppStorePurchases.bundleID,
+                "productId": "com.kern.functional.streetw.credits.50",
+                "type": "Consumable",
+                "environment": "Production",
+                "quantity": 1,
+                "signedDate": storeSignedDate.timeIntervalSince1970 * 1000,
+                "appAccountToken": account.uuidString.lowercased()
+            ]
+            let signedPurchase = try chain.sign(purchase)
+            let (status, receipt, _) = try await post(app, signedPurchase, headers: headers)
+            #expect(status == .ok)
+            #expect(receipt?.credited == 50)
+
+            func refund(renewal: String?) throws -> String {
+                var data: [String: Any] = [
+                    "bundleId": AppStorePurchases.bundleID,
+                    "environment": "Production",
+                    "signedTransactionInfo": signedPurchase
+                ]
+                if let renewal { data["signedRenewalInfo"] = renewal }
+                return try chain.sign([
+                    "notificationType": "REFUND",
+                    "notificationUUID": UUID().uuidString,
+                    "signedDate": storeSignedDate.timeIntervalSince1970 * 1000,
+                    "data": data
+                ])
+            }
+
+            // Renewal info inside is verified too: one Apple did not sign spoils the whole
+            // notification, however genuine its envelope.
+            let forged = try TestStoreChain().sign(["signedDate": storeSignedDate.timeIntervalSince1970 * 1000])
+            #expect(try await notify(app, try refund(renewal: forged)) == .badRequest)
+            #expect(try await CreditLedger.balance(of: account, on: app.db) == 50)
+
+            // An envelope Apple did not sign, around a transaction it did.
+            let unsignedEnvelope = try notification("REFUND", transaction: signedPurchase)
+            #expect(try await notify(app, unsignedEnvelope) == .badRequest)
+
+            let genuineRenewal = try chain.sign(["signedDate": storeSignedDate.timeIntervalSince1970 * 1000])
+            #expect(try await notify(app, try refund(renewal: genuineRenewal)) == .ok)
+            #expect(try await CreditLedger.balance(of: account, on: app.db) == 0)
         }
     }
 }

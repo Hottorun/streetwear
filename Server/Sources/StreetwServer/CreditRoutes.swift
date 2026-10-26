@@ -39,8 +39,8 @@ func creditRoutes(
 
     /// One StoreKit 2 transaction, credited once. Every 2xx is final and the phone finishes
     /// the transaction on it; every refusal leaves it unfinished, to be posted again on a
-    /// later launch — which is how a purchase made while this server could not verify it is
-    /// still credited once one can.
+    /// later launch — which is how a purchase refused by a deploy behind App Store Connect, or
+    /// made while an older server could not verify it, is still credited once one can.
     authed.grouped(RateLimit(store: app.rateLimits.purchases, identity: .device, name: "purchases"))
         .on(.POST, "credits", "purchases", body: .collect(maxSize: signedBodyLimit)) { req async throws -> CreditPurchaseReceipt in
         // Checked here as well, for the reason `POST /v1/usage` does: a body that arrives in
@@ -65,7 +65,7 @@ func creditRoutes(
     /// App Store Server Notifications V2 — the URL App Store Connect is given, for both
     /// environments. **Public, and authenticated by Apple's signature alone**: Apple holds no
     /// device token. Answers 200 for anything handled or deliberately ignored, so Apple stops
-    /// retrying; a 503 while no verifier is deployed, so Apple retries — for a while.
+    /// retrying; a 400 for anything whose signature or chain does not verify.
     v1.grouped(RateLimit(store: app.rateLimits.storeNotifications, identity: .address, name: "store-notifications"))
         .on(.POST, "app-store", "notifications", body: .collect(maxSize: signedBodyLimit)) { req async throws -> HTTPStatus in
         guard (req.body.data?.readableBytes ?? 0) <= signedBodyLimit.value else {

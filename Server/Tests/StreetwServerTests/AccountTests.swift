@@ -235,24 +235,59 @@ struct AppleTokenTests {
 
 @Suite("Accounts")
 struct AccountTests {
-    /// Signing in is refused, with a reason, until identity tokens can be verified — the
-    /// suite runs with no `SIWA_TEST_TOKENS`, which is the production configuration.
-    @Test("With no verifier, sign-in refuses rather than trusting the token")
-    func refusesWithoutAVerifier() async throws {
+    /// The suite runs with no `SIWA_TEST_TOKENS`, which is the production configuration: the
+    /// real verifier, which offers sign-in and believes only Apple's signature.
+    @Test("The production verifier offers sign-in and refuses a token Apple did not sign")
+    func refusesAnUnsignedToken() async throws {
         try await withServer { app in
+            #expect(app.appleSignIn.verifier is AppleIdentityTokenVerifier)
             let (headers, _) = try await register(app)
+            try await app.testing().test(.GET, "v1/account", headers: headers) { res async throws in
+                #expect(try res.content.decode(AccountStatus.self).signInAvailable == true)
+            }
+            // An unsigned token in every other respect perfect — what `SIWA_TEST_TOKENS`
+            // accepts. Refused on its header, before any key is fetched.
+            let claims = try JSONSerialization.data(withJSONObject: [
+                "iss": AppleSignInConstants.issuer, "aud": AppleSignInConstants.clientID,
+                "exp": Date().addingTimeInterval(600).timeIntervalSince1970, "sub": "mallory",
+                "nonce": AppleIdentityClaims.hash("n")
+            ] as [String: Any])
+            let unsigned = "\(Data(#"{"alg":"none"}"#.utf8).base64URLEncodedString()).\(claims.base64URLEncodedString())."
             try await app.testing().test(.POST, "v1/account/apple", headers: headers, beforeRequest: { req in
-                try req.content.encode(AppleSignIn(identityToken: "a.b.c", authorizationCode: nil, nonce: "n"))
+                try req.content.encode(AppleSignIn(identityToken: unsigned, authorizationCode: nil, nonce: "n"))
             }, afterResponse: { res async throws in
-                #expect(res.status == .serviceUnavailable)
-                #expect(res.body.string.contains(UnavailableAppleIdentityVerifier.reason))
+                #expect(res.status == .unauthorized)
+                #expect(res.body.string.contains(AppleIdentityTokenVerifier.Failure.unsupportedAlgorithm.description))
             })
             #expect(try await AccountModel.query(on: app.db).count() == 0)
-            // And the app is told, so it does not offer the button.
-            try await app.testing().test(.GET, "v1/account", headers: headers) { res async throws in
-                #expect(try res.content.decode(AccountStatus.self).signInAvailable == false)
-            }
         }
+    }
+
+    @Test("A token Apple's key signed signs in through the route")
+    func signsInWithAGenuineToken() async throws {
+        try await withServer { app in
+            let keys = try TestAppleKeys()
+            let jwks = try keys.jwks
+            app.appleSignIn = AppleSignInConfiguration(
+                verifier: AppleIdentityTokenVerifier(keys: AppleSigningKeys(fetch: { jwks })),
+                tokens: nil
+            )
+            let (headers, _) = try await register(app)
+            let token = try keys.token(subject: "alice", nonce: "raw-nonce")
+            try await app.testing().test(.POST, "v1/account/apple", headers: headers, beforeRequest: { req in
+                try req.content.encode(AppleSignIn(identityToken: token, authorizationCode: nil, nonce: "raw-nonce"))
+            }, afterResponse: { res async throws in
+                #expect(res.status == .ok, "\(res.body.string)")
+            })
+            #expect(try await AccountModel.query(on: app.db).first()?.appleSubject == "alice")
+        }
+    }
+
+    @Test("Before configure has chosen, nothing is believed")
+    func unconfiguredRefuses() async throws {
+        let refusal = UnavailableAppleIdentityVerifier()
+        #expect(!refusal.isAvailable)
+        await #expect(throws: Abort.self) { try await refusal.verify(identityToken: "a.b.c", nonce: "n", now: Date()) }
     }
 
     @Test("Account routes refuse an anonymous caller")
