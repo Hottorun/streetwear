@@ -45,7 +45,7 @@ ask Apple for either.
 
 Almost everything the app knows about you stays on your phone. The exception is the small amount
 of information our server needs in order to tell you that something you are waiting for has been
-released, has come back in stock or has been marked down.
+released, has come back in stock or has been marked down, and the searches you ask it to run.
 
 We do not sell data, we show no advertising, we use no third-party analytics or attribution
 services, and we do not track you across other companies' apps or websites. The one thing we
@@ -56,8 +56,6 @@ server — see *Anonymous usage counts* below.
 
 - Everything you save, and the notes, sizes and photographs attached to it
 - Your boards and the outfits you compose
-- Anything you type into Shop's search box. Shop searches the products already on your phone,
-  and the search never leaves it
 - Your daily picks, and anything you mark "not for me"
 - Anything you write in the style statement field
 - The taste profile used to recommend brands and pick products, and any brand you have dismissed
@@ -85,6 +83,10 @@ Deleting the app deletes all of it. We hold no copy and cannot recover it.
   drops, or nothing at all, so we know which storefronts to watch and what to tell you.
 - **Which products you have asked to be alerted about**, including the size or colour you asked
   for.
+- **What you type into Shop's search box**, so our server can search everything the shops you
+  follow sell. It is used to answer that one search and then discarded: it is not stored, not
+  written to our logs, and not linked to you or your device. Finding products that look alike
+  runs on our own server too — no search, and no product, is sent to another company to do it.
 - **Your size preferences and your gender filter.** These are held so that a restock alert in a
   size you do not wear is never sent to you. That targeting is the only reason we have them.
 - **The country you shop in** — your phone's region, unless you choose another under You ›
