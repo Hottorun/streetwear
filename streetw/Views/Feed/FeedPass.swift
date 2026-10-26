@@ -29,13 +29,27 @@ struct FeedPass {
         card.entries.compactMap { rows[$0] }
     }
 
+    /// One row's scalars, read once. A SwiftData property is not a stored property — every
+    /// read goes through the model's backing data — so the pass reads each field of each row
+    /// exactly once and everything after it works on these.
+    private struct Row {
+        let update: BrandUpdate
+        let id: String
+        let kind: UpdateKind
+        let happened: Date
+        let arrived: Date
+        let brand: Brand
+    }
+
     /// - Parameter news: rows with an arrival — the feed's timeline is news, never history.
     ///   See `BrandUpdate.arrivedAt`.
     init(news: [BrandUpdate], profile: SizeProfile, since boundary: Date?, now: Date = Date()) {
         // **The order of the tests is the cost of this function**, the lesson
         // `FollowedSupply.cards` wrote down: stored scalars first, the relationship after.
-        var kept: [(update: BrandUpdate, arrived: Date, brand: Brand)] = []
+        var kept: [Row] = []
         kept.reserveCapacity(news.count)
+        var products: [UUID: [Row]] = [:]
+        var releases: [UUID: [Row]] = [:]
         for update in news {
             guard let arrived = update.arrivedAt else { continue }
             // A gift card is not news about a brand's output and is never on the feed; it is
@@ -46,38 +60,45 @@ struct FeedPass {
                 isHidingSome = true
                 continue
             }
-            guard rows[update.externalID] == nil else { continue }
-            rows[update.externalID] = update
+            let id = update.externalID
+            guard rows[id] == nil else { continue }
+            rows[id] = update
             brands[brand.id.uuidString] = brand
-            kept.append((update, arrived, brand))
+            let row = Row(update: update, id: id, kind: update.kind, happened: update.publishedAt, arrived: arrived, brand: brand)
+            kept.append(row)
+            if row.kind == .product { products[brand.id, default: []].append(row) }
+            if row.kind == .collection { releases[brand.id, default: []].append(row) }
         }
 
-        let releases = kept.filter { $0.update.kind == .collection }
+        var tokens: [String: Set<String>] = [:]
         var entries: [FeedTimeline.Entry] = []
         entries.reserveCapacity(kept.count)
-        for (update, arrived, brand) in kept {
-            let kind = update.kind
-            let key = brand.id.uuidString
-            if kind == .post, releases.contains(where: { release in
-                release.brand.id == brand.id
-                    && abs(release.update.publishedAt.timeIntervalSince(update.publishedAt)) <= FeedTimeline.releaseWindow
+        for row in kept {
+            let update = row.update
+            let brand = row.brand
+            if row.kind == .post, releases[brand.id]?.contains(where: { release in
+                abs(release.happened.timeIntervalSince(row.happened)) <= FeedTimeline.releaseWindow
                     && Self.restates(release.update.title, as: update.title, ignoring: brand.name)
-            }) {
+            }) == true {
                 // **One release, stated once.** A brand that runs a blog announces its drop
                 // twice — the collection, and a post about the collection — and BBC's Yankees
                 // edit arrived as both. The release card says it.
                 continue
             }
+            var members = Set<String>()
+            if row.kind == .collection {
+                members = Self.members(of: update, among: products[brand.id] ?? [], tokens: &tokens)
+            }
             entries.append(FeedTimeline.Entry(
-                id: update.externalID,
-                brand: key,
-                kind: kind,
-                happenedAt: update.publishedAt,
-                arrivedAt: arrived,
-                product: update.productExternalID ?? update.externalID,
+                id: row.id,
+                brand: brand.id.uuidString,
+                kind: row.kind,
+                happenedAt: row.happened,
+                arrivedAt: row.arrived,
+                product: update.productExternalID ?? row.id,
                 // `claims`, never `matches` — the label is a statement about the reader.
-                isYours: kind == .restock && !profile.isEmpty && !update.restockedSizes(matching: profile).isEmpty,
-                releaseMembers: kind == .collection ? members(of: update, brand: brand, among: kept) : []
+                isYours: row.kind == .restock && !profile.isEmpty && !update.restockedSizes(matching: profile).isEmpty,
+                releaseMembers: members
             ))
         }
         timeline = FeedTimeline.build(entries, since: boundary, now: now)
@@ -87,21 +108,30 @@ struct FeedPass {
     /// else the word match — `Brand.members(of:)`'s order, so the card and the page it opens
     /// agree about what is in it.
     ///
-    /// Matched against this timeline's own rows rather than the brand's catalogue: the
-    /// question is only what to fold, and `members(of:)` faults the whole relationship to
+    /// Matched against this timeline's own products of the brand rather than its catalogue:
+    /// the question is only what to fold, and `members(of:)` faults the whole relationship to
     /// answer a wider one. The guess admits `.product` alone, the same restraint the guess
     /// there keeps — a re-shelved garment from the same season carries the same season code.
-    private func members(
+    ///
+    /// **Each product is tokenised once per pass**, however many releases ask about it. A
+    /// brand's collection list is mostly shop furniture and arrives in quantity — Kith's was
+    /// 241 rows in one seed — and asking every release about every product, tokenising both
+    /// sides each time, was 200ms of a 240ms pass.
+    private static func members(
         of release: BrandUpdate,
-        brand: Brand,
-        among kept: [(update: BrandUpdate, arrived: Date, brand: Brand)]
+        among products: [Row],
+        tokens: inout [String: Set<String>]
     ) -> Set<String> {
         if !release.memberExternalIDs.isEmpty { return Set(release.memberExternalIDs) }
         let words = BrandUpdate.distinctiveWords(in: release.title)
-        guard !words.isEmpty else { return [] }
+        guard !words.isEmpty, !products.isEmpty else { return [] }
         var members = Set<String>()
-        for row in kept where row.brand.id == brand.id && row.update.kind == .product && row.update.mentionsAny(of: words) {
-            members.insert(row.update.productExternalID ?? row.update.externalID)
+        for product in products {
+            let own = tokens[product.id] ?? product.update.wordTokens
+            tokens[product.id] = own
+            if words.contains(where: own.contains) {
+                members.insert(product.update.productExternalID ?? product.id)
+            }
         }
         return members
     }

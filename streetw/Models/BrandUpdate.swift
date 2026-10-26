@@ -754,12 +754,18 @@ final class BrandUpdate {
     /// release, so a loose match is not a slightly worse answer, it is a false one.
     func mentionsAny(of words: [String]) -> Bool {
         guard !words.isEmpty else { return false }
+        let tokens = wordTokens
+        return words.contains { tokens.contains($0) }
+    }
+
+    /// The whole tokens `mentionsAny` matches against: title, type and tags, lowercased.
+    /// Built fresh on every read, so a caller asking about many releases holds on to it.
+    var wordTokens: Set<String> {
         let haystack = ([title, productType ?? ""] + tags)
             .joined(separator: " ")
             .lowercased()
             .split(whereSeparator: { !$0.isLetter && !$0.isNumber })
-        let tokens = Set(haystack.map(String.init))
-        return words.contains { tokens.contains($0) }
+        return Set(haystack.map(String.init))
     }
 
     /// Sizes from this restock that the user actually wears.

@@ -287,10 +287,17 @@ enum DevSeed {
         // feed has something to render, arriving when each was published. A dozen per brand
         // by default; `-seedNews 400` makes the feed as deep as a busy follow list, which is
         // what its speed has to be measured against.
+        //
+        // Garments only. A baseline's newest rows are mostly `/collections.json` furniture —
+        // Kith's newest 241 were all collections — and real news never looks like that:
+        // after the baseline a collection is announced only once its stock says it is one.
         await engine.sync(brands: brands)
         let slice = Int(UserDefaults.standard.string(forKey: "seedNews") ?? "") ?? 12
         for brand in brands {
-            for update in brand.recentUpdates(limit: slice) { update.arrive(at: update.publishedAt) }
+            let garments = brand.updates.filter { [.product, .restock, .priceDrop].contains($0.kind) }
+            for update in BrandUpdate.oncePerProduct(garments).prefix(slice) {
+                update.arrive(at: update.publishedAt)
+            }
         }
         try? context.save()
     }
