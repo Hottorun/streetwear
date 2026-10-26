@@ -25,9 +25,13 @@ if ! curl -sf "http://127.0.0.1:$PORT/velmar-loafer.jpg" -o /dev/null; then
   sleep 1
 fi
 
+# en_US on the launch as well as the device: prices print in the reader's locale, and a
+# German simulator prints "135 US$".
 COMMON=(-standalone YES -didOfferStarterPack YES -demoCatalog "http://127.0.0.1:$PORT"
-        -seedSizes "M,L,10")
+        -seedSizes "M,L,10" -AppleLocale en_US -AppleLanguages "(en)")
 
+xcrun simctl spawn "$DEV" defaults write -g AppleLocale en_US
+xcrun simctl spawn "$DEV" defaults write -g AppleLanguages -array en-US en
 xcrun simctl status_bar "$DEV" override --time "9:41" --batteryState charged --batteryLevel 100 \
   --cellularMode active --cellularBars 4 --wifiMode active --wifiBars 3
 
@@ -50,11 +54,11 @@ shot() {  # name, settle seconds, extra launch args...
 }
 
 shot feed     10 -startTab feed -feedLastVisitHours 5
-shot product  10 -startTab feed -demoOpen "restock:shopify:910001"
-shot discover 14 -startTab shop
+shot product  25 -startTab feed -demoOpen "restock:shopify:910001"
+shot search   12 -startTab shop -shopQuery "black trousers under 200"
+shot picks    14 -startTab shop
 shot saved    40 -startTab saved
-shot style    12 -startTab style    # Saved › Fits
+shot fit      14 -startTab style -demoSheet fit    # style opens Saved › Fits
 shot calendar 10 -startTab feed -feedFilter upcoming
-shot fit      14 -startTab style -demoSheet fit
 
 xcrun simctl terminate "$DEV" $BUNDLE || true

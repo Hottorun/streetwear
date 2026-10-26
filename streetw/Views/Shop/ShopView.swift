@@ -187,6 +187,15 @@ struct ShopView: View {
         .task(id: picksKey(day: day)) {
             await choosePicks(day: day)
         }
+        #if DEBUG
+        // Screenshot affordance: `-shopQuery "<text>"` types a description into the field at
+        // launch, so a search and its reading can be shot without driving the keyboard.
+        .task {
+            if text.isEmpty, let typed = UserDefaults.standard.string(forKey: "shopQuery"), !typed.isEmpty {
+                text = typed
+            }
+        }
+        #endif
         // A multi-line field so a long description wraps where it can be read, which makes
         // return a newline — so a newline is taken as "done", the way the keyboard's own
         // Search key reads.
