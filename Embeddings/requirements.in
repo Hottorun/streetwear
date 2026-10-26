@@ -1,0 +1,18 @@
+# The service's direct dependencies. requirements.txt is compiled from this for Linux,
+# pinned and hashed:
+#
+#   uv pip compile requirements.in --generate-hashes --python-version 3.12 \
+#     --python-platform linux --index-url https://download.pytorch.org/whl/cpu \
+#     --extra-index-url https://pypi.org/simple --index-strategy unsafe-best-match \
+#     -o requirements.txt
+#
+# torch and torchvision come from PyTorch's CPU index, so the image never pulls CUDA.
+torch==2.14.1+cpu
+torchvision==0.29.1+cpu
+open_clip_torch
+# open_clip's tokenizer for SigLIP is a Hugging Face tokenizer.
+transformers
+pillow
+starlette
+uvicorn
+httpx
