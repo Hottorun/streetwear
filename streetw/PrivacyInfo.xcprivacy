@@ -68,10 +68,10 @@
 	<array>
 		<dict>
 			<!--
-			  The device row: a server-issued bearer token and an APNs device token. There
-			  is no account, no email and no name anywhere in this system — but the row is
-			  persistent and everything below hangs off it, so it is reported as linked
-			  rather than pretending pseudonymity is anonymity.
+			  The device row: a server-issued bearer token and an APNs device token. No email
+			  and no name of the user anywhere in this system — but the row is persistent and
+			  everything below hangs off it, so it is reported as linked rather than
+			  pretending pseudonymity is anonymity.
 			-->
 			<key>NSPrivacyCollectedDataType</key>
 			<string>NSPrivacyCollectedDataTypeDeviceID</string>
@@ -114,7 +114,10 @@
 		<dict>
 			<!--
 			  The size profile and the gender filter, sent so the server can decide whether
-			  a restock is worth waking someone for.
+			  a restock is worth waking someone for; the country a person shops in, so the
+			  feed comes from that country's shop (a setting defaulting to the phone's region,
+			  never a position — which is why this is not Coarse Location); and each profile's
+			  alerts switch.
 
 			  Note what is *not* here, and is not an oversight: saves, boards, fits, the
 			  style statement, the taste vector and every dismissal stay on the device by
@@ -123,6 +126,42 @@
 			-->
 			<key>NSPrivacyCollectedDataType</key>
 			<string>NSPrivacyCollectedDataTypeOtherDataTypes</string>
+			<key>NSPrivacyCollectedDataTypeLinked</key>
+			<true/>
+			<key>NSPrivacyCollectedDataTypeTracking</key>
+			<false/>
+			<key>NSPrivacyCollectedDataTypePurposes</key>
+			<array>
+				<string>NSPrivacyCollectedDataTypePurposeAppFunctionality</string>
+			</array>
+		</dict>
+		<dict>
+			<!--
+			  Sign in with Apple's stable identifier (`accounts.apple_subject`), optional, and
+			  what an account is recognised by on a new phone. Apple mints a different one per
+			  team, so it identifies nobody outside this app — but it is an account identifier,
+			  and every follow and size of a signed-in user hangs off it. No email and no name
+			  is requested (`requestedScopes = []`).
+			-->
+			<key>NSPrivacyCollectedDataType</key>
+			<string>NSPrivacyCollectedDataTypeUserID</string>
+			<key>NSPrivacyCollectedDataTypeLinked</key>
+			<true/>
+			<key>NSPrivacyCollectedDataTypeTracking</key>
+			<false/>
+			<key>NSPrivacyCollectedDataTypePurposes</key>
+			<array>
+				<string>NSPrivacyCollectedDataTypePurposeAppFunctionality</string>
+			</array>
+		</dict>
+		<dict>
+			<!--
+			  A profile's display name ("Anna"), held on the server and printed at the start
+			  of that profile's alerts. Free text that is often a real person's first name, so
+			  it is declared as Name rather than argued out of it.
+			-->
+			<key>NSPrivacyCollectedDataType</key>
+			<string>NSPrivacyCollectedDataTypeName</string>
 			<key>NSPrivacyCollectedDataTypeLinked</key>
 			<true/>
 			<key>NSPrivacyCollectedDataTypeTracking</key>

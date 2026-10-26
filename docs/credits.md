@@ -11,6 +11,12 @@ never expire, a fixed number per action, a small free monthly allowance, usage s
 and prices set from measured cost. No AI action exists yet (Phase 4); everything here is built so
 that one only has to call it.
 
+**The app does not show credits yet** (`CreditStore.isOffered`, false). Packs nothing in the app
+can spend are a consumable that does nothing — App Review refuses those under 3.1.1, and it would
+be taking money for a promise. Everything server-side is deployed and tested; Phase 4 flips the
+switch in the same release as the first action that costs credits, and the packs go into App Store
+Connect then, not before.
+
 ## What Phase 4 calls
 
 ```swift

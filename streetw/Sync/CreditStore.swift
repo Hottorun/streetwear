@@ -45,10 +45,17 @@ final class CreditStore {
         self.settings = settings
     }
 
-    /// Whether the You page draws a Credits section: a server, and an account on it.
+    /// Whether the You page draws a Credits section: something to spend them on, a server, and
+    /// an account on it.
     var isShown: Bool {
-        settings.isConfigured && summary?.signedIn == true
+        Self.isOffered && settings.isConfigured && summary?.signedIn == true
     }
+
+    /// **Off until an action costs credits** — Phase 4's AI. Selling packs nothing in the app
+    /// can spend is a consumable that does nothing, which App Review refuses (3.1.1) and which
+    /// would take somebody's money for a promise. The ledger, the routes and the purchase path
+    /// all ship and are tested; this is the one switch that shows them.
+    static let isOffered = false
 
     private var api: StreetwAPI? {
         guard let baseURL = settings.baseURL, settings.token != nil else { return nil }

@@ -16,8 +16,9 @@
 // Nothing here is a placeholder. Sign-in leads the page, quietly, because it is the one setting
 // about whether any of the rest survives a reinstall — see `AccountSection` — and profiles follow
 // it, because everything below them is about whichever profile is current (`ProfilesSection`).
-// Credits are drawn only for an account (`CreditsSection`), and they and the location are the
-// account's, whichever profile is current.
+// Credits are drawn only for an account, and only once something costs credits
+// (`CreditStore.isOffered`); they and the location are the account's, whichever profile is
+// current.
 
 import StreetwCore
 import SwiftData
