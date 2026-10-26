@@ -266,6 +266,43 @@ struct ProductSearchTests {
         }
     }
 
+    /// The full scan's `unlisted_at`, which this branch only reads where it exists — added by
+    /// hand here, as the scan's migration adds it.
+    @Test("A product the scan found gone from its shop is not searched")
+    func unlistedIsLeftOut() async throws {
+        try await withServer { app in
+            let sql = try #require(app.db as? any SQLDatabase)
+            try await sql.raw("ALTER TABLE products ADD COLUMN unlisted_at DATETIME").run()
+            let kith = try await shop(app, "Kith", slug: "kith.com")
+            try await product(app, kith, "Williams Hoodie", type: "Hoodies")
+            let gone = try await product(app, kith, "Retired Hoodie", type: "Hoodies")
+            try await sql.raw("UPDATE products SET unlisted_at = \(bind: Date()) WHERE id = \(bind: try gone.requireID())").run()
+
+            let auth = try await reader(app, follows: [kith.brand])
+            let answer = try await search(app, auth, "hoodie")
+            #expect(answer.exactTitles == ["Williams Hoodie"])
+            #expect(answer.searched == 1)
+        }
+    }
+
+    /// A sitemap product's key is its whole URL, slashes and all; it is one path segment.
+    @Test("More like this takes an external id holding a URL")
+    func similarBySitemapID() async throws {
+        try await withServer { app in
+            let subdued = try await shop(app, "Subdued", slug: "subdued.com")
+            let key = "sitemap:https://subdued.com/en/products/wool-coat"
+            try await product(app, subdued, "Wool Coat", id: key, type: "Coats", tags: ["wool"])
+            try await product(app, subdued, "Wool Long Coat", id: "sitemap:https://subdued.com/en/products/long", type: "Coats", tags: ["wool"])
+            let auth = try await reader(app, follows: [subdued.brand])
+            let segment = try #require(key.addingPercentEncoding(withAllowedCharacters: .alphanumerics))
+            try await app.testing().test(.GET, "v1/products/\(segment)/similar?brand=\(subdued.brand)", headers: auth) { res async throws in
+                #expect(res.status == .ok)
+                let ids = try res.content.decode(SimilarProductsResponse.self).products.map(\.productExternalID)
+                #expect(ids == ["sitemap:https://subdued.com/en/products/long"])
+            }
+        }
+    }
+
     @Test("Sold out goes last, and is not hidden")
     func soldOutLast() async throws {
         try await withServer { app in

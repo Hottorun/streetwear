@@ -88,11 +88,14 @@ enum ProductSearch {
             brandIDs: kind == .followed ? ids : nil,
             on: db
         )
+        var hidesUnlisted = false
+        if let sql = db as? any SQLDatabase { hidesUnlisted = try await CatalogueScope.hasUnlistedColumn(on: sql) }
         return CatalogueScope(
             kind: kind,
             brands: Dictionary(brands.compactMap { brand in brand.id.map { ($0, brand.name) } }, uniquingKeysWith: { a, _ in a }),
             serving: serving,
-            dialect: dialect
+            dialect: dialect,
+            hidesUnlisted: hidesUnlisted
         )
     }
 

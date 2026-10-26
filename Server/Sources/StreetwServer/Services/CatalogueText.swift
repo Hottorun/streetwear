@@ -32,13 +32,30 @@ struct CatalogueScope: Sendable {
     /// served its main shop. One shop per brand, never both — the rule the feed keeps.
     var serving: [UUID: StorefrontModel]
     var dialect: String
+    /// Whether `products.unlisted_at` exists to be read — see `hasUnlistedColumn`.
+    var hidesUnlisted = false
+
+    /// Whether the catalogue scan's `products.unlisted_at` is in this database.
+    ///
+    /// The full scan sets it on a product missing from two complete reads, and a product the
+    /// shop has taken down must not be offered by search any more than by Discover. The scan
+    /// and this search were built side by side, so this branch asks rather than assumes; once
+    /// the two are merged the column is always there and this question can go.
+    static func hasUnlistedColumn(on sql: any SQLDatabase) async throws -> Bool {
+        let query: SQLQueryString = sql.dialect.name == "postgresql"
+            ? "SELECT 1 AS one FROM information_schema.columns WHERE table_name = 'products' AND column_name = 'unlisted_at'"
+            : "SELECT 1 AS one FROM pragma_table_info('products') WHERE name = 'unlisted_at'"
+        return try await sql.raw(query).first() != nil
+    }
 
     /// The products this caller may be shown, as a predicate on `p`.
     ///
     /// Garments only (`kind = 'product'`: not a collection, a post or a page), with a
     /// photograph, from the shop that serves them, and **announced** — a sitemap row still
     /// waiting for its page (`pending_announcement`) may not be a product at all, and has no
-    /// price or stock to search on until it is read.
+    /// price or stock to search on until it is read. And still **listed**: a product the
+    /// full scan has found gone from its shop (`unlisted_at`) is left out, as Discover leaves
+    /// it out.
     var predicate: SQLQueryString {
         let photographed: SQLQueryString = dialect == "postgresql"
             ? "cardinality(p.image_urls) > 0"
@@ -58,7 +75,8 @@ struct CatalogueScope: Sendable {
         }
         if !shops.isEmpty { served.append("p.storefront_id IN (\(binds: shops))") }
         let shop: SQLQueryString = served.isEmpty ? "1 = 0" : "(" + served.joined(separator: " OR ") + ")"
-        return "p.kind = 'product' AND p.pending_announcement IS NULL AND \(photographed) AND \(shop)"
+        let listed: SQLQueryString = hidesUnlisted ? " AND p.unlisted_at IS NULL" : ""
+        return "p.kind = 'product' AND p.pending_announcement IS NULL AND \(photographed) AND \(shop)\(listed)"
     }
 }
 
