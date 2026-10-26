@@ -12,7 +12,7 @@
 // - **Inferring taste** — the Style tab's reading (`StyleProfile`), the brand recommendations'
 //   taste vector, the Discover taste vector — reads `counted`/`weighted`: nothing left out, and
 //   the mood leant on. These are the places a save is taken as a statement about the person.
-// - **Pairing against what you have** — "goes with your …" (`GoesWith`), `FitStudio`, the
+// - **Pairing against what you have** — "goes with your …" (`GoesWith`), `FitProposal`, the
 //   Discover card's pairing — reads `pairingPool`. The wardrobe is in it **whatever its taste
 //   setting**, because owning something is a fact and liking it is not: a jacket kept out of
 //   the taste reading is still in the cupboard and still goes with the trousers. Only the

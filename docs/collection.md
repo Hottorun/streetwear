@@ -21,9 +21,8 @@ Part of the streetw guidance set; see `CLAUDE.md` for the index and the build ru
     `LazyVStack` and is routinely recycled or scrolled away before you act on the toast; so are
     the two sheets, which are presented from `ContentView` because the toast dismisses itself
     on the tap that opens them.
-  - **It clears the buy bar.** Anchored above the tab bar — `quickSave` owns the horizontal
-    drag on the lower half of a feed card, so anything laid over that region fights a gesture
-    for the same pixels — but a product page puts its buy button there, and covering it for
+  - **It clears the buy bar.** Anchored above the tab bar — over the cards it would cover the
+    next ones being read — but a product page puts its buy button there, and covering it for
     four seconds at the moment somebody decided they want the thing is the worst possible
     place for a confirmation. `bottomClearance` lifts it while that page is up.
   - **A share gets the same confirmation, and it is the main point of it.** The extension
@@ -81,9 +80,12 @@ Part of the streetw guidance set; see `CLAUDE.md` for the index and the build ru
   off the Delete button, because on iOS 26 it is a popover pointing at whatever it is attached
   to, and from the page it pointed at the title.
 - **A fit started from a selection is not stored until it is saved.** `FitCanvas(fit: nil,
-  starting:board:)` lays the pieces out with `FitArrangement` (stepping apart two that want the
-  same spot) and files it on the board it was begun from; closing the canvas leaves nothing,
-  which is the contract `StyleView.keep` learned the hard way.
+  starting: .pieces(_:), board:)` lays the pieces out with `FitArrangement` (stepping apart two
+  that want the same spot) and files it on the board it was begun from; closing the canvas leaves
+  nothing. It is the contract the Style tab's one-tap keep learned the hard way, and every way into
+  a fit now keeps it (`FitCanvas.Opening`): a suggestion tried from Saved › Fits, and an outfit
+  built around a product, a save or a Discover card, whose unsaved garments are kept only when the
+  fit is (see `docs/fits.md`).
 - **The wall never crops.** The feed's grid fills its tiles because a grid of thumbnails
   needs one rhythm; the archive is the opposite — you kept these particular photographs, so
   `CollectionTile` draws `.fit` and takes the picture's measured aspect as the tile's shape.
@@ -168,8 +170,8 @@ Part of the streetw guidance set; see `CLAUDE.md` for the index and the build ru
   needs a **version bump**, which is why `Cutout.version` and `VisualReading.version` are
   both at 2 — nothing else would ever revisit them.
 - **…and an item that stays due must not be re-asked on every appearance.** The rule above is
-  right and it has a cost: the item never leaves the backlog, so every arrival on Saved or
-  Style builds a queue containing it and re-fetches the same URL. On a brand whose domain a
+  right and it has a cost: the item never leaves the backlog, so every arrival on Saved or the
+  fit canvas builds a queue containing it and re-fetches the same URL. On a brand whose domain a
   DNS filter blocks — which is indistinguishable from offline, from the phone's side — that
   is one save re-requested through `URLSession`'s own timeouts on every visit, forever.
   `ImageTagger.resting` is a five-minute cool-off keyed on the photograph's URL: **in memory,
@@ -274,7 +276,7 @@ has its own "don't use for my taste" (`isExcludedFromTaste`).
   | Your taste (`StyleProfile`), its facets (`CollectionFacet.matches`) | `counted` | It is a reading of you. The facet asks the same saves the same question, or "Black · 12" opens onto fourteen |
   | Brand suggestions' taste vector (`BrandRecommendations`) | `weighted` | Inferring taste; the mood leant on |
   | Discover's taste vector (`DiscoverFeedView.deckContext`) | `weighted` over the pairing pool plus the mood's saves | Inferring taste; a mood of tailoring kept as inspiration is exactly what leaning on it should read |
-  | "Goes with your …" (`GoesWith`), `FitStudio`, Discover's pairing and `WardrobeGap` | `pairingPool` | What you *have*: the wardrobe whatever its setting, because owning something is a fact and liking it is not. Only the everything-kept fallback goes through the rule — there a save stands in for "you", and one you said is not you is the one known not to be |
+  | "Goes with your …" (`GoesWith`), the canvas's shortlist around one garment (`FitProposal`), Discover's pairing and `WardrobeGap` | `pairingPool` | What you *have*: the wardrobe whatever its setting, because owning something is a fact and liking it is not. Only the everything-kept fallback goes through the rule — there a save stands in for "you", and one you said is not you is the one known not to be |
   | Fit suggestions and their gaps (`FitSuggestions`, `FitCandidates.gaps`) | `fitPool`, leaning on the mood | The wardrobe, plus the inspiration that counts |
   | What's missing | the wardrobe, else `counted` | Same as the pairing pool, for the same reason |
   | The fit canvas tray, a fit started from a selection | everything | A person choosing pieces is not an inference |
@@ -291,7 +293,7 @@ has its own "don't use for my taste" (`isExcludedFromTaste`).
   to counting, which its own menu then shows. Two boards each claiming to be the source of taste
   would be two leans averaged into neither.
 - **It is said wherever it changes something.** A board on anything but the default says so under
-  the mode strip, and the line is the menu that changes it; the Style tab's reading says how many
+  the mode strip, and the line is the menu that changes it; the taste reading on You says how many
   saves it left out, and the fit row says which board it is leaning towards; a save's own page
   says when a board, rather than its own chips, is deciding. A setting that changes three tabs and
   is visible only inside a menu is indistinguishable from those tabs misbehaving. The line *is* the
@@ -304,7 +306,8 @@ has its own "don't use for my taste" (`isExcludedFromTaste`).
   exactly as before — the rule is about what the app *learns*, which is the same promise the style
   statement and the size profile make.
 - **Every derivation keyed on the collection is keyed on the scope too.** `TasteScope` is
-  `Equatable` and sits in `StyleView`'s fingerprint, `BrandRecommendations.Key` and
+  `Equatable` and sits in the fingerprints of `YouView.TasteMemo` and `FitsPage.ReadingMemo`,
+  `BrandRecommendations.Key` and
   `DiscoverFeedView.DeckKey`, because flipping one save's flag or choosing a mood changes no count
   and no photograph stamp — without it the reading would go on including the save until something
   unrelated moved. The consumers that need boards ask only for `Board.shapingTaste`, the boards

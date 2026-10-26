@@ -192,7 +192,11 @@ struct UsageTests {
 
     @Test("Every tab has its own event")
     func tabEvents() {
-        for tab in ["feed", "discover", "saved", "style"] {
+        for tab in ["feed", "shop", "saved"] {
+            #expect(UsageEvent(tab: tab) != nil, "\(tab)")
+        }
+        // Retired tabs, still reported by the builds that had them.
+        for tab in ["discover", "style"] {
             #expect(UsageEvent(tab: tab) != nil, "\(tab)")
         }
         #expect(UsageEvent(tab: "brands") == nil)

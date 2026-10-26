@@ -41,9 +41,9 @@ enum PriceAlerts {
     @discardableResult
     static func run(in context: ModelContext, serverPushesWatches: Bool) async -> Int {
         let cutoff = Date().addingTimeInterval(-window)
-        // Narrowed on the same index `MarkdownsView` uses — `previousPriceAmount` is written
-        // only where a row becomes a markdown — and the kind confirmed in Swift, because a
-        // marked-down product that later restocks keeps the old price.
+        // Narrowed on `previousPriceAmount`, which is written only where a row becomes a
+        // markdown, and the kind confirmed in Swift, because a marked-down product that later
+        // restocks keeps the old price.
         let descriptor = FetchDescriptor<BrandUpdate>(
             predicate: #Predicate { $0.publishedAt >= cutoff && $0.previousPriceAmount != nil }
         )

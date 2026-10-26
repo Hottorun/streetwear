@@ -22,9 +22,9 @@
 //   Wanting to be told your size has gone and come back is not conditional on it being
 //   gone *now*, and until this the question could only be asked about something already
 //   sold out.
-// - **It sits above the tab bar, not over the card.** `quickSave` owns the horizontal
-//   drag on the bottom half of a feed card, and a control laid over that region would be
-//   fighting the gesture for the same pixels.
+// - **It sits above the tab bar, not over the card.** The card that was saved is in a
+//   lazy grid and has usually been scrolled past by the time anybody amends the save, and a
+//   control laid over the cards would cover the next ones being read.
 
 import SwiftData
 import SwiftUI

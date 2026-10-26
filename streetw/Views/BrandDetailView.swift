@@ -671,15 +671,10 @@ extension FollowMode {
 /// A product as the brand page draws it: photograph, what is urgent about it, name, price,
 /// size run.
 ///
-/// Two columns wide, which is the whole reason it is not `FeedTile`. That tile is a third
-/// of a feed page and carries a title and nothing else, on purpose — it is competing with a
-/// lead item above it and with two other brands below. Here there is one brand and no lead,
-/// the grid *is* the page, and a tile that says only what something is called is a
-/// thumbnail you have to open to learn anything from. At half-width the price and the size
-/// run both fit, and those are the two facts that decide whether to tap.
-///
-/// The accent rule marking your size is kept from `FeedTile`, at the same dose: the size
-/// run says it in full, and the rule is what makes it findable while scrolling.
+/// Unlike a feed card it carries the size run as well as the price: here there is one brand,
+/// the grid *is* the page, and the price and the size run are the two facts that decide
+/// whether to tap. The accent rule marks your size: the size run says it in full, and the
+/// rule is what makes it findable while scrolling.
 private struct CatalogueTile: View {
     @Environment(SizeProfileStore.self) private var sizes: SizeProfileStore
 

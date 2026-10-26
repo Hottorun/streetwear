@@ -26,9 +26,12 @@ the collection changes. `StyleView`'s three `@Query`s are unpredicated, so it re
 `context.save()` — and `ImageTagger.analyzePending` saves once per batch of twelve while it
 drains, so analysing two hundred saves rebuilt the whole `StyleProfile` and every
 `FitSuggestions` pairing seventeen times over, on the main actor, while somebody was reading the
-page. Opening Settings did it again, for a sheet. `StyleView.ReadingMemo` keeps the answer behind
-a fingerprint that is cheap in the way the builds are not — one walk over already-faulted scalars,
-no classification, no string scanning. Two rules for the fingerprint: it must contain
+page. Opening Settings did it again, for a sheet. A memo keeps the answer behind a fingerprint
+that is cheap in the way the builds are not — one walk over already-faulted scalars, no
+classification, no string scanning. It was `StyleView.ReadingMemo`; since the Style tab went it is
+`YouView.TasteMemo` for the taste reading and `FitsPage.ReadingMemo` for the fit row, over one
+shared digest (`CollectionDigest`) so the two agree about what counts as a change. Two rules for
+the fingerprint: it must contain
 `analyzedAt`, `visionVersion` and `cutoutVersion`, because the photograph analysis landing is
 precisely what changes the reading; and it must **not** touch `update.brand`, because faulting a
 relationship per save per `body` is the cost being avoided. Held in a plain reference type rather

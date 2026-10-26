@@ -9,99 +9,166 @@ Changing these silently will break intended behavior:
 - **Instagram is never scraped.** `BrandSource.Kind.instagram` has `isAutomatic == false` and
   `SourceAdapters.adapter(for:)` returns `nil` for it — it is a stored deep link only. Aggregating
   arbitrary public profiles isn't permitted and unofficial endpoints break constantly.
-- **The feed's unit is the event, not the product, and there are four tabs because of it.**
-  It was shaped like a product list: each brand led with its newest *garment* printed full
-  width and square, with the reason for it set as a caption in tracked caps under the
-  wordmark. That is the wrong shape for what the screen holds. Restocks and re-shelvings are
-  most of its volume — the whole reason `Reshelving` exists — and they are the same events
-  `Notifier.isWorthWaking` refuses to send a push about, so the quietest thing that can
-  happen was being handed the loudest slot the app has. A brand whose only news was six
-  restocks got a full screen of one shoe.
-  A brand's spread is now a short stack of **stories**, one per kind, ranked by
-  `UpdateKind.newsRank`: a lock, a release, a drop, then the quiet kinds. Each states what
-  happened in words ("14 new products", "4 price cuts") and carries its garments as
-  evidence — one row of three, with the rest folding into the link at the foot.
-  Three things are load-bearing. **Only a sudden kind earns the lead photograph**
-  (`UpdateKind.isSudden`), which is what actually changes the page: a quiet story is a
-  headline and one row you can scan past, where a drop still opens out. **The ordering is
-  fixed, never derived from counts** — a rank computed from how many of each landed would
-  reorder a brand's spread as its items are read, which is the property `FeedView`'s brand
-  ordering exists to protect. And `isSudden` **is** `Notifier.isWorthWaking`: the switch
-  moved into `StreetwCore` and the server calls it, because two copies of a seven-case
-  judgement is how the feed ends up leading with the thing the push deliberately stayed
-  silent about. The lock story is synthesised from `Brand.isLockedForDrop` rather than from
-  an unread `.dropLock` row, since a storefront can be locked with its event already read.
-- **Every count on a spread opens the list it counts, and the headline is the door.** A spread
-  said *7 new products* and *8 things are back*, printed three tiles of each, and offered one
-  link out — "+8 MORE FROM BBC" — which went to **all fifteen mixed together**. So the page
-  could name two different pieces of news and open neither, and the number in the link
-  described a remainder while its destination was the total: a small lie you only catch by
-  reconciling the page you land on against the one you left. The rule that used to sit here
-  said the link is per brand rather than per story, because four links under four headlines is
-  a menu. That is right about *adding* four controls and is not what this does — the headline
-  is already on the page, already states the count, and is already the only line naming what
-  you would ask for, so tapping "7 new products" to see seven new products adds nothing but a
-  chevron (`BrandFeedRoute.kind`, `BrandSpread.headline`). Four things follow. The sentence
-  lives on `UpdateKind.headline(count:)` because the feed and the page it opens both print it,
-  and a tap has to land under the words that promised it. **A headline with no row behind it
-  is not a link** — the `.dropLock` story is synthesised from `Brand.isLockedForDrop` and often
-  stands for nothing unread, and a link onto an empty filtered page pushes and pops itself,
-  which is a tap that visibly does nothing. **"Mark all seen" clears the story it is looking
-  at, never the spread** — a checkmark on a page headed "7 new products" must not also swallow
-  eight restocks. And the foot link now says **"ALL 14 FROM …"**, because the total is what it
-  always opened.
-- **Brands is not a tab, and the brand rail is what replaced it.** It was a directory — a
-  list of names, with no news in it and nothing that changes — beside three tabs that are
-  all about change, while the feed below already grouped by brand and every wordmark in it
-  already opened the brand page. Its only exclusive jobs were reaching a brand that has
-  published *nothing unread* (most of them, most of the time) and adding one. Both are now
-  the rail at the head of `FeedView`, and `BrandsView` survives behind "ALL" as a sheet
-  because it holds the one thing a mark cannot say: which sources a brand is watched with,
-  and whether any of them is failing. What is left is an honest set — **Feed** (what
-  happened) · **Discover** (what's new to you) · **Saved** (what's yours) · **Style** (what
-  that says about you). Notes on the rail: it is **alphabetical, never by activity**, because
-  it is the one strip on the page whose job is to be aimed at and a rail that reorders as
-  brands publish is a set of moving targets — `DiscoverDeck.pinningRead`'s lesson, met on a
-  new surface. The unread mark is a **dot, not a number**: the spread below and the brand
-  page both state the count, and a third figure to keep in agreement buys nothing; it is read
-  off the groups the feed just built, so a brand whose whole unread queue is hidden by the
-  gender filter is silent here too. A horizontal scroller is acceptable here for the reason
-  `BrandDetailView`'s carousels were not — a rail of *marks* is skimmed at a glance, where a
-  strip of *garments* can only be read a tile and a half at a time. And **add is the first
-  tile, not the last** — it went in at the tail on the theory that the brands are the subject
-  and adding one is the afterthought, which is true of the rail and false of the control: the
-  rail scrolls, so the tail is wherever the last brand happens to be, and with a dozen
-  followed, adding one meant swiping to the end of a strip to reach a button that never
-  moves relative to anything visible. At the head it is in the same place at every collection
-  size. `Tabs.resolve` maps the now-dead `-startTab brands` onto the feed, because a
-  `TabView` whose selection matches nothing draws a blank page.
-- **There is no refresh button, and the feed's toolbar is what it cost** (`FeedRefresh`). Four
-  icons sat above a page whose whole subject is photographs, and only three of them were doors
-  onto anything — the fourth was asking the reader to do the app's job, since a feed that has to
-  be *told* to check is one that is quietly out of date until you tell it. Coming back to the
-  app is the moment the question is actually being asked, so `scenePhase == .active` answers it
-  before anybody has to; pulling down is the impatient case and was always attached, so the
-  button was a second way to do a thing the list already did and the only one of the two taking
-  up room. **The two throttles differ by an order of magnitude and that is the point of the
-  type**: in server mode a refresh is one request against a poller that has already fetched for
-  everybody (60s), while standalone the phone fetches every followed storefront itself, so the
-  interval is the *brand's* cadence rather than the reader's patience (20 min) — a foreground
-  pass every few minutes would be this app hammering shops it is a guest of. A pull is somebody
-  saying "look now" and is never throttled. Two consequences worth keeping. The `CHECKING` pill
-  now answers for the **remote** sync as well, because a check nobody asked for needs saying
-  where one they did already has the platform's spinner attached to the finger that started it —
-  and silence during it is the same screen as "nothing happened". And the bell follows the
-  markdowns icon's rule: **drawn only once a watch exists**, since a watch is never set from
-  here (it is set on a product page, from the save confirmation, from a sold-out share) so the
-  icon is the way *back* to a list, not the way into a feature. The test is *any* watch, not any
-  active one — `WatchesView` keeps fired ones under "CAME BACK", and an icon vanishing the moment
-  the thing you waited for arrives would hide exactly the news it exists to carry. The calendar
-  is the one icon always drawn, because it is the only route to the drop calendar at all:
-  showing it only once a drop is written down means it appears only after you found the way to
-  write one down, which is through it.
+- **Three tabs, and everything about the person behind the avatar** (`ContentView`, `YouRoute`,
+  `YouView`; Phase 1). **Feed** (what happened at your shops) · **Shop** (what to get next) ·
+  **Saved** (what's yours) — and a person symbol top right on every tab (`.youButton()`). Style
+  was the fourth tab and was never a place: a reading of somebody's taste, two rows of fits and a
+  settings gear. Its fits are Saved › Fits (`docs/fits.md`), and the reading leads You, followed
+  by the sizes, the brands followed, what somebody is waiting for and then the settings that were
+  behind the gear — alerts with their delivery status, the style statement, about. The brand list,
+  the watches and the calendar were sheets behind icons and a link on the feed, a screen whose
+  subject is what has happened; none of them is news, and all of them are things the person set.
+  The decisions:
+  - **One page, presented once, from the root.** The avatar on any tab sets `YouRoute.isOpen` and
+    `ContentView` presents the sheet — not a sheet per tab — because a facet tapped in the taste
+    reading has to close You *and* change tab, and only the root knows there are tabs. Built in
+    `streetwApp.init` with the other routes, so a tab never reads an environment object that is not
+    there yet. `.youButton()` goes on a tab's root **before** its own `.toolbar`: SwiftUI lays a
+    trailing group out outermost-first, so applied after, the avatar came out ahead of Select. On
+    iOS 26 a `ToolbarSpacer` gives it a circle of its own: it is not one of the page's actions.
+  - **Set as type, not a settings form.** Paper, serif, mono and rules in a `ScrollView`; space
+    between sections, never a rule under a row that already ends in one — two hairlines a few
+    points apart read as a printing error.
+  - **Sizes are a summary and a door.** One row per filled ladder as it prints
+    (`SizeProfile.ladders`, which `summary` is made of), what is shown, and Edit sizes pushing the
+    existing editor. `SizesSheet` is the same editor in a sheet of its own, because the
+    feed's lines about the profile are about these two settings and nothing else.
+  - **Following draws what needs attention, not the whole list.** Brands with a failing source get
+    a row each (`Brand.hasFailingSource`, read off `lastError`, which travels on the wire), then
+    "All brands" opens `BrandsView` and "Add a brand" the add flow. Somebody following forty shops
+    would otherwise scroll past forty rows to reach their alerts, and a shop that had quietly
+    stopped answering read exactly like one that had stopped publishing until somebody opened its
+    page. On `BrandsView` the failing source is said on its row — `CATALOG FAILING · COLLECTIONS`,
+    vermilion on the failing word alone — and the per-brand UNREAD count is gone: unread is "since
+    you were last here" on the feed, and a second tally of it on a list of follows is a number to
+    reconcile against a screen that no longer keeps one per brand.
+  - **Nothing that is not built.** Sign-in, profiles, location and credits are Phase 2, and a row
+    for each saying so would be four rows of the app talking about itself. The avatar is a symbol
+    for the same reason: there is nobody to put in it until there is an account.
+  - **Retired tab names still open something.** `Tabs.resolve` maps `discover` to Shop, `style` to
+    Saved on its Fits strip (`Tabs.opensOnFits`), and anything else to the feed. The usage counts
+    gained `tab.shop` and keep accepting `tab.discover` and `tab.style` from builds that have them.
+- **The feed is one list of event cards, newest first across every brand** (Phase 1, `FeedView`,
+  `FeedTimeline`). *Changed on purpose from 1.0*, which grouped the feed by brand: a wordmark header
+  per brand, a stack of stories ranked by `UpdateKind.newsRank`, counts and "›" links under each,
+  and a checkmark to clear the spread. Every piece of that was argued for in turn, and the sum was a
+  first screen of five counters and three lines of links before its one photograph, whose name and
+  price sat under the tab bar. The grouping existed to keep one busy brand from flooding the feed;
+  that rule survives because **the event stays the unit**, and the things that happened *together*
+  are still one card:
+  - **a release** (`.collection`) is one card — a mosaic of its contents, "NEW · ALPINE CAPSULE",
+    "6 PIECES · FROM $38" — and the garments it holds are not cards of their own, for the
+    release's own window (`FeedTimeline.releaseWindow`, three days; a member restocked a month
+    later is a restock). Membership is `Brand.members(of:)`'s order: what the storefront stated,
+    else the word match. A post restating a release in the same window is folded (`FeedPass.restates`).
+  - **a burst** — `burstMinimum` (3) or more events of **one kind** from one brand inside
+    `burstWindow` (30 minutes), **anchored at the first** — is one card: a drop ("NEW", "24 PIECES ·
+    FROM $38"), a wave of restocks, a sale rail of markdowns. Anchored, never chained, or a brand
+    trickling one product every twenty minutes becomes a card spanning the day; the card keeps its
+    id as the drop grows forward, so it is not rebuilt. The owner's rule was new products; restocks
+    and markdowns group for the same flooding reason — Kith restocks dozens in one pass.
+  - **a restock in your size is never folded** into a group or a release. "BACK IN YOUR SIZE" is the
+    most specific thing the feed can say, and a "BACK IN STOCK · 12 PIECES" mosaic with it inside
+    would bury it.
+  - Tapping a group opens exactly the rows it counted (`DropRoute` → `DropPiecesView`), never the
+    brand's catalogue — "24 PIECES" opening onto everything would be 1.0's "+8 MORE" lie again.
+  - A lock is **not** a card: it is a state of the storefront, said by the line above the feed and
+    under Upcoming for as long as it is true, where a card saying "drop imminent" would outlive the
+    drop. A date ahead (a product published in the future) is Upcoming's too.
+- **A card is a photograph, the brand, one label and the price — and no product name** (`FeedCard`,
+  `FeedLabel`). The picture says what it is and the product page says the rest. **Every event gets
+  a picture** — *changed on purpose*: 1.0 gave only a sudden kind the lead photograph, a rule about
+  one large slot per brand that a grid does not have, and which left price cuts as a sentence with
+  no picture. A product with no photograph shows the brand's wordmark (`UpdateImage.mark`), never a
+  tile that looks like one still loading; a sale has no garment, so its card shows the brand's own
+  marked-down stock, newest first. Labels, one per kind, in one switch so a new kind has to be
+  decided: `product` NEW · `restock` BACK IN YOUR SIZE (vermilion, `SizeProfile.claims`) or BACK IN
+  STOCK · `priceDrop` −30% with the "was" struck through beside the price, PRICE CUT when no cut can
+  be measured, UP TO −40% for a group · `sale` the brand's own words said as a sale, "SALE 25% OFF ·
+  CODE AUTUMN" · `collection` NEW · <NAME> · `dropLock` LOCKED · DROP IMMINENT (vermilion; Upcoming
+  only) · `post` NEW POST · `pageChange` THE SITE CHANGED. A kind this build does not know never
+  reaches the store (`FeedItem.knownKind`), and a kind added later fails to compile until it has a
+  label and a filter. Vermilion only for your size and a lock: an accent on every card is none.
+- **Ordering is two stored dates, and reading writes neither.** Cards are ordered by when their
+  newest event happened (`publishedAt` — the event's time in both modes: the server's event, or
+  standalone's rewrite stamping a restock with now), ties broken on the row's `externalID` the way
+  `BrandUpdate.newestFirst` breaks them. Which side of the line a card falls is
+  `BrandUpdate.arrivedAt`: when the row reached the phone **as news**. The two differ — a poll finds
+  a product twenty minutes after it was published — and the line must be placed by arrival or a
+  thing new to you sits under it. Within each side, newest event first. One garment is one card
+  (`oncePerProduct`, keyed on brand and product), so a jacket that dropped Monday and came back
+  Thursday is Thursday's restock. Since nothing a reader does touches either date, nothing on the
+  page moves under a thumb — the property 1.0's brand ordering (`Brand.lastActivityAt`, still
+  maintained, still the brand list's order) had to be argued for. A sync can add a card above the
+  line or grow a drop; that is the feed being told something.
+- **History has no arrival, so it is never in the timeline.** `arrivedAt` is nil for a brand's first
+  sync, a catch-up after following, and anything a follow mode does not admit; it is stamped beside
+  `isSeen` at every place that decides news (`SyncEngine.insert`/`refresh`, `RemoteSync.merge`,
+  `WatchNotifier`). The 1.0 unread queue is adopted as news once, at launch, arriving when it was
+  written (`FeedHistory.adoptLegacy`) — which is also the repair for any path that writes a row
+  unread without stamping it: unread is news, whatever wrote it. The timeline reads the newest 500
+  arrivals (`FeedView.depth`), because in server mode every event is a row and a `@Query` with no
+  bound subscribes the view to all of them.
+- **"Since you were last here" is one line, instead of per-brand unread state** (`FeedVisit`).
+  *Changed on purpose*: no checkmarks, no dots, no "40 new from 6 brands", no swipe to mark a card
+  read — somebody had to keep 1.0's feed empty for it to be useful. **A visit is the feed on screen,
+  allowing gaps shorter than five minutes** (`resumeWindow`): a trip to a storefront to buy the
+  thing, or a look at Saved, is the same visit; coming back after lunch is a new one. The line is
+  drawn where the previous visit ended — the last moment the feed was on screen — and does not move
+  during a visit. Above it, "↑ NEW SINCE YOU WERE LAST HERE · 5H AGO"; when nothing is new it heads
+  the page, "NOTHING NEW SINCE YOU WERE LAST HERE". With no visit recorded — a fresh install, a
+  phone coming from 1.0 — everything is above it and no line is drawn. A crash records no end, and
+  errs towards showing too much as new.
+- **What marks a row seen now: the feed going out of sight.** Whenever it does — another tab, the
+  app leaving the foreground — everything that had arrived by then is marked seen
+  (`FeedHistory.markShown`), except what the gender filter hid, which was never on screen. The feed
+  no longer reads `isSeen`, but four things do and nothing marks anything by hand any more:
+  `FollowedSupply` (Discover's unread from followed brands), a brand page's UNREAD, `SyncEngine.prune`
+  (which never drops an unread row) and the product page. So `isSeen` means *the feed has had its
+  chance to show this*: during a visit it is exactly what sits above the line. Opening a product
+  page and saving still mark a row seen, as before; a fired watch and a standalone restock still
+  make one unread, and now give it an arrival.
+- **One row of filters: All · Drops · Restocks · Sales · Upcoming · Brand ▾** (`FeedFilterRow`,
+  `FeedFilter`). It replaced the alphabetical brand rail and the three toolbar icons (calendar,
+  markdowns with its system badge, the bell). Drops is new products, releases and page changes — a
+  page watch moving *is* the drop on a storefront nothing structured can read; Restocks; Sales is
+  markdowns and brand-wide sales, and replaced the markdowns list (`MarkdownsView` and its
+  dismissal were retired: the timeline is not emptied by reading, which was that list's whole
+  reason to exist); Upcoming is a list rather than cards; a post is under All alone. Brand ▾
+  narrows any of them to one shop, lists quiet brands labelled with their mode (and says why one is
+  empty), and ends with "Add a brand". **The row never truncates**: every label is its own width and
+  the whole row scrolls when it must — the prototype pinned Brand at the edge and cut UPCOMING to
+  "UPCOMIN". At the default size it fits a 402pt phone without scrolling.
+- **The rail left the feed, and brands live under You › Following** — *changed on purpose*. Adding
+  a brand is in the Brand menu, in the empty feed, and under You. `BrandsView`, `WatchesView` and
+  `DropCalendarView` are no longer reached from here.
+- **The future is one line above the feed, never a pinned card** (`UpcomingLine`). The soonest of: a
+  storefront locked now (`Brand.isAnnouncingLock`), a date somebody wrote down, a product the brand
+  dated ahead — inside two days (`UpcomingDrops.lineHorizon`): "● TOMORROW 10:00 · ONDO CLUB ·
+  Summer capsule", vermilion when locked or under a day away, the point at which the calendar's
+  countdown starts counting seconds. Tapping it opens Upcoming. The prototype pinned these as grey
+  tiles with a calendar glyph, the largest object on the screen saying the least. Upcoming lists the
+  same rows the calendar does (`UpcomingDropList`, `UpcomingDropRow`) — locks, dates the brand set,
+  dates "ADDED BY YOU" — **without the rhythms** ("usually Fridays"), which are a guess and cost a
+  walk of every catalogue; those stay in the full calendar under You.
+- **There is no refresh button** (`FeedRefresh`). A feed that has to be *told* to check is quietly
+  out of date until you tell it, so `scenePhase == .active` answers the question when you come back,
+  and pulling down is the impatient case. **The two throttles differ by an order of magnitude and
+  that is the point of the type**: in server mode a refresh is one request against a poller that has
+  already fetched for everybody (60s), while standalone the phone fetches every followed storefront
+  itself, so the interval is the *brand's* cadence (20 min). A pull is never throttled, and **runs
+  its sync in its own task**: SwiftUI cancels a refresh action when the content under it changes,
+  and a sync changes it at once, so every pull ended "cancelled". The `CHECKING` pill answers for
+  both engines, and the sync-trouble line under the filters is still the one place a failed sync is
+  said. The feed's toolbar holds only what every tab carries (the You button).
+- **Saving from a card is the bookmark and the long-press menu; there is no swipe.** `SaveAction`
+  sits on the photograph of a garment card and raises the save confirmation (Board, Notify);
+  `UpdateMenu` is the long press. 1.0's quick-save swipe — right to mark read, left to file — went:
+  a half-width card cannot be dragged sideways without covering its neighbour, and marking read is
+  now what a visit does. A group, a release or a sale has no single garment and no bookmark.
 - **`BrandUpdate.passes` is the one browsing filter, and every list calls it.** It said so in its own
   doc comment for a long time and had *no callers*: the feed applied `profile.allows(gender)` inline
-  and `BrandFeedView` — which is where "+36 more from Kith" goes — applied nothing at all. So a
+  and `BrandFeedView` — which was where "+36 more from Kith" went — applied nothing at all. So a
   Menswear setting held on the feed and evaporated the moment you opened the rest of the same drop,
   which reads as the setting being broken rather than as one screen missing it. Gender hides; **size
   does not** — a size you don't wear is said in vermilion, not by removing the product, because a
@@ -131,18 +198,8 @@ Changing these silently will break intended behavior:
   vermilion — about womenswear it had just decided not to show. Two screens describing one queue and
   disagreeing about its size reads as the number being broken. Every visible count calls
   `Brand.unseenCount(matching:)`; the unfiltered one survives only for a caller that genuinely means
-  every row. The markdowns badge is the same obligation: `BrandUpdate.markdownDismissedAt` narrows
-  `MarkdownsView`'s query *and* `FeedView`'s badge query, or waving markdowns off empties the sheet
-  while the badge that opens it goes on claiming twelve.
-- **Dismissing a markdown is not marking it seen, and the two must stay separate.** The markdowns
-  list exists precisely because it is *not* emptied by reading things — the feed is ordered by
-  recency and a price cut is worth as much a week later as it was on the day — but that left a
-  standing list with no way to shorten it, which turns it into wallpaper. So `markdownDismissedAt`
-  is its own verdict, set only from that screen, leaving the product in the feed and on its brand
-  page. `SyncEngine` clears it when it writes a *new* `.priceDrop` on the same row, because a second
-  cut is a new markdown: that path rewrites the row rather than inserting one (in server mode every
-  event is its own row and the question never arises), so without it, waving off a 10% cut in March
-  would silently swallow the 40% cut in June.
+  every row. The feed itself prints no counts any more; the rule binds the brand page and the brands
+  list, and a card's "24 PIECES", which is the length of the page it opens.
 - **A brand page is that brand's catalogue, and its counts are the way into it**
   (`BrandDetailView`). Two things were wrong with what was there. It was two **horizontal
   carousels**, so seeing a brand's output meant swiping a strip sideways one and a half tiles at a
@@ -152,7 +209,7 @@ Changing these silently will break intended behavior:
   the page exists to answer — was the one thing it could not. It is a two-column `LazyVGrid` over
   everything now, uncapped because a lazy grid builds only the screenful you are looking at, and
   the tile carries the price and the size run rather than the title alone (`CatalogueTile`, not
-  `FeedTile` — that one is a third of a feed page and is competing with a lead above it).
+  1.0's feed tile — a third of a feed page, competing with a lead above it).
   `UpdateCarousel` and `EmptyStateView` were deleted with it; this was their only caller.
   **The three counts are the filter.** Catalogue, unread and kept already described exactly the
   three lists the page can draw and sat above a grid you could not point any of them at — same
@@ -162,44 +219,26 @@ Changing these silently will break intended behavior:
   which is what makes it agree with the feed and with `Brand.unseenCount(matching:)`; and `KEPT` is
   deliberately *not* filtered by `passes`, because those are things somebody chose and hiding one
   for a setting changed afterwards would be the app editing their own collection.
-- **Every row of Upcoming names a brand, so every row opens it.** That page answers "who is about
+- **Every row of Upcoming names a brand, so every row opens it** — in the calendar and under the
+  feed's Upcoming filter, which draw the same `UpcomingDropList`. That page answers "who is about
   to drop"; the next question is always "what have they been doing", and the wordmark at the top of
   each row was inert — the only route to the brand was to dismiss the sheet and go looking. A
   locked storefront in particular is the strongest signal in the app and the moment somebody most
   wants the page. Note the sheet needs its **own** `appDestinations()`: a destination registered on
   the feed's stack is invisible from inside a presented one, and the failure is a link that does
   nothing, silently.
-- **`FeedView.feed` is one pass, and that is a correctness property as much as a speed one.**
-  Marking a brand read writes a row per update and saves, which invalidates the `@Query` and
-  re-renders — and the view then answered four more questions on the way back, each a full walk of
-  every brand's `updates`, each calling `passes`, which reads `gender`, which **re-runs the
-  classifier whenever the stored revision differs from this build's** — the steady state for
-  anything the server classified. So dismissing one brand cost thousands of string classifications
-  before a frame could be drawn, which is the reported lag. Anything added to that body walks the
-  relationship once or not at all.
-- **…and the pass is over the unread queue, which the *store* narrows.** One pass was not enough on
-  its own. The view queried `Brand` and walked `brand.updates`, which faults in the whole catalogue
-  — every product ever synced, read or not — where the question was only ever about the unread few:
-  measured on a real store, 1.4s for the first build and 44–426ms for every rebuild after, and
-  marking a brand read *causes* a rebuild. `FeedView` now holds a `@Query` on
-  `#Predicate<BrandUpdate> { !$0.isSeen }`, which SQLite answers from an index, and groups by brand
-  in memory. `markSeen` reads out of that same array for the same reason — touching
-  `brand.updates` to clear one spread faults the brand's entire catalogue on the tap whose slowness
-  is the complaint. The markdown badge is the third case: its window is thirty days, which on a
-  freshly added brand is the whole store, so it narrows on `previousPriceAmount != nil` — written
-  only where `kind` becomes `.priceDrop`, so it is a faithful index for the question — and confirms
-  the kind in Swift, because a marked-down product that later restocks keeps the old price.
-- **The feed orders brands by their newest activity, never by their newest *unread* item.**
-  A key computed from unread items changes as you read them: clear the top card of a brand whose
-  remaining unread things are older and the brand's key drops to that older date, so the whole
-  spread slides down the page under brands you had already dealt with. You are reading a list that
-  reorders itself under your thumb. `Brand.lastActivityAt` is stored — maintained by everything that
-  writes an update, which includes `SyncEngine.refresh`, since a restock and a markdown are written
-  by *rewriting* an existing row rather than inserting one and would otherwise not move the brand at
-  all. It only ever advances: a late-arriving old row does not make a brand less recently active.
-  `BrandGroup.latest` is still the newest unread date, because that is what the header stamps — two
-  different questions that were being answered by one value. Ties break on the brand name, the same
-  reason `BrandUpdate.newestFirst` breaks its ties.
+- **The feed is one pass per `body`, over a capped query, reading each row once** (`FeedPass`).
+  1.0's lesson, kept: marking a brand read re-rendered the feed and the body then walked every
+  brand's `updates` four more times, each walk calling `passes`, which re-runs the gender classifier
+  whenever the stored revision differs — thousands of classifications before a frame. And walking
+  `brand.updates` faults the whole catalogue in, where the question is only ever about the few rows
+  being drawn. So the store narrows (`arrivedAt != nil`, newest 500 arrivals), the pass reads each
+  row's scalars **once** into values, and cards read photographs and prices from their own rows live,
+  so a photograph that lands later redraws its card rather than the screen. **Each product is
+  tokenised once per pass** however many releases ask about it: a baseline's collections arrive in
+  quantity — Kith's were 241 rows — and asking every release about every product, tokenising both
+  each time, was 230–360ms of a pass in a debug build. Now 12–18ms for that store and 9–13ms for 400
+  garments in 31 cards; scrolling evaluates no `body` at all.
 - **A stored classification that keeps re-deriving has to be written back.** `Classification`
   settles stale `genderVersion` rows in bounded batches after a sync and on foreground. It
   recomputes *locally* and stamps the local revision, which is honest — the prohibition below is on
@@ -274,25 +313,24 @@ Changing these silently will break intended behavior:
   and by the phone for the feed — and what *Sales only* lets through is `UpdateKind.isSale`, so
   a new sale kind is one case in one switch. The decisions:
   - **The feed is filtered on the phone, by storing what the mode does not admit as already
-    read** (`RemoteSync.merge`, `SyncEngine.insert` and `refresh`). Not on the server, because
+    read and with no arrival** (`RemoteSync.merge`, `SyncEngine.insert` and `refresh`), so it is
+    history and never in the timeline. Not on the server, because
     a quiet brand's own page is still its whole catalogue and a server that withheld its
     events would freeze that page the moment it went quiet; and standalone has no server.
-    Not as a filter in the feed's body either, because every unread count, the rail's dot and
-    the brand page's UNREAD would each need the same rule — five copies of it — and the unread
-    queue would grow for ever, since nothing that is unread is ever pruned. Stored read, the
-    feed, the counts and the rail agree without knowing modes exist.
-  - **Changing the mode clears what it no longer admits from the unread queue**, which is
-    "mark all seen" for those kinds; nothing is deleted, and nothing is un-seen on the way back
-    to *Everything* — what happened while a brand was quiet is its history, not news.
-  - **The lists that are about news and not emptied by reading ask the mode themselves**: the
-    markdowns list and its badge (`BrandUpdate.isAdmittedByFollowMode`), and the feed's lock
-    signals — the rail's dot, the calendar's accent and the lock story (`Brand.isAnnouncingLock`)
-    — plus Upcoming, which skips a brand whose drops are not admitted. A date somebody typed is
-    kept whatever the mode; they asked for it by name. The brand page and the brands list still
+    Not as a filter in the feed's body either, because every unread count and the brand page's
+    UNREAD would each need the same rule, and the unread queue would grow for ever, since nothing
+    that is unread is ever pruned. Stored read and without an arrival, the feed and the counts
+    agree without knowing modes exist.
+  - **Changing the mode takes what it no longer admits out of the feed** — out of the unread queue
+    and out of the timeline (`Brand.apply` clears `arrivedAt`); nothing is deleted, and nothing
+    comes back on the way to *Everything* — what happened while a brand was quiet is its history.
+  - **What is about the future asks the mode itself**: the line above the feed and Upcoming read
+    `Brand.isAnnouncingLock` and skip a brand whose drops are not admitted. A date somebody typed
+    is kept whatever the mode; they asked for it by name. The brand page and the brands list still
     say a storefront is locked, in muted ink: that is a fact about the shop.
-  - **A quiet brand is reachable**: it stays on the rail, in the brands list — labelled QUIET or
-    SALES ONLY, so a silenced brand does not read as one that stopped publishing — and its page
-    is its catalogue. It still counts as a follow for recommendations and Discover.
+  - **A quiet brand is reachable**: in the Brand menu, labelled with its mode — and choosing it says
+    why it is empty — under You › Following, and its page is its catalogue. It still counts as a
+    follow for recommendations and Discover.
   - **A watch ignores the mode**, on the lock screen and in the feed: a fired watch still
     surfaces its row unread, because it is the one alert somebody asked for by name.
   - **The server's mode is the mode.** In server mode `Brand.followModeRaw` mirrors
@@ -308,12 +346,12 @@ Changing these silently will break intended behavior:
     filed a big catalogue under *Sales only* at follow time would be a filter somebody did not
     set, which is indistinguishable from a broken follow — and product velocity alone does not
     tell Kith, the roadmap's *Everything* brand, from H&M.
-- **A collection is not a product** (`CollectionCard`, `CollectionReleaseView`). It is the one update
+- **A collection is not a product** (the feed's release card, `CollectionReleaseView`). It is the one update
   that is *about* other updates, and it was drawn as a garment: no photograph (a season page rarely
   has one), an empty size run, no price, and a tap onto a product page with nothing on it — so
   "DENIM TEARS FW26", the most interesting thing a brand posts all season, rendered as the emptiest
-  card in the feed. Releases are hoisted above the products in a brand's group, because they are the
-  headline and the garments are the contents. **A collection's contents are read, not guessed, and the
+  card in the feed. In Phase 1 a release is one card whose mosaic is its contents, and the garments
+  it absorbed are not cards of their own. **A collection's contents are read, not guessed, and the
   contents are what decide whether it is announced at all.** `/collections.json` names a release
   and does not list it, so `Brand.members(of:)` used to match a distinctive word from the title and
   fall back to anything published within 36 hours — defended as a heuristic whose alternative was a
@@ -351,7 +389,8 @@ Changing these silently will break intended behavior:
   collection sitting on the storefront in plain sight. A re-merchandised collection is most of what
   a brand announces. Nothing that is not a garment can slip into the stated path, because the join
   is on the id list and a page change carries no `shopify:<id>`.
-- **One release, stated once in a spread.** Billionaire Boys Club announced its Yankees edit three
+- **One release, stated once** (1.0's spread; the timeline keeps both rules in `FeedTimeline` and
+  `FeedPass`). Billionaire Boys Club announced its Yankees edit three
   times in one spread: `/collections.json` gave the release, `/products.json` gave two tees the
   ±36h window had wrongly filed inside it, and the brand's own blog gave the announcement — three
   sources, three kinds, three buckets, and nothing in `BrandSpread.layout` had ever been in a
@@ -378,23 +417,19 @@ Changing these silently will break intended behavior:
   per poll inside a 45-day window, filtered in Swift because "an empty array column" is not
   something Fluent expresses the same way on Postgres and SQLite; `RemoteSync.backfill` carries the
   result to the phone.
-- **A price cut states itself and does not spend a row.** `MarkdownsView` exists precisely because
-  the feed is the wrong home for markdowns — it is ordered by recency and a cut is worth as much a
-  week later — which is why that screen is not emptied by reading and keeps its own
-  `markdownDismissedAt`. It has its own badge and its own way in, so three tiles of the same thing
-  under every brand was one list said twice, at a third of the height of a spread whose subject is
-  what just dropped. The headline stays and stays a link, per the rule that every count opens the
-  list it counts; the evidence row goes, because a markdown is a claim about a *number*.
+- **A price cut takes a card** — *changed on purpose*. 1.0 printed a headline and no picture, on the
+  argument that the feed was the wrong home for a markdown and `MarkdownsView` the right one. That
+  list is retired; Sales is a filter over the timeline, which is not emptied by reading either, and
+  a cut drawn as a sentence was the card nobody looked at. "−30%" with the "was" struck through.
 - **One garment, one row, in every list** (`BrandUpdate.oncePerProduct`). The store holds *events*:
   a feed row is `event:<uuid>` and one jacket drops, is marked down and comes back in an L, so a
-  brand page, a release and a brand's spread each printed it three times at three prices. Keyed on
+  brand page, a release and a brand's spread each printed it three times at three prices — and the
+  Phase 1 timeline is one more list that obeys it. Keyed on
   `productExternalID` — the garment — never on `externalID`, which is the event; a row with no
   product behind it keeps its own key so two unrelated links can never collapse into one. The
-  survivor is the newest by `newestFirst`, so the choice is stable across relaunches. **Anything
-  that clears a list has to clear the rows it folded away**: `markSeen` and "Mark all seen" walk
-  `brand.updates`, not the deduplicated array, or the brand returns to the feed showing the same
-  jacket. `unseenCount(matching:)` counts distinct garments for the same reason — counting rows
-  said 40 above a page showing 25.
+  survivor is the newest by `newestFirst`, so the choice is stable across relaunches.
+  `unseenCount(matching:)` counts distinct garments for the same reason — counting rows said 40
+  above a page showing 25.
 - **`published_at` says when a product was last put on a shelf, not when it is new.**
   Storefronts rewrite it on every re-merchandising sweep — Kith's own tags say so
   (`081126NIKEremerch`, `shopifyflow:removedtag`) — so a fifth of its 250 newest products
@@ -442,21 +477,21 @@ Changing these silently will break intended behavior:
   (`FetchedItem.originalPriceAmount`, Shopify's `compare_at_price`; `PriceChange.base`). A drop
   used to be only a fall between two polls, so a product first seen already discounted — last
   season's stock moved onto the sale rail, which is most of what a sale is — was never a markdown:
-  no "−30%", nothing in the markdowns list. Four rules. **The original belongs to the lowest
+  no "−30%", nothing under Sales. Four rules. **The original belongs to the lowest
   variant's price**, not the highest compare-at anywhere on the product, and counts only past the
   same 5%: storefronts leave compare-at equal to the price or below it. **A re-shelved product
   that is marked down is a `.priceDrop`** with the original as its "was" (`Reshelving`), not a
   restock; a launch at a discount keeps its kind and its card still says how much is off. **The
   card says the larger cut** — 180, then 150 for a week, then 120 is "−20%" against the poll and
-  "−33%" against the tag, and the tag is what a shopper can check — and the markdowns list ranks
-  on the same number (`BrandUpdate.markdownBase`, `wasPriceText`). **A source that publishes a
+  "−33%" against the tag, and the tag is what a shopper can check (`BrandUpdate.markdownBase`,
+  `wasPriceText`). **A source that publishes a
   price says every time whether it is marked down**, so a null compare-at clears the original; a
   source with no price (a sitemap) says nothing about either. `FeedItem` carries the current
   price as a number as well: it carried only the display text, so every server-backed markdown had
   no measurable cut in the mode the app ships in.
 - **A brand going on sale is news; a markdown is not** (`UpdateKind.sale`, the deliberate change
-  to "only the unexpected is worth a buzz"). A single markdown is worth as much next week, which is
-  what the markdowns list is for, and stays quiet. A brand putting much of its catalogue on sale,
+  to "only the unexpected is worth a buzz"). A single markdown is worth as much next week, and stays
+  quiet. A brand putting much of its catalogue on sale,
   or announcing "25% off everything with code AUTUMN" in its bar, starts at a moment, its best
   sizes go first, and the code is found nowhere else — so `.sale` is `isSudden` *and* `isSale`,
   and it is the one thing a *Sales only* follow is woken by. Quiet hears nothing; the mode still
@@ -470,13 +505,11 @@ Changing these silently will break intended behavior:
   another name. Standalone detects neither: both need the poller's view over time, and the
   phone polling a homepage every half hour for itself is the hammering `FeedRefresh` exists to
   avoid.
-- **A sale is a brand-level story, said in its own words.** The row has no garment — its words
-  live on the event (`events.title`/`summary`) and arrive as `FeedItem.title`/`summary`, its link
-  is the shop — so the feed prints "A sale is on" with "25% OFF EVERYTHING · CODE AUTUMN" under
-  it, no tiles, and **the headline is not a link**: a page of the rows that said it would be the
-  sentence again with nothing in it. It ranks after a lock and before a release (`newsRank`), and
-  a push about it opens the brand, not a product page. Phase 1 redesigns the feed; this is the
-  minimum the current one can say honestly.
+- **A sale is a brand-level card, said in its own words.** The row has no garment — its words live on
+  the event (`events.title`/`summary`) and arrive as `FeedItem.title`/`summary`, its link is the
+  shop — so the card shows the brand's own marked-down garments as its picture, its label is the
+  offer as the brand put it ("SALE 25% OFF · CODE AUTUMN", `FeedLabel.saleWords`), it carries no
+  price, and it opens the brand's page, as a push about one does. It sits under Sales and All.
 - **A price drop on something you watch or saved reaches you** — the roadmap's rule from 1.0 that
   changes on purpose. A markdown on a garment you have never seen is not news; one on the thing
   you asked about by name, or kept, is news about *you*. **Watched: the server pushes it**, by the
@@ -500,8 +533,8 @@ Changing these silently will break intended behavior:
   added later stays invisible to every build until it can draw it, and it skips a kind it does
   not know (`FeedItem.knownKind`) rather than drawing it as a product. A push is not filtered: a
   sale push to a 1.0 phone carries no event id, so tapping it opens the brand, which 1.0 has.
-- **Restock is the only reason a seen item resurfaces.** `SyncEngine.refresh` re-flags an update
-  only when a *variant* goes false→true, recording which sizes returned in `restockedSizes`
+- **Restock is the only reason a seen item resurfaces.** `SyncEngine.refresh` re-flags an update —
+  unread, and arriving now, so it lands above the line — only when a *variant* goes false→true, recording which sizes returned in `restockedSizes`
   (falling back to whole-product `isAvailable` for sources without variants).
 - **`FetchResult.notModified` is not the same as an empty `items`.** A 304 means "unchanged";
   merging its empty list would be a no-op, but the distinction matters for any future caller that

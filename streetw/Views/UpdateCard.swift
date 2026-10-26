@@ -1,12 +1,11 @@
 // UpdateCard.swift
-// The visual units of the app. There are three, and the split is deliberate.
+// The routes every card pushes, and the archive's tile.
 //
-// `FeedLead` and `FeedTile` belong to the hype feed: they carry time, price, stock and
-// the accent. `CollectionTile` belongs to the archive and carries none of that — no
-// badge, no count, no "new" dot, per the positioning in ROADMAP. One shared card
-// serving both rooms is exactly what that document says won't survive, so it doesn't.
-//
-// All three share `SaveAction` and `UpdateImage` so behaviour stays in one place.
+// The feed's cards live in `Views/Feed/` now (`FeedCard`): one picture card per event. What
+// stays here is shared by both rooms — `SaveAction` and `UpdateMenu`, so saving behaves the
+// same everywhere — and `CollectionTile`, which belongs to the archive and carries none of
+// the feed's urgency: no badge, no count, no "new" dot, per the positioning in ROADMAP. One
+// shared card serving both rooms is exactly what that document says won't survive.
 
 import StreetwCore
 import SwiftData
@@ -40,20 +39,6 @@ struct BrandRoute: Hashable {
     let brand: Brand
 }
 
-/// Everything one brand has posted — where "ALL 36 FROM KITH" goes.
-///
-/// `kind` narrows it to one story: nil is the whole of what a brand posted, and a kind is
-/// the page behind a headline like "7 new products". That second form is the answer to a
-/// question the feed could state and not open — a spread said *7 new products* and *8 things
-/// are back*, printed three tiles of each, and the only link out of it went to all fifteen
-/// mixed together. Those are two different pieces of news and somebody wanting one of them
-/// had nowhere to press.
-struct BrandFeedRoute: Hashable {
-    let brand: Brand
-    var unseenOnly: Bool = true
-    var kind: UpdateKind?
-}
-
 /// A collection announcement, and the garments that landed with it.
 struct ReleaseRoute: Hashable {
     let update: BrandUpdate
@@ -66,199 +51,16 @@ extension View {
     func appDestinations() -> some View {
         navigationDestination(for: ProductRoute.self) { ProductDetailView(update: $0.update) }
             .navigationDestination(for: BrandRoute.self) { BrandDetailView(brand: $0.brand) }
-            .navigationDestination(for: BrandFeedRoute.self) {
-                BrandFeedView(brand: $0.brand, unseenOnly: $0.unseenOnly, kind: $0.kind)
-            }
             .navigationDestination(for: ReleaseRoute.self) { CollectionReleaseView(update: $0.update) }
+            .navigationDestination(for: DropRoute.self) {
+                DropPiecesView(brand: $0.brand, kind: $0.kind, pieces: $0.pieces)
+            }
     }
 
-    /// Makes this view push the product page, without taking the drag off it — the
-    /// photograph in a feed card still pages, because a tap is not a drag.
+    /// Makes this view push the product page.
     func productLink(_ update: BrandUpdate) -> some View {
         NavigationLink(value: ProductRoute(update: update)) { self }
             .buttonStyle(.plain)
-    }
-}
-
-// MARK: - Feed: the lead
-
-/// One brand's most recent item, printed large. The image is the argument; everything
-/// else is a caption under it.
-struct FeedLead: View {
-    @Environment(SizeProfileStore.self) private var sizes: SizeProfileStore
-
-    let update: BrandUpdate
-
-    private var runEntries: [SizeRun.Entry] {
-        SizeRun.entries(for: update, profile: sizes.profile)
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            // No photograph, no photo block. A collection announcement or a page change
-            // has nothing to show, and a full-width grey rectangle is worse than none —
-            // it reads as a broken image rather than as a text item.
-            if update.primaryImageURL != nil {
-                ZStack(alignment: .topTrailing) {
-                    // Square, not the 4:5 a lookbook would use. Storefront product shots
-                    // are a centred object in a big white field, so a portrait crop
-                    // mostly enlarges the emptiness — and pushed the size run, the one
-                    // thing worth reading, below the fold on a large phone.
-                    //
-                    // All of the brand's photographs, not just the first: they were
-                    // always fetched and stored, and the front of a garment is rarely the
-                    // whole argument for it. Paging lives here and quick-save lives on
-                    // the caption below, so the two never fight for the same swipe.
-                    ImageGallery(
-                        urls: update.imageURLs,
-                        kind: update.kind,
-                        drawnWidth: 400,
-                        mark: update.brand?.name
-                    )
-                    SaveAction(update: update)
-                        .padding(12)
-                }
-                // The photograph is the largest object on the screen and was the only
-                // one that did nothing. Paging is a *drag*, so a tap costs it nothing —
-                // the comment above is about the swipe, and a tap was never claimed.
-                //
-                // A **value** link, not `navigationDestination(isPresented:)`. That
-                // modifier may be declared only once per stack, and there is one card per
-                // brand in a `LazyVStack` — so every card registered its own and whichever
-                // registered last answered for all of them. Tapping the lead opened the
-                // card below it. The destination is registered once, on `FeedView`'s
-                // stack, and every card here just names a value.
-                .contentShape(.rect)
-                .productLink(update)
-            }
-
-            // Tapping opens the app's own page rather than ejecting to Safari. The
-            // caption is also where quick-save listens, so the two coexist: a tap opens,
-            // a horizontal drag files or dismisses, and the photograph above keeps its
-            // paging.
-            Group {
-                VStack(alignment: .leading, spacing: 7) {
-                    if let state = FeedState(update: update, profile: sizes.profile) {
-                        HStack(spacing: 6) {
-                            // The dot is the "this is live" marker, so it only appears
-                            // when the line is actually about you.
-                            if state.isForMe {
-                                Circle()
-                                    .fill(Color.signal)
-                                    .frame(width: 5, height: 5)
-                            }
-                            Text(state.text)
-                                .font(.data(11, .medium))
-                                .tracking(0.6)
-                                .foregroundStyle(state.color)
-                        }
-                    }
-
-                    Text(update.title)
-                        .font(.editorial(21))
-                        .foregroundStyle(Color.ink)
-                        .lineLimit(2)
-                        .multilineTextAlignment(.leading)
-                        .fixedSize(horizontal: false, vertical: true)
-
-                    HStack(alignment: .firstTextBaseline) {
-                        SizeRun(entries: runEntries)
-                        Spacer(minLength: 12)
-                        if let price = update.priceText {
-                            // A launch at a discount says so; the cut comes from the brand.
-                            Text([price, update.percentOffText].compactMap { $0 }.joined(separator: " "))
-                                .font(.data(12, .medium))
-                                .foregroundStyle(Color.ink)
-                                .fixedSize()
-                                // The price is short and never worth eliding; if anything
-                                // has to give, it's the tail of the size run.
-                                .layoutPriority(1)
-                        }
-                    }
-                    .clipped()
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.top, 14)
-                .padding(.horizontal, 20)
-                .contentShape(.rect)
-            }
-            .productLink(update)
-            .quickSaveHandle()
-        }
-        .contentShape(.rect)
-        .contextMenu { UpdateMenu(update: update) }
-        .quickSave(update)
-    }
-}
-
-// MARK: - Feed: the briefs
-
-/// Everything else the brand posted. Small, cropped square, title only — enough to
-/// recognise something, not enough to compete with the lead.
-struct FeedTile: View {
-    @Environment(SizeProfileStore.self) private var sizes: SizeProfileStore
-
-    let update: BrandUpdate
-
-    /// **"Buyable right now in a size you wear"** — not decoration, and the one place the
-    /// app spends its accent colour on a fact about the reader.
-    ///
-    /// Three consequences worth knowing, because between them they explain every tile: with
-    /// an empty profile it never draws at all; with no variants on the row it falls back to
-    /// the server's verdict; and an *unparseable* size counts as a match, which is the
-    /// deliberate one-size rule that makes hats and bags work.
-    ///
-    /// That last one is why an ALD gift card was underlined while the hoodie beside it was
-    /// not — the hoodie had no M in stock, and the card's "sizes" are denominations that
-    /// normalise to nothing. The repair is upstream and not here: a gift card is not a
-    /// garment and no longer reaches a feed list at all (`BrandUpdate.isMerchandise`).
-    /// Requiring a parseable size instead would have taken the one-size rule down with it,
-    /// which is the larger and more useful of the two behaviours.
-    private var isMine: Bool { update.isInMySize(sizes.profile) }
-
-    var body: some View {
-        Group {
-            VStack(alignment: .leading, spacing: 6) {
-                // Three to a row: a third of the screen, so the smallest rendition.
-                // No gallery on a tile — at this size a second photograph is unreadable,
-                // and it would put a paging gesture inside a grid that scrolls.
-                UpdateImage(
-                    url: update.primaryImageURL,
-                    kind: update.kind,
-                    aspect: 1,
-                    drawnWidth: 130,
-                    mark: update.brand?.name
-                )
-                    .overlay(alignment: .bottomLeading) {
-                        // The accent again, at the smallest possible dose: a rule along
-                        // the bottom edge means "your size is in there".
-                        if isMine {
-                            Rectangle()
-                                .fill(Color.signal)
-                                .frame(height: 2)
-                        }
-                    }
-                    // **Said, as well as drawn.** A 2pt vermilion rule is the whole of the
-                    // "your size is in there" signal, and colour alone is not a signal for
-                    // everybody. `SizeRun` already speaks this ("your size, available"); the
-                    // tile was the one place the same fact was silent.
-                    .accessibilityElement(children: .combine)
-                    .accessibilityLabel(
-                        isMine ? "\(update.title), in your size" : update.title
-                    )
-
-                Text(update.title)
-                    .font(.editorial(12))
-                    .foregroundStyle(Color.ink)
-                    .lineLimit(2)
-                    .multilineTextAlignment(.leading)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            .contentShape(.rect)
-        }
-        .productLink(update)
-        .contextMenu { UpdateMenu(update: update) }
     }
 }
 

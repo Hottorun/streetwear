@@ -260,8 +260,8 @@ actor ImageLoader {
     /// **One drain, with a bounded queue.**
     ///
     /// `prefetch` used to start its own detached task per call, and it is called per card:
-    /// `BrandFeedView` fires one from every `GalleryCard` and another on every gallery page
-    /// change. Scrolling a brand's whole output therefore spawned hundreds of independent
+    /// the brand feed of 1.0 fired one from every full-width card, and `ImageGallery` fires
+    /// another on every page change. Scrolling a brand's whole output therefore spawned hundreds of independent
     /// serial queues which — since `URLSession` caps connections per host — collapsed into
     /// one unbounded, unordered FIFO. The photograph somebody is looking at *now* queued
     /// behind three hundred images they had already scrolled past.

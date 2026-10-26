@@ -36,7 +36,7 @@ struct GoesWith: View {
 
     /// The wardrobe, or everything kept if nothing has been filed as owned.
     ///
-    /// Same fallback `StyleView` uses and for the same reason: the honest question is "what
+    /// Same fallback the fit row uses and for the same reason: the honest question is "what
     /// do you own", and most people never split the two axes — so insisting on
     /// `SaveType.wardrobe` would leave the row permanently empty for almost everybody.
     ///
@@ -83,9 +83,9 @@ struct GoesWith: View {
                 // question this row raises and cannot itself answer. Four tiles side by side
                 // are four separate suggestions — two of them are often tops, and only one of
                 // those can be worn — so the row says what goes with the garment and leaves
-                // *what the outfit is* to be assembled in somebody's head. `FitStudio` fills
-                // every position on the body, ranks the alternatives for each one, and lets
-                // the result be kept.
+                // *what the outfit is* to be assembled in somebody's head. The canvas opens
+                // with every position on the body filled (`FitProposal`), the alternatives
+                // for each one on a shelf in its tray, and the result can be kept.
                 //
                 // A whole-row button rather than a small control beside the title: the title
                 // is the affordance people reach for, and a section that expands has to look
@@ -120,7 +120,7 @@ struct GoesWith: View {
             }
             .padding(.top, 6)
             .padding(.bottom, 28)
-            .sheet(isPresented: $isBuilding) { FitStudio(subject: .product(subject)) }
+            .sheet(isPresented: $isBuilding) { FitCanvas(fit: nil, starting: .around(.product(subject), anchor: nil)) }
         }
     }
 }

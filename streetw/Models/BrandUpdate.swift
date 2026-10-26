@@ -63,22 +63,6 @@ final class BrandUpdate {
     /// first sync, a brand's catch-up — are written with it already spent.
     var priceAlertedAmount: Double?
 
-    /// When this markdown was waved off, if it was.
-    ///
-    /// **Deliberately not `isSeen`.** The markdowns list exists precisely because it is
-    /// *not* emptied by reading things — a feed is ordered by recency and a price cut is
-    /// worth as much a week later as it was on the day, so scrolling past one in the feed
-    /// must not remove it from the standing list. But that left the list with no way to say
-    /// "I have looked at this one and I don't want it", and a standing list you cannot
-    /// shorten stops being a list of things to act on and becomes wallpaper.
-    ///
-    /// So it is its own mark: seen and dismissed are different verdicts about the same row,
-    /// and this one is only ever set from the markdowns screen. The product is untouched —
-    /// still in the feed, still on the brand page, still saveable — and if the brand cuts
-    /// the price *again* the event is rewritten and this is cleared, because that is a new
-    /// markdown rather than the one that was waved off.
-    var markdownDismissedAt: Date?
-
     var isAvailable: Bool?
     /// When the storefront was last asked what is actually left. Nil means never — see
     /// `StockRefresh`.
@@ -104,6 +88,34 @@ final class BrandUpdate {
     var memberExternalIDs: [String] = []
 
     var isSeen: Bool = false
+
+    /// When this row reached the feed as news. **Nil is history**: a brand's first sync, a
+    /// catch-up after following, something the follow mode keeps out of the feed, a save
+    /// from a shop nobody follows.
+    ///
+    /// The feed used to *be* the unread queue, so `isSeen` answered both of the questions it
+    /// asks — is this news, and has it been read. Phase 1 shows a timeline of everything that
+    /// happened, read or not, with a line where the last visit ended, and the two came apart:
+    /// a baseline is stored read and was never news, a restock read on Monday is still
+    /// Monday's news. This says which rows are events in the timeline and which side of the
+    /// line each falls (`FeedTimeline`). `isSeen` still means "the feed has had its chance
+    /// to show this" for everything else that reads it — see `FeedVisit`.
+    ///
+    /// Restamped when standalone rewrites a row into a new event — a restock, a markdown —
+    /// because that is a new arrival of the same row. Written beside `isSeen` at every place
+    /// that decides news, through `arrive(at:)`.
+    var arrivedAt: Date?
+
+    /// Writes this row into the feed as news that arrived now.
+    func arrive(at date: Date = Date()) {
+        isSeen = false
+        arrivedAt = date
+    }
+
+    /// Deleted, or detached from its context — `Fit.isGone`'s test, for the same trap.
+    /// Unfollowing a brand cascades through its rows while a lazy grid may still hold a card
+    /// drawing one for a pass, and reading any property of a deleted model traps.
+    var isGone: Bool { isDeleted || modelContext == nil }
 
     /// Dominant colour read off the photograph rather than out of the title — a brand
     /// calling a shoe "Triple White" is naming a colourway, not a colour.
@@ -532,22 +544,6 @@ final class BrandUpdate {
         )
     }
 
-    /// Whether the brand's follow mode lets a row of this kind into the lists that are about
-    /// *news* rather than about the brand — the markdowns list and its badge. See
-    /// `FollowMode.admits`.
-    ///
-    /// The unread feed needs no such call: a row the mode does not admit is stored already
-    /// read (`Brand.apply`). The markdowns list is the exception because it is deliberately
-    /// not emptied by reading, so a quiet brand's price cuts would sit in it — and in the
-    /// toolbar badge — however quiet it had been asked to be.
-    ///
-    /// **Not part of `passes`**, which is the browsing filter: a quiet brand's own page is
-    /// still its whole catalogue. A row with no brand behind it — a link shared from a shop
-    /// nobody follows — has no mode and always passes.
-    var isAdmittedByFollowMode: Bool {
-        brand?.followMode.admits(kind) ?? true
-    }
-
     /// Whether this item belongs in a browsing view at all.
     ///
     /// **The one filter, called from every screen that shows a list of a brand's output.**
@@ -758,12 +754,18 @@ final class BrandUpdate {
     /// release, so a loose match is not a slightly worse answer, it is a false one.
     func mentionsAny(of words: [String]) -> Bool {
         guard !words.isEmpty else { return false }
+        let tokens = wordTokens
+        return words.contains { tokens.contains($0) }
+    }
+
+    /// The whole tokens `mentionsAny` matches against: title, type and tags, lowercased.
+    /// Built fresh on every read, so a caller asking about many releases holds on to it.
+    var wordTokens: Set<String> {
         let haystack = ([title, productType ?? ""] + tags)
             .joined(separator: " ")
             .lowercased()
             .split(whereSeparator: { !$0.isLetter && !$0.isNumber })
-        let tokens = Set(haystack.map(String.init))
-        return words.contains { tokens.contains($0) }
+        return Set(haystack.map(String.init))
     }
 
     /// Sizes from this restock that the user actually wears.
@@ -780,8 +782,8 @@ final class BrandUpdate {
     ///
     /// This read `imageURLs.first`, which parses **every** photograph a storefront
     /// publishes — eight to twelve per product — and allocates an array of them to throw
-    /// all but one away. Every tile in every grid calls it, and `BrandSpread.lead` calls it
-    /// down a brand's products until one answers, so a feed of forty-nine cards was parsing
+    /// all but one away. Every tile in every grid calls it, and 1.0's brand spread called it
+    /// down a brand's products until one answered, so a feed of forty-nine cards was parsing
     /// several hundred URLs it had no intention of using.
     /// The first string that is actually a URL, not simply the first string.
     ///

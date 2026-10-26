@@ -1,5 +1,6 @@
 // SavedView.swift
-// The calm room: Inspiration (things you liked) and Wardrobe (things you own).
+// The calm room: Inspiration (things you liked), Wardrobe (things you own), and Fits (what
+// they make together).
 //
 // Everything the feed does to create urgency is absent here by design — no counts, no
 // "new", no stock, no accent colour. Two columns of varying heights so the page reads as
@@ -18,12 +19,15 @@ import SwiftUI
 
 /// What the strip at the top of the collection is currently showing.
 ///
-/// Two kinds of thing in one control, because they answer different questions and a
+/// Three kinds of thing in one control, because they answer different questions and a
 /// person doesn't think of them as different: Inspiration/Wardrobe is "do I own this",
-/// a board is "what does this belong with". Both are *filters* over one collection —
-/// nothing here moves an item into a container.
+/// a board is "what does this belong with", and Fits is "what does it make". All of them
+/// are views of one collection — nothing here moves an item into a container.
 enum CollectionFilter: Hashable {
     case type(SavedItem.SaveType)
+    /// The outfits, kept and proposed — the Style tab's two rows, which moved here when it
+    /// went. See `FitsPage`.
+    case fits
     case board(UUID)
 }
 
@@ -34,7 +38,9 @@ struct SavedView: View {
     @Query(sort: [SortDescriptor(\Board.sortIndex), SortDescriptor(\Board.createdAt)])
     private var boards: [Board]
 
-    @State private var filter: CollectionFilter = .type(.inspiration)
+    /// `-startTab style` names a tab that is gone, and what it held is the Fits strip here —
+    /// see `Tabs.resolve`.
+    @State private var filter: CollectionFilter = Tabs.opensOnFits ? .fits : .type(.inspiration)
     @State private var query = ""
     @State private var isNamingBoard = false
     @State private var newBoardName = ""
@@ -72,6 +78,8 @@ struct SavedView: View {
         switch filter {
         case .type(let type):
             inMode = saves.filter { $0.update != nil && $0.type == type }
+        case .fits:
+            inMode = []
         case .board:
             // Read off the board, which is proportional to the answer, rather than asking
             // every save in the collection whether it is on it — a relationship walk per save
@@ -79,7 +87,7 @@ struct SavedView: View {
             inMode = currentBoard?.recentItems.filter { $0.update != nil } ?? []
         }
         // The facet narrows whatever is already showing rather than replacing it, so
-        // arriving from the Style tab lands you inside the collection you know rather
+        // arriving from your taste on You lands you inside the collection you know rather
         // than in a mode you didn't choose. It is removable, and says so.
         let narrowed = collection.facet.map { facet in
             inMode.filter { facet.matches($0, in: scope) }
@@ -132,6 +140,7 @@ struct SavedView: View {
     private var filterLabel: String {
         switch filter {
         case .type(let type): return type.label
+        case .fits: return "Fits"
         case .board: return currentBoard?.name ?? "Board"
         }
     }
@@ -171,7 +180,7 @@ struct SavedView: View {
 
     private func buildWall() -> Wall {
         // Built from the boards this view already holds, so it costs nothing it was not
-        // already paying. A facet opened from the Style tab is a query over the reading, and
+        // already paying. A facet opened from your taste is a query over the reading, and
         // the reading leaves things out — see `CollectionFacet.matches`.
         let items = visible(in: TasteScope(boards: boards, saves: saves))
         let (left, right) = Self.columns(items)
@@ -183,7 +192,9 @@ struct SavedView: View {
 
         return NavigationStack {
             Group {
-                if wall.isEmpty, visibleFits.isEmpty {
+                if filter == .fits {
+                    FitsPage(saves: saves, boards: boards, query: query)
+                } else if wall.isEmpty, visibleFits.isEmpty {
                     EditorialEmptyState(
                         title: emptyTitle,
                         action: emptyAction
@@ -202,6 +213,8 @@ struct SavedView: View {
             .safeAreaInset(edge: .bottom) {
                 if isSelecting { selectionBar(wall) }
             }
+            // Before the page's own toolbar, so the avatar is the last item in the corner.
+            .youButton()
             .toolbar { toolbar(wall) }
             .sheet(item: $opened) { SaveDetailView(save: $0) }
             .sheet(item: $openedFit) { FitCanvas(fit: $0) }
@@ -210,7 +223,7 @@ struct SavedView: View {
                     .presentationDetents([.medium, .large])
             }
             .sheet(item: $fitStart) { start in
-                FitCanvas(fit: nil, starting: start.items, board: start.board)
+                FitCanvas(fit: nil, starting: .pieces(start.items), board: start.board)
             }
             // Analysing here rather than at save time: this is the one screen whose
             // whole content is saved items, so the work is done where its results are
@@ -237,6 +250,12 @@ struct SavedView: View {
             .onChange(of: wall.items.map(\.id)) { _, ids in
                 selection.formIntersection(ids)
                 if ids.isEmpty { isSelecting = false }
+            }
+            // A facet is a question about saved things, and Fits shows outfits — so arriving on
+            // one from your taste while Fits is up opens the wall it narrows, rather than a
+            // filter applied to a page it cannot apply to.
+            .onChange(of: collection.requests) { _, _ in
+                if filter == .fits { filter = .type(.inspiration) }
             }
             .alert(renaming == nil ? "New board" : "Rename board", isPresented: $isNamingBoard) {
                 TextField("Name", text: $newBoardName)
@@ -284,13 +303,16 @@ struct SavedView: View {
                     .font(.data(13, .semibold))
             }
         } else {
-            ToolbarItem(placement: .topBarTrailing) {
-                Button("Select") {
-                    selection = []
-                    isSelecting = true
+            // Not on Fits: a selection acts on saves, and that page shows outfits.
+            if filter != .fits {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Select") {
+                        selection = []
+                        isSelecting = true
+                    }
+                    .font(.data(13))
+                    .disabled(wall.isEmpty)
                 }
-                .font(.data(13))
-                .disabled(wall.isEmpty)
             }
             ToolbarItem(placement: .topBarTrailing) {
                 Menu {
@@ -397,6 +419,7 @@ struct SavedView: View {
         switch filter {
         case .type(.inspiration): return "Nothing kept yet"
         case .type(.wardrobe): return "Wardrobe is empty"
+        case .fits: return "No fits yet"
         case .board: return "This board is empty"
         }
     }
@@ -409,6 +432,7 @@ struct SavedView: View {
         switch filter {
         case .type(.inspiration): return "TAP THE BOOKMARK ON ANYTHING IN YOUR FEED"
         case .type(.wardrobe): return "LONG-PRESS AN ITEM AND CHOOSE ADD TO WARDROBE"
+        case .fits: return "SAVE A FEW THINGS AND THE OUTFITS THEY MAKE START HERE"
         case .board: return "SWIPE A CARD IN THE FEED, OR SELECT SAVES ON THE WALL TO FILE THEM HERE"
         }
     }
@@ -444,8 +468,8 @@ struct SavedView: View {
     /// A fit is its own kind of thing — it references saved items rather than containing
     /// them — but it files onto a board exactly as an item does, so a board that has both
     /// should show both. Only on a board: Inspiration and Wardrobe are about individual
-    /// pieces, and the Style tab is where outfits live. Hidden while selecting, which acts on
-    /// saves and nothing else.
+    /// pieces, and Fits is where outfits live. Hidden while selecting, which acts on saves
+    /// and nothing else.
     @ViewBuilder
     private var boardFits: some View {
         if !visibleFits.isEmpty {
@@ -522,7 +546,7 @@ struct SavedView: View {
     private var header: some View {
         VStack(alignment: .leading, spacing: 0) {
             modePicker
-            if let facet = collection.facet { facetChip(facet) }
+            if let facet = collection.facet, filter != .fits { facetChip(facet) }
             if let board = currentBoard, board.tasteMode != .counts { tasteLine(board) }
         }
     }
@@ -531,7 +555,7 @@ struct SavedView: View {
     ///
     /// Only for a board that is not on the default: a board that counts is what every board
     /// is, and a line saying so on all of them would be a line nobody reads. Anything else
-    /// changes what the Style tab, Discover and the brand suggestions show, which is too much
+    /// changes what your taste, Discover and the brand suggestions show, which is too much
     /// to leave findable only inside a menu.
     private func tasteLine(_ board: Board) -> some View {
         // The three choices inline. A submenu here would make the line a menu whose only item
@@ -588,6 +612,9 @@ struct SavedView: View {
                 ForEach(SavedItem.SaveType.allCases) { type in
                     entry(label: type.label, value: .type(type))
                 }
+                // Third, before the boards: it is one of the three ways of looking at the
+                // whole collection, where a board is a slice of it.
+                entry(label: "Fits", value: .fits)
                 ForEach(boards) { board in
                     entry(label: board.name, value: .board(board.id))
                 }
@@ -743,7 +770,7 @@ private struct SelectionBarLabel: View {
 
 /// Filing a selection: every board, and whether all, some or none of the selection is on it.
 ///
-/// The left-swipe picker's rows, for the same reason the two share `BoardRow` — filing is one
+/// The board picker's rows, for the same reason the two share `BoardRow` — filing is one
 /// act whether it is one thing or twenty. A tap on a board files the whole selection on it, or
 /// takes it all off when it is already all there (`CollectionEdit.toggle`).
 struct BulkBoardSheet: View {
