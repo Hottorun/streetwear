@@ -1998,9 +1998,14 @@ func routes(_ app: Application) throws {
         let backfill = req.application.storage[EmbeddingBackfillKey.self] ?? EmbeddingBackfill(app: req.application)
         var lines: [String] = []
         for _ in 0..<batches {
-            let pass = try await backfill.runOnce()
-            lines.append(pass.description)
-            if pass.embedded == 0 { break }
+            do {
+                let pass = try await backfill.runOnce()
+                lines.append(pass.description)
+                if pass.embedded == 0 { break }
+            } catch EmbeddingError.modelChanged(let from, let to) {
+                // Not a failure: the next batch reads the new model and starts re-embedding.
+                lines.append("the sidecar now runs \(to), not \(from) — re-embedding")
+            }
         }
         return lines.joined(separator: "\n")
     }
