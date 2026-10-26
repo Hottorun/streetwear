@@ -147,6 +147,7 @@ Dev-only launch flags (all read via `UserDefaults`, all no-ops when absent):
 | `-feedLastVisitHours 5` | Pretends the last visit to the feed ended that long ago, for the launch's first visit, so the "since you were last here" line can be shot without waiting out `FeedVisit.resumeWindow` |
 | `-feedFilter upcoming` | Opens the feed narrowed — `all`, `drops`, `restocks`, `sales` or `upcoming` |
 | `-feedBrand "Ondo Club"` | Opens the feed narrowed to one followed brand, by name |
+| `-debugBackgroundPass YES` | Runs the background refresh's every-profile pass each time the app is backgrounded (DEBUG builds only) |
 
 **`-standalone YES` is the only way to get standalone mode.** `-serverBaseURL ""` used to do it
 and no longer does — see *The server address is not a setting* below.
@@ -835,11 +836,21 @@ why the sold-out prompt is asked by the app rather than the extension.
   `BrandDismissal`, `PlannedDrop`. A new `@Model` that isn't listed in `ProfileSession.schema`
   simply doesn't exist at runtime.
 - **There is one store per profile, not a profile id on every model** (`ProfileSession`,
-  `docs/profiles.md`). The holder's is `default.store` and their `UserDefaults` keys are the
-  unscoped ones, so data from before profiles is the holder's with nothing moved; a profile's is
-  `profile-<id>.store` and `<key>.<id>`. A new `UserDefaults` key that describes a person goes
-  through `ProfileScope.key` and into `ProfileScope.scopedKeys`; one that describes the phone does
-  not. Anything long-running captures its scope at the start rather than reading the current one.
+  `docs/profiles.md`). `default.store` and the unscoped `UserDefaults` keys are the phone's own —
+  used signed out, and kept by the first account to sign in (`ProfileStores.owner`) — so data from
+  before profiles is that holder's with nothing moved. Every other store is filed under its
+  account: `Accounts/<account>/profile-<id>.store`, and `holder.store` for an Apple ID that signed
+  in after `default.store` was taken; their keys are `<key>.<home>` (`ProfileScope.home`). Signing
+  into another Apple ID **hides** the first one's stores rather than deleting them; only deleting
+  the account, deleting a profile, or You's Remove row deletes a store. A new `UserDefaults` key
+  that describes a person goes through `ProfileScope.key` and into `ProfileScope.scopedKeys`; one
+  that describes the phone does not. Anything long-running captures its scope at the start rather
+  than reading the current one, and only one `RemoteSync` writes a store at a time.
+- **A background refresh or push wake syncs every profile on the account**
+  (`BackgroundServices.syncProfiles`): the pushed profile, then the current one, then the rest by
+  staleness, within `passBudget`, through the same `RemoteSync.sync` per store. Simulator: launch
+  with `-debugBackgroundPass YES` and background the app — the simulator cannot run a
+  `BGAppRefreshTask` without lldb, and refuses a silent `simctl push`.
 - **`Fit.items` ↔ `SavedItem.fits` is many-to-many and cascades in neither direction.** Deleting a
   fit must not delete the clothes, and un-saving something leaves the fits it was in rather than
   silently rewriting them.
