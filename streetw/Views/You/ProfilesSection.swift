@@ -157,3 +157,48 @@ struct ProfilesSection: View {
         profile.name ?? (profile.isHolder ? "You" : "Profile")
     }
 }
+
+/// One quiet line, drawn only when this phone keeps another Apple ID's stores.
+///
+/// **Kept, not deleted, when somebody else signs in** — the first account's saves, boards and
+/// fits come back when it signs in again (`ProfileStores`). That is right for a phone handed
+/// between two people and wrong for one that has changed hands for good, so the second person
+/// gets a way to clear it, confirmed because nothing brings it back.
+struct OtherAccountsRow: View {
+    @Environment(ProfileStore.self) private var profiles: ProfileStore
+    @State private var isConfirming = false
+
+    var body: some View {
+        if profiles.holdsOtherAccounts {
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                Text("Saves from another Apple ID are kept on this phone.")
+                    .font(.editorial(14))
+                    .foregroundStyle(Color.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 8)
+                Button { isConfirming = true } label: {
+                    DataLabel(text: "REMOVE", size: 10, color: .muted)
+                        .contentShape(.rect)
+                }
+                .buttonStyle(.borderless)
+                .accessibilityLabel("Remove another Apple ID's saves")
+            }
+            .confirmationDialog(
+                "Remove another Apple ID's saves?",
+                isPresented: $isConfirming,
+                titleVisibility: .visible
+            ) {
+                Button("Remove from this phone", role: .destructive) {
+                    Task { await profiles.removeOtherAccounts() }
+                }
+                Button("Keep", role: .cancel) {}
+            } message: {
+                Text("""
+                    Their saves, boards, fits and drop dates are deleted from this phone, for every \
+                    profile on that account. Nothing on Dropwall's server changes, and yours are not \
+                    touched.
+                    """)
+            }
+        }
+    }
+}

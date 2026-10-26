@@ -276,20 +276,15 @@ final class RemoteSync {
     /// would refuse.
     private(set) var signInAvailable = false
 
-    /// Hands a Sign in with Apple credential to the server and adopts what comes back.
-    ///
-    /// **The sizes are adopted before anything else runs.** The server kept the account's
-    /// profile, or merged this phone's into it, and every sync pushes this phone's profile
-    /// destructively — so on a reinstall, where the phone's profile is empty, the next sync
-    /// would erase exactly the sizes signing in was meant to keep. The display scales stay
-    /// this phone's: they never leave it.
+    /// Hands a Sign in with Apple credential to the server and records the account. The
+    /// sizes are the caller's to adopt — see `adopt(_:into:)` — because which store they belong
+    /// in depends on the account that came back (`ProfileStore.signIn`).
     ///
     /// - Parameter nonce: the raw nonce whose SHA-256 went on the Apple request.
     func signInWithApple(
         identityToken: String,
         authorizationCode: String?,
-        nonce: String,
-        sizes: SizeProfileStore
+        nonce: String
     ) async throws -> AccountSession {
         try await ensureRegistered()
         guard let api else { throw APIError.notConfigured }
@@ -297,13 +292,20 @@ final class RemoteSync {
             AppleSignIn(identityToken: identityToken, authorizationCode: authorizationCode, nonce: nonce)
         )
         settings.account = session.account
+        return session
+    }
 
+    /// **The sizes are adopted before anything else runs.** The server kept the account's
+    /// profile, or merged this phone's into it, and every sync pushes this phone's profile
+    /// destructively — so on a reinstall, where the phone's profile is empty, the next sync
+    /// would erase exactly the sizes signing in was meant to keep. The display scales stay
+    /// this phone's: they never leave it.
+    static func adopt(_ session: AccountSession, into sizes: SizeProfileStore) {
         var adopted = session.sizes.asProfile
         adopted.shoeScale = sizes.profile.shoeScale
         adopted.dressScale = sizes.profile.dressScale
         adopted.suitScale = sizes.profile.suitScale
         if adopted != sizes.profile { sizes.profile = adopted }
-        return session
     }
 
     /// Deletes the account and everything the server holds under it, then registers this
@@ -808,19 +810,32 @@ final class RemoteSync {
     ///   gates the launch sync on `lastSyncedAt == nil`, `FeedRefresh` treats the stamp as
     ///   fresh for 60s, and the feed printed "PULL TO REFRESH" rather than the first-run
     ///   line. One dropped request and the app did not try again until it was relaunched.
-    func sync(sizes: SizeProfile) async {
-        guard !isSyncing, settings.isConfigured else { return }
+    ///
+    /// - Parameter ifIdle: skip rather than wait when another `RemoteSync` is writing this
+    ///   store — what a background pass asks, so it never queues behind the feed.
+    /// - Returns: whether a sync ran. One that ran and failed says so in `lastError`.
+    @discardableResult
+    func sync(sizes: SizeProfile, ifIdle: Bool = false) async -> Bool {
+        guard !isSyncing, settings.isConfigured else { return false }
+        // **One writer per store, across every instance.** A background pass syncs profiles
+        // nobody is looking at through a `RemoteSync` of its own, and switching to one of them
+        // mid-pass builds the session's — two merges interleaving on one context at every
+        // `await`, each deciding what is new from rows the other is halfway through writing.
+        let store = scope.storeURL
+        if ifIdle, StoreWriters.isBusy(store) { return false }
         isSyncing = true
+        await StoreWriters.acquire(store)
         lastError = nil
         newItemCount = 0
         defer {
+            StoreWriters.release(store)
             isSyncing = false
             lastAttemptedAt = Date()
         }
 
         do {
             try await ensureRegistered(sizes: sizes)
-            guard let api else { return }
+            guard let api else { return true }
 
             if didRegisterAfresh {
                 // **The holder's to spend.** A new anonymous device has no account, so it has
@@ -919,6 +934,7 @@ final class RemoteSync {
         } catch {
             lastError = error.localizedDescription
         }
+        return true
     }
 
     /// One page for `FeedPager`.
@@ -1310,5 +1326,27 @@ final class RemoteSync {
         } else {
             update.refreshGender()
         }
+    }
+}
+
+/// Which stores a sync is writing right now, by file, across every `RemoteSync` — and who is
+/// waiting for one. Main-actor state, so taking and releasing need no lock of their own.
+@MainActor
+private enum StoreWriters {
+    private static var waiting: [URL: [CheckedContinuation<Void, Never>]] = [:]
+
+    static func isBusy(_ store: URL) -> Bool { waiting[store] != nil }
+
+    static func acquire(_ store: URL) async {
+        while waiting[store] != nil {
+            await withCheckedContinuation { waiting[store, default: []].append($0) }
+        }
+        waiting[store] = []
+    }
+
+    /// Wakes every waiter; the first to run takes the store and the rest wait again.
+    static func release(_ store: URL) {
+        let woken = waiting.removeValue(forKey: store) ?? []
+        for waiter in woken { waiter.resume() }
     }
 }

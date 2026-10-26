@@ -23,7 +23,6 @@ import SwiftUI
 struct AccountSection: View {
     @Environment(ServerSettings.self) private var settings: ServerSettings
     @Environment(RemoteSync.self) private var remote: RemoteSync
-    @Environment(SizeProfileStore.self) private var sizes: SizeProfileStore
     @Environment(ProfileStore.self) private var profiles: ProfileStore
     @Environment(\.colorScheme) private var colorScheme
 
@@ -124,19 +123,11 @@ struct AccountSection: View {
         .frame(maxWidth: 360)
     }
 
+    /// Through the profile store, which decides whose store the account gets before anything
+    /// is written into one — see `ProfileStore.signIn`.
     private func signIn(identityToken: String, authorizationCode: String?, nonce: String) async throws {
-        _ = try await remote.signInWithApple(
-            identityToken: identityToken,
-            authorizationCode: authorizationCode,
-            nonce: nonce,
-            sizes: sizes
-        )
         self.nonce = nil
-        // What the account kept — another phone's follows, a reinstall's whole list, its
-        // watches — arrives with the sync, so read it now rather than at the next foreground.
-        await remote.sync(sizes: sizes.profile)
-        // And the profiles on it, which a reinstall has no record of.
-        await profiles.refresh()
+        try await profiles.signIn(identityToken: identityToken, authorizationCode: authorizationCode, nonce: nonce)
     }
 
     // MARK: - Signed in
@@ -171,11 +162,19 @@ struct AccountSection: View {
                 }
                 Button("Keep", role: .cancel) {}
             } message: {
-                Text("""
+                // Your own saves stay only when they are the phone's — the store that was here
+                // before you signed in. An Apple ID that signed in after somebody else's had a
+                // store of its own, and it goes with the account.
+                Text(profiles.accountDeletionKeepsSaves ? """
                     Dropwall's server deletes your account and everything it keeps under it — \
                     follows, sizes, watches, drop dates and every profile — on every phone signed \
                     in, and any unused credits. Other profiles' saves go from this phone too. Your \
                     own brands and saves stay, and the app carries on without an account.
+                    """ : """
+                    Dropwall's server deletes your account and everything it keeps under it — \
+                    follows, sizes, watches, drop dates and every profile — on every phone signed \
+                    in, and any unused credits. Your saves, boards and fits go from this phone \
+                    too, and it goes back to what it held before you signed in.
                     """)
             }
         }

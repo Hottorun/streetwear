@@ -49,8 +49,31 @@ enum DropReminders {
     /// may only clear its own: the holder keeps `drop-`, unchanged from before profiles, and a
     /// profile's are `drop@<id>-`, which the holder's prefix does not match. Without it,
     /// switching to Anna would cancel every reminder the holder had set.
+    ///
+    /// By store (`ProfileScope.home`), not by server user: the holder of a second Apple ID has
+    /// a store of its own and sends no header, and sharing `drop-` with the first account's
+    /// holder would have each rewrite cancel the other's.
     private static func reminderPrefix(for scope: ProfileScope) -> String {
-        scope.id.map { "drop@\($0.uuidString)-" } ?? "drop-"
+        scope.home.map { "drop@\($0.uuidString)-" } ?? "drop-"
+    }
+
+    /// Cancels every pending reminder whose store is not in `homes` — nil being
+    /// `default.store`. **Another Apple ID's reminders do not fire while it is hidden**: "Supreme
+    /// drops today" on a phone somebody else is signed into is the first account's calendar
+    /// read out to them. They are a rewrite from each store, so they come back the moment the
+    /// account signs in again (`ProfileStore.signIn`).
+    static func retain(_ homes: Set<UUID?>) async {
+        let centre = UNUserNotificationCenter.current()
+        let stale = await centre.pendingNotificationRequests().map(\.identifier).filter { id in
+            if id.hasPrefix("drop-") { return !homes.contains(nil) }
+            guard id.hasPrefix("drop@"), let home = UUID(uuidString: String(id.dropFirst(5).prefix(36))) else {
+                return false
+            }
+            return !homes.contains(home)
+        }
+        guard !stale.isEmpty else { return }
+        centre.removePendingNotificationRequests(withIdentifiers: stale)
+        log.info("cancelled \(stale.count) reminders of a store that is not shown")
     }
 
     /// Re-schedules every reminder from the current set of planned drops.
