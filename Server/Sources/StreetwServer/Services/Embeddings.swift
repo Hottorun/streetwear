@@ -328,11 +328,42 @@ struct SemanticStatusKey: StorageKey {
     typealias Value = SemanticIndex.Status
 }
 
+struct SemanticRestKey: StorageKey {
+    typealias Value = SemanticRest
+}
+
+/// A short pause on asking the provider, after it failed a search.
+///
+/// The deadline bounds one search, not an outage: with the sidecar down, every search would
+/// still wait out its full 1.5 s — the HTTP client keeps retrying a refused connection until
+/// the deadline — and a box that is a second and a half slower for as long as the sidecar is
+/// redeploying reads as a broken search. So one failure makes the next `interval` of searches
+/// full-text without asking. In memory and per process: a pause, not a verdict, like
+/// `ImageTagger.resting` on the phone. The backfill does not consult it; it has its own sleep.
+final class SemanticRest: Sendable {
+    static let interval: TimeInterval = 30
+    private let until = Mutex<Date?>(nil)
+
+    func isResting(now: Date = Date()) -> Bool {
+        until.withLock { $0.map { $0 > now } ?? false }
+    }
+
+    func rest(now: Date = Date()) {
+        until.withLock { $0 = now.addingTimeInterval(Self.interval) }
+    }
+}
+
 extension Application {
+    /// Setting a provider starts it with no pause.
     var embeddingProvider: (any EmbeddingProvider)? {
         get { storage[EmbeddingProviderKey.self] }
-        set { storage[EmbeddingProviderKey.self] = newValue }
+        set {
+            storage[EmbeddingProviderKey.self] = newValue
+            storage[SemanticRestKey.self] = SemanticRest()
+        }
     }
+
+    var semanticRest: SemanticRest? { storage[SemanticRestKey.self] }
 
     /// What `SemanticIndex.prepare` found at boot. `.unavailable` until it has run.
     var semanticStatus: SemanticIndex.Status {

@@ -421,6 +421,16 @@ struct ProductSearchTests {
         }
     }
 
+    @Test("A failed query embedding pauses semantic search for a while, not for good")
+    func semanticRestsAfterAFailure() {
+        let rest = SemanticRest()
+        let now = Date(timeIntervalSince1970: 1_900_000_000)
+        #expect(!rest.isResting(now: now))
+        rest.rest(now: now)
+        #expect(rest.isResting(now: now.addingTimeInterval(SemanticRest.interval - 1)))
+        #expect(!rest.isResting(now: now.addingTimeInterval(SemanticRest.interval + 1)))
+    }
+
     @Test("The admin kick says why it cannot embed")
     func adminEmbedSaysWhy() async throws {
         try await withServer { app in
@@ -616,6 +626,10 @@ struct ProductSearchPostgresTests {
             let started = Date()
             #expect(try await search(app, auth, "fleece hoodie").exactTitles.count == 2)
             #expect(Date().timeIntervalSince(started) < 4)
+            // …and having timed out once, the next searches do not wait for it again.
+            let again = Date()
+            #expect(try await search(app, auth, "fleece hoodie").exactTitles.count == 2)
+            #expect(Date().timeIntervalSince(again) < ProductSearch.embeddingTimeout)
         }
     }
 

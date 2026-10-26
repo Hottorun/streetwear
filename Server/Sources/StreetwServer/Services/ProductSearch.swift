@@ -183,20 +183,38 @@ enum ProductSearch {
         app: Application,
         on sql: any SQLDatabase
     ) async -> [IndexCandidate] {
-        guard let provider = app.semanticSearch else { return [] }
+        guard let provider = app.semanticSearch, app.semanticRest?.isResting() != true else { return [] }
         let text = query.terms.map(\.word).joined(separator: " ")
+        let space: EmbeddingSpace
+        let vectors: [[Float]]
         do {
             // The space is read inside the deadline: on a cold sidecar it is a `/health` call.
-            let (space, vectors) = try await withTimeout(embeddingTimeout) {
+            (space, vectors) = try await withTimeout(embeddingTimeout) {
                 (try await provider.space, try await provider.embed(texts: [text]))
             }
-            guard let vector = vectors.first, vector.count == space.dimension else { return [] }
+        } catch {
+            app.semanticRest?.rest()
+            app.logger.warning("search: semantic retrieval skipped for \(Int(SemanticRest.interval))s: \(String(describing: error))")
+            return []
+        }
+        guard let vector = vectors.first, vector.count == space.dimension else { return [] }
+        do {
             return try await SemanticIndex.nearest(
                 to: vector, in: space, scope: scope.predicate, limit: semanticPool, on: sql
             ).map { IndexCandidate(id: $0.id, relevance: $0.similarity) }
         } catch {
             app.logger.warning("search: semantic retrieval skipped: \(String(describing: error))")
             return []
+        }
+    }
+
+    private static func space(of provider: any EmbeddingProvider, app: Application) async -> EmbeddingSpace? {
+        do {
+            return try await withTimeout(embeddingTimeout) { try await provider.space }
+        } catch {
+            app.semanticRest?.rest()
+            app.logger.warning("search: vectors skipped for \(Int(SemanticRest.interval))s: \(String(describing: error))")
+            return nil
         }
     }
 
@@ -377,10 +395,11 @@ enum ProductSearch {
         guard !scope.brands.isEmpty else { return SimilarProductsResponse(products: [], basis: "text") }
         let profile = user.sizeProfile
 
-        // The space is only read, never embedded with, so a sidecar that is down costs the
-        // vectors and nothing else: no space, no vector basis, the text one below.
-        if let provider = app.semanticSearch,
-           let space = try? await withTimeout(embeddingTimeout, { try await provider.space }),
+        // The space is only read, never embedded with, and is cached once the sidecar has
+        // answered — so a sidecar that is down usually costs nothing here. When it has never
+        // answered, the basis is the text one below, and searches rest as after a failed query.
+        if let provider = app.semanticSearch, app.semanticRest?.isResting() != true,
+           let space = await Self.space(of: provider, app: app),
            let vector = try await SemanticIndex.vector(of: subjectID, in: space, on: sql) {
             let near = try await SemanticIndex.nearest(
                 to: vector, in: space, scope: scope.predicate, excluding: subjectID, limit: 60, on: sql
