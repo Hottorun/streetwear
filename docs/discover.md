@@ -11,13 +11,15 @@ this section is still the deck's, unchanged.
 
 ### The field searches your shops, and says so
 
-- **The scope is the honesty.** Until Phase 3 stores whole catalogues and Phase 4 puts a model
-  behind the field, it searches the products from the shops you follow **that are already on
-  this phone** (`ShopCatalogue`) — the newest few hundred per shop (`retentionPerBrand`), and in
-  server mode only what arrived as news. Under the box, always: "IN YOUR SHOPS · 398 PRODUCTS ON
-  THIS PHONE". It never says AI and never says the web, and it draws a magnifying glass rather
-  than a sparkle, because a sparkle is the platform's promise of a model. A narrow search
-  presented as a broad one is a quiet lie; the same search labelled with its scope is useful.
+- **The scope is the honesty.** In server mode the field searches every product the server
+  holds for the shops you follow (`GET /v1/products/search`, below), and says "IN YOUR SHOPS ·
+  1,907 PRODUCTS" — the count the last answer gave, and never "on this phone". Standalone it
+  searches the products from your shops **that are on this phone** (`ShopCatalogue`) — the
+  newest few hundred per shop (`retentionPerBrand`) — and says "IN YOUR SHOPS · 398 PRODUCTS ON
+  THIS PHONE", exactly as before. It never says AI and never says the web, and it draws a
+  magnifying glass rather than a sparkle, because a sparkle is the platform's promise of a
+  model; Phase 4 puts one behind the same field. A narrow search presented as a broad one is a
+  quiet lie; the same search labelled with its scope is useful.
 - **The grammar is small and written down** (`ShopQuery`, in the core, tested). Words are
   matched as **whole tokens** against title, product type, tags, colourways, the measured colour
   and the shop's name — "shorts" must not find a short-sleeve shirt, the substring bug every
@@ -70,7 +72,42 @@ this section is still the deck's, unchanged.
   values; classifying and tokenising run detached (`ShopIndex`), and the per-keystroke search
   never touches SwiftData. Measured on 12,000 synthetic listings in release: index 0.18s off
   the main actor, a search 3–10ms. "Has a photograph" is checked in Swift — a predicate over
-  `imageURLStrings` is a crash, not a narrowing.
+  `imageURLStrings` is a crash, not a narrowing. Standalone only: in server mode the picks still
+  read `ShopCatalogue`, the search does not.
+
+### In server mode the field asks the server
+
+- **The same grammar on both ends.** The phone parses the text with `ShopQuery` and prints its own
+  reading; the server parses the same text with the same code and runs the same `ShopSearch.run`,
+  so price bounds, "no …", "in my size" through `claims`, the gender filter, the ranking and the
+  six failures mean one thing on either. What only the server can say travels in
+  `ProductSearchResponse`: the words that exist nowhere in the scope (struck in the reading), the
+  outcome, the "cheaper" bound. The chips go up as their own flags (`cheaper`, `formal`,
+  `inMySize`), not folded into the text. The server's half is in `docs/server.md`.
+- **Your shops first; every other shop only when asked.** Under your shops' answer, always, one
+  quiet row — "Also look in every shop we watch" — and only a tap asks `scope=all`. The answer is
+  headed IN EVERY SHOP WE WATCH and shows only what your own shops did not: products of brands you
+  follow are left out of it, so a product is never on the page twice, and its count reads IN THE
+  OTHER SHOPS WE WATCH. Once asked, a new query asks both until the field is cleared, like the
+  chips. Shop searches your shops; the wider look is labelled as one.
+- **A failed request says it failed** — "The search didn't run · COULDN'T REACH DROPWALL — …" with
+  a way to try again — and never draws "no results". An empty list for "couldn't ask" and for
+  "asked, nothing there" is the failure `CLAUDE.md` names; the `Answer` enum keeps them apart.
+  The previous answer stays on screen while the next is asked for.
+- **A result is a card, not a row.** It arrives as a `DiscoverCard` and is drawn by `ShopCardTile`
+  — `ShopResultTile`'s photograph, title, wordmark, price, size run and MATCHED line — and minting
+  a `BrandUpdate` to draw it would empty the catalogue into the store, the deck's rule. The
+  bookmark saves through `DiscoverSave`, which lands on the row the phone may already hold; a tap
+  opens `DiscoverProductSheet`.
+- **Pages** are the server's opaque cursor, a MORE row under the exact matches. The summary says
+  "200+ MATCHES" when the server's candidates reached their bound (`isCapped`), because the count
+  is then a floor.
+- **"More like this" asks too** (`SimilarItems`, `GET /v1/products/:id/similar`): the same shops
+  you follow, their whole catalogues, by vector once products are embedded. It sends the server
+  the id of the product on screen — what asking costs — and falls back to the phone's own answer
+  when the request fails, because the row is a suggestion labelled the same either way. Its
+  `.task` sits on a container that is always there: on the row's own conditional content it never
+  ran while there was nothing to show, which is always, at first.
 
 ### Today's picks
 

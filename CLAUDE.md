@@ -25,7 +25,8 @@ of the entire push chain. So:
 When renaming anything, remember **`streetwear` contains `streetw`** — match on a word boundary or
 you will rename the product category the app is about.
 
-The repo holds **three things** — a shared library, an iOS app, and a server:
+The repo holds **four things** — a shared library, an iOS app, a server, and the server's
+embedding sidecar:
 
 ```
 Package.swift            StreetwCore library + tests
@@ -37,6 +38,7 @@ ShareExtension/          share-sheet extension target
 streetw.xcodeproj        app + ShareExtension targets; links StreetwCore as a local package
 Tools/AppIcon/           renders the app icon — the PNGs in the catalogue are generated
 Server/                  SEPARATE SwiftPM package: Vapor + Fluent poller and API
+Embeddings/              SEPARATE deployable, Python: the FashionSigLIP embedding sidecar + its eval
 docs/                    the long-form rules for one area each — see below
 ```
 
@@ -45,6 +47,12 @@ root dependency, opening the iOS app in Xcode would resolve and build the whole 
 tree. Run `swift build`/`swift test` from `Server/` for it, from the root for the library,
 and `xcodebuild` for the app. `Server/README.md` covers running it; `BACKEND.md` covers why
 it exists.
+
+`Embeddings/` is a second Railway service, reachable only from the server over the private
+network. Nothing in either Swift package refers to it, and it must stay that way: the server
+speaks to it over HTTP (`SidecarEmbeddingProvider`), so torch never enters a Swift build. Run
+`pytest` from `Embeddings/`; `Embeddings/README.md` covers deploying it, and `docs/server.md`
+(*Embeddings*) covers why it is self-hosted.
 
 ### The docs set
 
@@ -60,7 +68,8 @@ cost.
 | `docs/discover.md` | Shop's search and daily picks; the Discover deck, its supply, ranking, presentation and card |
 | `docs/fits.md` | The fit canvas, the studio, suggestions, and judging a whole outfit |
 | `docs/collection.md` | Saves, boards, the archive page, and everything the photograph is asked |
-| `docs/server.md` | The poller, the schema, migrations, retention, `Notifier`, storefronts per country |
+| `docs/server.md` | The poller, the daily catalogue scan, the schema, migrations, retention, `Notifier`, storefronts per country, product search, pgvector, the embedding sidecar |
+| `docs/pgvector-migration.md` | The owner's runbook for moving production onto a Postgres with pgvector and deploying the embedding service |
 | `docs/performance.md` | Every rule written after measuring — queries, bodies, decoding, sorts |
 | `docs/share-extension.md` | The App Group inbox, enrichment, brand attribution |
 | `docs/drop-calendar.md` | `PlannedDrop`, local reminders, and poll hints |
@@ -210,7 +219,9 @@ plutil -p /tmp/streetw-dd/Build/Products/Debug-iphonesimulator/streetw.app/Info.
 ### Tests
 
 ```bash
-swift test                                    # all 709
+swift test                                    # all 720
+cd Server && swift test                       # 362, of which 11 need STREETW_TEST_POSTGRES_URL
+cd Embeddings && pytest                       # 63; -m slow adds 3 against real weights
 swift test --filter "Size normalisation"      # one suite
 swift test --filter relockFiresAgain          # one test
 ```
@@ -300,6 +311,16 @@ Adapters live in `streetw/Sources/` and are resolved through `SourceAdapters.ada
 
 Discovery prefers them in that order, so a page watch is now genuinely a fallback rather
 than the common case for non-Shopify brands.
+
+**On the server the catalogue is read at two speeds.** The poll above is the fast half and the
+only thing that may call a product new. Once a day every Shopify source is also read to the end
+(`Poller.scanTick` on its own `ScanLoop`, `ShopifySource.cataloguePage`, `catalogue_scans`), so
+older stock's price and stock are current — but it says nothing new: a first scan is a baseline,
+products it meets first are stored silently, anything published in the last day is left for the
+poll, and events come only from `refresh`'s existing rules. Sources that cannot be scanned
+honestly (sitemap, UCP) get per-item rechecks of whatever is *watched* instead — never saved,
+which the server cannot know. Read `docs/server.md` (*The catalogue is read at two speeds*)
+before touching either.
 
 `BrandDiscovery` (in `Sync/`) probes a bare domain, attaches whatever it finds, and falls back to a
 page watch so every brand yields some signal.
@@ -745,10 +766,16 @@ while it is empty, and the deck one row below. **Read `docs/discover.md` (*Shop*
 `ShopView`, `ShopCatalogue`, `PickLedger`, `ShopQuery`, `ShopSearch` or `DailyPicks`.** The rules
 most easily broken:
 
-- **It searches your shops, on this phone, and says so** — "IN YOUR SHOPS · N PRODUCTS ON THIS
-  PHONE" under the box, never AI or the web, a magnifying glass and not a sparkle. Phase 3 widens
-  the catalogue and Phase 4 puts a model behind the same field; until then the copy must not
-  promise either.
+- **It searches your shops, and says where** — in server mode every product the server holds for
+  them (`GET /v1/products/search`, "IN YOUR SHOPS · N PRODUCTS"), standalone the ones on this
+  phone ("… ON THIS PHONE"); never AI or the web, a magnifying glass and not a sparkle. Phase 4
+  puts a model behind the same field; until then the copy must not promise one. Every other shop
+  the server watches is one quiet row under the answer, asked only when tapped, and shows only
+  what your shops did not. A request that failed says it failed, never "no results".
+- **One grammar on both ends**: the server parses the text with the same `ShopQuery` and runs the
+  same `ShopSearch.run` over candidates its full-text index found (`ProductSearch`), told by the
+  database which words exist at all (`knows:`). A query must not mean something different on the
+  phone and the server; `ProductSearchTests.parity` holds them to it.
 - **The grammar is small, in the core, and printed back**: whole-token words over title, type,
   tags, colourways, measured colour and shop name; price bounds (a bare number is a name); "in my
   size" by `claims`; "no …" rules out; "cheap"/"formal" set the chips' own flags. Prices are
@@ -993,6 +1020,8 @@ the local path in the `else`. Adding a new one means adding both halves:
 | poll hints from the drop calendar | `PUT /v1/poll-hints` (whole set; no-op standalone) |
 | anonymous usage counts | `POST /v1/usage` (daily tallies; standalone counts and sends nothing) — read back with `GET /admin/usage`, see `docs/server.md` |
 | recommendations | `GET /v1/brands/popular` |
+| Shop's search field | `GET /v1/products/search?q=&scope=followed\|all&cheaper=&formal=&inMySize=&cursor=` — standalone, `ShopSearch` over `ShopCatalogue` |
+| "more like this" on a product page | `GET /v1/products/:id/similar?brand=` (the external id, one escaped segment) — falls back to the phone's own `SimilarItems` answer when it fails, and is that answer standalone |
 | credits: balance, this month's usage, the packs | `GET /v1/credits` (`signedIn: false` and nothing else without an account; no standalone equivalent, and the section is hidden) |
 | buying a pack | StoreKit, then `POST /v1/credits/purchases` with the signed transaction — finished only once the server took it (`CreditStore`). Refunds arrive from Apple at `POST /v1/app-store/notifications`; costs read back with `GET /admin/costs`, see `docs/credits.md` |
 | the Discover feed | `GET /v1/discover` (no standalone equivalent — the phone only holds brands somebody already followed, which is the opposite of the question) |
@@ -1121,8 +1150,25 @@ SQLite**; a failed poll must still advance `next_check_at`; the poll claim is a 
 (`FOR UPDATE SKIP LOCKED`); `UserModel.sizeProfile` is discrete columns, so a new
 `SizeProfile` field is silently dropped without a migration; retention prunes events before
 products; `Poller.refresh` guards every write, because rewrites — not rows — are what fill the
-volume; and only the *unexpected* is worth a buzz (`Notifier.isWorthWaking`), one push per brand per
-**cooldown**.
+volume; the daily scan is a baseline the first time, never stores what the poll has yet to
+announce, and does not stamp `last_seen_at`; and only the *unexpected* is worth a buzz
+(`Notifier.isWorthWaking`), one push per brand per **cooldown**.
+
+**Product search and embeddings** (`ProductSearch`, `CatalogueText.swift`, `Embeddings.swift`) have
+their own sections there. In short: the index finds and the grammar decides; `products.search` is a
+generated `simple` tsvector, so the poller writes nothing new; which words exist is asked of the whole
+scope; ranking quality is a Postgres property and SQLite is only `LIKE`. pgvector is installed only
+where `pg_available_extensions` has it — at every boot as well as in the migration, because a dump
+and restore carries the migration record and not the extension — and every vector is keyed by its
+model id, which the sidecar reports and the server never assumes. There is **one**
+`EmbeddingProvider` protocol, and `SidecarEmbeddingProvider` is its only production conformer: on
+when `EMBEDDING_URL` and `EMBEDDING_TOKEN` are both set, off otherwise, said at boot either way. A
+query gets 1.5 s to be embedded (`withTimeout`, which returns at the deadline even though an HTTP
+request in flight does not hear cancellation) and falls back to full-text. A photograph the sidecar
+cannot read costs its product only the image vector — `.gone` is written off for that URL,
+`.unavailable` is asked again further apart and written off on the fifth answer — so the backfill
+never re-asks one on every pass. Search, "more like this" and the backfill all leave out what the
+scan has unlisted.
 
 ### Credits
 

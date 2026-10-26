@@ -18,7 +18,8 @@ struct ShopSearchTests {
         price: Double? = nil,
         daysAgo: Double = 1,
         available: Bool = true,
-        shown: Bool = true
+        shown: Bool = true,
+        relevance: Double = 0
     ) -> ShopListing {
         ShopListing(
             id: id,
@@ -32,7 +33,8 @@ struct ShopSearchTests {
             price: price,
             publishedAt: Date(timeIntervalSince1970: 1_800_000_000 - daysAgo * Self.day),
             isAvailable: available,
-            isShown: shown
+            isShown: shown,
+            relevance: relevance
         )
     }
 
@@ -196,5 +198,69 @@ struct ShopSearchTests {
             listing("named", "Polar Fleece", type: "Sweatshirts", daysAgo: 4)
         ])
         #expect(search("fleece", in: index).exact.map(\.id) == ["named", "tagged"])
+    }
+
+    // MARK: - The server's half
+
+    /// The server hands over the best few hundred candidates out of a catalogue it cannot
+    /// load, so a rare word may be in none of them. What exists is the database's answer, and
+    /// it must decide what is required exactly as the phone's whole-store vocabulary does.
+    @Test("What exists is the caller's to say when the index holds part of the store")
+    func knowsOverridesThePool() {
+        let pool = ShopIndex([listing("tee", "Heavy Boxy Tee — Black", type: "T-Shirt")])
+        let query = ShopQuery.parse("black tee zebra")
+        // Read off the pool, "zebra" is nowhere and is set aside.
+        let local = ShopSearch.run(query, in: pool, hasSizes: true, fits: { _ in true })
+        #expect(local.unknown == ["zebra"])
+        #expect(local.outcome == .found)
+        // The catalogue says it exists: it is required, nothing in the pool has all three,
+        // and the tee is the closest — the answer the phone gives holding the whole store.
+        let served = ShopSearch.run(query, in: pool, hasSizes: true, fits: { _ in true }, knows: { _ in true })
+        #expect(served.unknown.isEmpty)
+        #expect(served.outcome == .closest)
+        #expect(served.partial.first?.matched == ["black", "tee"])
+    }
+
+    /// The index's rank only settles what the grammar calls equal — never outranks it.
+    @Test("Full-text relevance breaks a tie after the score, before recency")
+    func relevanceBreaksTies() {
+        let index = ShopIndex([
+            listing("newer", "Black Cap", type: "Hats", daysAgo: 0, relevance: 0.1),
+            listing("closer", "Black Cap", type: "Hats", daysAgo: 9, relevance: 0.6),
+            listing("tagged", "Logo Cap", type: "Hats", tags: ["black"], daysAgo: 0, relevance: 0.9)
+        ])
+        #expect(search("black cap", in: index).exact.map(\.id) == ["closer", "newer", "tagged"])
+    }
+
+    @Test("An outcome survives the wire")
+    func outcomeRoundTrips() throws {
+        let outcomes: [ShopSearch.Outcome] = [
+            .found, .closest, .nothingToSearch, .notInYourShops(["tuxedo"]), .allRuledOut(["wool"]),
+            .hiddenByFilter(3), .outsidePrice(count: 2, cheapest: 380), .outsidePrice(count: 1, cheapest: nil),
+            .noSizes, .noneInYourSize(4)
+        ]
+        for outcome in outcomes {
+            let data = try APICoding.encoder.encode(outcome)
+            #expect(try APICoding.decoder.decode(ShopSearch.Outcome.self, from: data) == outcome)
+        }
+    }
+
+    /// The server finds a category word through this list before `classify` decides it, so
+    /// anything the classifier places in a slot must carry one of its words.
+    @Test("A slot's vocabulary covers everything the classifier places there", arguments: [
+        ("Penny Loafer — Black Calf", "Footwear", GarmentSlot.footwear),
+        ("Dunk Low Retro", "Sneakers", .footwear),
+        ("Running Shoe 2", nil, .footwear),
+        ("P3 Hood", nil, .top),
+        ("Heavy T-Shirt", nil, .top),
+        ("Nylon Tracksuit", nil, .top),
+        ("Shirt Jacket", nil, .outerwear),
+        ("Logo Beanies", nil, .headwear),
+        ("Cargo Pants", "Bottoms", .bottom)
+    ] as [(String, String?, GarmentSlot)])
+    func vocabularyCoversTheClassifier(title: String, type: String?, slot: GarmentSlot) {
+        #expect(GarmentClassifier.classify(title: title, productType: type) == slot)
+        let tokens = Set(ShopText.tokens([title, type ?? ""].joined(separator: " ")))
+        #expect(!tokens.isDisjoint(with: GarmentClassifier.vocabulary(for: slot)))
     }
 }

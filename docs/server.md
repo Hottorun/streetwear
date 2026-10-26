@@ -173,7 +173,13 @@ Part of the streetw guidance set; see `CLAUDE.md` for the index and the build ru
 - **Retention prunes events before products, never the reverse.** `events.product_id` is
   `ON DELETE CASCADE`, so pruning a product takes feed history with it; and deleting a
   product the source still lists makes the next poll announce it as a new drop. Only
-  products unseen for `PRODUCT_RETENTION_DAYS` *with no events left* are eligible.
+  products gone for `PRODUCT_RETENTION_DAYS` *with no events left* are eligible — for a source
+  the daily scan has completed within that window, "gone" is `unlisted_at` (two complete scans
+  in a row did not find it), counted from then; for everything else it is `last_seen_at`, as
+  before. The scan does not stamp `last_seen_at`, so a listed product in a scanned shop must
+  never be judged by it. **Nor is a product with an active watch pruned**: `watches.product_id`
+  cascades, so retention used to delete the watch with it, silently — and a product only its own
+  page re-reads can go unseen by any catalogue for months while being watched throughout.
 - **What fills the volume is rewrites, not rows.** Postgres does not edit a row in place:
   every `UPDATE` writes a new tuple and leaves the old one dead until autovacuum reclaims
   it — and reclaimed space goes back to the *table* for reuse, not to the filesystem, so a
@@ -265,6 +271,138 @@ Part of the streetw guidance set; see `CLAUDE.md` for the index and the build ru
   Victoria's Secret's at 02:31, Hollister's cached at the edge for a day — and Subdued's is 7.2 MB
   a read. Its memory of what it has seen lives in `sources.fingerprint` (`SitemapMemory`), which
   is only rewritten when it changed.
+- **The catalogue is read at two speeds** (`CatalogueScan.swift`, `Poller.scanTick`, `ScanLoop`,
+  `catalogue_scans`, `CreateCatalogueScans`). The poll is the fast half and is unchanged: it
+  reads a shop's newest products every few minutes, its baseline is the newest 2,500 and it
+  re-reads only the newest ~250. Everything older — exactly what goes on sale — sat at whatever
+  price it had the day it fell out of that window, invisible to a markdown, a restock, a watch,
+  `CatalogueSale` and search. **Once a day, every Shopify source is read to the end** of
+  `/products.json` (`ShopifySource.cataloguePage`, 250 a page) and every product, variant, price,
+  `compare_at_price` and stock is stored or updated. Measured live against Aimé Leon Dore on
+  2026-10-26: 900 products and 4,015 variants in 4 pages, 7.9 MB of JSON, 8 seconds at the
+  two-second politeness interval — so the roadmap's 5,000-product shop is 21 pages and under a
+  minute of one host's budget. Load-bearing, each with what it prevents:
+  - **The scan says nothing new.** It writes catalogue state, and its events come only from
+    `refresh` by the poll's own rules — a size back, a markdown past 5% — and from
+    `CatalogueSale`. Three rules hold that:
+    - **A first scan is a baseline**, and so is one after no scan has finished for three days
+      (`CatalogueScan.staleAfter`) or after the poll re-spent its baseline (a country shop back
+      from a pause) — `Poller.scanIsBaseline`. On the day this shipped, every product past the
+      newest 250 held months-old prices and stock, and comparing against them would have
+      announced every markdown and restock since as news. Decided when a scan begins and kept
+      in its row, so one scan is one or the other from its first page to its last.
+    - **A product the scan meets for the first time is stored silently** — old stock the
+      poll's window never reached is not a drop.
+    - **…and one published within a day of the poll's last read is not stored at all**
+      (`newsMargin`), nor is anything new while the poll is failing. "New" is the poll's word:
+      a scan that stored a drop first would have left the poll finding it already known, and
+      the drop would never have been announced. A day rather than "since the poll's last read"
+      because a storefront's `/products.json` is cached at the edge and a product can appear in
+      it later than its `published_at`.
+    `firstScanIsSilentAndAMarkdownIsNot` scans a 5,000-product shop whose older half moved
+    since the baseline and asserts no event, then a markdown on one old product and asserts
+    exactly that one `.priceDrop`.
+  - **An unchanged product causes no write**, which is `refresh`'s rule, and the scan also does
+    not stamp `last_seen_at` (`refresh(marksSeen: false)`) — a daily stamp would be a rewrite of
+    the whole catalogue a day, the exact churn `refresh` exists to stop. Measured on Postgres: a
+    second scan of an unchanged 5,400-product catalogue updated **zero** product and variant rows
+    (`pg_stat_user_tables`), plus one brand row and three scan-row writes; the test pins the same
+    with triggers on SQLite. Retention reads `unlisted_at` for scanned shops instead.
+  - **Scheduling.** One row per Shopify source in `catalogue_scans`, made by the scanner itself
+    for any source without one (`enrolScans`) — five paths make sources, and a scan that relied
+    on each of them remembering would be missing for whichever forgot. A source's scan falls at a
+    fixed second of the UTC day taken from its id (`CatalogueScan.slot`), so a few hundred
+    sources spread across the day rather than bursting at midnight, and a deploy spreads the
+    first scans over the next 24 hours. The next scan is the source's slot at least twelve hours
+    after the last *started*: one per slot, at most once a day, and a late start does not push
+    the next a day later. Only sources the poll has baselined: a scan before the poll's first
+    read would take the newest products for old ones.
+  - **The lease is the poll claim's, on its own table.** `due_at` is pushed forward by
+    `leaseDuration` in the statement that picks the rows, `FOR UPDATE OF catalogue_scans SKIP
+    LOCKED`, so two instances never scan one source, and only the scan row is locked — the poll's
+    claim locks `sources` every tick and must never skip one because a scan holds it.
+    `CatalogueScanPostgresTests` runs two scanners at once against eight shops and counts eight
+    pages, not sixteen. SQLite keeps a plain query.
+  - **Budgeted, and resumable.** At most `pagesPerTurn` (4) pages a source per pass and
+    `scansPerPass` (3) sources per pass, one pass a minute: twelve pages a minute at most, far more
+    than a daily read of every catalogue needs. A source with pages left goes back in the queue
+    at once, behind every scan that has waited longer, so a 30,000-product shop (120 pages) takes
+    thirty turns and its share of the fetcher, never all of it. Hard cap `maxPages` (200, 50,000
+    products): a scan that reaches it stops, keeps what it read, says so (`last_truncated`) and
+    does not count as complete. Between turns the row holds the next page, the products seen so
+    far as 32-bit digests (`ScanDigests`, ~27 KB at 5,400 products) and the sale reading, so a
+    deploy mid-scan resumes on whichever instance claims it next; a scan in progress for twelve
+    hours (`abandonAfter`) starts again rather than stitching a catalogue from two days. A lock
+    waits an hour, `hostBusy` waits its retry, and a failure backs off from five minutes to six
+    hours.
+  - **It never slows the poll.** Its own loop (`ScanLoop`), not a step of `PollLoop`, with one
+    page in flight at a time through the shared `PoliteFetcher` — a poll to the same host waits at
+    most one politeness slot. Merges of one brand are serialised (`Poller.holdBrand`), because a
+    poll and a scan comparing the same product at once would both see a size come back and both
+    write the restock; held around the merge only, so a poll waits at most one page being
+    written. That is per instance: the two claims keep two instances off one *source* each, not
+    a poll on one instance off a scan on another.
+  - **Removal is two complete scans in a row.** `/products.json` is paged by number, so a product
+    removed mid-read shifts the next page up by one and a listed row goes unseen. The first miss
+    sets `products.missing_since`, the second `unlisted_at`; any read that sees it again clears
+    both. Only products first stored before the scan began are judged. A scan that finds more
+    than half a shop missing (and more than 25 products) marks nothing and logs — a storefront
+    that stopped answering past some page reads exactly like a mass delisting. Nothing is deleted:
+    retention takes an unlisted product six months on, and Discover stops dealing it.
+  - **`CatalogueSale` over the whole catalogue counts only what can be bought.** A complete scan
+    records `brands.catalogue_share` and when; a whole catalogue carries stock kept listed after
+    it sold out, whose price says nothing about a sale anyone can act on, and counted in it either
+    dilutes a real sale or holds the share over the line for good. The thresholds keep their
+    meaning — 30% of the buyable catalogue cut is a sale — and the first scan is a baseline. The
+    two readings can disagree for weeks (old stock marked down: 40% to the scan, 5% to the poll),
+    so **either may start a sale and only the poll may end one, when its read and a scan from
+    the last three days are both under 10%**; letting either end what the other held would
+    announce the sale again every few days. Main shop only, like the poll's.
+  - **Country storefronts** are scanned exactly when they are polled — the claim applies
+    `Storefronts.wanted` — and a paused one is never claimed and never fetched.
+  - **`DISABLE_CATALOGUE_SCAN=true`** stops the scan and nothing else. Its cost is mostly storage,
+    so on a volume near its cap it is the one background job to switch off.
+  - **What it costs to store**, measured on Postgres 17 by replaying Aimé Leon Dore's real pages
+    six times over with fresh ids (5,400 products, 24,090 variants — 4.5 a product, a typical
+    streetwear size run): products 10.6 MB (1.66 KB a row, heap 9.5 MB, indexes 0.8 MB),
+    variants 6.4 MB (129 bytes a row, heap 3.3 MB, indexes 3.0 MB), 17.0 MB of database growth.
+    **About 3.2 MB per 1,000 products**: ALD's 900 is ~2.8 MB, a 5,000-product shop ~16 MB, a
+    30,000-product one ~95 MB, one at the 50,000 cap ~160 MB. The scan alone reaches 5 GB only
+    somewhere past 1.5 million products, before events, dead tuples and whatever search adds —
+    so how near Hobby's cap it brings the volume depends on which brands are in the catalogue,
+    and `databaseBytes` is where to watch it. A change is one new
+    tuple per changed row: re-pricing one page of 250 products rewrote 250 product and 1,027
+    variant rows (~0.5 MB of dead tuples), so a whole-catalogue sale costs about one more copy
+    of that brand until autovacuum reuses it.
+  - **`/admin/status` says `databaseBytes`** (`pg_database_size`, nil on SQLite), the number the
+    volume cap is measured against and one no row count stands in for, beside `scansFinishedToday`,
+    `scansInProgress` and `unlistedProducts`.
+- **A watched product that no catalogue re-reads has its own page re-read** (`Poller.watchedRechecks`,
+  inside `enrich`). A sitemap names a URL and nothing else, and a UCP search pages a bounded
+  window with no order, so a watched product from either would otherwise never be priced or
+  stocked again — and a huge non-Shopify retailer cannot be scanned honestly (20,000 pages at 2s
+  is eleven hours a brand). So its page is read again through `ProductPage` every `recheckAfter`
+  (six hours), which gives price and stock, and so a markdown and a restock by `refresh`'s rules
+  — the watch fires on them as on a Shopify product. Four details:
+  - **Watched, not saved.** Saves never leave the phone (`docs/collection.md`), so the server
+    cannot know what is saved and must not be told; the per-item set is the watches, and "Notify"
+    on a save is what makes one. Anything a later opt-in sends would join the same queue.
+  - **Budgeted per host**: at most `recheckPerHost` (2) of one host's pages a pass, never-read
+    first then oldest, inside the pass's `enrichmentBudget`. A host with more watched products
+    than that covers in six hours is re-read less often rather than harder.
+  - **A UCP product the protocol still reads is left to it** (`ucpCoverage`, two days of
+    `last_seen_at`, which a page read of a UCP product does not stamp): those reads carry prices
+    and live stock already, and a page printing the price slightly differently would argue with
+    them every six hours. Only one that has fallen out of the search window is read by its page.
+  - **A page never brings a second vocabulary of variants.** A UCP product's variants are named
+    by the protocol and its page's by its JSON-LD; taking the page's would store every size twice
+    and never see one come back. They are matched on size and colour onto the held ones
+    (`Poller.translated`), and only a clean match is used; otherwise only the product's own price
+    and stock are read, which still gives a markdown and a whole-product restock. Nor does a page
+    rename a product a catalogue named.
+  - **No brand-wide sale detection for these sources** — the scan's share needs the whole
+    catalogue, and a handful of watched pages is not one. Their banner reads still announce a
+    code sale (`SaleBanners`).
 - **A brand going on sale is said once, by whichever detector sees it first** (`SaleEvents`,
   `.sale`). Both write through `SaleEvents.announce`, which refuses a second `.sale` for the brand
   inside `quietPeriod` (24h): an end-of-season sale marks the catalogue down *and* puts "SALE NOW
@@ -281,8 +419,10 @@ Part of the streetw guidance set; see `CLAUDE.md` for the index and the build ru
     against — and **the first measurement is a baseline**: measured against Motel Rocks, 1,155 of
     2,748 products were already marked down, which a deploy would otherwise have announced. It is
     a share of the *read* (the newest 250 for an incremental Shopify poll), not of the stored
-    catalogue, whose prices are whatever they were when last seen; older stock nobody re-reads is
-    the roadmap's Phase 3 blind spot.
+    catalogue, whose prices are whatever they were when last read. **The daily scan measures the
+    whole buyable catalogue too** (`CatalogueSale.decideScan`, `brands.catalogue_share`), which is
+    the sale on older stock the newest 250 cannot see — see *The catalogue is read at two speeds*
+    below. Either may start a sale; only the poll ends one, and only while a fresh scan agrees.
   - **The announcement bar** (`SaleBanners`, `SaleBanner`, `SaleBannerLedger`): a code sale moves
     no price, so the homepage is read every 30–60 minutes per brand (fixed per brand by its id, so
     reads do not bunch), three a pass, through the shared `PoliteFetcher`. Only brands somebody
@@ -522,3 +662,183 @@ Part of the streetw guidance set; see `CLAUDE.md` for the index and the build ru
   `test(...)`'s discardable return and silently pick that overload — the app comes up with
   no routes and everything 404s, while multi-statement closures resolve to yours and pass.
   The local helper is called `withServer`.
+
+## Product search
+
+`GET /v1/products/search` and `GET /v1/products/:id/similar` (`ProductRoutes.swift`,
+`ProductSearch`, `CatalogueText.swift`). The phone's half and the screen's rules are in
+`docs/discover.md` (*Shop*); these are the server's.
+
+- **One grammar, both ends.** The text is parsed by `ShopQuery` and matched, constrained, ranked
+  and explained by `ShopSearch.run` — the code the phone runs over its own store. The server only
+  adds what a phone does not need: an index to *find* candidates in a catalogue too large to load,
+  and the database's answer to which words exist at all. `ProductSearchTests.parity` runs the same
+  queries through the route and through `ShopSearch` over the same products and compares the
+  pages, the partial matches, the struck words, the outcome and the "cheaper" bound.
+- **The index finds; the grammar decides.** `CatalogueTextIndex.candidates` hands over the best
+  `ProductSearch.pool` (600) products in scope carrying any of the words — every word first, then
+  `ts_rank_cd`, then recency and id — and `ShopSearch` keeps what really matches. So it errs wide:
+  a category word looks for every token `GarmentClassifier.vocabulary` can place there, a compound
+  ("tshirt") for its parts in order, a shop's name by brand id. What can be said in SQL — a price
+  bound, a ruled-out word in the vector — narrows the candidates, and a second read of 200 without
+  them is what lets an empty answer still say how many matched and what the cheapest was.
+- **Which words exist is asked of the whole scope** (`existing`, one `EXISTS` per word), never read
+  off the candidates. A rare word crowded out of 600 would otherwise be "not in your shops" on the
+  server and required on the phone — `rareWordsAreRequired` reproduces exactly that. `ShopSearch.run`
+  takes it as `knows:`.
+- **`simple`, not `english`** (`AddProductSearch`). Product names are not prose: the English
+  configuration drops "on", "off" and "all" as stop words (On Running, Off-White, All Saints), and
+  stems "Vans" to "van" and "boxy" to "boxi". The grammar spells out a word's other number and its
+  synonyms itself, the same on both ends, so a stemmer would only add matches the phone never makes.
+- **`products.search` is a generated column** — `setweight` A title, B product type, D tags, through
+  `streetw_fold` (accents folded with `translate`, because `unaccent` is not `IMMUTABLE`) and
+  `streetw_join` (`array_to_string` is only `STABLE`). Nothing that writes a product changes; the
+  poller is untouched. A generated column sees one row of one table, so the brand's name is matched
+  in Swift and the colourways through an expression index on `variants`
+  (`idx_variants_color_search`), one index scan per word: an aggregate asking every word per variant
+  recomputed the vector each time, 68ms of an 80ms query.
+- **Ranking quality is a property of Postgres.** SQLite (`PortableTextIndex`) reads the same fields
+  with `LIKE`, newest first, no rank, and the candidates' vocabulary stands in for `existing`. It is
+  there so the tests drive the route, the scopes and the grammar end to end; tune nothing against it.
+  `ProductSearchPostgresTests` covers the rank, the spellings and `existing` against
+  `STREETW_TEST_POSTGRES_URL`.
+- **What is searched** (`CatalogueScope.predicate`): `kind = 'product'`, a photograph, the shop that
+  serves the caller (`Storefronts.serving` — one shop per brand, never both), announced
+  (`pending_announcement IS NULL`) and still listed (`unlisted_at IS NULL`). Scope `followed` is
+  every follow whatever its mode — *Quiet* still shapes search; `all` is every brand. The gender
+  filter and "in my size" are applied by the grammar, so an empty answer can say it was the filter.
+- **Candidates are read as columns, the page as models.** Hydrating 600 `ProductModel`s and four
+  thousand `VariantModel`s through Fluent was 380ms of a 650ms search; reading rows into values and
+  building `DiscoverCard`s for the page alone brought "black hoodie" to 105ms and the rest to 20–70ms,
+  measured in release on eight thousand products. The size context is worked out only for the
+  listings "in my size" is asked about.
+- **Paging is an offset into one query's ranking** (`cursor`, opaque). Total, with no randomness, so
+  the same query pages the same way; a catalogue that changes between two pages can repeat or skip a
+  product at the seam, which is the price of not holding a cursor's state.
+- **"More like this"** takes the product's id, or the external id the phone holds with `?brand=` —
+  percent-encoded as one segment, because a sitemap product's key is its whole URL. By vector where
+  this product has one under the current model, otherwise by its own words read as a query and
+  scored the way `SimilarItems` scores (the same slot, each shared word, half a point for the same
+  shop, at least two). `basis` says which.
+
+## Embeddings
+
+Search and "more like this" compare vectors, and the vectors come from one place: **`Embeddings/`,
+a Python service running FashionSigLIP, deployed as a second Railway service beside this one.** The
+server sends it text or image URLs and gets back unit vectors; it stores nothing. The server decides
+what to embed and when, stores each vector in pgvector beside the model id that produced it, and does
+the comparing in Postgres. Nothing in either Swift package imports anything from the sidecar, and the
+phone never talks to it.
+
+It is off in production until two things are true, and each is said at boot: a Postgres with pgvector
+(`docs/pgvector-migration.md`), and the sidecar deployed with `EMBEDDING_URL` and `EMBEDDING_TOKEN`
+set on this service.
+
+### The sidecar
+
+- **Self-hosted, not an API.** A query embedding is on the path of every search, and an image
+  embedding on every product the poller sees. A third-party API would put a stranger's uptime
+  in front of the search box and a per-call bill on the catalogue. It would also send every
+  query a person typed to somebody else, which `StyleStatement` was kept local to avoid. The
+  model is 200M parameters and runs on CPU at roughly 3–10 images a second on 2 vCPU
+  (measured in Docker and natively; Railway's own number is still to be taken), and embedding
+  100k products once costs well under a dollar. There is nothing to buy. `Embeddings/README.md`
+  and `Embeddings/eval/README.md` have the measurements.
+- **Python, in its own service.** torch has no Swift equivalent worth the port, and putting it
+  in the server's image would put a 2 GB toolchain into every server deploy. A separate service
+  also lets the model's memory be sized and restarted on its own.
+- **FashionSigLIP v1 by default, because Marqo's v2 is not public.** Marqo offers v2 only
+  commercially ("Contact Marqo"). v1 is Apache-2.0 and pinned by revision. On our catalogues it
+  beat the base SigLIP it was tuned from by only a few points, within the noise of a 100-query
+  eval (`Embeddings/eval/README.md`); the case for it is that it costs nothing over the base.
+  **The model is a build argument of the image** (`EMBEDDING_MODEL_REPO`, `_REVISION`), so the
+  owner can switch to the third-party `srpone/zooclaw-fashionsiglip2` — Apache-2.0, eleven points
+  better on text R@1 in the same eval, about four times slower per image — without a code change.
+  The owner has chosen it; it is not the default yet because its repository carries no licence
+  file, only `license: apache-2.0` in the card's metadata, and the eval never measured text
+  against text, which is what the server compares. `Embeddings/README.md` (*Choosing the model*)
+  has the switch, its cost and both caveats.
+- **The model id names the repository and the revision**, and is stored beside every vector. Two
+  models, or two revisions of one, do not share a space: a vector from one compared with a query
+  from the other still produces a ranking, and the ranking is noise. If an answer names a
+  different model from the one the provider last reported, `SidecarEmbeddingProvider` throws
+  `modelChanged` rather than return the vectors under the old id, and the backfill's next batch
+  starts re-embedding under the new one.
+- **The sidecar fetches URLs, so it is an SSRF surface, and it sits next to Postgres.** It
+  refuses non-public addresses on every hop and pins the connection to the address it
+  checked. It requires a token, compared in constant time, and refuses everything without
+  one, like `ADMIN_TOKEN`. It has no public domain.
+
+### The server's half
+
+- **One protocol, `EmbeddingProvider`** (`Services/Embeddings.swift`): `space` (the model id and
+  the dimension, as the provider reports them — asynchronous, because the sidecar learns them from
+  its own `/health`), `embedsImages`, `embed(texts:)` → `[[Float]]` and `embed(imageURLs:)` → one
+  `ImageEmbedding` per URL. The dimension is never hard-coded — SigLIP-base is 768.
+  `SidecarEmbeddingProvider` is the production conformer, `FakeEmbeddingProvider` the tests'.
+- **Unset is off, and off is a supported state.** With `EMBEDDING_URL` or `EMBEDDING_TOKEN` unset,
+  `SidecarEmbeddingProvider.make` returns nil, logs `embeddings: off — …` (a warning when only one
+  is set), and search is full-text. Set, it logs `embeddings: sidecar at …`. Every failure is an
+  `EmbeddingError` naming which one it was (unreachable, refused, malformed, model changed, wrong
+  count or dimension, timed out), so search can fall back without guessing.
+- **pgvector is installed only where it is available.** `AddProductEmbeddings` runs
+  `CREATE EXTENSION IF NOT EXISTS vector` only when `pg_available_extensions` lists it, and creates
+  `product_embeddings (product_id, model, text_embedding vector, image_embedding vector,
+  embedded_at, image_url, image_failure, image_attempts, image_retry_at)`. Where it is not —
+  production today, and SQLite — the migration records itself and does nothing, and boot logs
+  `search: full-text; semantic search unavailable (…)`.
+- **The same work runs again at every boot** (`SemanticIndex.prepare`), and that is load-bearing:
+  the move to pgvector is a dump and restore, the restored `_fluent_migrations` says the migration
+  ran, and without the boot pass the new database would never get its table. Rehearsed. A column
+  added to the table is added there too, with `ADD COLUMN IF NOT EXISTS`, for the same reason.
+- **The model id is stored beside every vector**, so a new model is a re-embed and not a migration:
+  `EmbeddingBackfill` embeds what has no row or a row from another model, a batch at a time, and a
+  nearest-neighbour query names the model, so two models' vectors are never compared. The column is
+  a bare `vector`; the HNSW index is built per model on `text_embedding::vector(n)`, partial on the
+  model (`SemanticIndex.ensureIndex`), so another dimension is another index. A half-finished
+  re-embed answers from fewer products, never from a mix.
+- **A separate table, not a column on `products`**: the poller and the scan rewrite product rows,
+  and a few kilobytes of floats would ride along on every rewrite — the volume problem above.
+  **Measured on Postgres 17 with pgvector 0.8.7**, 565 real products embedded by FashionSigLIP:
+  7.2 MB after `VACUUM FULL`, **about 12.7 MB per 1,000 products** — 3,076 bytes per 768-wide
+  vector, two per product, out of line in TOAST, and 4.2 KB per product of HNSW index on the text
+  vector. That is four times what the scan measured for the products themselves (3.2 MB), so a
+  catalogue's whole footprint is roughly 16 MB per 1,000 products before events. A re-embed
+  rewrites every row, so until autovacuum reuses the space the table is briefly twice that, and the
+  old model's index stays until dropped.
+- **What is compared is text with text.** A search embeds its own words and is matched against
+  each product's *text* vector (title, type, brand, colourways, tags — the fields the grammar
+  reads), and "more like this" compares two products' text vectors. The image vector is stored
+  for the photo matching to come and read by no query yet.
+- **A photograph that cannot be read costs its product only the image vector.** The sidecar
+  answers `null` for it with a reason and a `transient` flag, which the provider turns into
+  `.gone` (a 4xx, a 200 that will not decode, a refused address) or `.unavailable` (a timeout,
+  429, 5xx, no DNS answer) — the split `docs/collection.md` makes on the phone. The text vector is
+  written either way. A gone photograph is written off **for that URL**: `image_url` records it,
+  so the row leaves the backlog, and a different lead photograph later makes it due again. An
+  unavailable one is asked again at `image_retry_at` — an hour, then four, sixteen, sixty-four —
+  and the fifth unavailable answer writes it off too, because a backlog that never drains
+  re-fetches the same photographs forever. Each write-off is logged with its URL.
+- **Unlisted products are neither searched, offered as "more like this", nor embedded**
+  (`unlisted_at IS NULL` in `CatalogueScope.predicate` and in the backfill's query), as Discover
+  leaves them out.
+- **Query time needs the provider up.** A search embeds its words under a 1.5 s deadline
+  (`ProductSearch.embeddingTimeout`, `withTimeout`); slow or down, the answer is the full-text one,
+  which is complete on its own. Vectors widen the candidates and add to their rank; they never make
+  a match the grammar would not. **`withTimeout` returns at the deadline whether or not the work
+  listens**: a task group cancels its children and then *waits* for them, and an HTTP request on
+  an event loop does not hear cancellation, so a group-based timeout over the sidecar returned
+  when the request's own timeout fired. The abandoned request ends by its own timeout
+  (`textTimeout`, 10 s, sized for the backfill's batches of 32).
+- **…and one failure rests semantic search for 30 s** (`SemanticRest`). The deadline bounds one
+  search, not an outage: with the sidecar down, AsyncHTTPClient retries the refused connection
+  until the deadline, so every search was 1.6 s instead of 50–80 ms for as long as the sidecar was
+  redeploying. Now the first search after a failure waits, and the next thirty seconds of searches
+  are full-text without asking. In memory, per process, reset whenever the provider is set — a
+  pause, not a verdict. "More like this" asks the same pause, and needs the sidecar only for the
+  model id, which is cached after its first answer; with the vectors in Postgres it keeps
+  answering by vector while the sidecar is merely slow.
+- **`Application.semanticSearch`** is the one switch every semantic path asks — pgvector installed
+  *and* a provider — so nothing runs half on. The backfill loop starts only behind it and only where
+  the poller runs; `POST /admin/embed?batches=` runs batches by hand (and is how a server with
+  `DISABLE_POLLER=true` embeds anything), and says which half is missing when it cannot.

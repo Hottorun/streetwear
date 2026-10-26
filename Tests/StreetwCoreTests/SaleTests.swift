@@ -253,6 +253,84 @@ struct CatalogueSaleTests {
         #expect(said.title == "SALE · UP TO 50% OFF")
         #expect(said.summary == "42 of the 120 pieces just checked are marked down.")
     }
+
+    // MARK: The daily scan
+
+    @Test("A first scan records the catalogue's share and says nothing, even of a sale")
+    func firstScanIsBaseline() {
+        let measured = CatalogueSale.State(measuredAt: now.addingTimeInterval(-86_400))
+        let decision = CatalogueSale.decideScan(reading(priced: 1_000, markedDown: 400), state: measured, isBaseline: false, now: now)
+        #expect(decision == .record(.init(
+            measuredAt: measured.measuredAt, since: now, catalogueShare: 0.4, catalogueMeasuredAt: now
+        )))
+    }
+
+    @Test("A scan may start a sale on older stock")
+    func scanStarts() {
+        let scanned = CatalogueSale.State(
+            measuredAt: now.addingTimeInterval(-9 * 86_400), catalogueShare: 0.02,
+            catalogueMeasuredAt: now.addingTimeInterval(-86_400)
+        )
+        guard case .started(let live) = CatalogueSale.decideScan(
+            reading(priced: 1_000, markedDown: 350), state: scanned, isBaseline: false, now: now
+        ) else {
+            Issue.record("expected the scan to start a sale")
+            return
+        }
+        #expect(live.since == now)
+        #expect(live.catalogueShare == 0.35)
+        // A scan after a lapse is a baseline, and says nothing whatever it finds.
+        #expect(CatalogueSale.decideScan(
+            reading(priced: 1_000, markedDown: 350), state: scanned, isBaseline: true, now: now
+        ) == .record(.init(measuredAt: scanned.measuredAt, since: now, catalogueShare: 0.35, catalogueMeasuredAt: now)))
+    }
+
+    /// Ending belongs to the poll, or the two measurements would take turns announcing it.
+    @Test("A scan never ends a sale")
+    func scanNeverEnds() {
+        let live = CatalogueSale.State(
+            measuredAt: now.addingTimeInterval(-20 * 86_400), since: now.addingTimeInterval(-10 * 86_400),
+            catalogueShare: 0.4, catalogueMeasuredAt: now.addingTimeInterval(-86_400)
+        )
+        let decision = CatalogueSale.decideScan(reading(priced: 1_000, markedDown: 0), state: live, isBaseline: false, now: now)
+        #expect(decision == .record(.init(
+            measuredAt: live.measuredAt, since: live.since, catalogueShare: 0, catalogueMeasuredAt: now
+        )))
+    }
+
+    @Test("The poll does not end a sale a fresh scan still holds, and does once the scan is stale")
+    func pollEndsOnlyWithTheScan() {
+        let since = now.addingTimeInterval(-10 * 86_400)
+        var live = CatalogueSale.State(
+            measuredAt: now.addingTimeInterval(-20 * 86_400), since: since,
+            catalogueShare: 0.4, catalogueMeasuredAt: now.addingTimeInterval(-86_400)
+        )
+        #expect(CatalogueSale.decide(reading(priced: 250, markedDown: 0), state: live, isBaseline: false, now: now) == .unchanged)
+
+        live.catalogueShare = 0.05
+        guard case .record(let ended) = CatalogueSale.decide(
+            reading(priced: 250, markedDown: 0), state: live, isBaseline: false, now: now
+        ) else {
+            Issue.record("expected the sale to end once both readings are under the line")
+            return
+        }
+        #expect(ended.since == nil)
+        #expect(ended.catalogueShare == 0.05, "the scan's half is carried, not dropped")
+
+        live.catalogueShare = 0.4
+        live.catalogueMeasuredAt = now.addingTimeInterval(-4 * 86_400)
+        #expect(CatalogueSale.decide(reading(priced: 250, markedDown: 0), state: live, isBaseline: false, now: now)
+            == .record(.init(measuredAt: live.measuredAt, since: nil, catalogueShare: 0.4, catalogueMeasuredAt: live.catalogueMeasuredAt)))
+    }
+
+    /// The poll's first measurement used to clear a sale it did not see; a scan holding one
+    /// keeps it.
+    @Test("A poll's first measurement keeps a sale the scan recorded")
+    func pollBaselineKeepsTheScansSale() {
+        let scanned = CatalogueSale.State(since: now, catalogueShare: 0.4, catalogueMeasuredAt: now)
+        let decision = CatalogueSale.decide(reading(priced: 250, markedDown: 0), state: scanned, isBaseline: false, now: now)
+        #expect(decision == .record(.init(measuredAt: now, since: now, catalogueShare: 0.4, catalogueMeasuredAt: now)))
+    }
 }
 
 /// Never sending a kind to a client that cannot draw it.

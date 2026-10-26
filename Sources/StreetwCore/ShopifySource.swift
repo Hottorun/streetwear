@@ -71,6 +71,41 @@ public struct ShopifySource: SourceAdapter {
         )
     }
 
+    /// One page of the catalogue, for the daily full scan.
+    public struct CataloguePage: Sendable {
+        public var items: [FetchedItem]
+        /// Whether the page came back full. A short page — an empty one included — is the
+        /// end of the catalogue; Shopify says nothing else about where it ends.
+        public var isFull: Bool
+        /// A password wall or a refusal: the shop is shut for a drop, and the scan waits.
+        public var isLocked: Bool
+    }
+
+    /// Reads page `page` of `/products.json`, nothing more.
+    ///
+    /// The scan's own door rather than `fetch`, which pages only as far as `since` and asks
+    /// `/meta.json` every time: the scan reads to the end of the catalogue across several
+    /// passes, a page at a time, and already knows the shop's currency from the poll that
+    /// baselined it. No validator either — an ETag on page 1 says nothing about page 40.
+    public static func cataloguePage(
+        of base: URL,
+        page: Int,
+        currency: String?,
+        http: any HTTPFetching = Net.live
+    ) async throws -> CataloguePage {
+        let response = try await http.get(catalogURL(for: base, page: page))
+        if response.isLocked { return CataloguePage(items: [], isFull: false, isLocked: true) }
+        try response.requireOK()
+        guard let decoded = try? JSONDecoder().decode(Catalog.self, from: response.data) else {
+            throw SourceError.notThisKind
+        }
+        return CataloguePage(
+            items: decoded.products.map { item(from: $0, storeURL: base, currency: currency) },
+            isFull: decoded.products.count >= pageSize,
+            isLocked: false
+        )
+    }
+
     private static func shouldContinue(after last: Product?, since: Date?) -> Bool {
         guard let since else { return true } // first sync: take the full net
         guard let oldest = last?.publishedAt ?? last?.createdAt else { return true }

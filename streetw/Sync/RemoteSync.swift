@@ -412,6 +412,28 @@ final class RemoteSync {
         return try await api.discover(cursor: cursor)
     }
 
+    /// Shop's field, over every product the server holds for the scope — the server mode half
+    /// of `ShopSearch`, which standalone runs over the phone's own store.
+    func searchProducts(
+        _ text: String,
+        scope: ProductSearchScope,
+        cheaper: Bool,
+        formal: Bool,
+        inMySize: Bool,
+        cursor: String? = nil
+    ) async throws -> ProductSearchResponse {
+        guard let api else { throw APIError.notConfigured }
+        return try await api.searchProducts(
+            text, scope: scope, cheaper: cheaper, formal: formal, inMySize: inMySize, cursor: cursor
+        )
+    }
+
+    /// "More like this" from the shops this profile follows.
+    func similarProducts(productExternalID: String, brandID: UUID) async throws -> SimilarProductsResponse {
+        guard let api else { throw APIError.notConfigured }
+        return try await api.similarProducts(productExternalID: productExternalID, brandID: brandID)
+    }
+
     /// Follows a brand the catalog already has, and pulls it straight into the local
     /// store so the UI reflects it without waiting for a full sync.
     func followExisting(_ dto: BrandDTO, sizes: SizeProfile) async throws {

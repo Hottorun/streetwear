@@ -344,12 +344,17 @@ fit editor; the starter pack of six womenswear and six menswear shops. See
 
 ### Phase 3 — the catalogue and search behind the AI
 
-- [ ] **Railway Pro, and a Postgres with pgvector.** Hobby caps a volume at 5 GB, which the full
-      scan will pass. The default Postgres has no pgvector and Railway does not plan to add it, so
-      this is the pgvector template plus a dump and restore — a planned migration with a new
-      `DATABASE_URL`, not a toggle. Turn on daily snapshots, and keep the server on the private
-      database URL; over the public one, the traffic is billed as egress.
-- [ ] **Catalogues at two speeds.** The fast "what's new" poll stays as it is. A daily full scan
+- [ ] **A Postgres with pgvector, and the embedding service beside it.** The default Postgres has
+      no pgvector and Railway does not plan to add it, so this is the pgvector template plus a dump
+      and restore — a planned migration with a new `DATABASE_URL`, not a toggle — and then the
+      `embeddings` service and two variables on the server (`docs/pgvector-migration.md`). The
+      template runs on Hobby; what Hobby limits is the volume, 5 GB, and measured storage is about
+      16 MB per 1,000 products with both vectors, so **Pro is not needed for storage yet** — move
+      when `databaseBytes` passes half the cap. On cost Pro meets Hobby once usage passes $20 a
+      month, which the embedding service's memory alone nearly does. Turn on daily snapshots, and
+      keep the server on the private database URL; over the public one, the traffic is billed as
+      egress.
+- [x] **Catalogues at two speeds.** The fast "what's new" poll stays as it is. A daily full scan
       stores every product with its price and stock; for Shopify a 5,000-product shop is ~20
       requests. Today a Shopify brand's baseline is its newest 2,500 and only the newest ~250 are
       re-read, so older stock — exactly what goes on sale — is invisible to sale alerts and would
@@ -357,9 +362,38 @@ fit editor; the starter pack of six womenswear and six menswear shops. See
       at 2s is ~11 hours per brand), so there new products are enriched once, and price tracking
       is **per item**: whatever somebody has saved or watches has its own page re-checked.
       Brand-wide sale detection is not available for those.
+      *Done:* every Shopify source is read to the end once a day on its own loop, at a slot fixed
+      by its id, under a `FOR UPDATE SKIP LOCKED` lease on `catalogue_scans`, four pages a turn and
+      resumable; it writes only what changed, stores what it meets first silently, leaves anything
+      published in the last day to the poll, and is a baseline the first time, so a first scan of a
+      5,000-product shop emits nothing and a later markdown on old stock emits exactly that.
+      Missing from two complete scans in a row is unlisted and ages out through retention.
+      `CatalogueSale` also measures the buyable catalogue; either reading may start a sale, only
+      both together end one. Country shops are scanned while read. Per item: watched sitemap and
+      UCP products, two pages per host a pass — the server only knows watches, since saves never
+      leave the phone. Measured: Aimé Leon Dore live, 900 products in 4 pages and 8s; on Postgres
+      ~3.2 MB per 1,000 products, and an unchanged scan rewrites nothing. `/admin/status` reports
+      `databaseBytes`. See `docs/server.md`.
 - [ ] **Product search.** None exists — the only search is `ILIKE` on brand names. Postgres
       full-text plus pgvector embeddings of each product's text and photograph, built once per
       product. The same index serves "more like this", Shop's ranking, daily picks and the scan.
+      *Done, the full-text half:* a generated `simple` tsvector on `products` (title, type, tags,
+      weighted) with a GIN index, colourways through an expression index, brand names in Swift;
+      `GET /v1/products/search?scope=followed|all` runs the phone's own `ShopQuery` and
+      `ShopSearch` over the candidates, so price bounds, "no …", "in my size", the gender filter,
+      the ranking and the six failures mean the same on both ends; `GET /v1/products/:id/similar`.
+      Shop searches the server in server mode — your shops, then every shop we watch when asked —
+      and "more like this" asks it. 20–130ms on eight thousand products, release. See
+      `docs/server.md` and `docs/discover.md`.
+      *Built and off in production:* one `EmbeddingProvider`, its sidecar client
+      (`SidecarEmbeddingProvider`, on with `EMBEDDING_URL` and `EMBEDDING_TOKEN`),
+      `product_embeddings` keyed by model id, the backfill (unreadable photographs written off,
+      not retried forever) and vector "more like this" — proven end to end against the real
+      service and a pgvector Postgres. **Waits on:** the move to a pgvector Postgres and the
+      `embeddings` service deployed (`docs/pgvector-migration.md`, both parts). Marqo
+      FashionSigLIP v1 by default; the ZooClaw SigLIP2 fine-tune is one build variable away
+      (`Embeddings/README.md`). Daily picks and the scan do not read the index yet, and no query
+      reads the image vectors yet.
 
 ### Phase 4 — AI
 

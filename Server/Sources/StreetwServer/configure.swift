@@ -143,12 +143,43 @@ func configure(_ app: Application) async throws {
     // for yet.
     app.similarity = BrandSimilarity(app: app)
 
+    // Product search is full-text everywhere; semantic retrieval needs pgvector *and* a
+    // provider, and both are said here, because the alternative is inferring it from results
+    // that are merely less good. `prepare` runs at every boot, not only in its migration —
+    // see `SemanticIndex.prepare` for the restore that needs it.
+    app.semanticStatus = await SemanticIndex.prepare(on: app.db, logger: app.logger)
+    app.embeddingProvider = SidecarEmbeddingProvider.make(for: app)
+    switch app.semanticStatus {
+    case .installed(let version):
+        let state = app.embeddingProvider == nil ? "off until EMBEDDING_URL and EMBEDDING_TOKEN are set" : "on"
+        app.logger.notice("search: full-text; pgvector \(version) installed — semantic search \(state)")
+    case .unavailable(let why):
+        app.logger.notice("search: full-text; semantic search unavailable (\(why))")
+    }
+
     if Environment.get("DISABLE_POLLER") != "true" {
         let loop = PollLoop(poller: poller, notifier: notifier, reaper: reaper)
         app.storage[PollLoopKey.self] = loop
         await loop.start(logger: app.logger)
+        // The daily full scan, on a loop of its own so it never holds up a poll. Its own
+        // switch, because it is the one piece of background work whose cost is mostly
+        // storage: on a volume near its cap it can be stopped without stopping the poll.
+        if Environment.get("DISABLE_CATALOGUE_SCAN") != "true" {
+            let scans = ScanLoop(poller: poller)
+            app.storage[ScanLoopKey.self] = scans
+            await scans.start()
+        } else {
+            app.logger.notice("scan: DISABLE_CATALOGUE_SCAN set — catalogues are not scanned")
+        }
         // Background work, so it runs where the poller does — never in a test app.
         Task { await checks.resumeOrphans() }
+        // Only where there is a provider and a pgvector to write to. `POST /admin/embed` runs
+        // a batch by hand, which is how a server with the poller off embeds anything.
+        if app.semanticSearch != nil {
+            let backfill = EmbeddingBackfill(app: app)
+            app.storage[EmbeddingBackfillKey.self] = backfill
+            await backfill.start()
+        }
     }
 
     try routes(app)
@@ -201,6 +232,10 @@ struct FetcherKey: StorageKey {
 
 struct PollLoopKey: StorageKey {
     typealias Value = PollLoop
+}
+
+struct ScanLoopKey: StorageKey {
+    typealias Value = ScanLoop
 }
 
 struct NotifierKey: StorageKey {
@@ -260,4 +295,7 @@ func addMigrations(to app: Application) {
     app.migrations.add(AddStorefrontColumns())
     app.migrations.add(AddUserProfiles())
     app.migrations.add(CreateStorefrontCountries())
+    app.migrations.add(CreateCatalogueScans())
+    app.migrations.add(AddProductSearch())
+    app.migrations.add(AddProductEmbeddings())
 }

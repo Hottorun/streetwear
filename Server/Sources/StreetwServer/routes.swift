@@ -106,6 +106,19 @@ func routes(_ app: Application) throws {
                 .sort(\.$nextCheckAt).first() {
                 status.nextPollAt = next.nextCheckAt
             }
+            status.scansFinishedToday = try await CatalogueScanModel.query(on: req.db)
+                .filter(\.$finishedAt >= Date().addingTimeInterval(-86_400))
+                .count()
+            status.scansInProgress = try await CatalogueScanModel.query(on: req.db)
+                .filter(\.$startedAt != nil)
+                .count()
+            status.unlistedProducts = try await ProductModel.query(on: req.db)
+                .filter(\.$unlistedAt != nil)
+                .count()
+            if let sql = req.db as? any SQLDatabase, sql.dialect.name == "postgresql" {
+                status.databaseBytes = try await sql.raw("SELECT pg_database_size(current_database()) AS bytes")
+                    .first(decodingColumn: "bytes", as: Int64.self)
+            }
         } catch {
             // Reported rather than thrown: "what exactly is wrong" beats a 500.
             status.databaseConnected = false
@@ -222,6 +235,10 @@ func routes(_ app: Application) throws {
 
     accountRoutes(authed: authed, admin: admin)
     profileRoutes(authed: authed)
+
+    // MARK: Products
+
+    productRoutes(authed: authed)
 
     // MARK: Brands
 
@@ -860,6 +877,8 @@ func routes(_ app: Application) throws {
                     // main shop otherwise — never both, or a jacket would be dealt twice in
                     // two currencies.
                     .filter(\.$storefrontID == shop?.id)
+                    // A garment the shop no longer lists cannot be bought from the card.
+                    .filter(\.$unlistedAt == nil)
                     .sort(\.$publishedAt, .descending)
                     .offset(offset)
                     .limit(discoverFetchPerBrand)
@@ -1963,6 +1982,32 @@ func routes(_ app: Application) throws {
         guard let reaper = req.application.reaper else { throw Abort(.serviceUnavailable) }
         let result = await reaper.sweep()
         return "pruned \(result.events) events, \(result.products) products"
+    }
+
+    /// One batch of the embedding backfill, now — or `?batches=` of them, stopping early
+    /// when nothing is due. Says why when there is nothing to embed with, since "embedded 0"
+    /// reads the same whether the backlog is empty or semantic search is off.
+    admin.post("embed") { req async throws -> String in
+        guard req.application.semanticSearch != nil else {
+            switch req.application.semanticStatus {
+            case .unavailable(let why): return "semantic search unavailable (\(why))"
+            case .installed: return "no embedding provider — EMBEDDING_URL and EMBEDDING_TOKEN are not both set"
+            }
+        }
+        let batches = min(max((try? req.query.get(Int.self, at: "batches")) ?? 1, 1), 100)
+        let backfill = req.application.storage[EmbeddingBackfillKey.self] ?? EmbeddingBackfill(app: req.application)
+        var lines: [String] = []
+        for _ in 0..<batches {
+            do {
+                let pass = try await backfill.runOnce()
+                lines.append(pass.description)
+                if pass.embedded == 0 { break }
+            } catch EmbeddingError.modelChanged(let from, let to) {
+                // Not a failure: the next batch reads the new model and starts re-embedding.
+                lines.append("the sidecar now runs \(to), not \(from) — re-embedding")
+            }
+        }
+        return lines.joined(separator: "\n")
     }
 
     try creditRoutes(app, v1: v1, authed: authed, admin: admin)

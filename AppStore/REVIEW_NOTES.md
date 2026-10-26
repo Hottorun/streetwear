@@ -31,8 +31,10 @@ reachable immediately. If the feed looks empty, it is
 because no brand has published anything in the last few minutes; the brand's own page shows
 its full catalogue right away.
 
-Shop's search box searches the products already on the phone from the shops the user follows,
-and says so under the field; it is not a web search and no model is involved.
+Shop's search box searches the catalogue our server holds of the shops the user follows (and,
+when asked, of every shop it watches), and says which under the field. It is not a web search
+and no generative model is involved. The text of a search is used to answer it and is not stored
+or logged.
 
 SIGN IN WITH APPLE, PROFILES AND ACCOUNT DELETION
 
@@ -112,8 +114,8 @@ size they do not wear is never sent — and the country they shop in. A user who
 Apple's per-app identifier for them, and the names they give any profiles; those are declared as
 User ID and Name.
 
-Saved items, boards, outfits, notes, Shop searches, the written style statement and the taste
-profile used for recommendations all stay on the device, for every profile. Recommendations are computed locally: the server
+Saved items, boards, outfits, notes, the written style statement and the taste profile used for
+recommendations all stay on the device, for every profile. Recommendations are computed locally: the server
 sends candidate brands and the comparison happens on the phone precisely so that what a user
 saves never has to leave it.
 
