@@ -5,12 +5,13 @@ import uvicorn
 
 from .app import create_app
 from .config import Settings
-from .model import OpenCLIPEmbedder
+from .model import Embedder, check_requested, load_embedder, read_meta
 
 
-def load(settings: Settings) -> OpenCLIPEmbedder:
-    return OpenCLIPEmbedder(settings.model_dir, threads=settings.threads,
-                            batch_size=settings.batch_size)
+def load(settings: Settings) -> Embedder:
+    check_requested(read_meta(settings.model_dir), settings.model_repo, settings.model_revision)
+    return load_embedder(settings.model_dir, threads=settings.threads,
+                         batch_size=settings.batch_size)
 
 
 def dual_stack_socket(port: int) -> socket.socket:

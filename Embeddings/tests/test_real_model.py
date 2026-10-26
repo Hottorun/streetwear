@@ -1,4 +1,5 @@
-"""The real model, end to end. Slow and heavy (~800 MB of weights), so opt-in:
+"""The real model, end to end. Slow and heavy (0.8–1.5 GB of weights), so opt-in, and run
+against whichever model the directory holds:
 
     EMBEDDING_MODEL_DIR=/path/from/download_model.py pytest -m slow
 """
@@ -21,12 +22,13 @@ pytestmark = [
 
 @pytest.fixture(scope="module")
 def embedder():
-    from embedding_service.model import OpenCLIPEmbedder
-    return OpenCLIPEmbedder(Path(MODEL_DIR), threads=2, batch_size=4)
+    from embedding_service.model import load_embedder
+    return load_embedder(Path(MODEL_DIR), threads=2, batch_size=4)
 
 
 def test_identity_and_dimension(embedder):
-    assert embedder.model_id.startswith("Marqo/marqo-fashionSigLIP@")
+    from embedding_service.model import model_id, read_meta
+    assert embedder.model_id == model_id(read_meta(Path(MODEL_DIR)))
     assert embedder.dimension == 768
 
 

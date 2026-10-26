@@ -5,11 +5,12 @@ queries into vectors for search, "find similar" and photo matching. That is its 
 it stores nothing, decides nothing about what gets embedded, and is never reachable from
 the internet. Why it exists and what runs where is in `docs/server.md` (*Embeddings*).
 
-**The model is Marqo FashionSigLIP (v1), not v2.** Marqo has not published FashionSigLIP 2.
-The v1 model card says "Marqo Fashion Siglip 2 is available … Contact Marqo to learn more",
-and Marqo's Hugging Face organisation has no v2 repository. v1 is Apache-2.0 and pinned by
-revision in `download_model.py`. `eval/README.md` compares it with the base SigLIP model it
-was fine-tuned from, on our own catalogues.
+**The default model is Marqo FashionSigLIP (v1), not v2.** Marqo has not published
+FashionSigLIP 2. The v1 model card says "Marqo Fashion Siglip 2 is available … Contact Marqo to
+learn more", and Marqo's Hugging Face organisation has no v2 repository. v1 is Apache-2.0 and
+pinned by revision. The model is a build argument, so a third-party SigLIP2 fine-tune can be
+swapped in without a code change; see *Choosing the model*. `eval/README.md` compares all three
+on our own catalogues.
 
 ## API
 
@@ -30,7 +31,11 @@ do without `ADMIN_TOKEN`.
 - Limits: 64 items per request (`EMBEDDING_MAX_ITEMS`), 1,000 characters per text, 10 MB
   per image.
 - One unreadable photo does not fail the batch. Its vector is `null`, and
-  `errors: [{"index": 1, "error": "HTTP 404"}]` says why.
+  `errors: [{"index": 1, "error": "HTTP 404", "transient": false}]` says why. `transient` says
+  whether asking again later could help: true for a timeout, a connection failure, a host that
+  did not resolve, and HTTP 408/425/429/5xx; false for every other status, a refused address, an
+  oversized image and anything that will not decode. The server writes off only the second kind
+  (`EmbeddingBackfill`, `docs/server.md`).
 
 ### Fetching images safely
 
@@ -60,8 +65,8 @@ python3.12 -m venv .venv
 .venv/bin/pip install --require-hashes --only-binary=:all: \
   --index-url https://download.pytorch.org/whl/cpu --extra-index-url https://pypi.org/simple \
   -r requirements.txt          # Linux only: requirements.txt pins the +cpu Linux wheels
-.venv/bin/python download_model.py /tmp/fashionsiglip            # ~815 MB
-EMBEDDING_TOKEN=dev EMBEDDING_MODEL_DIR=/tmp/fashionsiglip .venv/bin/python -m embedding_service
+.venv/bin/python download_model.py /tmp/embedding-model          # ~815 MB
+EMBEDDING_TOKEN=dev EMBEDDING_MODEL_DIR=/tmp/embedding-model .venv/bin/python -m embedding_service
 ```
 
 On a Mac, install the same packages unpinned (`pip install torch open_clip_torch
@@ -79,7 +84,7 @@ Tests use a fake model and never touch the network:
 
 ```bash
 pip install pytest && pytest                                   # from Embeddings/
-EMBEDDING_MODEL_DIR=/tmp/fashionsiglip pytest -m slow          # the real model, opt-in
+EMBEDDING_MODEL_DIR=/tmp/embedding-model pytest -m slow        # the real model, opt-in
 ```
 
 ### Environment
@@ -92,8 +97,62 @@ EMBEDDING_MODEL_DIR=/tmp/fashionsiglip pytest -m slow          # the real model,
 | `EMBEDDING_MAX_ITEMS` | 64 | Items per request |
 | `EMBEDDING_MAX_IMAGE_BYTES` | 10485760 | Per image |
 | `EMBEDDING_FETCH_TIMEOUT` | 10 | Seconds per image |
-| `EMBEDDING_MODEL_DIR` | `/models/fashionsiglip` | Set by the image |
+| `EMBEDDING_MODEL_DIR` | `/models/embedding` | Set by the image |
+| `EMBEDDING_MODEL_REPO` | `Marqo/marqo-fashionSigLIP` | Build argument **and** variable: which model the image holds. See *Choosing the model* |
+| `EMBEDDING_MODEL_REVISION` | `c56244cc94f9…` (full hash) | Its pinned commit. A full 40-character hash; a branch name is refused |
 | `PORT` | 8080 | Railway sets it |
+
+## Choosing the model
+
+Two models can go in the image, each pinned to a commit in `download_model.py` (`MODELS`):
+
+| | `Marqo/marqo-fashionSigLIP` (default) | `srpone/zooclaw-fashionsiglip2` |
+|---|---|---|
+| Revision | `c56244cc94f92419e8369fa71efdaf403b124ce8` | `d2c0c98de9cd1e27c114267ddfbb584eb98b5ebf` |
+| Who | Marqo | an individual Hugging Face account (`srpone`), paper arXiv:2606.27708 |
+| Base | SigLIP ViT-B/16, 224 px | SigLIP2 base, 384 px |
+| Loader | open_clip | transformers `SiglipModel` |
+| Weights | 813 MB | 1.5 GB |
+| Text R@1 / image R@1 (`eval/`) | 0.50 / 0.75 | **0.61** / **0.78** |
+| CPU per image | 1× | about 4× slower |
+| Licence | Apache-2.0 | Apache-2.0 |
+
+**Licences, as checked on 2026-10-26.** Neither model repository carries a `LICENSE` file;
+each declares `license: apache-2.0` in its model card's metadata. For Marqo, its code repository
+(`marqo-ai/marqo-FashionCLIP`) carries the Apache 2.0 text. For ZooClaw, the card's badge links to
+the Apache 2.0 licence, its base `google/siglip2-base-patch16-384` is Apache-2.0, and its
+authors' benchmark code (`SerendipityOneInc/look-bench`) carries the Apache 2.0 text. The card
+also advertises a commercial API and separately licensed training data; neither is used here.
+The pinned commit is the newest on `main` (2026-09-28, a model-card edit); the weights'
+`model.safetensors` has LFS SHA-256 `aa9a0927a77b672697fd23bcca8e73ceff85dcde142c7c9fa7d1e46a2bbfeb20`.
+We run the weights inside our own service and do not redistribute them.
+
+**To switch**, set both variables on the `embeddings` service and rebuild:
+
+```
+EMBEDDING_MODEL_REPO=srpone/zooclaw-fashionsiglip2
+EMBEDDING_MODEL_REVISION=d2c0c98de9cd1e27c114267ddfbb584eb98b5ebf
+```
+
+Railway passes them to the build as `ARG`s (the Dockerfile declares them) and to the running
+service as variables. The service checks the two agree at boot: if the image holds one model and
+the variables name another — a restart without a rebuild — it refuses to start, its health check
+stays red, and the previous deploy keeps serving. Locally:
+`docker build --build-arg EMBEDDING_MODEL_REPO=… --build-arg EMBEDDING_MODEL_REVISION=… Embeddings/`,
+or `python download_model.py DIR REPO REVISION`.
+
+**Switching re-embeds the whole catalogue.** The model id (`repo@revision[:12]`) is stored beside
+every vector, and vectors from two models are never compared. The server reads the new id from
+the first answer, and from then on every product is due again (`EmbeddingBackfill`). Until the
+backfill has caught up, semantic search answers from the products already re-embedded and
+full-text covers the rest, so nothing breaks; it just gets better as it goes. Budget for it: at
+about four times the per-image cost, 100k products is a day or two on 2 vCPU rather than hours,
+and the resident memory roughly doubles (allow 4 GB). Each new model also builds its own HNSW
+index; the old model's rows are overwritten as they are re-embedded, and its index can be dropped
+once none are left (`DROP INDEX idx_product_embeddings_…`, named in `pg_indexes`).
+
+To add a third model: an entry in `MODELS` with its loader, files and a pinned commit, and an
+eval run first (`eval/README.md`).
 
 ## Deploy on Railway
 
@@ -115,7 +174,7 @@ network.
 4. **Resources.** Under *Settings → Deploy → Resources*, allow 2 vCPU and 3 GB memory. The
    process holds about 1.3 GB once serving and peaks at about 1.6 GB while loading the
    weights, so 2 GB fits with little headroom. Railway bills what is used, not the limit, so
-   the extra headroom costs nothing. See *Measured* below.
+   the extra headroom costs nothing. See *Measured* below. With the ZooClaw model, allow 4 GB.
 5. **Health check.** *Settings → Deploy → Healthcheck Path* `/health`. It answers 503
    until the model is loaded and a token is set, so a misconfigured deploy never replaces a
    working one.
@@ -134,7 +193,7 @@ network.
 The image is about 3.2 GB unpacked (1.1 GB compressed), of which ~815 MB is weights and most
 of the rest is torch. The
 first build takes several minutes, and later builds reuse the cached layers unless
-`requirements.txt` or `download_model.py` changed.
+`requirements.txt`, `download_model.py` or the model variables changed.
 
 ## Measured
 

@@ -80,7 +80,8 @@ Marqo's Hugging Face organisation has no v2 repository (checked through the Hub 
   repository (`marqo-ai/marqo-FashionCLIP`) carries the Apache License 2.0 text. Commercial
   use is permitted.
 - `timm/ViT-B-16-SigLIP` (the base, and the source of the tokenizer): `license: apache-2.0`.
-- `srpone/zooclaw-fashionsiglip2`: `license: apache-2.0`, not used by the service.
+- `srpone/zooclaw-fashionsiglip2`: `license: apache-2.0`. Selectable in the service, not the
+  default; `../README.md` (*Choosing the model*) has the licence check and the pinned commit.
 
 ## CPU cost
 

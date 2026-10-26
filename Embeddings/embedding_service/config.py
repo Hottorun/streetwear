@@ -18,7 +18,11 @@ class Settings:
     # Empty means unset, and unset refuses every embed request: an open endpoint that makes
     # the service fetch URLs a stranger chose is the same mistake as an open admin route.
     token: str = field(default="", repr=False)
-    model_dir: Path = Path("/models/fashionsiglip")
+    model_dir: Path = Path("/models/embedding")
+    # What the deployment asks for. The image holds one model, chosen at build time; these
+    # only have to agree with it (`check_requested`). Empty asks for nothing in particular.
+    model_repo: str = ""
+    model_revision: str = ""
     threads: int = os.cpu_count() or 1
     batch_size: int = 16
     max_items: int = 64
@@ -33,6 +37,8 @@ class Settings:
         return cls(
             token=os.environ.get("EMBEDDING_TOKEN", "").strip(),
             model_dir=Path(os.environ.get("EMBEDDING_MODEL_DIR", str(cls.model_dir))),
+            model_repo=os.environ.get("EMBEDDING_MODEL_REPO", "").strip(),
+            model_revision=os.environ.get("EMBEDDING_MODEL_REVISION", "").strip(),
             threads=_int("EMBEDDING_THREADS", os.cpu_count() or 1),
             batch_size=_int("EMBEDDING_BATCH_SIZE", cls.batch_size),
             max_items=_int("EMBEDDING_MAX_ITEMS", cls.max_items),
