@@ -302,6 +302,75 @@ Part of the streetw guidance set; see `CLAUDE.md` for the index and the build ru
   kinds travel inside the continuation (`FeedContinuation.kinds`, nil in an older token, read as
   legacy) so one read is one window to its last page — the new client sends its kinds on every
   page, but a token stored across an app update must not change its window halfway.
+- **A brand's main shop is the brand row; a country's shop is a `storefronts` row**
+  (`StorefrontModel`, `CreateStorefronts`, `Storefronts`). Big retailers run a shop per country —
+  Victoria's Secret UK is a different company from the US one — so a brand maps to its storefront
+  per country: a base URL, an ISO country, a currency and **its own sources**. `sources`,
+  `products` and `events` carry a nullable `storefront_id`, and **null is the main shop**. Five
+  details are load-bearing:
+  - **The main shop is not a row, and that is what keeps existing data unchanged.** Every source,
+    product and event already in the database is exactly "the main shop", so a null column says
+    so with no backfill, no re-discovery, no new polling and no baseline re-spent. Minting a
+    storefront per brand and re-pointing every source would have rewritten every source and
+    product row — the volume problem `refresh` guards against — to say what null already says.
+    The main shop has no country either: Palace's is British and Kith's American, nothing here
+    knows which, and it is what serves everybody nobody else serves.
+  - **Countries are switched on by `STOREFRONT_COUNTRIES`** (`GB,DE`), read once at boot like
+    `ADMIN_TOKEN`. Unset is none, which is today. An environment variable rather than a table
+    because a country multiplies the polling of every brand followed there, so switching one on
+    is a deployment decision, made rarely and visibly — not a toggle somebody with the admin key
+    flips at a terminal and nobody notices.
+  - **A country's storefront is polled only while somebody there follows the brand**
+    (`Storefronts.wanted`): its country is switched on and a follow's user has that
+    `users.country`. Worked out once per tick, and applied in the claim itself
+    (`storefront_id IS NULL OR storefront_id = ANY(wanted)`), so a paused storefront is never
+    claimed, never fetched and never pushes its schedule forward. **The main shop's sources are
+    claimed exactly as before** — `PollerStorefrontTests` counts the requests. Its product pages
+    are read by `enrich` under the same rule.
+  - **A storefront that sat idle re-baselines** (`Storefronts.resumeAfter`, a day). Nothing
+    polls a paused storefront, so the first read after a pause compares against whatever it
+    knew months ago — and would announce every product and restock since as news to the first
+    follower back. Nothing else ever leaves a source unread for a day: the longest backoff is
+    six hours.
+  - **A caller is served a country's storefront only when it is live** — the country is
+    switched on, somebody there follows the brand, and it has been baselined
+    (`Storefronts.serving`). Otherwise the main shop, exactly as before. One rule for
+    `GET /v1/feed`, `GET /v1/brands/:id/feed`, `GET /v1/discover`, every `BrandDTO` and
+    `Notifier`, and it is **one shop per brand per person, never both**: a reader in Britain
+    would otherwise get every drop twice, once in each currency, and a push for each. A brand
+    page's sources and currency are the serving shop's; `BrandDTO.storefront` names it, nil
+    for the main shop, which is all 1.0 ever sees.
+- **Every stored price carries its currency** (`products.currency`, `AddStorefrontColumns`), from
+  the read that produced it — Shopify's `/meta.json`, a JSON-LD offer's `priceCurrency`, UCP's
+  money. An event's previous price is in its product's currency. **Nothing is converted**: there
+  are no exchange rates anywhere in this system, prices are compared within one shop, and a
+  price that changed currency between two reads is not a markdown (`PriceChange.isDrop`'s
+  currency guard). A row from before the column has none, and on the wire falls back to
+  `brands.currency` — correct, because every such row is the main shop's. `FeedItem.currency` and
+  `DiscoverCard.currency` are optional, so 1.0 and 1.1 decode exactly as before.
+- **`users.country` is the caller's country, nullable, and null is the main shop**
+  (`UpdateDevice.country`, `RegisterDevice.country`, `CountryCode`). Sent on `PATCH /v1/devices/me`
+  beside the sizes, and on registration so the first feed is already the right shop. Absent
+  changes nothing and an empty string clears it. **A code that is not one is ignored, not
+  refused**: that PATCH is the first authenticated call of every launch and doubles as the
+  liveness check, and a 400 there would fail the whole sync over a setting.
+- **What only the main shop does.** The brand's name and `brands.currency` come from main-shop
+  sources only, so a British storefront cannot rename the brand or reprice its legacy rows. Both
+  sale detectors read the main shop alone — the catalogue's state lives on the brand row, and the
+  announcement bar is `brands.website` — so a country storefront's readers hear of no `.sale`
+  yet; a sale on the main shop is not one on theirs. `repoint` and `source` rebuild the main
+  shop and leave every storefront alone.
+- **A storefront is attached by hand** (`POST /admin/brands/:id/storefronts?country=GB&url=…`).
+  It runs ordinary discovery on the URL, through the poller's fetcher, and refuses three
+  mistakes: nothing watchable there; **the same catalogue as the main shop** — a Shopify Markets
+  subfolder like `/en-gb/` is read off the host, so it would be the main shop again in its
+  currency (reading those is not built); and a shop whose `/meta.json` says it does not ship to
+  the country, unless `&force=true`. Measured: Kith's US shop ships to 197 countries, `eu.kith.com`
+  prices in EUR and ships to 48, and Palace's `www.` prices in GBP and ships to five — GB, GG,
+  IM, JE, PH. `/meta.json`'s own `country` is where the *merchant* is (`eu.kith.com` says FR), not
+  who it sells to, and is not read. Attaching a country that already has one replaces it;
+  `POST /admin/brands/:id/storefronts/:country/delete` removes one, cascading its sources,
+  products and events. Nothing discovers country storefronts automatically.
 - **`HTTPFetching`, not `HTTPClient`** — Vapor re-exports `AsyncHTTPClient.HTTPClient` and
   an unqualified collision in the server target is nastier than the wordier name.
 - **Don't name a test helper `withApp`.** VaporTesting exports a generic `withApp<T>` that
