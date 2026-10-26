@@ -228,6 +228,17 @@ final class RateLimits: @unchecked Sendable {
     /// coming back, on the way out or when its token changes — twelve an hour at the very
     /// most, and one or two on an ordinary day.
     let usage = RateLimitStore(capacity: 10, refillPerSecond: 30.0 / 3600)
+
+    /// Purchase posts, per device. Each one is a signature check and a locked write, and the
+    /// app posts one per purchase plus one per unfinished transaction at launch: twenty in a
+    /// burst and sixty an hour is a shopping spree with room to spare.
+    let purchases = RateLimitStore(capacity: 20, refillPerSecond: 60.0 / 3600)
+
+    /// App Store Server Notifications, per address. Public by necessity — Apple cannot hold a
+    /// device token — and every one costs two signature checks, so this is what stops the
+    /// route being a way to make the server do crypto on a stranger's say-so. Apple sends one
+    /// per refund and retries a few times; sixty in a burst, six hundred an hour.
+    let storeNotifications = RateLimitStore(capacity: 60, refillPerSecond: 600.0 / 3600)
 }
 
 extension Application {

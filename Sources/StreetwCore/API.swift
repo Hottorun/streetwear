@@ -1046,6 +1046,126 @@ public struct StatusResponse: Codable, Sendable {
     }
 }
 
+// MARK: - Credits
+
+/// A pack somebody can buy, as the server sells it: the App Store product and what it adds.
+///
+/// The server's table is the only one (`CreditPacks`). The phone asks StoreKit for these ids
+/// and prints StoreKit's localized price beside this count, so changing what a pack is worth
+/// needs no app update — and a pack the server does not list cannot be bought, because the
+/// server would refuse to credit it.
+public struct CreditPackDTO: Codable, Sendable, Hashable, Identifiable {
+    public var productID: String
+    public var credits: Int
+
+    public var id: String { productID }
+
+    public init(productID: String, credits: Int) {
+        self.productID = productID
+        self.credits = credits
+    }
+}
+
+/// How many of one action this account ran in the month. `action` is a `CreditAction` raw
+/// value, kept a string so an action this build has never heard of still decodes.
+public struct CreditUsage: Codable, Sendable, Hashable {
+    public var action: String
+    public var count: Int
+
+    public init(action: String, count: Int) {
+        self.action = action
+        self.count = count
+    }
+}
+
+/// `GET /v1/credits` — everything the You page's Credits section prints.
+///
+/// **`signedIn` is the only field an anonymous device gets.** Credits need an account
+/// (`CreateAccounts`), and this is how the phone learns whether it has one without depending
+/// on whatever else the account routes return: false means "draw no Credits section", and
+/// every other field is nil. Everything else is optional for the reason every new field on
+/// the wire is.
+public struct CreditsSummary: Codable, Sendable, Hashable {
+    public var signedIn: Bool
+    /// What can be spent now, this month's free allowance included even before the first
+    /// action of the month has claimed it — a balance that jumps on first use would read as
+    /// a bug. Negative after a refund of credits already spent; nothing can be spent until
+    /// it is positive again.
+    public var balance: Int?
+    /// The owner's switch: never charged. The phone prints "Unlimited" and no packs.
+    public var unlimited: Bool?
+    /// The free allowance a month, so the phone can say what it is rather than hard-code it.
+    public var monthlyAllowance: Int?
+    /// The `CreditMonth` key `thisMonth` counts.
+    public var month: String?
+    public var thisMonth: [CreditUsage]?
+    public var packs: [CreditPackDTO]?
+    /// Passed to StoreKit as the purchase's `appAccountToken`, so a transaction names the
+    /// account it was bought for. The server refuses to credit a transaction that names a
+    /// different one, and a refund that arrives before the purchase was ever posted can still
+    /// be tied back to its account.
+    public var accountToken: UUID?
+
+    public init(
+        signedIn: Bool,
+        balance: Int? = nil,
+        unlimited: Bool? = nil,
+        monthlyAllowance: Int? = nil,
+        month: String? = nil,
+        thisMonth: [CreditUsage]? = nil,
+        packs: [CreditPackDTO]? = nil,
+        accountToken: UUID? = nil
+    ) {
+        self.signedIn = signedIn
+        self.balance = balance
+        self.unlimited = unlimited
+        self.monthlyAllowance = monthlyAllowance
+        self.month = month
+        self.thisMonth = thisMonth
+        self.packs = packs
+        self.accountToken = accountToken
+    }
+}
+
+/// `POST /v1/credits/purchases` — one StoreKit 2 transaction, exactly as StoreKit signed it
+/// (`VerificationResult.jwsRepresentation`). The server verifies it itself; nothing the phone
+/// says about the purchase is believed.
+public struct CreditPurchase: Codable, Sendable {
+    public var signedTransaction: String
+
+    public init(signedTransaction: String) {
+        self.signedTransaction = signedTransaction
+    }
+}
+
+/// What the server did with a transaction. Every outcome here is final, and the phone
+/// finishes the transaction on any of them — a refusal is an error status instead, and leaves
+/// it unfinished for the next launch to try again.
+public struct CreditPurchaseReceipt: Codable, Sendable, Hashable {
+    public enum Outcome: String, Codable, Sendable {
+        /// Credited now.
+        case credited
+        /// Already credited by an earlier post of the same transaction — a retry after a
+        /// reply that never arrived, or `Transaction.updates` replaying it.
+        case alreadyCredited
+        /// Refunded or revoked before it was credited. Nothing to add.
+        case revoked
+    }
+
+    public var transactionID: String
+    public var outcome: Outcome
+    /// Added by this call; zero unless `outcome` is `.credited`.
+    public var credited: Int
+    public var balance: Int?
+
+    public init(transactionID: String, outcome: Outcome, credited: Int, balance: Int? = nil) {
+        self.transactionID = transactionID
+        self.outcome = outcome
+        self.credited = credited
+        self.balance = balance
+    }
+}
+
 /// Both sides must agree on date encoding or every `since` cursor silently misbehaves.
 public enum APICoding {
     public static var encoder: JSONEncoder {

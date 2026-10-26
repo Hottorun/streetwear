@@ -1616,4 +1616,6 @@ func routes(_ app: Application) throws {
         let result = await reaper.sweep()
         return "pruned \(result.events) events, \(result.products) products"
     }
+
+    try creditRoutes(app, v1: v1, authed: authed, admin: admin)
 }
