@@ -12,6 +12,7 @@
 
 import Fluent
 import Foundation
+import SQLKit
 import StreetwCore
 
 enum Accounts {
@@ -38,17 +39,18 @@ enum Accounts {
     ///   somebody else. If this account had no user yet, it gets a fresh one with the
     ///   device's sizes, since those are about whoever is holding the phone.
     static func signIn(subject: String, device: DeviceModel, on db: any Database) async throws -> SignInResult {
-        try await db.transaction { db in
-            var isNew = false
-            let account: AccountModel
-            if let existing = try await AccountModel.query(on: db).filter(\.$appleSubject == subject).first() {
-                account = existing
-            } else {
-                account = AccountModel(appleSubject: subject)
-                try await account.save(on: db)
-                isNew = true
+        let (account, isNew) = try await findOrCreate(subject: subject, on: db)
+        let accountID = try account.requireID()
+        return try await db.transaction { db in
+            // **One sign-in per account at a time.** Two first sign-ins for one Apple ID — two
+            // phones, or one phone tapping twice — both found the account without a user, both
+            // adopted their own, and the account came out holding two users: a holder and a
+            // nameless profile nobody made. With the row locked, the second waits, then finds
+            // the first's user and merges into it. Postgres only; SQLite takes a database-wide
+            // lock on the first write, which is the same serialisation, coarser.
+            if let sql = db as? any SQLDatabase, sql.dialect.name == "postgresql" {
+                try await sql.raw("SELECT id FROM accounts WHERE id = \(bind: accountID) FOR UPDATE").run()
             }
-            let accountID = try account.requireID()
 
             let current = try await UserModel.find(device.$user.id, on: db)
             guard let current else { throw AccountError.noUser }
@@ -88,13 +90,102 @@ enum Accounts {
         }
     }
 
-    /// The account's user. Oldest first, so the answer stays put when profiles arrive and
-    /// an account holds several — the first user is the one the account was made from.
+    /// The account for `subject`, made if there is none — outside the sign-in's transaction,
+    /// so a lost race can be answered by looking again.
+    ///
+    /// **Two first sign-ins for one Apple ID used to be a 500.** Both looked, found nothing,
+    /// and inserted; the second insert hit the unique constraint on `apple_subject`, which is
+    /// not an `AbortError`, and the person was told "Something went wrong" for doing nothing
+    /// wrong. Inside the transaction the only answer would have been to fail it — Postgres
+    /// refuses every statement after an error until the transaction ends — so the account is
+    /// settled first, on its own, and the loser of the race reads the winner's row.
+    ///
+    /// Made before the merge commits, so a merge that then fails leaves an account with no
+    /// user. That is harmless: the next sign-in finds it and adopts the device's user, which
+    /// is exactly what the failed one would have done.
+    ///
+    /// - Parameter racing: a test seam, run between the miss and the insert, which is where
+    ///   the other sign-in lands in the race this exists for.
+    static func findOrCreate(
+        subject: String,
+        on db: any Database,
+        racing: (@Sendable () async throws -> Void)? = nil
+    ) async throws -> (account: AccountModel, isNew: Bool) {
+        if let existing = try await AccountModel.query(on: db).filter(\.$appleSubject == subject).first() {
+            return (existing, false)
+        }
+        try await racing?()
+        let account = AccountModel(appleSubject: subject)
+        do {
+            try await account.save(on: db)
+            return (account, true)
+        } catch where (error as? any DatabaseError)?.isConstraintFailure == true {
+            guard let winner = try await AccountModel.query(on: db).filter(\.$appleSubject == subject).first() else {
+                throw error
+            }
+            return (winner, false)
+        }
+    }
+
+    /// The account's own user — its holder. Oldest first, ties broken by id, so the answer
+    /// never moves once an account holds several: the first user is the one the account was
+    /// made from, and every later one is a profile. See `docs/profiles.md`.
     static func primaryUser(of accountID: UUID, on db: any Database) async throws -> UserModel? {
+        try await profiles(of: accountID, on: db).first
+    }
+
+    /// `primaryUser`'s order, for a list already in hand: oldest first, then by id.
+    static func holderFirst(_ a: UserModel, _ b: UserModel) -> Bool {
+        let left = (a.createdAt ?? .distantPast, a.id?.uuidString ?? "")
+        let right = (b.createdAt ?? .distantPast, b.id?.uuidString ?? "")
+        return left < right
+    }
+
+    /// The user whose account-wide settings apply to `user`: the holder for anybody on an
+    /// account, the user itself for an anonymous one.
+    ///
+    /// **Read location from here, never from the profile's own row.** A profile is somebody you
+    /// shop *for*, and the shop is still in the holder's country; the profile's own column would
+    /// only ever hold its default. Credits are the account's for the same reason, and a profile
+    /// has no balance of its own.
+    static func holder(of user: UserModel, on db: any Database) async throws -> UserModel {
+        guard let accountID = user.$account.id,
+              let holder = try await primaryUser(of: accountID, on: db)
+        else { return user }
+        return holder
+    }
+
+    /// The account's profiles, holder first. Ordered in Swift by `holderFirst`, so the notifier,
+    /// which orders a list it already holds, can never disagree with this about who the holder
+    /// is; an account holds at most `Profiles.maxPerAccount` rows.
+    static func profiles(of accountID: UUID, on db: any Database) async throws -> [UserModel] {
         try await UserModel.query(on: db)
             .filter(\.$account.$id == accountID)
-            .sort(\.$createdAt, .ascending)
-            .first()
+            .all()
+            .sorted(by: holderFirst)
+    }
+
+    /// Deletes one profile and everything personal under it, in one transaction. Never the
+    /// holder — the route refuses that — and never the catalogue.
+    ///
+    /// Each table explicitly, as `delete` does, so the promise does not rest on SQLite having
+    /// foreign keys switched on. A device hanging off the profile is moved to the holder rather
+    /// than deleted: devices belong to the holder by construction, and if one does not, it is
+    /// still a phone somebody is holding.
+    static func deleteProfile(_ profile: UserModel, holder: UserModel, on db: any Database) async throws {
+        let id = try profile.requireID()
+        let holderID = try holder.requireID()
+        try await db.transaction { db in
+            try await PollHintModel.query(on: db).filter(\.$user.$id == id).delete()
+            try await WatchModel.query(on: db).filter(\.$user.$id == id).delete()
+            try await FollowModel.query(on: db).filter(\.$user.$id == id).delete()
+            try await BrandCheckWatcherModel.query(on: db).filter(\.$user.$id == id).delete()
+            try await DeviceModel.query(on: db)
+                .filter(\.$user.$id == id)
+                .set(\.$user.$id, to: holderID)
+                .update()
+            try await UserModel.query(on: db).filter(\.$id == id).delete()
+        }
     }
 
     /// Folds an anonymous user into an account's user, then deletes it.

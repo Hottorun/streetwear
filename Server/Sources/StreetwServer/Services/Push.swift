@@ -20,6 +20,11 @@ struct PushPayload: Codable, Sendable {
     /// The client keys its rows `event:<uuid>`, so this is enough to find the item it
     /// just pulled and go straight to its page.
     var eventID: String?
+    /// The profile the alert is about — its server user id — whenever the recipient is on an
+    /// account, so a tap switches to that profile before it opens anything. Absent for an
+    /// anonymous user. An older app ignores it and opens the item in whatever profile it has,
+    /// which is the only one it knows about.
+    var profileID: String?
     /// Bumped so a client can tell a streetw push apart from anything added later.
     var version = 2
 }
@@ -47,7 +52,8 @@ struct APNSPushSender: PushSending {
             topic: topic,
             payload: PushPayload(
                 brandID: message.brandID.uuidString,
-                eventID: message.eventID?.uuidString
+                eventID: message.eventID?.uuidString,
+                profileID: message.profileID?.uuidString
             ),
             sound: .default,
             // One thread for the whole app, not one per brand.

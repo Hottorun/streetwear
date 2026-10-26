@@ -3,6 +3,7 @@
 // Sign in with Apple can be hung off it later without a migration of everything else.
 
 import Fluent
+import StreetwCore
 import Vapor
 
 struct DeviceAuthenticator: AsyncBearerAuthenticator {
@@ -43,6 +44,63 @@ struct RequireDevice: AsyncMiddleware {
     func respond(to request: Request, chainingTo next: any AsyncResponder) async throws -> Response {
         _ = try await request.authenticatedDevice()
         return try await next.respond(to: request)
+    }
+}
+
+/// Which profile a request acts for — `X-Profile-ID`, checked against the device's account.
+///
+/// **Absent, nothing changes.** The request acts for the device's own user, which is every
+/// request 1.0 and 1.1 make, every request from a device with no account, and every request
+/// the holder's profile makes. That is what keeps every existing route working unchanged.
+///
+/// **Present, it must name a user on the same account as the device's user**, and otherwise
+/// the request is refused with `ProfileHeader.refusal` — which the app recognises, so a
+/// profile deleted on another phone falls back to the holder instead of reading as an app
+/// with nothing in it. A device with no account is refused too: profiles need one.
+///
+/// In the group rather than in each route, for the reason `RequireDevice` is: a route that
+/// read the header itself could forget the account check, and the failure would be one
+/// person's follows readable by a stranger who guessed a user id. Routes ask
+/// `actingUserID()`, never the header. See `docs/profiles.md`.
+struct ActingProfile: AsyncMiddleware {
+    func respond(to request: Request, chainingTo next: any AsyncResponder) async throws -> Response {
+        guard let raw = request.headers.first(name: ProfileHeader.name), !raw.isEmpty else {
+            return try await next.respond(to: request)
+        }
+        guard let profileID = UUID(uuidString: raw) else {
+            throw Abort(.badRequest, reason: "\(ProfileHeader.name) is not a profile id")
+        }
+        let device = try await request.authenticatedDevice()
+        if profileID != device.$user.id {
+            let own = try await UserModel.find(device.$user.id, on: request.db)
+            guard let accountID = own?.$account.id,
+                  let profile = try await UserModel.find(profileID, on: request.db),
+                  profile.$account.id == accountID
+            else { throw Abort(.forbidden, reason: ProfileHeader.refusal) }
+        }
+        request.storage[ActingUserKey.self] = profileID
+        return try await next.respond(to: request)
+    }
+}
+
+struct ActingUserKey: StorageKey {
+    typealias Value = UUID
+}
+
+extension Request {
+    /// The user whose follows, watches, hints and sizes this request reads and writes: the
+    /// profile `ActingProfile` admitted, else the device's own user.
+    func actingUserID() async throws -> UUID {
+        if let id = storage[ActingUserKey.self] { return id }
+        return try await authenticatedDevice().$user.id
+    }
+
+    /// The acting user's row, for the routes that need its sizes.
+    func actingUser() async throws -> UserModel {
+        guard let user = try await UserModel.find(try await actingUserID(), on: db) else {
+            throw Abort(.unauthorized, reason: "Register a device and send its token as a bearer token")
+        }
+        return user
     }
 }
 

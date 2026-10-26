@@ -191,6 +191,14 @@ public struct WatchDTO: Codable, Sendable, Hashable, Identifiable {
     /// Set once it has fired, so a client can show it as satisfied rather than pending.
     public var firedAt: Date?
     public var firedSizes: [String]
+    /// What the watched product looks like, so a phone that has never seen it — a reinstall
+    /// signing in, a profile opened on a second phone — can put the watch back on its
+    /// Watching page as a product rather than a bare id. Nil from a server that predates
+    /// them; the app then restores only watches on products it already holds.
+    public var productURL: String?
+    public var imageURLs: [String]?
+    public var priceText: String?
+    public var variants: [VariantInfo]?
 
     public init(
         id: UUID,
@@ -201,7 +209,11 @@ public struct WatchDTO: Codable, Sendable, Hashable, Identifiable {
         color: String? = nil,
         createdAt: Date = Date(),
         firedAt: Date? = nil,
-        firedSizes: [String] = []
+        firedSizes: [String] = [],
+        productURL: String? = nil,
+        imageURLs: [String]? = nil,
+        priceText: String? = nil,
+        variants: [VariantInfo]? = nil
     ) {
         self.id = id
         self.brandID = brandID
@@ -212,6 +224,10 @@ public struct WatchDTO: Codable, Sendable, Hashable, Identifiable {
         self.createdAt = createdAt
         self.firedAt = firedAt
         self.firedSizes = firedSizes
+        self.productURL = productURL
+        self.imageURLs = imageURLs
+        self.priceText = priceText
+        self.variants = variants
     }
 }
 
