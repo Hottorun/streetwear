@@ -50,6 +50,10 @@ struct streetwApp: App {
     /// What the server said about each poll hint, so the drop calendar can say per row
     /// whether anything is actually going to be watching. See `DropHintStore`.
     @State private var hints: DropHintStore
+    /// The balance and the packs, and the listener that credits an interrupted purchase.
+    /// Built here because the listener must be running before StoreKit delivers anything —
+    /// see `CreditStore.start`.
+    @State private var credits: CreditStore
 
     init() {
         Net.configureSharedCache()
@@ -108,6 +112,8 @@ struct streetwApp: App {
         _collection = State(initialValue: MainActor.assumeIsolated { CollectionRoute() })
         _you = State(initialValue: MainActor.assumeIsolated { YouRoute() })
         _hints = State(initialValue: MainActor.assumeIsolated { DropHintStore() })
+        let credits = MainActor.assumeIsolated { CreditStore(settings: settings) }
+        _credits = State(initialValue: credits)
 
         // The app delegate is built by UIKit and can't be handed these, so they are
         // published here — the same moment they become valid.
@@ -119,6 +125,7 @@ struct streetwApp: App {
                 route: route
             )
             UsageCounts.install(settings: settings, remote: remote)
+            credits.start()
         }
     }
 
@@ -138,6 +145,7 @@ struct streetwApp: App {
                 .environment(collection)
                 .environment(you)
                 .environment(hints)
+                .environment(credits)
                 .task {
                     await DevSeed.runIfRequested(in: sharedModelContainer.mainContext)
                     // Screenshot affordance: `-demoOpen <externalID>` lands on one product

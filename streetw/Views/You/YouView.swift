@@ -13,8 +13,9 @@
 // `List`: this is where somebody comes to see what the app thinks of them, and a grouped
 // settings form is the one shape that says "this is the app's plumbing".
 //
-// Nothing here is a placeholder. Sign-in, profiles, location and credits are planned and not
-// built, and a row for each saying so would be four rows of the app talking about itself.
+// Nothing here is a placeholder. Sign-in, profiles and location are planned and not built, and
+// a row for each saying so would be three rows of the app talking about itself. Credits are
+// drawn only for an account (`CreditsSection`), so until sign-in exists nobody sees them.
 
 import StreetwCore
 import SwiftData
@@ -23,6 +24,8 @@ import SwiftUI
 struct YouView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(SizeProfileStore.self) private var sizes: SizeProfileStore
+    @Environment(ServerSettings.self) private var settings: ServerSettings
+    @Environment(CreditStore.self) private var credits: CreditStore
 
     @Query(sort: \SavedItem.savedAt, order: .reverse) private var saves: [SavedItem]
     /// Only the boards with a taste setting — see `Board.shapingTaste`. Usually none.
@@ -53,6 +56,7 @@ struct YouView: View {
                     sizesSection
                     following
                     waitingFor
+                    CreditsSection()
                     NotificationsSection()
                     StyleStatementSection()
                     AboutSection()
@@ -63,6 +67,11 @@ struct YouView: View {
             }
             .scrollIndicators(.hidden)
             .background(Color.paper)
+            // Whether there is a Credits section at all is the server's answer, so it is asked
+            // every time the page opens. Keyed on the token for the reason every authenticated
+            // `.task` is: the page can appear before registration finishes, and a 401 here
+            // would leave the section missing for the session.
+            .task(id: settings.token) { await credits.refresh() }
             .navigationTitle("You")
             .toolbarTitleDisplayMode(.inlineLarge)
             .toolbar {
