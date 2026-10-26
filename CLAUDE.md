@@ -60,12 +60,14 @@ cost.
 | `docs/discover.md` | Shop's search and daily picks; the Discover deck, its supply, ranking, presentation and card |
 | `docs/fits.md` | The fit canvas, the studio, suggestions, and judging a whole outfit |
 | `docs/collection.md` | Saves, boards, the archive page, and everything the photograph is asked |
-| `docs/server.md` | The poller, the schema, migrations, retention, `Notifier` |
+| `docs/server.md` | The poller, the schema, migrations, retention, `Notifier`, storefronts per country |
 | `docs/performance.md` | Every rule written after measuring — queries, bodies, decoding, sorts |
 | `docs/share-extension.md` | The App Group inbox, enrichment, brand attribution |
 | `docs/drop-calendar.md` | `PlannedDrop`, local reminders, and poll hints |
 | `docs/recommendations.md` | `BrandVector`, similarity, popularity, dismissals |
+| `docs/profiles.md` | Profiles: one server user and one local store per person, the profile header, labelled alerts |
 | `docs/ucp.md` | Reading a storefront that has closed its catalogue |
+| `docs/credits.md` | Credits, the ledger, StoreKit purchases and refunds, and AI cost metering |
 
 ## Build environment
 
@@ -139,11 +141,13 @@ Dev-only launch flags (all read via `UserDefaults`, all no-ops when absent):
 | `-seedSizes "M,L,9,9.5"` | Fills the size profile |
 | `-startTab saved` | Opens straight to a tab, so screenshots need no UI automation. One of `feed`, `shop`, `saved`. Retired names still open something via `Tabs.resolve` rather than a blank page: `discover` opens Shop, `style` opens Saved › Fits (where the Style tab's fits went), anything else — including `brands` — the feed |
 | `-standalone YES` | Runs with no server, so `SyncEngine` polls from the phone |
+| `-fakeAppleSignIn alice` | DEBUG only. Replaces Apple's button with "Sign in as alice (debug)", which sends an unsigned identity token for that subject. Offered only against a server on `127.0.0.1`/`localhost`, and accepted only by one started with `SIWA_TEST_TOKENS=true` outside production. This is how sign-in → merge → delete is driven in a simulator with no Apple ID |
 | `-seedSaves 8` | Files garments into the wardrobe, spread across `GarmentSlot.essential`. Independent of `-seedBrands`: it reads whatever brands the store holds, so in server mode it runs after the launch sync rather than at launch |
 | `-seedNews 400` | With `-seedBrands`, how many of each brand's newest products are made news after the baseline (default 12) — enough of Kith's to see its bursts and to measure the feed on a deep store |
 | `-feedLastVisitHours 5` | Pretends the last visit to the feed ended that long ago, for the launch's first visit, so the "since you were last here" line can be shot without waiting out `FeedVisit.resumeWindow` |
 | `-feedFilter upcoming` | Opens the feed narrowed — `all`, `drops`, `restocks`, `sales` or `upcoming` |
 | `-feedBrand "Ondo Club"` | Opens the feed narrowed to one followed brand, by name |
+| `-debugBackgroundPass YES` | Runs the background refresh's every-profile pass each time the app is backgrounded (DEBUG builds only) |
 
 **`-standalone YES` is the only way to get standalone mode.** `-serverBaseURL ""` used to do it
 and no longer does — see *The server address is not a setting* below.
@@ -205,7 +209,7 @@ plutil -p /tmp/streetw-dd/Build/Products/Debug-iphonesimulator/streetw.app/Info.
 ### Tests
 
 ```bash
-swift test                                    # all 690
+swift test                                    # all 709
 swift test --filter "Size normalisation"      # one suite
 swift test --filter relockFiresAgain          # one test
 ```
@@ -442,6 +446,15 @@ bought it. The short form of the load-bearing ones:
   destination. `PushRoute` is built in `streetwApp.init` alongside everything else, because a push
   that cold-launches the app delivers its tap **before any view exists**; a notification-centre
   broadcast at that moment reaches nobody.
+- **A device on an account hears every profile on it, and another profile's alerts say whose they
+  are** (`Notifier.audience`). "For Anna: …" on the body (`ProfileAlert.labelled`, shared with the
+  app's local alerts); the holder's read as they always did. Each profile has its own alerts switch
+  (`users.alerts_enabled`) — off, nothing is sent for it on any path, and a watch is still spent.
+  The cooldown is still the brand's, so each profile hears about a brand once per cooldown.
+  **`collapseID` is per profile** (the holder keeps the brand id, another profile appends eight hex
+  digits — APNs caps the id at 64 bytes), or Anna's alert would replace the holder's unread one;
+  `threadID` stays one for the app. `PushPayload.profileID` names the recipient so a tap switches
+  to that profile first. See `docs/profiles.md`.
 
 ### Heuristics carry a version
 
@@ -781,7 +794,7 @@ the catalogue (`/products/<handle>.js`, which has `available`) over Open Graph.
 
 **Read `docs/share-extension.md` before touching `SharedInbox`, `SharedSaveImporter`, the App Group,
 or anything about entitlements.** Notably: adding the App Group silently moved the SwiftData store,
-so `streetwApp` pins the store URL explicitly — don't remove that. Also covered: one file per save
+so `ProfileSession.container(for:)` pins the store URL explicitly — don't remove that. Also covered: one file per save
 with reading separate from deleting, `enrichmentVersion` giving a bad landing another chance,
 `registrableDomain` matching a brand across its hostnames, `brandLabel` when there is no brand, and
 why the sold-out prompt is asked by the app rather than the extension.
@@ -820,8 +833,24 @@ why the sold-out prompt is asked by the app rather than the extension.
   keep it that way, and add new fields the same way. `SizeProfile` has the same hand-written
   lenient `init(from:)` for the same reason — it lives in `UserDefaults` on real phones.
 - The schema is `Brand`, `BrandUpdate`, `SavedItem`, `Board`, `StockWatch`, `Fit`,
-  `BrandDismissal`, `PlannedDrop`. A new `@Model` that isn't listed in `streetwApp.init` simply
-  doesn't exist at runtime.
+  `BrandDismissal`, `PlannedDrop`. A new `@Model` that isn't listed in `ProfileSession.schema`
+  simply doesn't exist at runtime.
+- **There is one store per profile, not a profile id on every model** (`ProfileSession`,
+  `docs/profiles.md`). `default.store` and the unscoped `UserDefaults` keys are the phone's own —
+  used signed out, and kept by the first account to sign in (`ProfileStores.owner`) — so data from
+  before profiles is that holder's with nothing moved. Every other store is filed under its
+  account: `Accounts/<account>/profile-<id>.store`, and `holder.store` for an Apple ID that signed
+  in after `default.store` was taken; their keys are `<key>.<home>` (`ProfileScope.home`). Signing
+  into another Apple ID **hides** the first one's stores rather than deleting them; only deleting
+  the account, deleting a profile, or You's Remove row deletes a store. A new `UserDefaults` key
+  that describes a person goes through `ProfileScope.key` and into `ProfileScope.scopedKeys`; one
+  that describes the phone does not. Anything long-running captures its scope at the start rather
+  than reading the current one, and only one `RemoteSync` writes a store at a time.
+- **A background refresh or push wake syncs every profile on the account**
+  (`BackgroundServices.syncProfiles`): the pushed profile, then the current one, then the rest by
+  staleness, within `passBudget`, through the same `RemoteSync.sync` per store. Simulator: launch
+  with `-debugBackgroundPass YES` and background the app — the simulator cannot run a
+  `BGAppRefreshTask` without lldb, and refuses a silent `simctl push`.
 - **`Fit.items` ↔ `SavedItem.fits` is many-to-many and cascades in neither direction.** Deleting a
   fit must not delete the clothes, and un-saving something leaves the fits it was in rather than
   silently rewriting them.
@@ -872,9 +901,25 @@ Three tiers, and the middle one is the part that was wrong for a long time.
 - **Public**: `GET /health` and `GET /.well-known/ucp`. The first must stay cheap and must
   not fail the deploy when the database blinks; the second has to be fetchable by a merchant
   before it will answer a catalogue query, and is a fixed statement about the software naming
-  no device, user or brand.
-- **Device token** — everything under `/v1` except registration.
-- **`ADMIN_TOKEN`** — everything under `/admin`, including `/status`.
+  no device, user or brand. And `POST /v1/app-store/notifications`, because Apple holds no
+  device token: it is authenticated by Apple's signature on the body alone, verified the same
+  way as a purchase, and rate-limited per address (`docs/credits.md`).
+- **Device token** — everything under `/v1` except registration and the App Store
+  notifications. The account routes (`/v1/account`) are device routes too: an account is
+  reached *through* a device, so signing in needs a registered device first, and the token
+  keeps working after it. There is no account-level credential. Credits additionally need the
+  device's user to have an account: without one, a spend or a purchase answers
+  `403 Sign in to use credits`. **`X-Profile-ID` chooses which of the account's users a request
+  acts for** (`ActingProfile`, in the authed group): absent, the device's own user — every
+  older client, every device with no account, the holder; present, it must name a user on the
+  device's account or the request is refused with `ProfileHeader.refusal`. Routes ask
+  `req.actingUserID()`, never the header, and the device-level ones (APNs token, delivery,
+  usage, credits, the account and profile routes) act on the device. **Credits and the country
+  are the account's whichever profile asks**: the credit routes read the device's own user, so
+  every profile spends from one ledger, and `PATCH /v1/devices/me`'s country goes through
+  `Accounts.setCountry` to every user on the account. See `docs/profiles.md`.
+- **`ADMIN_TOKEN`** — everything under `/admin`, including `/status`, `/admin/accounts` and
+  the owner's unlimited-credits switch.
 
 - **`grouped(DeviceAuthenticator())` does not require a device.** It only *offers* to find
   one, so every route under it was protected purely because its handler happened to call
@@ -883,6 +928,12 @@ Three tiers, and the middle one is the part that was wrong for a long time.
   write a row into a catalogue everybody shares. `RequireDevice` now sits in the group, so
   membership *is* the guarantee it looks like and a new route cannot be accidentally public
   by forgetting a line inside its body.
+- **Sign-in believes Apple's signature, never the token on trust.** RS256 only — `none` and
+  HS256 are refused before a key is looked at — against Apple's JWKS, cached and re-read on an
+  unknown `kid` at most once per five minutes so a forged `kid` cannot make the server hammer
+  Apple (`AppleIdentityTokenVerifier`, `AppleSigningKeys`); the claims are read only after.
+  `SIWA_TEST_TOKENS=true` (unsigned tokens, every claim still checked) is ignored on a
+  `production` environment. See `docs/server.md`.
 - **A missing `ADMIN_TOKEN` refuses rather than allows.** `/admin/poll` makes the server
   fetch fifty storefronts, `/admin/push-test` wakes every phone holding a token, and
   `delete?force=true` removes a brand and cascades away every follow on it. "Open when unset
@@ -932,11 +983,17 @@ the local path in the `else`. Adding a new one means adding both halves:
 | delete / unfollow | `DELETE /v1/follows/:id` |
 | follow mode (Everything / Sales only / Quiet) | `PATCH /v1/follows/:id` — the server first, the phone only once it took it; standalone, `Brand.followModeRaw` alone |
 | size and gender profile | `PATCH /v1/devices/me` |
+| country (You › Location) | `PATCH /v1/devices/me` (`country`; also sent at registration) — standalone stores it and changes nothing |
 | APNs token / environment | `PATCH /v1/devices/me` |
-| stock watches | `POST` / `GET` / `DELETE /v1/watches` |
+| Sign in with Apple (optional; hidden standalone and when the server says it cannot verify) | `GET /v1/account`, `POST /v1/account/apple` — the first sign-in adopts this device's user, a later one merges it into the account's |
+| delete the account | `DELETE /v1/account`, then a fresh `POST /v1/devices` and a re-follow of this phone's brands; other profiles' local stores are deleted |
+| profiles (signed in only) | `GET` / `POST /v1/account/profiles`, `PATCH` / `DELETE /v1/account/profiles/:id`; every other route acts for the current profile through `X-Profile-ID` (none for the holder) |
+| stock watches | `POST` / `GET` / `DELETE /v1/watches` — `GET` also restores watches this store does not have (a reinstall, a profile on a second phone) |
 | poll hints from the drop calendar | `PUT /v1/poll-hints` (whole set; no-op standalone) |
 | anonymous usage counts | `POST /v1/usage` (daily tallies; standalone counts and sends nothing) — read back with `GET /admin/usage`, see `docs/server.md` |
 | recommendations | `GET /v1/brands/popular` |
+| credits: balance, this month's usage, the packs | `GET /v1/credits` (`signedIn: false` and nothing else without an account; no standalone equivalent, and the section is hidden) |
+| buying a pack | StoreKit, then `POST /v1/credits/purchases` with the signed transaction — finished only once the server took it (`CreditStore`). Refunds arrive from Apple at `POST /v1/app-store/notifications`; costs read back with `GET /admin/costs`, see `docs/credits.md` |
 | the Discover feed | `GET /v1/discover` (no standalone equivalent — the phone only holds brands somebody already followed, which is the opposite of the question) |
 
 **Discovery is a check, not a request.** A site that is not on Shopify takes longer to read than
@@ -1031,11 +1088,30 @@ Related: SwiftPM validates that every declared target directory exists when it l
 graph, so the Docker image must copy `Tests/` and `Server/Tests/` too even though it only
 builds the executable. Omitting them yields a confusing "overlapping sources" error.
 
+### Countries and currencies
+
+**A brand's main shop is the brand row; a country's shop is a `storefronts` row serving a set of
+countries** (`storefront_countries`, unique per brand and country — `eu.kith.com` is one shop for
+48), and `storefront_id` is null on every source, product and event of the main shop — which is
+every row written before storefronts existed, so nothing was backfilled or re-polled. A country is
+switched on by `STOREFRONT_COUNTRIES`; a shop is polled, once, while any of its switched-on
+countries has a follower of the brand, and a person is served **one shop per brand** — the one
+whose set holds their country when that country is switched on and the shop is read and
+baselined, otherwise the main shop exactly as before. Every stored price
+carries its currency (`FetchedItem.currency`, `products.currency`, `FeedItem.currency`), nothing
+converts, and the app prints a row in its own currency in the reader's locale
+(`PriceFormat`, `BrandUpdate.priceLabel`) — **never with the brand's currency**, which names the
+serving shop, not the one an older row came from. Shops are attached by hand
+(`POST /admin/brands/:id/storefronts?url=&countries=`; no countries is an offer and writes nothing),
+and `…/storefronts/:country/add` and `…/remove` change a shop's set. **Read the storefront rules in
+`docs/server.md` and the location rules in `docs/design-decisions.md` before touching
+`Storefronts`, `StorefrontModel`, the claim query, `LocationSetting` or a price print.**
+
 ### Server specifics
 
 **The catalog is global** — brands, sources, products and variants are one row per real-world thing;
-only users, devices, follows, size profiles, watches and poll hints are personal. Never add a
-`user_id` to a catalog table. `usage_counts` is neither: totals per day per event, with no user or
+only accounts, users, devices, follows, size profiles, watches and poll hints are personal. Never
+add a `user_id` to a catalog table. `usage_counts` is neither: totals per day per event, with no user or
 device id ever — the one per-device usage fact is `devices.active_on`, overwritten.
 
 **Read `docs/server.md` before touching the poller, the schema, migrations or `Notifier`.** The
@@ -1046,6 +1122,23 @@ SQLite**; a failed poll must still advance `next_check_at`; the poll claim is a 
 products; `Poller.refresh` guards every write, because rewrites — not rows — are what fill the
 volume; and only the *unexpected* is worth a buzz (`Notifier.isWorthWaking`), one push per brand per
 **cooldown**.
+
+### Credits
+
+AI is paid for with credits (`ROADMAP.md`, *Decided*); no AI action exists yet, and the ledger
+and the meter are built so Phase 4 only calls `CreditLedger.spend` before a provider call,
+`CostMeter.record` after every one, and `CreditLedger.undo` when the action failed. **Read
+`docs/credits.md` before touching `CreditLedger`, `CostMeter`, `AppStorePurchases`,
+`PurchasePolicy`, `CreditPacks`, `CreditStore`, `CreditsSection` or `streetw.storekit`.** The
+short form: the ledger is the balance (a sum, serialised per account by a row lock that only a
+real Postgres can test); credits need an account; unlimited writes zero rows and is still
+metered; a StoreKit JWS is believed only on a chain to the compiled-in **Apple Root CA - G3**
+(never the token's own root) carrying Apple's two marker OIDs, valid at the payload's
+`signedDate`, with no online revocation check (`AppStoreVerifier`); a notification's envelope,
+transaction and renewal info are each verified; the unverified double needs a non-production server *and* `CREDITS_UNVERIFIED_TRANSACTIONS=true`;
+an `Xcode` transaction is never believed on production; a refund may take the balance negative;
+the phone finishes a transaction only once the server took it; and the StoreKit configuration
+applies only when Xcode itself launches the app.
 
 ### The collection
 

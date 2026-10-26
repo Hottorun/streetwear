@@ -38,8 +38,11 @@ final class FeedVisit {
     /// that putting the phone down and picking it up later is a new visit.
     static let resumeWindow: TimeInterval = 5 * 60
 
-    private static let lastOnScreenKey = "feedLastOnScreenAt"
-    private static let boundaryKey = "feedVisitBoundary"
+    /// Per profile: "since you were last here" is about one person's last visit. Captured
+    /// when the feed is built, because the visit is ended as the feed is torn down — which a
+    /// profile switch does after the new profile is already current.
+    @ObservationIgnored private let lastOnScreenKey = ProfileScope.active.key("feedLastOnScreenAt")
+    @ObservationIgnored private let boundaryKey = ProfileScope.active.key("feedVisitBoundary")
 
     /// Where this visit's line falls. Nil means there was no earlier visit.
     private(set) var boundary: Date?
@@ -65,10 +68,10 @@ final class FeedVisit {
             begin(at: override)
             return
         }
-        let last = defaults.object(forKey: Self.lastOnScreenKey) as? Date
+        let last = defaults.object(forKey: lastOnScreenKey) as? Date
         if let last, now.timeIntervalSince(last) < Self.resumeWindow {
             // The same visit, interrupted: the line stays where it was drawn.
-            boundary = defaults.object(forKey: Self.boundaryKey) as? Date
+            boundary = defaults.object(forKey: boundaryKey) as? Date
         } else {
             begin(at: last)
         }
@@ -82,13 +85,13 @@ final class FeedVisit {
     func left(now: Date = Date()) -> Date? {
         guard isOnScreen else { return nil }
         isOnScreen = false
-        defaults.set(now, forKey: Self.lastOnScreenKey)
+        defaults.set(now, forKey: lastOnScreenKey)
         return now
     }
 
     private func begin(at line: Date?) {
         boundary = line
-        defaults.set(line, forKey: Self.boundaryKey)
+        defaults.set(line, forKey: boundaryKey)
     }
 }
 

@@ -71,7 +71,13 @@ enum StockRefresh {
         // because the failure left no record.
         update.stockCheckedAt = Date()
 
-        guard let fresh = await fetch(link, currency: update.brand?.currencyCode) else {
+        // The row's own currency, which is the shop it came from. The brand's stands in only
+        // while the brand is on its main shop: once a country's shop serves this phone the
+        // brand's currency is that shop's, and an older row is not — so nil, and the product's
+        // own host is asked instead.
+        let currency = update.currencyCode
+            ?? (update.brand?.storefrontCountry == nil ? update.brand?.currencyCode : nil)
+        guard let fresh = await fetch(link, currency: currency) else {
             try? context.save()
             return false
         }

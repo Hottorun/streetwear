@@ -59,31 +59,7 @@ func configure(_ app: Application) async throws {
         app.logger.notice("database: sqlite at \(path)")
     }
 
-    app.migrations.add(CreateSchema())
-    app.migrations.add(AddIndexes())
-    app.migrations.add(FixPostgresArrayColumns())
-    app.migrations.add(AddPushLedger())
-    app.migrations.add(AddSourceBaseline())
-    app.migrations.add(AddBrandLogo())
-    app.migrations.add(AddProductPriceAmount())
-    app.migrations.add(AddUserGender())
-    app.migrations.add(CreateWatches())
-    app.migrations.add(AddSourceLock())
-    app.migrations.add(AddVariantImageIndex())
-    app.migrations.add(AddUserWaistSizes())
-    app.migrations.add(AddEventPrice())
-    app.migrations.add(AddProductBrandIndex())
-    app.migrations.add(AddBrandNotifyLedger())
-    app.migrations.add(CreatePollHints())
-    app.migrations.add(AddProductMembers())
-    app.migrations.add(CreateBrandChecks())
-    app.migrations.add(CreateUsageCounts())
-    app.migrations.add(AddDeviceActiveDay())
-    app.migrations.add(AddUserDressAndSuitSizes())
-    app.migrations.add(AddFollowMode())
-    app.migrations.add(AddProductEnrichment())
-    app.migrations.add(AddProductOriginalPrice())
-    app.migrations.add(AddSaleLedgers())
+    addMigrations(to: app)
     if Environment.get("AUTO_MIGRATE") != "false" {
         try await app.autoMigrate()
     }
@@ -143,6 +119,13 @@ func configure(_ app: Application) async throws {
     } else {
         app.logger.warning("admin: ADMIN_TOKEN not set — every /admin route will refuse")
     }
+
+    app.appleSignIn = AppleSignInConfiguration.make(for: app)
+    // Read once, here, like the admin key — a country multiplies the polling of every brand
+    // followed there, so which ones are on is a deployment decision and the boot log says it.
+    let countries = Storefronts.countries(from: Environment.get("STOREFRONT_COUNTRIES"))
+    app.storage[StorefrontCountriesKey.self] = countries
+    app.logger.notice("storefronts: \(countries.isEmpty ? "no countries switched on" : countries.sorted().joined(separator: ","))")
 
     let sender = app.configureAPNS()
     app.storage[APNSConfiguredKey.self] = sender != nil
@@ -239,4 +222,42 @@ extension Application {
     var fetcher: any HTTPFetching { storage[FetcherKey.self] ?? Net.live }
     var notifier: Notifier? { storage[NotifierKey.self] }
     var reaper: Reaper? { storage[ReaperKey.self] }
+}
+
+/// Every migration, in the order they were applied in production. One list, so a test that runs
+/// against a real Postgres migrates exactly the schema the deployment has rather than a hand-picked
+/// subset that drifts from it.
+func addMigrations(to app: Application) {
+    app.migrations.add(CreateSchema())
+    app.migrations.add(AddIndexes())
+    app.migrations.add(FixPostgresArrayColumns())
+    app.migrations.add(AddPushLedger())
+    app.migrations.add(AddSourceBaseline())
+    app.migrations.add(AddBrandLogo())
+    app.migrations.add(AddProductPriceAmount())
+    app.migrations.add(AddUserGender())
+    app.migrations.add(CreateWatches())
+    app.migrations.add(AddSourceLock())
+    app.migrations.add(AddVariantImageIndex())
+    app.migrations.add(AddUserWaistSizes())
+    app.migrations.add(AddEventPrice())
+    app.migrations.add(AddProductBrandIndex())
+    app.migrations.add(AddBrandNotifyLedger())
+    app.migrations.add(CreatePollHints())
+    app.migrations.add(AddProductMembers())
+    app.migrations.add(CreateBrandChecks())
+    app.migrations.add(CreateUsageCounts())
+    app.migrations.add(AddDeviceActiveDay())
+    app.migrations.add(AddUserDressAndSuitSizes())
+    app.migrations.add(AddFollowMode())
+    app.migrations.add(AddProductEnrichment())
+    app.migrations.add(AddProductOriginalPrice())
+    app.migrations.add(AddSaleLedgers())
+    app.migrations.add(CreateAccounts())
+    app.migrations.add(CreateCreditLedger())
+    app.migrations.add(CreateCostRecords())
+    app.migrations.add(CreateStorefronts())
+    app.migrations.add(AddStorefrontColumns())
+    app.migrations.add(AddUserProfiles())
+    app.migrations.add(CreateStorefrontCountries())
 }

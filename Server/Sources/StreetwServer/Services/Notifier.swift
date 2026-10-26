@@ -37,6 +37,10 @@ struct PushMessage: Sendable, Hashable {
     var eventID: UUID?
     /// Lets APNs replace an unread notification for the same brand rather than stacking.
     var collapseID: String?
+    /// The profile this alert is about — the recipient user, when it is on an account — so
+    /// tapping it opens that profile before the item. Nil for an anonymous user, whose phone
+    /// has one profile and nothing to switch. See `docs/profiles.md`.
+    var profileID: UUID?
 }
 
 enum PushDeliveryError: Error {
@@ -284,25 +288,24 @@ actor Notifier {
     /// sentinel, which the app opens nowhere — a refused shop has no page to land on.
     func tell(userID: UUID, title: String, body: String, brandID: UUID?, collapseID: String) async {
         guard let sender else { return }
-        let devices: [DeviceModel]
+        let recipient: Recipient
         do {
-            devices = try await DeviceModel.query(on: app.db)
-                .filter(\.$user.$id == userID)
-                .filter(\.$apnsToken != nil)
-                .all()
+            guard let found = try await Self.audience(for: [userID], on: app.db)[userID] else { return }
+            recipient = found
         } catch {
             app.logger.error("notifier: could not load devices for a reply: \(error)")
             return
         }
-        for device in devices {
+        for device in recipient.devices {
             guard let token = device.apnsToken else { continue }
             let message = PushMessage(
                 deviceToken: token,
                 environment: device.environment,
                 title: title,
-                body: body,
+                body: recipient.labelled(body),
                 brandID: brandID ?? Self.probeBrandID,
-                collapseID: collapseID
+                collapseID: recipient.collapse(collapseID),
+                profileID: recipient.profileID
             )
             do {
                 try await sender.send(message)
@@ -404,6 +407,16 @@ actor Notifier {
                 uniquingKeysWith: { first, _ in first }
             )
 
+            // The country shops of the brands in this pass, so each follower hears only from the
+            // shop they are served — see `Storefronts`. Not asked at all while no country is
+            // switched on, which leaves every follower on the main shop as before.
+            let shops = (try? await Storefronts.live(
+                brandIDs: Set(fresh.map { $0.$brand.id }),
+                enabled: app.storefrontCountries,
+                on: db
+            )) ?? []
+            let shopsByBrand = Dictionary(grouping: shops, by: { $0.$brand.id })
+
             let cooling = Set(quiet)
             for (brandID, events) in Dictionary(grouping: fresh, by: { $0.$brand.id }) where !cooling.contains(brandID) {
                 let brand = byID[brandID]
@@ -411,6 +424,7 @@ actor Notifier {
                 await notify(
                     brandID: brandID,
                     events: events,
+                    storefronts: shopsByBrand[brandID] ?? [],
                     using: sender,
                     skipping: claimed,
                     into: &result
@@ -493,12 +507,7 @@ actor Notifier {
                 .all()
             guard !watches.isEmpty else { return claimed }
 
-            let userIDs = Set(watches.map(\.$user.id))
-            let devices = try await DeviceModel.query(on: app.db)
-                .filter(\.$user.$id ~~ Array(userIDs))
-                .filter(\.$apnsToken != nil)
-                .all()
-            let devicesByUser = Dictionary(grouping: devices, by: { $0.$user.id })
+            let audience = try await Self.audience(for: Set(watches.map(\.$user.id)), on: app.db)
 
             // The restock event that satisfied each watch, so the alert can open the exact
             // product rather than the brand it belongs to.
@@ -524,19 +533,23 @@ actor Notifier {
 
                 claimed.insert(Pair(user: watch.$user.id, brand: watch.$brand.id))
 
-                for device in devicesByUser[watch.$user.id] ?? [] {
+                // A profile with alerts off has no recipient here: the watch above is still
+                // spent, for the reason it is spent when no device holds a token.
+                guard let recipient = audience[watch.$user.id] else { continue }
+                for device in recipient.devices {
                     guard let token = device.apnsToken else { continue }
                     let message = PushMessage(
                         deviceToken: token,
                         environment: device.environment,
                         title: watch.brand.name,
-                        body: Self.watchCopy(product: watch.product.title, sizes: back),
+                        body: recipient.labelled(Self.watchCopy(product: watch.product.title, sizes: back)),
                         brandID: watch.$brand.id,
                         eventID: restockEvent[watch.$product.id]?.id,
                         // Not collapsed onto the brand's other notifications: this is the
                         // one the user explicitly asked for and it must not be replaced by
                         // a later generic summary.
-                        collapseID: nil
+                        collapseID: nil,
+                        profileID: recipient.profileID
                     )
                     do {
                         try await sender.send(message)
@@ -599,11 +612,7 @@ actor Notifier {
                 .all()
             guard !watches.isEmpty else { return claimed }
 
-            let devices = try await DeviceModel.query(on: app.db)
-                .filter(\.$user.$id ~~ Array(Set(watches.map(\.$user.id))))
-                .filter(\.$apnsToken != nil)
-                .all()
-            let devicesByUser = Dictionary(grouping: devices, by: { $0.$user.id })
+            let audience = try await Self.audience(for: Set(watches.map(\.$user.id)), on: app.db)
 
             var told: Set<String> = []
             for watch in watches {
@@ -624,18 +633,21 @@ actor Notifier {
                         now: product.priceAmount
                     )
                 )
-                for device in devicesByUser[watch.$user.id] ?? [] {
+                guard let recipient = audience[watch.$user.id] else { continue }
+                for device in recipient.devices {
                     guard let token = device.apnsToken else { continue }
                     let message = PushMessage(
                         deviceToken: token,
                         environment: device.environment,
                         title: watch.brand.name,
-                        body: body,
+                        body: recipient.labelled(body),
                         brandID: watch.$brand.id,
                         eventID: event.id,
                         // A second cut on the same product replaces the first if it is
-                        // still unread; a different product never does.
-                        collapseID: "price-\(productID.uuidString)"
+                        // still unread; a different product never does — and neither does
+                        // the same cut said to another profile on the phone.
+                        collapseID: recipient.collapse("price-\(productID.uuidString)"),
+                        profileID: recipient.profileID
                     )
                     do {
                         try await sender.send(message)
@@ -665,16 +677,106 @@ actor Notifier {
             : "Back in \(sentence(sizes)) — \(product)"
     }
 
-    /// A user/brand pair that has already been notified in this pass.
+    /// A user/brand pair that has already been notified in this pass. Per user, which is per
+    /// profile: a watch alert for one profile suppresses that profile's summary and nobody
+    /// else's on the same phone.
     struct Pair: Hashable, Sendable {
         var user: UUID
         var brand: UUID
     }
 
+    /// Where one user's alerts go, and how they are marked as theirs.
+    struct Recipient: Sendable {
+        var devices: [DeviceModel]
+        /// The profile's name, when the user is a profile other than its account's holder.
+        /// Nil for the holder and for anonymous users, whose alerts read as they always have.
+        var label: String?
+        /// The user, when it is on an account — what `PushPayload.profileID` carries.
+        var profileID: UUID?
+
+        func labelled(_ body: String) -> String {
+            label.map { ProfileAlert.labelled(body, for: $0) } ?? body
+        }
+
+        /// A collapse id of this profile's own. The holder keeps the plain one, so nothing
+        /// changes for any phone with one profile; another profile appends its first eight
+        /// hex digits — APNs caps the id at 64 bytes, and two UUIDs are 73.
+        func collapse(_ base: String) -> String {
+            guard label != nil, let profileID else { return base }
+            return "\(base)/\(profileID.uuidString.prefix(8))"
+        }
+    }
+
+    /// Who hears about each of `userIDs`, and labelled how. See `docs/profiles.md`.
+    ///
+    /// - **A user on an account is heard on every device of that account.** Devices belong to
+    ///   the holder, so a profile has none of its own; its alerts reach the phones its holder
+    ///   carries. An anonymous user's devices are its own, as they always were.
+    /// - **A profile with alerts off is left out**, holder included. Callers that keep a ledger
+    ///   — the watch's `fired_at`, the event's `notified_at` — still write it, so switching
+    ///   alerts back on does not release a burst of stale news.
+    /// - **Labelled only when it is not the holder.** "For Anna: …" on the body; the holder's
+    ///   alerts are unchanged.
+    ///
+    /// Four queries whatever the size of the batch: the users, their accounts' users, and the
+    /// devices of both.
+    static func audience(for userIDs: Set<UUID>, on db: any Database) async throws -> [UUID: Recipient] {
+        guard !userIDs.isEmpty else { return [:] }
+        let users = try await UserModel.query(on: db)
+            .filter(\.$id ~~ Array(userIDs))
+            .filter(\.$alertsEnabled == true)
+            .all()
+        let accountIDs = Set(users.compactMap(\.$account.id))
+        let members = accountIDs.isEmpty ? [] : try await UserModel.query(on: db)
+            .filter(\.$account.$id ~~ Array(accountIDs))
+            .all()
+
+        var membersByAccount: [UUID: [UserModel]] = [:]
+        for member in members {
+            guard let accountID = member.$account.id else { continue }
+            membersByAccount[accountID, default: []].append(member)
+        }
+        let holders = membersByAccount.compactMapValues { users in
+            users.min(by: Accounts.holderFirst)?.id
+        }
+
+        let owners = Set(users.compactMap(\.id)).union(members.compactMap(\.id))
+        let devices = try await DeviceModel.query(on: db)
+            .filter(\.$user.$id ~~ Array(owners))
+            .filter(\.$apnsToken != nil)
+            .all()
+        let devicesByOwner = Dictionary(grouping: devices, by: { $0.$user.id })
+
+        var audience: [UUID: Recipient] = [:]
+        for user in users {
+            guard let id = user.id else { continue }
+            guard let accountID = user.$account.id else {
+                audience[id] = Recipient(devices: devicesByOwner[id] ?? [])
+                continue
+            }
+            let phones = (membersByAccount[accountID] ?? []).compactMap(\.id).flatMap { devicesByOwner[$0] ?? [] }
+            let isHolder = holders[accountID] == id
+            audience[id] = Recipient(
+                devices: phones,
+                // A profile always has a name; the fallback is for a row written by hand.
+                label: isHolder ? nil : (user.displayName ?? "another profile"),
+                profileID: id
+            )
+        }
+        return audience
+    }
+
     /// Everyone following one brand hears about that brand's batch at most once.
+    ///
+    /// - Parameter storefronts: the brand's shops serving a switched-on country, with their
+    ///   sources and countries (`Storefronts.live`). Each follower hears only of events in the
+    ///   shop serving them — the one whose set holds their country where it is live, the main
+    ///   shop otherwise — so a reader in Britain is not woken twice for one drop, once in each
+    ///   currency.
     private func notify(
         brandID: UUID,
         events: [EventModel],
+        storefronts: [StorefrontModel] = [],
         using sender: any PushSending,
         skipping claimed: Set<Pair> = [],
         into result: inout NotifyResult
@@ -697,23 +799,34 @@ actor Notifier {
             guard !followers.isEmpty else { return }
 
             let users = try await UserModel.query(on: db).filter(\.$id ~~ followers).all()
-            let devices = try await DeviceModel.query(on: db)
-                .filter(\.$user.$id ~~ followers)
-                .filter(\.$apnsToken != nil)
-                .all()
-            guard !devices.isEmpty else { return }
-
-            let devicesByUser = Dictionary(grouping: devices, by: { $0.$user.id })
+            // Every profile on an account is heard on the account's phones, labelled when it
+            // is not the holder's; a profile with alerts off is not in it. See `audience`.
+            let audience = try await Self.audience(for: Set(followers), on: db)
+            guard audience.values.contains(where: { !$0.devices.isEmpty }) else { return }
 
             for user in users {
-                guard let userID = user.id, let userDevices = devicesByUser[userID] else { continue }
+                guard let userID = user.id, let recipient = audience[userID] else { continue }
+                let userDevices = recipient.devices
                 // Already told about this brand by a watch alert, which said something
                 // more specific than this summary would.
                 guard !claimed.contains(Pair(user: userID, brand: brandID)) else { continue }
 
                 let profile = user.sizeProfile
                 let mode = modes[userID] ?? .everything
-                let relevant = events.filter { Self.isRelevant($0, to: profile, mode: mode) }
+                // They follow the brand, so a shop serving their country is being read: whether
+                // it is live is then only whether it has been read once.
+                let shop = storefronts.first { storefront in
+                    Storefronts.serves(
+                        countries: Set(storefront.countryCodes),
+                        to: user.country,
+                        enabled: app.storefrontCountries,
+                        isRead: true,
+                        baselined: storefront.sources.contains { $0.baselinedAt != nil }
+                    )
+                }?.id
+                let relevant = events.filter {
+                    $0.storefrontID == shop && Self.isRelevant($0, to: profile, mode: mode)
+                }
                 guard let copy = Self.summary(brand: brandName, events: relevant) else { continue }
                 // Only when the alert names one thing. A counted summary ("3 restocks and
                 // 2 new items") has no single product behind it, and picking one of them
@@ -729,10 +842,13 @@ actor Notifier {
                         deviceToken: token,
                         environment: device.environment,
                         title: copy.title,
-                        body: copy.body,
+                        body: recipient.labelled(copy.body),
                         brandID: brandID,
                         eventID: single,
-                        collapseID: brandID.uuidString
+                        // Per profile: the holder's alert about Kith and Anna's are about two
+                        // people, and one must not silently replace the other unread.
+                        collapseID: recipient.collapse(brandID.uuidString),
+                        profileID: recipient.profileID
                     )
                     do {
                         try await sender.send(message)

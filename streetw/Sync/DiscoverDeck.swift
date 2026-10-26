@@ -153,7 +153,10 @@ final class DiscoverDeck {
     /// Capped and ordered, oldest first. A set would be cheaper to test and impossible to
     /// trim, and an unbounded ledger is a `UserDefaults` key that grows forever on a feed
     /// designed to be scrolled.
-    private static let seenKey = "discoverSeen"
+    ///
+    /// Per profile, under `ProfileScope.key` — what one person scrolled past is not what
+    /// another has seen.
+    private let seenKey: String
     private static let seenLimit = 2000
 
     /// The ledger in memory, in order. Flushed to `UserDefaults` in batches — see `markSeen`.
@@ -166,7 +169,7 @@ final class DiscoverDeck {
 
     private func flushSeen() {
         guard unflushed > 0 else { return }
-        UserDefaults.standard.set(Array(seenOrder.suffix(Self.seenLimit)), forKey: Self.seenKey)
+        UserDefaults.standard.set(Array(seenOrder.suffix(Self.seenLimit)), forKey: seenKey)
         unflushed = 0
     }
 
@@ -184,8 +187,9 @@ final class DiscoverDeck {
     /// already read before today does not come back; what was read a minute ago stays put.
     private let seenAtLaunch: Set<String>
 
-    init() {
-        let stored = UserDefaults.standard.stringArray(forKey: Self.seenKey) ?? []
+    init(scope: ProfileScope = .holder) {
+        seenKey = scope.key("discoverSeen")
+        let stored = UserDefaults.standard.stringArray(forKey: seenKey) ?? []
         let ledger = Set(stored)
         seenOrder = stored
         seenSet = ledger

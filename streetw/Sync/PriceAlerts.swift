@@ -39,7 +39,10 @@ enum PriceAlerts {
     ///   as a push, so saying it here too would be the same news twice. Standalone, nothing
     ///   else will say it.
     @discardableResult
-    static func run(in context: ModelContext, serverPushesWatches: Bool) async -> Int {
+    ///
+    /// - Parameter scope: whose saves these are. Only the current profile's store is read, so a
+    ///   markdown on a save of another profile is said when that profile is next current.
+    static func run(in context: ModelContext, serverPushesWatches: Bool, scope: ProfileScope = .holder) async -> Int {
         let cutoff = Date().addingTimeInterval(-window)
         // Narrowed on `previousPriceAmount`, which is written only where a row becomes a
         // markdown, and the kind confirmed in Swift, because a marked-down product that later
@@ -75,7 +78,7 @@ enum PriceAlerts {
             guard allowed, saved.contains(product) || watched.contains(product),
                   told.insert(product).inserted
             else { continue }
-            await notify(drop, product: product)
+            await notify(drop, product: product, scope: scope)
             said += 1
         }
         try? context.save()
@@ -93,19 +96,19 @@ enum PriceAlerts {
         return status == .authorized || status == .provisional || status == .ephemeral
     }
 
-    private static func notify(_ drop: BrandUpdate, product: String) async {
+    private static func notify(_ drop: BrandUpdate, product: String, scope: ProfileScope) async {
         let content = UNMutableNotificationContent()
         content.title = drop.brand?.name ?? "Price drop"
         // The server's wording for a watched markdown, so the two paths read the same.
-        content.body = PriceChange.alert(
+        content.body = scope.labelled(PriceChange.alert(
             title: drop.title,
-            priceText: drop.priceText,
+            priceText: drop.priceLabel,
             percent: PriceChange.percentOff(
                 previous: drop.previousPriceAmount,
                 original: drop.originalPriceAmount,
                 now: drop.priceAmount
             )
-        )
+        ))
         content.sound = .default
         // One thread for the app — `PushGrouping.threadID`, as every alert here.
         content.threadIdentifier = PushGrouping.threadID
@@ -113,12 +116,15 @@ enum PriceAlerts {
         // the same reader works for a standalone row (`shopify:<id>`) and a server one.
         var info: [String: String] = ["externalID": drop.externalID]
         if let brandID = drop.brand?.remoteID { info["brandID"] = brandID.uuidString }
+        // Opens in the profile whose save it was, as a server push does.
+        if let profileID = scope.id { info["profileID"] = profileID.uuidString }
         content.userInfo = info
 
         // Per product, so a second cut replaces an alert about the first that is still
         // waiting to be seen.
         try? await UNUserNotificationCenter.current().add(
-            UNNotificationRequest(identifier: "price-\(product)", content: content, trigger: nil)
+            // And per profile: the same jacket saved by two people is two alerts.
+            UNNotificationRequest(identifier: scope.key("price-\(product)"), content: content, trigger: nil)
         )
     }
 }

@@ -60,8 +60,7 @@ public struct ShopifySource: SourceAdapter {
         }
 
         let shop = await Self.shopInfo(for: source.url, http: http)
-        let currency = shop?.currency ?? "USD"
-        let items = products.map { Self.item(from: $0, storeURL: source.url, currency: currency) }
+        let items = products.map { Self.item(from: $0, storeURL: source.url, currency: shop?.currency) }
 
         return FetchResult(
             items: items,
@@ -141,6 +140,16 @@ public struct ShopifySource: SourceAdapter {
     public struct ShopInfo: Sendable {
         public var name: String?
         public var currency: String?
+        /// The ISO countries the merchant says it delivers to, as `ships_to_countries`.
+        ///
+        /// Read so a storefront attached for a country can be checked against the shop's own
+        /// word before anybody there is served it: Palace's `www.` shop prices in GBP and
+        /// ships to five countries, and attaching it for Germany would put a shop nobody in
+        /// Germany can buy from in front of them. Empty when the shop publishes none — which
+        /// says nothing, and is never read as "ships nowhere". `/meta.json`'s own `country`
+        /// is deliberately not carried: it is where the *merchant* is (`eu.kith.com` says FR),
+        /// not who it sells to.
+        public var shipsTo: [String] = []
     }
 
     /// `/meta.json` gives the storefront's real display name and currency — the
@@ -181,7 +190,11 @@ public struct ShopifySource: SourceAdapter {
         let name = meta.name
             .flatMap { BrandNaming.withoutTail($0, host: host) }
             .flatMap { BrandNaming.looksLikeHandle($0) || !BrandNaming.isUsable($0, host: host) ? nil : $0 }
-        return ShopInfo(name: name, currency: meta.currency)
+        return ShopInfo(
+            name: name,
+            currency: CurrencyCode.normalized(meta.currency),
+            shipsTo: (meta.ships_to_countries ?? []).compactMap(CountryCode.normalized)
+        )
     }
 
     // MARK: - One product, by its page
@@ -227,9 +240,9 @@ public struct ShopifySource: SourceAdapter {
         // a product read out of one against the currency of the other prints a British
         // price with a dollar sign on it. The link stays the one that was shared, because
         // that is the page the person was looking at.
-        func currencyCode(from origin: URL) async -> String {
+        func currencyCode(from origin: URL) async -> String? {
             if let currency { return currency }
-            return await shopInfo(for: origin, http: http)?.currency ?? "USD"
+            return await shopInfo(for: origin, http: http)?.currency
         }
 
         if let live = await liveProduct(handle: handle, at: page, http: http) {
@@ -315,7 +328,10 @@ public struct ShopifySource: SourceAdapter {
         return handle.isEmpty ? nil : handle
     }
 
-    private static func item(from product: Product, storeURL: URL, currency: String) -> FetchedItem {
+    /// - Parameter currency: the shop's, when `/meta.json` said. The display text falls back to
+    ///   dollars as it always has, and the item carries nil rather than that guess.
+    private static func item(from product: Product, storeURL: URL, currency known: String?) -> FetchedItem {
+        let currency = known ?? "USD"
         let sizeAxis = product.axis(named: ["size", "shoe size", "sizes"])
         let colorAxis = product.axis(named: ["color", "colour", "colorway"])
         let imageForVariant = imageIndices(in: product.images ?? [])
@@ -356,6 +372,7 @@ public struct ShopifySource: SourceAdapter {
             // whose XL is not should read as the sale price, which is what a shopper
             // sees on the storefront too.
             priceAmount: priced.min,
+            currency: known,
             originalPriceAmount: priced.original,
             originalPriceText: priced.original.map { formatPrice(String($0), currency: currency) },
             isAvailable: variants.contains { $0.available },
@@ -471,6 +488,7 @@ private extension ShopifySource {
     struct Meta: Decodable {
         var name: String?
         var currency: String?
+        var ships_to_countries: [String]?
     }
 
     /// `/products/<handle>.js`. A different payload from `products.json` and given its own
@@ -540,7 +558,8 @@ private extension ShopifySource {
             options?.first { candidates.contains($0.name.lowercased()) }?.position
         }
 
-        func asItem(storeURL: URL, currency: String) -> FetchedItem {
+        func asItem(storeURL: URL, currency known: String?) -> FetchedItem {
+            let currency = known ?? "USD"
             let sizeAxis = axis(named: ["size", "shoe size", "sizes"])
             let colorAxis = axis(named: ["color", "colour", "colorway"])
 
@@ -583,6 +602,7 @@ private extension ShopifySource {
                 kind: .product,
                 priceText: mapped.compactMap(\.price).first,
                 priceAmount: priced.min,
+                currency: known,
                 originalPriceAmount: priced.original,
                 originalPriceText: priced.original.map { formatPrice(String($0), currency: currency) },
                 isAvailable: mapped.contains { $0.available },

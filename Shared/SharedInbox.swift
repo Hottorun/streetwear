@@ -20,11 +20,18 @@ struct SharedSave: Codable, Sendable, Hashable {
     var url: URL
     var title: String?
     var sharedAt: Date
+    /// The store that was current when this was shared — `ProfileScope.home`: a profile's
+    /// server user id, or the account's id for the holder of an Apple ID that has a store of
+    /// its own — or nil for `default.store`, which is every share an older extension wrote.
+    /// Optional, so those still decode. The app files a share only into this store, and never
+    /// while it belongs to an account that is not signed in. See `docs/profiles.md`.
+    var profileID: UUID?
 
-    init(url: URL, title: String? = nil, sharedAt: Date = Date()) {
+    init(url: URL, title: String? = nil, sharedAt: Date = Date(), profileID: UUID? = nil) {
         self.url = url
         self.title = title
         self.sharedAt = sharedAt
+        self.profileID = profileID
     }
 }
 
@@ -90,7 +97,43 @@ enum SharedInbox {
         try? FileManager.default.removeItem(at: id)
     }
 
+    /// Drops every waiting share filed for one of `owners` — the stores of an account whose
+    /// data is being removed from the phone. Nil is the store the holder had before the field.
+    static func discard(for owners: Set<UUID?>) {
+        for item in pending() where owners.contains(item.save.profileID) {
+            remove(item.id)
+        }
+    }
+
     /// Whether the App Group is wired up at all. Used to show an honest error in the
     /// extension instead of a success animation over a dropped save.
     static var isAvailable: Bool { directory != nil }
+
+    // MARK: - The current profile
+
+    /// Which profile a share belongs to, written by the app on every switch and read by the
+    /// extension at share time.
+    ///
+    /// **A file in the group container, not `UserDefaults(suiteName:)`.** The privacy manifest
+    /// says no suite exists, and the container is already the one channel between the two
+    /// targets. Absent or unreadable means the holder, which is every install before profiles.
+    private static var profileFile: URL? {
+        FileManager.default
+            .containerURL(forSecurityApplicationGroupIdentifier: appGroupID)?
+            .appendingPathComponent("current-profile", isDirectory: false)
+    }
+
+    static func setCurrentProfile(_ id: UUID?) {
+        guard let file = profileFile else { return }
+        if let id {
+            try? Data(id.uuidString.utf8).write(to: file, options: .atomic)
+        } else {
+            try? FileManager.default.removeItem(at: file)
+        }
+    }
+
+    static func currentProfile() -> UUID? {
+        guard let file = profileFile, let data = try? Data(contentsOf: file) else { return nil }
+        return UUID(uuidString: String(decoding: data, as: UTF8.self))
+    }
 }

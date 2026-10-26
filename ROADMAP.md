@@ -258,39 +258,88 @@ Mostly things that hurt people using 1.0 today.
 Prototype the new feed and Shop tab on the demo catalogue first, beside the current app, before
 rebuilding anything.
 
-- [ ] **Three tabs and a You button.** *Feed* — what happened at your shops. *Shop* — Discover with
+- [x] **Three tabs and a You button.** *Feed* — what happened at your shops. *Shop* — Discover with
       the AI search on top and daily picks when the field is empty. *Saved* — Inspiration,
       Wardrobe and **Fits**. Your avatar, top right on every tab, opens *You*: taste, sizes,
       location, following, profiles, credits, sign-in, settings. The Style tab goes: kept and
       suggested fits move to Saved › Fits, "what's missing" drives Shop's picks, "your taste"
       moves to You. Today a fit can be started from three tabs and two detail pages and lands in
       one of two editors; it should start in one place and land in one.
-- [ ] **One picture per event.** Photograph, brand, one label — "NEW", "BACK IN YOUR SIZE",
+- [x] **One picture per event.** Photograph, brand, one label — "NEW", "BACK IN YOUR SIZE",
       "−30%", "SALE 25% OFF · CODE AUTUMN", "DROPS FRIDAY" — and the price. A drop of many pieces
       is one card with a few photographs and "24 pieces". Today's first screen shows five counters
       and markers and three lines of links before its one photograph, whose name and price sit
       under the tab bar.
-- [ ] **"Since you were last here"**, a line rather than per-brand unread state.
-- [ ] **One filter row** — All · Drops · Restocks · Sales · Upcoming · Brand ▾ — replacing the
+- [x] **"Since you were last here"**, a line rather than per-brand unread state.
+- [x] **One filter row** — All · Drops · Restocks · Sales · Upcoming · Brand ▾ — replacing the
       brand rail and the two unlabelled icons (the calendar, and markdowns with its system badge).
-- [ ] **Onboarding and App Store copy for all of fashion.** The starter pack and the listing say
+- [x] **Onboarding and App Store copy for all of fashion.** The starter pack and the listing say
       streetwear.
+
+*Done* in PR #2 (merged 2026-10-26): Feed, Shop and Saved with You behind the avatar; the grid of
+event cards with bursts and releases as one card; the "since you were last here" line
+(`BrandUpdate.arrivedAt`, `FeedVisit`); the filter row; Shop's local search and daily picks; one
+fit editor; the starter pack of six womenswear and six menswear shops. See
+`docs/design-decisions.md`, `docs/discover.md` and `docs/fits.md`.
 
 ### Phase 2 — accounts and paying
 
-- [ ] **Sign in with Apple, optional until it is needed.** StoreKit cannot restore consumable
+- [x] **Sign in with Apple, optional until it is needed.** StoreKit cannot restore consumable
       purchases, so a credit balance must live on the server under an identity that survives a
       reinstall — and today every reinstall is a new user. Required only for credits and profiles.
       Existing follows, sizes and watches move onto the account at first sign-in, and accounts can
       be deleted in the app, as Apple requires. Planned in `BACKEND.md` from the start.
-- [ ] **Profiles**, each with its own sizes, gender filter, follows, saves and taste — one server
+      *Done:* the `accounts` table and `users.account_id`. `POST /v1/account/apple`: the first
+      sign-in adopts the device's user, and a later one merges the anonymous user into the
+      account's in one transaction. `DELETE /v1/account` revokes Apple's token when a key is
+      set. `GET`/`POST /admin/accounts` hold the owner's unlimited-credits flag. On You, the
+      section is hidden standalone and whenever the server says it cannot verify. The owner
+      approved swift-crypto (`_CryptoExtras`) and swift-certificates, and the identity-token
+      verifier is real: RS256 against Apple's cached JWKS, re-read on an unknown `kid` at most
+      once per five minutes, then the claim checks (see `docs/server.md`).
+      **Before it ships:**
+      - Turn on the Sign in with Apple capability for the App ID.
+      - Set `SIWA_KEY_ID`, `SIWA_TEAM_ID` and `SIWA_PRIVATE_KEY` on Railway.
+      - Name the account in the privacy policy.
+- [x] **Profiles**, each with its own sizes, gender filter, follows, saves and taste — one server
       user per profile under the account. Alerts are labelled, and each profile can turn its own
       off.
-- [ ] **The location setting** and the region-aware price model (see *Decided*), defaulting to the
+      *Done:* `users.display_name` and `users.alerts_enabled`; `/v1/account/profiles` to list,
+      add, rename, switch alerts and delete (the holder goes only with the account); every other
+      route acts for the profile `X-Profile-ID` names, checked against the device's account, and
+      is unchanged without it. `Notifier.audience` sends every profile's alerts to the account's
+      phones, "For Anna: …" when it is not the holder's, collapsed per profile. On the phone, one
+      SwiftData store and one set of `UserDefaults` keys per profile, the holder's being the ones
+      that already existed; Profiles on You when signed in; shares, local alerts and reminders
+      follow the current profile. Credits and the location are the account's: every profile spends
+      from one ledger, and a country set by any profile is the whole account's.
+      See `docs/profiles.md`.
+- [x] **The location setting** and the region-aware price model (see *Decided*), defaulting to the
       phone's region.
-- [ ] **Cost metering and credits.** Every AI action records its real cost; consumable packs via
+      *Done:* You › Location, the phone's region unless chosen, held on the server as
+      `users.country`. A brand's main shop stays the brand row and every existing source, product
+      and event is it (`storefront_id` null — no backfill, no re-poll, no baseline spent); a
+      country's shop is a `storefronts` row attached by hand (`POST /admin/brands/:id/storefronts`)
+      for a set of countries — `eu.kith.com` is one shop for 48 — polled once while any of them is
+      in `STOREFRONT_COUNTRIES` and has a follower of the brand, and each person is served one
+      shop per brand in the feed, a brand's feed, Discover, every brand on the wire and pushes.
+      Every stored price carries its currency, nothing converts, and the app prints each row in
+      its own currency in the reader's locale. None switched on yet. Gaps: sale detection and
+      Shopify Markets subfolders are main-shop only. See `docs/server.md`.
+- [x] **Cost metering and credits.** Every AI action records its real cost; consumable packs via
       StoreKit; usage shown ("this month: 23 searches"); prices set after a few weeks of
       measurement.
+      *Done:* `CostMeter` writes numbers only to `ai_costs`, read back per action with p50/p90 at
+      `GET /admin/costs`; `credit_ledger` is the balance, spent under a per-account row lock, with
+      a lazy free monthly allowance, the owner's unlimited switch and monthly cost cap; StoreKit
+      purchases credited once per transaction at `POST /v1/credits/purchases`, refunds from App
+      Store Server Notifications V2; Credits on You for signed-in accounts, with a local
+      `streetw.storekit`. The StoreKit verifier is real, on the dependencies the owner approved:
+      the `x5c` chain to a compiled-in Apple Root CA - G3 with Apple's marker OIDs, valid at
+      `signedDate`, ES256 over the leaf's key, for purchases and for each signed part of a
+      notification. See `docs/credits.md`. **Before it ships:** create the three products in App Store Connect; give it the
+      notifications URL; set `CREDITS_ALLOW_SANDBOX=true` for review; set the prices and the
+      allowance from a few weeks of `/admin/costs` once Phase 4 runs.
 - [ ] **The new privacy policy and App Store privacy label**, before any of the above ships.
 
 ### Phase 3 — the catalogue and search behind the AI

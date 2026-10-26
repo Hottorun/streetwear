@@ -17,6 +17,11 @@ enum APIError: LocalizedError {
     /// Spending the token on that throws away a working identity and, because
     /// `POST /v1/devices` mints a device with no follows, the follow list with it.
     case forbidden(String?)
+    /// The request named a profile this device may no longer act for — deleted on another
+    /// phone, the account deleted, or the device re-registered. Told apart from `.forbidden`
+    /// by the server's exact reason (`ProfileHeader.refusal`), because the repair is to fall
+    /// back to the holder's profile and that must not happen on a 403 from an edge.
+    case profileRefused
     case server(Int, String?)
     case transport(String)
 
@@ -25,6 +30,7 @@ enum APIError: LocalizedError {
         case .notConfigured: "No server URL set"
         case .unauthorized: "This device isn't registered with the server"
         case .forbidden(let reason): reason.map { "\($0) (403)" } ?? "Dropwall refused the request (403)"
+        case .profileRefused: "This profile is no longer on your account"
         case .server(let code, let reason): reason.map { "\($0) (\(code))" } ?? "Server error \(code)"
         case .transport(let message): message
         }
@@ -46,8 +52,31 @@ final class ServerSettings {
     /// and follows, but it is still a credential — Keychain is the right home once the
     /// app does anything more sensitive.
     var token: String? {
-        didSet { UserDefaults.standard.set(token, forKey: "serverToken") }
+        didSet {
+            UserDefaults.standard.set(token, forKey: "serverToken")
+            // An account hangs off the device the token names. A new token is a new
+            // anonymous device, whatever the old one was signed in as.
+            if token != oldValue { account = nil }
+        }
     }
+
+    /// The Sign in with Apple account this device is on, as the server last said. Nil for
+    /// an anonymous device. A remembered answer, so the You page can draw without a
+    /// round trip; `RemoteSync.refreshAccount` corrects it, which is what notices a
+    /// deletion made from another phone.
+    var account: AccountDTO? {
+        didSet {
+            UserDefaults.standard.set(account.flatMap { try? JSONEncoder().encode($0) }, forKey: "serverAccount")
+            if account?.id != oldValue?.id { accountChanged?() }
+        }
+    }
+
+    /// Told when the account changes — a sign-in, a deletion, or a token the server no longer
+    /// knows, which re-registers as nobody — so `ProfileStore` can move the app onto a store
+    /// the new account may see. Without it a lapsed token left the phone signed out on the
+    /// previous account's own store, and its first sync re-followed that account's brands on
+    /// the new anonymous device.
+    @ObservationIgnored var accountChanged: (() -> Void)?
 
     /// The deployed server. There is exactly one, and it is not user-configurable.
     ///
@@ -90,7 +119,18 @@ final class ServerSettings {
         // value only wins while it is still one we ship — see `legacyBaseURLStrings`.
         let isStale = stored.isEmpty || Self.legacyBaseURLStrings.contains(stored)
         baseURLString = isStandalone ? "" : (isStale ? Self.defaultBaseURLString : stored)
-        token = UserDefaults.standard.string(forKey: "serverToken")
+        // **Both read before either is assigned, and the account after the token.** On an
+        // `@Observable` class an assignment here goes through the generated setter, `didSet`
+        // included, once every stored property has a value — so the token's "a new token is a
+        // new device" rule ran on every launch, cleared the account and deleted its key before
+        // the next line could read it. A signed-in phone launched as signed out until You
+        // asked the server again, and the current profile, which needs an account, fell back
+        // to the holder on every launch.
+        let storedToken = UserDefaults.standard.string(forKey: "serverToken")
+        let storedAccount = UserDefaults.standard.data(forKey: "serverAccount")
+            .flatMap { try? JSONDecoder().decode(AccountDTO.self, from: $0) }
+        token = storedToken
+        account = storedAccount
 
         // Assigning the stored property in `init` bypasses `didSet`, so persist here.
         if !baseURLString.isEmpty {
@@ -112,6 +152,10 @@ final class ServerSettings {
 struct StreetwAPI: Sendable {
     let baseURL: URL
     let token: String?
+    /// The profile every request acts for, sent as `ProfileHeader.name`. Nil for the holder —
+    /// and for every install that never signed in — which sends no header at all, so the
+    /// requests are byte for byte what they were before profiles. See `docs/profiles.md`.
+    var profileID: UUID? = nil
 
     private static let session: URLSession = {
         let config = URLSessionConfiguration.default
@@ -137,6 +181,36 @@ struct StreetwAPI: Sendable {
 
     func updateDevice(_ body: UpdateDevice) async throws {
         try await sendVoid(path: "v1/devices/me", method: "PATCH", body: body)
+    }
+
+    func account() async throws -> AccountStatus {
+        try await send(path: "v1/account", method: "GET", body: Optional<Never>.none)
+    }
+
+    func signInWithApple(_ body: AppleSignIn) async throws -> AccountSession {
+        try await send(path: "v1/account/apple", method: "POST", body: body)
+    }
+
+    /// Deletes the account and every device on it, this one included — the token this was
+    /// sent with stops working as it answers.
+    func deleteAccount() async throws {
+        try await sendVoid(path: "v1/account", method: "DELETE", body: Optional<Never>.none)
+    }
+
+    func profiles() async throws -> [ProfileDTO] {
+        try await send(path: "v1/account/profiles", method: "GET", body: Optional<Never>.none)
+    }
+
+    func createProfile(_ body: CreateProfile) async throws -> ProfileDTO {
+        try await send(path: "v1/account/profiles", method: "POST", body: body)
+    }
+
+    func updateProfile(id: UUID, _ body: UpdateProfile) async throws -> ProfileDTO {
+        try await send(path: "v1/account/profiles/\(id.uuidString)", method: "PATCH", body: body)
+    }
+
+    func deleteProfile(id: UUID) async throws {
+        try await sendVoid(path: "v1/account/profiles/\(id.uuidString)", method: "DELETE", body: Optional<Never>.none)
     }
 
     func discover(_ body: DiscoverBrand) async throws -> BrandDTO {
@@ -266,6 +340,22 @@ struct StreetwAPI: Sendable {
         try await send(path: "v1/usage", method: "POST", body: report)
     }
 
+    /// The balance, this month's usage and the packs — or `signedIn: false` and nothing else.
+    /// See `CreditStore`.
+    func credits() async throws -> CreditsSummary {
+        try await send(path: "v1/credits", method: "GET", body: Optional<Never>.none)
+    }
+
+    /// Hands one StoreKit transaction to the server, exactly as StoreKit signed it. Any 2xx
+    /// is final; anything else leaves the transaction to be posted again.
+    func postPurchase(signedTransaction: String) async throws -> CreditPurchaseReceipt {
+        try await send(
+            path: "v1/credits/purchases",
+            method: "POST",
+            body: CreditPurchase(signedTransaction: signedTransaction)
+        )
+    }
+
     /// One brand's recent history, outside the feed cursor. See the route's own note for
     /// why this cannot be a `since` on `/v1/feed`.
     func brandFeed(brandID: UUID, limit: Int = 60) async throws -> FeedResponse {
@@ -329,6 +419,9 @@ struct StreetwAPI: Sendable {
         if authenticated {
             guard let token else { throw APIError.unauthorized }
             request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            if let profileID {
+                request.setValue(profileID.uuidString, forHTTPHeaderField: ProfileHeader.name)
+            }
         }
 
         let data: Data
@@ -351,7 +444,9 @@ struct StreetwAPI: Sendable {
         case 401:
             throw APIError.unauthorized
         case 403:
-            throw APIError.forbidden(reason())
+            let said = reason()
+            if profileID != nil, said == ProfileHeader.refusal { throw APIError.profileRefused }
+            throw APIError.forbidden(said)
         default:
             throw APIError.server(code, reason())
         }

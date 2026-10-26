@@ -44,15 +44,47 @@ enum DropReminders {
     /// without touching a watch's — `WatchNotifier` schedules `watch-<uuid>` into the same
     /// notification centre, and a blanket `removeAllPendingNotificationRequests()` would
     /// take those with it.
-    private static let prefix = "drop-"
+    ///
+    /// **And per profile.** Each profile's planned drops are in its own store, so each rewrite
+    /// may only clear its own: the holder keeps `drop-`, unchanged from before profiles, and a
+    /// profile's are `drop@<id>-`, which the holder's prefix does not match. Without it,
+    /// switching to Anna would cancel every reminder the holder had set.
+    ///
+    /// By store (`ProfileScope.home`), not by server user: the holder of a second Apple ID has
+    /// a store of its own and sends no header, and sharing `drop-` with the first account's
+    /// holder would have each rewrite cancel the other's.
+    private static func reminderPrefix(for scope: ProfileScope) -> String {
+        scope.home.map { "drop@\($0.uuidString)-" } ?? "drop-"
+    }
+
+    /// Cancels every pending reminder whose store is not in `homes` — nil being
+    /// `default.store`. **Another Apple ID's reminders do not fire while it is hidden**: "Supreme
+    /// drops today" on a phone somebody else is signed into is the first account's calendar
+    /// read out to them. They are a rewrite from each store, so they come back the moment the
+    /// account signs in again (`ProfileStore.signIn`).
+    static func retain(_ homes: Set<UUID?>) async {
+        let centre = UNUserNotificationCenter.current()
+        let stale = await centre.pendingNotificationRequests().map(\.identifier).filter { id in
+            if id.hasPrefix("drop-") { return !homes.contains(nil) }
+            guard id.hasPrefix("drop@"), let home = UUID(uuidString: String(id.dropFirst(5).prefix(36))) else {
+                return false
+            }
+            return !homes.contains(home)
+        }
+        guard !stale.isEmpty else { return }
+        centre.removePendingNotificationRequests(withIdentifiers: stale)
+        log.info("cancelled \(stale.count) reminders of a store that is not shown")
+    }
 
     /// Re-schedules every reminder from the current set of planned drops.
     ///
     /// Call after anything that changes one. Cheap and idempotent by construction: it clears
     /// what it owns and re-adds from the store, so calling it twice is the same as calling
     /// it once and calling it after a crash is a repair.
-    static func refresh(in context: ModelContext) async {
+    static func refresh(in context: ModelContext, scope: ProfileScope? = nil) async {
+        let scope = scope ?? ProfileScope.active
         let centre = UNUserNotificationCenter.current()
+        let prefix = reminderPrefix(for: scope)
 
         // Never *asks*. Permission is requested from Settings and from the add sheet, both
         // behind an explicit action; prompting here would put a system alert in front of
@@ -60,11 +92,11 @@ enum DropReminders {
         // schedule and the drop still shows on Upcoming with its countdown, which is the
         // honest degradation.
         guard await centre.notificationSettings().authorizationStatus != .denied else {
-            await clear(in: centre)
+            await clear(prefix, in: centre)
             return
         }
 
-        await clear(in: centre)
+        await clear(prefix, in: centre)
 
         let drops = (try? context.fetch(FetchDescriptor<PlannedDrop>())) ?? []
         let now = Date()
@@ -82,8 +114,9 @@ enum DropReminders {
                     id: "\(prefix)day-\(drop.id.uuidString)",
                     at: morning,
                     title: drop.brandName.isEmpty ? "Dropping today" : drop.brandName,
-                    body: "\(drop.label) drops today at \(time.string(from: drop.releaseAt)).",
+                    body: scope.labelled("\(drop.label) drops today at \(time.string(from: drop.releaseAt))."),
                     brandID: drop.brand?.remoteID,
+                    profileID: scope.id,
                     to: centre
                 )
                 scheduled += 1
@@ -94,8 +127,9 @@ enum DropReminders {
                     id: "\(prefix)release-\(drop.id.uuidString)",
                     at: drop.releaseAt,
                     title: drop.brandName.isEmpty ? "Dropping now" : drop.brandName,
-                    body: "\(drop.label) is dropping now.",
+                    body: scope.labelled("\(drop.label) is dropping now."),
                     brandID: drop.brand?.remoteID,
+                    profileID: scope.id,
                     to: centre
                 )
                 scheduled += 1
@@ -109,6 +143,7 @@ enum DropReminders {
     /// Used on delete, where the row is gone from the store before `refresh` could read it —
     /// and calling it is belt-and-braces, since `refresh` clears everything it owns anyway.
     static func cancel(_ drop: PlannedDrop) {
+        let prefix = reminderPrefix(for: ProfileScope.active)
         UNUserNotificationCenter.current().removePendingNotificationRequests(
             withIdentifiers: [
                 "\(prefix)day-\(drop.id.uuidString)",
@@ -117,7 +152,7 @@ enum DropReminders {
         )
     }
 
-    private static func clear(in centre: UNUserNotificationCenter) async {
+    private static func clear(_ prefix: String, in centre: UNUserNotificationCenter) async {
         let pending = await centre.pendingNotificationRequests()
             .map(\.identifier)
             .filter { $0.hasPrefix(prefix) }
@@ -131,6 +166,7 @@ enum DropReminders {
         title: String,
         body: String,
         brandID: UUID?,
+        profileID: UUID?,
         to centre: UNUserNotificationCenter
     ) async {
         let content = UNMutableNotificationContent()
@@ -148,7 +184,11 @@ enum DropReminders {
         // The **remote** id, because that is the one `ContentView.follow` resolves against;
         // the local `Brand.id` would find nothing and silently drop the tap on the feed.
         // Standalone brands have none, and there the tap lands on the feed, correctly.
-        if let brandID { content.userInfo = ["brandID": brandID.uuidString] }
+        var info: [String: String] = [:]
+        if let brandID { info["brandID"] = brandID.uuidString }
+        // Opens in the profile whose calendar it was.
+        if let profileID { info["profileID"] = profileID.uuidString }
+        if !info.isEmpty { content.userInfo = info }
 
         let components = Calendar.current.dateComponents(
             [.year, .month, .day, .hour, .minute], from: date

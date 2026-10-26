@@ -7,8 +7,9 @@ there for a human reading it and nothing depends on them rendering.
 If the build is rejected, the same text is the starting point for the reply in **Resolution
 Center** — but answer the specific guideline they cite rather than re-sending this whole thing.
 
-**Demo account:** leave the "Sign-in required" box unchecked. There is no account, no login and
-no paywall; every screen is reachable on a fresh install.
+**Demo account:** leave the "Sign-in required" box unchecked. Signing in is optional (Sign in
+with Apple, which needs no demo credentials), there is no paywall, and every screen is reachable
+on a fresh install.
 
 **Keep this file in step with the app.** It makes factual claims — which endpoints are read,
 that the app has no checkout of its own, that Instagram is never fetched — and each one is enforced in
@@ -23,12 +24,33 @@ Dropwall watches clothing brands and shops — menswear and womenswear, any kind
 for new releases, restocks, sales and price drops, and lets you keep the pieces you care about
 in a private local archive.
 
-There is no account, no sign-in and no purchase. On first launch you are offered a short list
+Nothing requires an account and nothing is sold. On first launch you are offered a short list
 of suggested brands — tapping two or three of them is enough to populate the feed, and the
 Feed, Shop and Saved tabs, and the You page behind the person icon at the top right, are all
 reachable immediately. If the feed looks empty, it is
 because no brand has published anything in the last few minutes; the brand's own page shows
 its full catalogue right away.
+
+Shop's search box searches the products already on the phone from the shops the user follows,
+and says so under the field; it is not a web search and no model is involved.
+
+SIGN IN WITH APPLE, PROFILES AND ACCOUNT DELETION
+
+Sign in with Apple is offered on the You page and is optional. It keeps a user's follows, sizes
+and alerts across a reinstall or a second phone, and it is required only to add profiles —
+"For Anna" — for another person the user shops for, each with their own follows, sizes, saves
+and alerts. No name and no email address is requested from Apple. Sign in with Apple is the only
+sign-in method.
+
+The account can be deleted in the app: You → Account → Delete account. That deletes the account,
+every profile on it and every server-side record linked to it, and revokes the app's Sign in with
+Apple token. A single profile can be deleted the same way from its own row.
+
+LOCATION
+
+You → Location is a country setting, defaulting to the phone's region. Where a brand runs a
+separate shop for that country, the feed shows that shop's products and prices. It is a country
+chosen in the app, not the device's location: the app does not use Location Services.
 
 WHERE THE DATA COMES FROM
 
@@ -83,13 +105,15 @@ the phone is limited to refreshing what the server has already collected.
 
 PRIVACY
 
-There is no account and no personal identifier of any kind. The server holds an anonymous
+Without signing in there is no personal identifier of any kind. The server holds an anonymous
 device row, the list of brands a user follows, the products they have asked to be alerted
-about, and their size and gender preferences — the last of these only so that a restock alert
-in a size they do not wear is never sent.
+about, their size and gender preferences — the last of these only so that a restock alert in a
+size they do not wear is never sent — and the country they shop in. A user who signs in adds
+Apple's per-app identifier for them, and the names they give any profiles; those are declared as
+User ID and Name.
 
-Saved items, boards, outfits, notes, the written style statement and the taste profile used
-for recommendations all stay on the device. Recommendations are computed locally: the server
+Saved items, boards, outfits, notes, Shop searches, the written style statement and the taste
+profile used for recommendations all stay on the device, for every profile. Recommendations are computed locally: the server
 sends candidate brands and the comparison happens on the phone precisely so that what a user
 saves never has to leave it.
 

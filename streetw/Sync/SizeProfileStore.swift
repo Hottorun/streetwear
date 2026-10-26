@@ -9,15 +9,18 @@ import SwiftUI
 @MainActor
 @Observable
 final class SizeProfileStore {
-    private static let key = "sizeProfile"
+    /// Whose sizes: the holder's under the key 1.0 wrote, a profile's under its own. See
+    /// `ProfileScope.key`.
+    private let key: String
 
     var profile: SizeProfile {
         didSet { save() }
     }
 
-    init() {
+    init(scope: ProfileScope = .holder) {
+        key = scope.key("sizeProfile")
         let defaults = UserDefaults.standard
-        if let data = defaults.data(forKey: Self.key),
+        if let data = defaults.data(forKey: key),
            let decoded = try? JSONDecoder().decode(SizeProfile.self, from: data) {
             profile = decoded
         } else {
@@ -27,7 +30,7 @@ final class SizeProfileStore {
 
     private func save() {
         guard let data = try? JSONEncoder().encode(profile) else { return }
-        UserDefaults.standard.set(data, forKey: Self.key)
+        UserDefaults.standard.set(data, forKey: key)
     }
 
     func toggleApparel(_ size: String) {

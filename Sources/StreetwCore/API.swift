@@ -95,17 +95,23 @@ public struct RegisterDevice: Codable, Sendable {
     public var environment: String?
     public var locale: String?
     public var sizes: SizePayload?
+    /// The country somebody shops in, as `UpdateDevice.country` reads it — sent at
+    /// registration too, so the very first feed is already from the right shop. Optional:
+    /// 1.0 sends none, and none is the main shop.
+    public var country: String?
 
     public init(
         apnsToken: String? = nil,
         environment: String? = nil,
         locale: String? = nil,
-        sizes: SizePayload? = nil
+        sizes: SizePayload? = nil,
+        country: String? = nil
     ) {
         self.apnsToken = apnsToken
         self.environment = environment
         self.locale = locale
         self.sizes = sizes
+        self.country = country
     }
 }
 
@@ -116,11 +122,27 @@ public struct UpdateDevice: Codable, Sendable {
     /// tokens from different APNs environments, and a token is only valid at its own.
     public var environment: String?
     public var sizes: SizePayload?
+    /// Which country's shops this person is served — an ISO 3166 code, the phone's region
+    /// unless they chose another (`users.country`).
+    ///
+    /// Held server-side for the reason the sizes are: the server decides which of a brand's
+    /// storefronts a feed and a push come from, and can only do that if it knows. Three
+    /// readings, and the difference between the first two is the point: **absent** changes
+    /// nothing — every caller that is not the location setting sends none — while an **empty
+    /// string** clears it back to the main shop. A code the server cannot read is ignored
+    /// rather than refused, because this body is the liveness check every launch makes.
+    public var country: String?
 
-    public init(apnsToken: String? = nil, environment: String? = nil, sizes: SizePayload? = nil) {
+    public init(
+        apnsToken: String? = nil,
+        environment: String? = nil,
+        sizes: SizePayload? = nil,
+        country: String? = nil
+    ) {
         self.apnsToken = apnsToken
         self.environment = environment
         self.sizes = sizes
+        self.country = country
     }
 }
 
@@ -191,6 +213,14 @@ public struct WatchDTO: Codable, Sendable, Hashable, Identifiable {
     /// Set once it has fired, so a client can show it as satisfied rather than pending.
     public var firedAt: Date?
     public var firedSizes: [String]
+    /// What the watched product looks like, so a phone that has never seen it — a reinstall
+    /// signing in, a profile opened on a second phone — can put the watch back on its
+    /// Watching page as a product rather than a bare id. Nil from a server that predates
+    /// them; the app then restores only watches on products it already holds.
+    public var productURL: String?
+    public var imageURLs: [String]?
+    public var priceText: String?
+    public var variants: [VariantInfo]?
 
     public init(
         id: UUID,
@@ -201,7 +231,11 @@ public struct WatchDTO: Codable, Sendable, Hashable, Identifiable {
         color: String? = nil,
         createdAt: Date = Date(),
         firedAt: Date? = nil,
-        firedSizes: [String] = []
+        firedSizes: [String] = [],
+        productURL: String? = nil,
+        imageURLs: [String]? = nil,
+        priceText: String? = nil,
+        variants: [VariantInfo]? = nil
     ) {
         self.id = id
         self.brandID = brandID
@@ -212,6 +246,10 @@ public struct WatchDTO: Codable, Sendable, Hashable, Identifiable {
         self.createdAt = createdAt
         self.firedAt = firedAt
         self.firedSizes = firedSizes
+        self.productURL = productURL
+        self.imageURLs = imageURLs
+        self.priceText = priceText
+        self.variants = variants
     }
 }
 
@@ -301,6 +339,118 @@ public struct DeviceResponse: Codable, Sendable {
     }
 }
 
+// MARK: - Accounts
+
+/// `POST /v1/account/apple` — what `ASAuthorizationAppleIDCredential` hands the app.
+///
+/// **`nonce` is the raw value, not the hash.** The app puts `SHA256(nonce)` on the Apple
+/// request, Apple copies that into the identity token, and the server hashes what it is sent
+/// here and compares. Sending the hash instead would let anybody holding a token replay it:
+/// the claim is printed in the token itself, so knowing it proves nothing.
+///
+/// `authorizationCode` is optional because the code is only good for one exchange and the
+/// server only needs it to get the refresh token deletion will revoke — a deployment with no
+/// Sign in with Apple key ignores it.
+public struct AppleSignIn: Codable, Sendable {
+    public var identityToken: String
+    public var authorizationCode: String?
+    public var nonce: String
+
+    public init(identityToken: String, authorizationCode: String?, nonce: String) {
+        self.identityToken = identityToken
+        self.authorizationCode = authorizationCode
+        self.nonce = nonce
+    }
+}
+
+/// An account as its holder sees it. Deliberately nothing Apple said about the person — no
+/// email, no name — because the server stores neither, and the opaque `sub` is a lookup key
+/// rather than something to show anybody.
+public struct AccountDTO: Codable, Sendable, Hashable, Identifiable {
+    public var id: UUID
+    public var createdAt: Date?
+
+    public init(id: UUID, createdAt: Date?) {
+        self.id = id
+        self.createdAt = createdAt
+    }
+}
+
+/// What a sign-in did.
+public struct AccountSession: Codable, Sendable {
+    public var account: AccountDTO
+    /// This sign-in made the account.
+    public var isNew: Bool
+    /// This device's anonymous follows, watches and sizes were folded into an account that
+    /// already had a user — the reinstall, or the second phone.
+    public var merged: Bool
+    /// The account's size profile after the merge, which the app adopts. Without it the next
+    /// launch sync would push this phone's profile — empty, on a reinstall — over the one the
+    /// account kept, because the size push is destructive by design.
+    public var sizes: SizePayload
+
+    public init(account: AccountDTO, isNew: Bool, merged: Bool, sizes: SizePayload) {
+        self.account = account
+        self.isNew = isNew
+        self.merged = merged
+        self.sizes = sizes
+    }
+}
+
+/// `GET /v1/account` — whether the caller's device is signed in. `account` is nil for an
+/// anonymous device, which is every device until somebody signs in.
+public struct AccountStatus: Codable, Sendable {
+    public var account: AccountDTO?
+    /// Whether this server can verify a Sign in with Apple token at all. The app offers the
+    /// button only when it can: a deployment without a verifier refuses every sign-in, and a
+    /// button that always fails is worse than no button. Optional so the app reads a server
+    /// that predates it as "no".
+    public var signInAvailable: Bool?
+
+    public init(account: AccountDTO?, signInAvailable: Bool? = nil) {
+        self.account = account
+        self.signInAvailable = signInAvailable
+    }
+}
+
+/// `POST /admin/accounts/:id/credits`. `monthlyCostCapMicros` nil clears the cap.
+public struct SetAccountCredits: Codable, Sendable {
+    public var unlimited: Bool
+    public var monthlyCostCapMicros: Int?
+
+    public init(unlimited: Bool, monthlyCostCapMicros: Int? = nil) {
+        self.unlimited = unlimited
+        self.monthlyCostCapMicros = monthlyCostCapMicros
+    }
+}
+
+/// One row of `GET /admin/accounts`: enough for the owner to find their own account right
+/// after signing in, and nothing about anybody that the operator does not already hold.
+public struct AdminAccount: Codable, Sendable, Hashable, Identifiable {
+    public var id: UUID
+    public var createdAt: Date?
+    public var userCount: Int
+    public var deviceCount: Int
+    public var unlimited: Bool
+    public var monthlyCostCapMicros: Int?
+
+    public init(
+        id: UUID,
+        createdAt: Date?,
+        userCount: Int,
+        deviceCount: Int,
+        unlimited: Bool,
+        monthlyCostCapMicros: Int?
+    ) {
+        self.id = id
+        self.createdAt = createdAt
+        self.userCount = userCount
+        self.deviceCount = deviceCount
+        self.unlimited = unlimited
+        self.monthlyCostCapMicros = monthlyCostCapMicros
+    }
+}
+
 /// How one place a brand is watched is doing, as far as a client needs to know.
 ///
 /// Deliberately *not* `BrandSource`, even though the server holds one of those per row and
@@ -348,6 +498,39 @@ public struct BrandSourceDTO: Codable, Sendable, Hashable, Identifiable {
     public var isAutomatic: Bool { sourceKind?.isAutomatic ?? false }
 }
 
+/// The shop of a brand's that serves the caller, when it is not the brand's main one.
+///
+/// Big retailers run a shop per country, and the server serves a person the one for their
+/// country where the brand has one and it is being read — see `docs/server.md`. This is what
+/// lets a brand page say which shop it is showing. Nil on `BrandDTO` means the main shop,
+/// which is what every brand is to 1.0, to anybody whose country has no shop of its own, and
+/// to every brand that runs one shop for everybody.
+public struct StorefrontDTO: Codable, Sendable, Hashable {
+    /// ISO 3166-1 alpha-2: one of `countries` — the only one, for a shop that serves one.
+    /// Read `servedCountries` to say who it serves.
+    public var country: String
+    public var url: String
+    /// ISO 4217, when the shop has said.
+    public var currency: String?
+    /// Every country the shop serves, sorted. A regional shop serves several (`eu.kith.com`
+    /// serves Europe in euros). Optional so a client can still decode a server that predates
+    /// it, which meant `[country]` — read it through `servedCountries`.
+    public var countries: [String]?
+
+    public init(country: String, url: String, currency: String? = nil, countries: [String]? = nil) {
+        self.country = country
+        self.url = url
+        self.currency = currency
+        self.countries = countries
+    }
+
+    /// Who the shop serves, from a server of any age.
+    public var servedCountries: [String] {
+        guard let countries, !countries.isEmpty else { return [country] }
+        return countries
+    }
+}
+
 public struct BrandDTO: Codable, Sendable, Hashable, Identifiable {
     public var id: UUID?
     public var name: String
@@ -374,6 +557,10 @@ public struct BrandDTO: Codable, Sendable, Hashable, Identifiable {
     /// keeps the mode it already holds rather than resetting a quiet brand because it
     /// happened to reappear in a search result.
     public var followMode: FollowMode?
+    /// The country shop serving the caller, or nil for the brand's main shop. When set,
+    /// `currency` and `sources` are that shop's — a brand page describes the shop it is
+    /// showing. Optional, and absent from everything 1.0 is sent.
+    public var storefront: StorefrontDTO?
 
     public init(
         id: UUID?,
@@ -385,7 +572,8 @@ public struct BrandDTO: Codable, Sendable, Hashable, Identifiable {
         lockedForDrop: Bool = false,
         logoURL: String? = nil,
         sources: [BrandSourceDTO] = [],
-        followMode: FollowMode? = nil
+        followMode: FollowMode? = nil,
+        storefront: StorefrontDTO? = nil
     ) {
         self.id = id
         self.name = name
@@ -397,6 +585,7 @@ public struct BrandDTO: Codable, Sendable, Hashable, Identifiable {
         self.logoURL = logoURL
         self.sources = sources
         self.followMode = followMode
+        self.storefront = storefront
     }
 }
 
@@ -572,6 +761,15 @@ public struct FeedItem: Codable, Sendable, Hashable, Identifiable {
     /// could not rank one cut against another in the mode the app ships in. Optional, and
     /// ignored by the 1.0 app.
     public var priceAmount: Double?
+    /// The ISO 4217 code every price on this row is in — now, before, and the brand's own
+    /// original — so the phone can write it the reader's way (`PriceFormat`).
+    ///
+    /// A brand runs a shop per country, so "the brand's currency" is not one fact, and the
+    /// row says which it is rather than leaving the phone to guess from the brand: after
+    /// somebody changes country, the brand's currency names a different shop from the one
+    /// this row came from. Nil when nothing said; the phone then prints `priceText` as it
+    /// always did. Optional, and ignored by 1.0.
+    public var currency: String?
     /// What it cost before, on a `.priceDrop`. Both forms, for the same reason the model
     /// keeps both: the string is what a card prints, and only the number can say which of
     /// two markdowns is the better one. Optional throughout — a client older than this
@@ -683,6 +881,7 @@ public struct FeedItem: Codable, Sendable, Hashable, Identifiable {
         imageURLs: [String] = [],
         priceText: String? = nil,
         priceAmount: Double? = nil,
+        currency: String? = nil,
         previousPriceText: String? = nil,
         previousPriceAmount: Double? = nil,
         originalPriceText: String? = nil,
@@ -709,6 +908,7 @@ public struct FeedItem: Codable, Sendable, Hashable, Identifiable {
         self.imageURLs = imageURLs
         self.priceText = priceText
         self.priceAmount = priceAmount
+        self.currency = currency
         self.previousPriceText = previousPriceText
         self.previousPriceAmount = previousPriceAmount
         self.originalPriceText = originalPriceText
@@ -862,6 +1062,8 @@ public struct DiscoverCard: Codable, Sendable, Hashable, Identifiable {
     public var linkURL: String?
     public var priceText: String?
     public var priceAmount: Double?
+    /// The price's ISO 4217 code, as `FeedItem.currency`. Optional.
+    public var currency: String?
     public var isAvailable: Bool?
     /// The classifier's inputs, for the same reason `FeedItem` carries them: the client does
     /// not merely display these. `GarmentSlot`, `Gender` and the whole of `Pairing` are read
@@ -908,6 +1110,7 @@ public struct DiscoverCard: Codable, Sendable, Hashable, Identifiable {
         linkURL: String? = nil,
         priceText: String? = nil,
         priceAmount: Double? = nil,
+        currency: String? = nil,
         isAvailable: Bool? = nil,
         productType: String? = nil,
         tags: [String] = [],
@@ -929,6 +1132,7 @@ public struct DiscoverCard: Codable, Sendable, Hashable, Identifiable {
         self.linkURL = linkURL
         self.priceText = priceText
         self.priceAmount = priceAmount
+        self.currency = currency
         self.isAvailable = isAvailable
         self.productType = productType
         self.tags = tags
@@ -1010,6 +1214,8 @@ public struct StatusResponse: Codable, Sendable {
     /// registered for remote notifications — usually a missing `aps-environment`
     /// entitlement — not that the server is misconfigured.
     public var devicesWithToken: Int?
+    /// Sign in with Apple accounts. Optional, like everything added here since 1.0.
+    public var accounts: Int?
 
     public init(
         database: String,
@@ -1026,7 +1232,8 @@ public struct StatusResponse: Codable, Sendable {
         nextPollAt: Date? = nil,
         apnsConfigured: Bool? = nil,
         pendingPushes: Int? = nil,
-        devicesWithToken: Int? = nil
+        devicesWithToken: Int? = nil,
+        accounts: Int? = nil
     ) {
         self.database = database
         self.environment = environment
@@ -1043,6 +1250,127 @@ public struct StatusResponse: Codable, Sendable {
         self.apnsConfigured = apnsConfigured
         self.pendingPushes = pendingPushes
         self.devicesWithToken = devicesWithToken
+        self.accounts = accounts
+    }
+}
+
+// MARK: - Credits
+
+/// A pack somebody can buy, as the server sells it: the App Store product and what it adds.
+///
+/// The server's table is the only one (`CreditPacks`). The phone asks StoreKit for these ids
+/// and prints StoreKit's localized price beside this count, so changing what a pack is worth
+/// needs no app update — and a pack the server does not list cannot be bought, because the
+/// server would refuse to credit it.
+public struct CreditPackDTO: Codable, Sendable, Hashable, Identifiable {
+    public var productID: String
+    public var credits: Int
+
+    public var id: String { productID }
+
+    public init(productID: String, credits: Int) {
+        self.productID = productID
+        self.credits = credits
+    }
+}
+
+/// How many of one action this account ran in the month. `action` is a `CreditAction` raw
+/// value, kept a string so an action this build has never heard of still decodes.
+public struct CreditUsage: Codable, Sendable, Hashable {
+    public var action: String
+    public var count: Int
+
+    public init(action: String, count: Int) {
+        self.action = action
+        self.count = count
+    }
+}
+
+/// `GET /v1/credits` — everything the You page's Credits section prints.
+///
+/// **`signedIn` is the only field an anonymous device gets.** Credits need an account
+/// (`CreateAccounts`), and this is how the phone learns whether it has one without depending
+/// on whatever else the account routes return: false means "draw no Credits section", and
+/// every other field is nil. Everything else is optional for the reason every new field on
+/// the wire is.
+public struct CreditsSummary: Codable, Sendable, Hashable {
+    public var signedIn: Bool
+    /// What can be spent now, this month's free allowance included even before the first
+    /// action of the month has claimed it — a balance that jumps on first use would read as
+    /// a bug. Negative after a refund of credits already spent; nothing can be spent until
+    /// it is positive again.
+    public var balance: Int?
+    /// The owner's switch: never charged. The phone prints "Unlimited" and no packs.
+    public var unlimited: Bool?
+    /// The free allowance a month, so the phone can say what it is rather than hard-code it.
+    public var monthlyAllowance: Int?
+    /// The `CreditMonth` key `thisMonth` counts.
+    public var month: String?
+    public var thisMonth: [CreditUsage]?
+    public var packs: [CreditPackDTO]?
+    /// Passed to StoreKit as the purchase's `appAccountToken`, so a transaction names the
+    /// account it was bought for. The server refuses to credit a transaction that names a
+    /// different one, and a refund that arrives before the purchase was ever posted can still
+    /// be tied back to its account.
+    public var accountToken: UUID?
+
+    public init(
+        signedIn: Bool,
+        balance: Int? = nil,
+        unlimited: Bool? = nil,
+        monthlyAllowance: Int? = nil,
+        month: String? = nil,
+        thisMonth: [CreditUsage]? = nil,
+        packs: [CreditPackDTO]? = nil,
+        accountToken: UUID? = nil
+    ) {
+        self.signedIn = signedIn
+        self.balance = balance
+        self.unlimited = unlimited
+        self.monthlyAllowance = monthlyAllowance
+        self.month = month
+        self.thisMonth = thisMonth
+        self.packs = packs
+        self.accountToken = accountToken
+    }
+}
+
+/// `POST /v1/credits/purchases` — one StoreKit 2 transaction, exactly as StoreKit signed it
+/// (`VerificationResult.jwsRepresentation`). The server verifies it itself; nothing the phone
+/// says about the purchase is believed.
+public struct CreditPurchase: Codable, Sendable {
+    public var signedTransaction: String
+
+    public init(signedTransaction: String) {
+        self.signedTransaction = signedTransaction
+    }
+}
+
+/// What the server did with a transaction. Every outcome here is final, and the phone
+/// finishes the transaction on any of them — a refusal is an error status instead, and leaves
+/// it unfinished for the next launch to try again.
+public struct CreditPurchaseReceipt: Codable, Sendable, Hashable {
+    public enum Outcome: String, Codable, Sendable {
+        /// Credited now.
+        case credited
+        /// Already credited by an earlier post of the same transaction — a retry after a
+        /// reply that never arrived, or `Transaction.updates` replaying it.
+        case alreadyCredited
+        /// Refunded or revoked before it was credited. Nothing to add.
+        case revoked
+    }
+
+    public var transactionID: String
+    public var outcome: Outcome
+    /// Added by this call; zero unless `outcome` is `.credited`.
+    public var credited: Int
+    public var balance: Int?
+
+    public init(transactionID: String, outcome: Outcome, credited: Int, balance: Int? = nil) {
+        self.transactionID = transactionID
+        self.outcome = outcome
+        self.credited = credited
+        self.balance = balance
     }
 }
 

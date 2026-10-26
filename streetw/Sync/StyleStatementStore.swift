@@ -15,15 +15,17 @@ import SwiftUI
 @MainActor
 @Observable
 final class StyleStatementStore {
-    private static let key = "styleStatement"
+    /// Whose sentence. A profile's is its own, and stays on the phone like the holder's.
+    private let key: String
 
     /// The parse, kept whole. Written on every change because the parse is cheap and the
     /// alternative — storing the text and re-parsing per read — would run it inside view
     /// bodies, which is where this app has been bitten before.
     private(set) var statement: StyleStatement
 
-    init() {
-        if let data = UserDefaults.standard.data(forKey: Self.key),
+    init(scope: ProfileScope = .holder) {
+        key = scope.key("styleStatement")
+        if let data = UserDefaults.standard.data(forKey: key),
            let decoded = try? JSONDecoder().decode(StyleStatement.self, from: data) {
             statement = decoded
         } else {
@@ -36,6 +38,6 @@ final class StyleStatementStore {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         statement = trimmed.isEmpty ? StyleStatement() : StyleStatement.parse(trimmed)
         guard let data = try? JSONEncoder().encode(statement) else { return }
-        UserDefaults.standard.set(data, forKey: Self.key)
+        UserDefaults.standard.set(data, forKey: key)
     }
 }

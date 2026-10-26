@@ -43,6 +43,7 @@ final class BrandModel: Model, @unchecked Sendable {
 
     @Children(for: \.$brand) var sources: [SourceModel]
     @Children(for: \.$brand) var products: [ProductModel]
+    @Children(for: \.$brand) var storefronts: [StorefrontModel]
 
     init() {}
 
@@ -56,11 +57,97 @@ final class BrandModel: Model, @unchecked Sendable {
     }
 }
 
+/// A brand's shop for a set of countries, when it runs one apart from its main shop.
+///
+/// **The main shop is not a row.** It is the brand itself — `brands.website`,
+/// `brands.currency` and every source whose `storefront_id` is null — which is what let every
+/// brand already in the catalogue keep working unchanged: no backfill, no re-discovery, no
+/// baseline spent twice. A storefront exists only where somebody attached one
+/// (`POST /admin/brands/:id/storefronts`), and is only polled while somebody in one of its
+/// countries follows the brand — see `Storefronts`.
+///
+/// **A shop serves a set of countries** (`countries`, `storefront_countries`). `eu.kith.com`
+/// is one shop, in euros, for 48 of them; when a row was one country it could be attached for
+/// one, and attaching it for a second was refused as a catalogue already read.
+///
+/// Catalogue, not personal: one row per real-world shop, shared by everybody it serves.
+final class StorefrontModel: Model, @unchecked Sendable {
+    static let schema = "storefronts"
+
+    @ID(key: .id) var id: UUID?
+    @Parent(key: "brand_id") var brand: BrandModel
+    /// One of `countries`, always: the first, alphabetically, of those it was attached for.
+    ///
+    /// **Not who it serves — `countries` is.** This is the column a shop was identified by
+    /// when it served one country, kept because it sits inside the `(brand_id, country)` unique
+    /// constraint and SQLite cannot drop a column that does, and the two databases must not
+    /// diverge. Kept *in* the set so that constraint can never fire on its own — the set is
+    /// unique per brand, so its members are — and sent as `StorefrontDTO.country` to a client
+    /// that reads no set. Removing it from the set moves it to another member.
+    @Field(key: "country") var homeCountry: String
+    /// The shop's own base URL — what discovery was run on, and what a brand page names.
+    @Field(key: "url") var url: String
+    /// What this shop charges in, from its own `/meta.json` when it publishes one. Kept apart
+    /// from `brands.currency`, which is the main shop's and would otherwise be overwritten by
+    /// whichever of the two shops polled last.
+    @OptionalField(key: "currency") var currency: String?
+    @Timestamp(key: "created_at", on: .create) var createdAt: Date?
+
+    @Children(for: \.$storefront) var sources: [SourceModel]
+    /// Who it serves. Never empty: removing the last is refused, because that is deleting
+    /// the shop.
+    @Children(for: \.$storefront) var countries: [StorefrontCountryModel]
+
+    init() {}
+
+    init(brandID: UUID, homeCountry: String, url: String, currency: String?) {
+        self.$brand.id = brandID
+        self.homeCountry = homeCountry
+        self.url = url
+        self.currency = currency
+    }
+
+    /// The codes it serves, sorted. Needs `countries` loaded.
+    var countryCodes: [String] { countries.map(\.country).sorted() }
+
+    /// Needs `countries` loaded, which every storefront `Storefronts.serving` hands back has.
+    var asDTO: StorefrontDTO {
+        StorefrontDTO(country: homeCountry, url: url, currency: currency, countries: countryCodes)
+    }
+}
+
+/// One country a storefront serves.
+///
+/// **Unique on (brand, country), which is "one shop per brand per person" written into the
+/// schema.** The brand is copied onto the row for that alone — a constraint cannot reach
+/// through the storefront to its brand — and it is always the storefront's. Two shops of one
+/// brand for one country would leave which of them a person there is served undecided.
+final class StorefrontCountryModel: Model, @unchecked Sendable {
+    static let schema = "storefront_countries"
+
+    @ID(key: .id) var id: UUID?
+    @Parent(key: "storefront_id") var storefront: StorefrontModel
+    @Field(key: "brand_id") var brandID: UUID
+    /// ISO 3166-1 alpha-2, as `CountryCode` writes it.
+    @Field(key: "country") var country: String
+
+    init() {}
+
+    init(storefrontID: UUID, brandID: UUID, country: String) {
+        self.$storefront.id = storefrontID
+        self.brandID = brandID
+        self.country = country
+    }
+}
+
 final class SourceModel: Model, @unchecked Sendable {
     static let schema = "sources"
 
     @ID(key: .id) var id: UUID?
     @Parent(key: "brand_id") var brand: BrandModel
+    /// The country shop this source reads, or nil for the brand's main shop — which every
+    /// source written before storefronts existed is. See `StorefrontModel`.
+    @OptionalParent(key: "storefront_id") var storefront: StorefrontModel?
     @Field(key: "kind") var kind: String
     @Field(key: "url") var url: String
     @Field(key: "enabled") var enabled: Bool
@@ -85,8 +172,9 @@ final class SourceModel: Model, @unchecked Sendable {
 
     init() {}
 
-    init(brandID: UUID, kind: BrandSource.Kind, url: String) {
+    init(brandID: UUID, kind: BrandSource.Kind, url: String, storefrontID: UUID? = nil) {
         self.$brand.id = brandID
+        self.$storefront.id = storefrontID
         self.kind = kind.rawValue
         self.url = url
         self.enabled = true
@@ -127,6 +215,16 @@ final class ProductModel: Model, @unchecked Sendable {
     /// The numeric price, so a markdown is detectable. `price_text` is formatted for
     /// display and two different strings say nothing about direction.
     @OptionalField(key: "price_amount") var priceAmount: Double?
+    /// The ISO 4217 code of both prices, from the read that produced them — nil when the source
+    /// did not say, and on every row from before the column, all of which are the main shop's
+    /// and so in `brands.currency`. See `AddStorefrontColumns`.
+    @OptionalField(key: "currency") var currency: String?
+    /// The storefront this row was read from, copied from its source when the row is made —
+    /// nil for the main shop. Here as well as on the source because Discover asks for one
+    /// shop's products and the feed for one shop's events, and neither should have to join
+    /// through `sources` to say which shop it means. A source never changes storefront, so
+    /// the copy cannot go stale.
+    @OptionalField(key: "storefront_id") var storefrontID: UUID?
     /// What the brand says it cost before it was marked down — `compare_at_price`. Beside
     /// the price rather than on an event, because it describes the product as it is now.
     /// See `AddProductOriginalPrice`.
@@ -153,9 +251,11 @@ final class ProductModel: Model, @unchecked Sendable {
 
     init() { self.memberExternalIDs = [] }
 
-    init(brandID: UUID, sourceID: UUID?, item: FetchedItem) {
+    init(brandID: UUID, sourceID: UUID?, storefrontID: UUID? = nil, item: FetchedItem) {
         self.$brand.id = brandID
         self.$source.id = sourceID
+        self.storefrontID = storefrontID
+        self.currency = item.currency
         self.externalID = item.externalID
         self.title = item.title
         self.summary = item.summary
@@ -261,12 +361,17 @@ final class EventModel: Model, @unchecked Sendable {
     /// other kind, which is drawn from its product.
     @OptionalField(key: "title") var title: String?
     @OptionalField(key: "summary") var summary: String?
+    /// Which of the brand's shops this happened in — its product's storefront, nil for the
+    /// main shop. A `.sale` is the main shop's: both detectors read it alone. The feed and
+    /// `Notifier` serve each person one shop per brand, and this is what they serve by.
+    @OptionalField(key: "storefront_id") var storefrontID: UUID?
 
     init() {}
 
     init(
         brandID: UUID,
         productID: UUID?,
+        storefrontID: UUID? = nil,
         kind: UpdateKind,
         sizes: [String] = [],
         previousPriceText: String? = nil,
@@ -276,6 +381,7 @@ final class EventModel: Model, @unchecked Sendable {
     ) {
         self.$brand.id = brandID
         self.$product.id = productID
+        self.storefrontID = storefrontID
         self.kind = kind.rawValue
         self.sizes = sizes
         self.previousPriceText = previousPriceText
@@ -317,6 +423,23 @@ final class UserModel: Model, @unchecked Sendable {
     /// Nullable: absent means "everything", which is the default for a new profile and
     /// the honest reading of someone who has never expressed a preference.
     @OptionalField(key: "gender") var gender: String?
+    /// The Sign in with Apple account this user belongs to, or nil for an anonymous one —
+    /// which is every user 1.0 and 1.1 make, and every user until somebody signs in. See
+    /// `CreateAccounts`.
+    @OptionalParent(key: "account_id") var account: AccountModel?
+    /// Which country's shops this person is served, as `CountryCode` writes it. Nullable, and
+    /// null is the main shop of every brand — what every user was before this existed, what 1.0
+    /// always is, and the honest reading of somebody who has never said. Not part of
+    /// `sizeProfile`: it says nothing about what fits, and it is set by its own field on
+    /// `UpdateDevice`. See `Storefronts`.
+    @OptionalField(key: "country") var country: String?
+    /// What a profile is called, printed at the start of its alerts ("For Anna: …"). Nil for
+    /// every anonymous user and for the holder until they name themselves. See
+    /// `AddUserProfiles` and `docs/profiles.md`.
+    @OptionalField(key: "display_name") var displayName: String?
+    /// The profile's own switch for every push about it — summaries, watches, markdowns and
+    /// replies alike. A watch still fires and is still spent with it off.
+    @Field(key: "alerts_enabled") var alertsEnabled: Bool
 
     init() {
         self.apparelSizes = []
@@ -326,6 +449,7 @@ final class UserModel: Model, @unchecked Sendable {
         self.suitSizes = []
         self.suitLengths = []
         self.includeOneSize = true
+        self.alertsEnabled = true
     }
 
     /// The display scales (`shoeScale`, `dressScale`, `suitScale`) have no column on
@@ -353,6 +477,42 @@ final class UserModel: Model, @unchecked Sendable {
             includeOneSize = true
             gender = newValue.gender.rawValue
         }
+    }
+}
+
+/// The identity that survives a reinstall: one Sign in with Apple subject.
+///
+/// Personal, and above `users` rather than beside it — an account owns its users (one now,
+/// one per profile later), and every device reaches it through its user. Holds nothing a
+/// person typed: Apple's opaque `sub`, the credit settings the operator sets by hand, and
+/// the refresh token deletion has to revoke. See `CreateAccounts`.
+final class AccountModel: Model, @unchecked Sendable {
+    static let schema = "accounts"
+
+    @ID(key: .id) var id: UUID?
+    /// Apple's `sub` claim — stable per developer team, opaque, and the only lookup key.
+    @Field(key: "apple_subject") var appleSubject: String
+    @Timestamp(key: "created_at", on: .create) var createdAt: Date?
+    /// The owner's switch: this account is never charged. Means nothing until credits
+    /// exist, and is stored now so the owner can flip it on their own account the day they
+    /// sign in. Set only by `POST /admin/accounts/:id/credits`.
+    @Field(key: "unlimited_credits") var unlimitedCredits: Bool
+    /// A ceiling on what this account may cost in a month, in millionths of a dollar. Nil
+    /// is no account-specific cap.
+    @OptionalField(key: "monthly_cost_cap_micros") var monthlyCostCapMicros: Int64?
+    /// What `/auth/revoke` needs on deletion. Never logged, never on the wire. Nil when the
+    /// deployment has no Sign in with Apple key, so the exchange was skipped.
+    @OptionalField(key: "apple_refresh_token") var appleRefreshToken: String?
+
+    @Children(for: \.$account) var users: [UserModel]
+
+    init() {
+        self.unlimitedCredits = false
+    }
+
+    init(appleSubject: String) {
+        self.appleSubject = appleSubject
+        self.unlimitedCredits = false
     }
 }
 

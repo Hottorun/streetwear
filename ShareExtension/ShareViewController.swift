@@ -31,7 +31,10 @@ final class ShareViewController: UIViewController {
 
         let title = (extensionContext?.inputItems.first as? NSExtensionItem)?
             .attributedContentText?.string
-        return SharedInbox.append(SharedSave(url: url, title: title)) ? .saved : .failed
+        // Into whichever profile was current in the app, so a link shared for somebody else
+        // lands on their wall. See `SharedInbox.currentProfile`.
+        let save = SharedSave(url: url, title: title, profileID: SharedInbox.currentProfile())
+        return SharedInbox.append(save) ? .saved : .failed
     }
 
     /// Safari offers the page as a URL; Notes and Messages often offer it as text with a

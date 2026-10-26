@@ -5,8 +5,8 @@ Part of the streetw guidance set; see `CLAUDE.md` for the index and the build ru
 ## Server specifics
 
 - **The catalog is global.** Brands, sources, products and variants are one row per
-  real-world thing; only users, devices, follows, size profiles, watches and poll hints are
-  personal. Never add a `user_id` to a catalog table — polling once for everyone is the whole
+  real-world thing; only accounts, users (a profile is one), devices, follows, size profiles,
+  watches and poll hints are personal. Never add a `user_id` to a catalog table — polling once for everyone is the whole
   design. (`watches` points *at* a product without owning it, exactly as `follows` points at a
   brand, and `poll_hints` at a brand's *schedule* without owning that either — a hint changes
   cadence and is never read back to anybody but the device that wrote it.)
@@ -302,6 +302,219 @@ Part of the streetw guidance set; see `CLAUDE.md` for the index and the build ru
   kinds travel inside the continuation (`FeedContinuation.kinds`, nil in an older token, read as
   legacy) so one read is one window to its last page — the new client sends its kinds on every
   page, but a token stored across an app update must not change its window halfway.
+- **An account owns users; a device reaches it through its user** (`accounts`, `users.account_id`,
+  `CreateAccounts`, `Accounts`, `AccountRoutes.swift`). Sign in with Apple is optional, and 1.0
+  and 1.1 never call these routes, so `account_id` is null for nearly every user and nothing may
+  assume one. It is a plain index, not unique: Phase 2's profiles are one user each under one
+  account. The column cascades from `accounts`, and deletion still deletes every table by hand
+  in one transaction, so the promise does not rest on SQLite having foreign keys switched on.
+  Eight details are load-bearing:
+  - **The first sign-in adopts the device's user; a later one merges** (`Accounts.signIn`). The
+    reinstall and the second phone arrive with an anonymous user of their own. The device moves
+    onto the account's user, keeping its token, and the anonymous user is folded in and deleted,
+    all in one transaction. Follows are a union and the account's mode wins where both have one.
+    Watches are a union on (product, size, colour), compared in Swift because the unique
+    constraint cannot see two NULLs as equal. Poll hints and brand-check watchers move where the
+    account has none. Sizes are merged per ladder: the account's where set, else the device's,
+    and a gender of `everything` counts as unset. A device already on *another* account moves
+    alone; that user is the other person's data.
+  - **The sign-in answers with the merged sizes, and the app adopts them** (`AccountSession.sizes`).
+    Every sync pushes the phone's profile destructively, so without this a reinstall, whose
+    profile is empty, would erase the sizes signing in was meant to keep.
+  - **The nonce on the wire is the raw value.** The app puts `SHA256(nonce)` on the Apple request
+    and Apple copies it into the token. The server hashes what it is sent and compares. Sending
+    the hash would prove nothing, because the claim is printed in the token.
+  - **The production verifier checks Apple's signature, then the claims**
+    (`AppleIdentityTokenVerifier`, `AppleSignIn.swift`). `GET /v1/account` says
+    `signInAvailable: true`. The header must say `alg: RS256` — `none`, HS256 and everything
+    else are refused before any key is looked at, because the algorithm is the server's to
+    choose, not the token's. The key is the one Apple's JWKS (`https://appleid.apple.com/auth/keys`)
+    publishes under the header's `kid`, built with `_RSA.Signing.PublicKey(n:e:)` (2048 bits or
+    refused) and checked with `.insecurePKCS1v1_5` over SHA-256 of `header.payload` exactly as
+    sent. Only then does `AppleIdentityClaims.check` run (issuer, audience = the bundle id,
+    expiry, nonce, subject). RSA is `_CryptoExtras` from swift-crypto, declared in
+    `Server/Package.swift` alongside swift-certificates once the owner approved both; neither
+    downloads anything, both were already in `Package.resolved` through Vapor. `jwt-kit` was
+    not taken.
+  - **The JWKS is cached and re-read on an unknown `kid` — at most once per five minutes**
+    (`AppleSigningKeys`), thirty seconds after a read that failed. Apple rotates keys, so an
+    unknown `kid` may be genuine; a forged token can name any `kid` too, and without the floor
+    every one would make this server ask Apple again. Concurrent misses share one read, a day-old
+    set is re-read on next use so a withdrawn key stops being trusted, and a re-read that fails
+    keeps the set already held. A bad token is 401; Apple unreachable with no keys held is 503,
+    the one refusal about the server rather than the token. Fetched through `app.client`, not
+    `PoliteFetcher` — it is Apple's API, not a storefront.
+  - **`SIWA_TEST_TOKENS=true` accepts unsigned tokens, outside production only.** Every claim
+    check still runs. It exists so the app's DEBUG-only `-fakeAppleSignIn <subject>` can drive
+    sign-in → merge → delete against a local server. On an environment named `production`,
+    which is what the Docker `CMD` passes, it is ignored and logged as critical.
+  - **Revocation is real and needs a key.** The client secret is an ES256 JWT
+    (`AppleClientSecret`). P-256 is in the `Crypto` that Vapor already re-exports, so this needs
+    no new dependency. It is read from `SIWA_KEY_ID`, `SIWA_TEAM_ID` (`JD6NETLE45`) and
+    `SIWA_PRIVATE_KEY` (the `.p8`'s PEM; escaped `\n` accepted, as for `APNS_KEY_P8`). With them,
+    sign-in trades the authorization code for a refresh token (`accounts.apple_refresh_token`,
+    never logged and never on the wire), and `DELETE /v1/account` revokes it. Without them,
+    both steps are skipped and logged as skipped. Either way the exchange runs after the merge
+    commits and the revocation runs after the data is gone, so neither depends on Apple's
+    uptime. Not yet encrypted at rest.
+  - **Deletion takes every device on the account, the caller's included.** The app then
+    registers a fresh anonymous device and re-follows the phone's own brands
+    (`RemoteSync.deleteAccount`, then `didRegisterAfresh`, which is persisted so a kill between
+    the two cannot strand it). The catalogue is never touched.
+- **A first sign-in settles its account before it merges** (`Accounts.findOrCreate`). Two first
+  sign-ins for one Apple ID both missed the lookup and both inserted, and the second hit the
+  unique constraint on `apple_subject` — not an `AbortError`, so a 500. Inside the transaction
+  there was no answer, because Postgres refuses every statement after an error until the
+  transaction ends; outside it, the loser reads the winner's row. The merge transaction then
+  takes `SELECT … FOR UPDATE` on the account row (Postgres only), so the second sign-in waits
+  and merges into the first's user instead of both adopting their own — which, with profiles,
+  would have left a nameless second user that looks like a profile. `SignInRaceTests`.
+- **Profiles are users under the account, and `X-Profile-ID` says which one a request acts for**
+  (`ActingProfile`, `ProfileRoutes.swift`, `AddUserProfiles`). Read `docs/profiles.md` before
+  touching them. In short: the holder is the account's oldest user and goes only with the
+  account; a profile's follows, watches, hints and sizes are its own rows, deleted with it
+  (`Accounts.deleteProfile`), never the catalogue; a header naming a user off the device's
+  account is refused with `ProfileHeader.refusal`; every push path reaches the account's
+  devices through `Notifier.audience`, labels another profile's alerts, honours its
+  `alerts_enabled` and collapses per profile. **Profiles share the account's credits and
+  country**: the credit routes read the device's own user, so every profile hits one ledger;
+  `users.country` is written to every user on the account by `Accounts.setCountry` alone (the
+  device PATCH as any profile, the merge, a new profile copying its holder), so the storefront
+  rules — `Storefronts.wanted`'s follow join, `serving`, `Notifier` — need no change to treat a
+  profile as being where its holder is.
+- **The owner's unlimited credits are a flag on the account** (`accounts.unlimited_credits`,
+  `monthly_cost_cap_micros`). Credits read both (`docs/credits.md`). To set them on your own
+  account, sign in on your phone, then:
+  ```bash
+  curl -H "Authorization: Bearer $ADMIN_TOKEN" https://app.streetw.hottorun.com/admin/accounts
+  # the newest row, with your device count, is yours
+  curl -X POST -H "Authorization: Bearer $ADMIN_TOKEN" -H 'Content-Type: application/json' \
+    -d '{"unlimited": true, "monthlyCostCapMicros": null}' \
+    https://app.streetw.hottorun.com/admin/accounts/<id>/credits
+  ```
+  The cap is in millionths of a dollar (`25000000` is $25), `null` clears it, and a negative
+  value is refused. The list shows counts only and nothing about what anybody follows.
+- **Credits and cost metering have their own doc** (`docs/credits.md`); the server rules in
+  short. `credit_ledger` is the balance — no stored total — and a spend locks the account row
+  (`FOR UPDATE`) before summing, which SQLite cannot exercise: `CreditRaceTests` runs against a
+  scratch Postgres named by `STREETW_TEST_POSTGRES_URL` and is skipped otherwise. Two unique
+  constraints *are* the idempotency — `(apple_transaction_id, reason)` credits and refunds a
+  purchase once each, `(account_id, allowance_month)` grants a month once — and both rely on
+  NULLs never colliding, on Postgres and SQLite alike. `ai_costs` keeps numbers only, with both
+  keys `ON DELETE SET NULL` so deleting an account unnames its costs and keeps the measurement;
+  the ledger cascades. Every amount and token count is a `BIGINT`, and a sum is
+  `CAST(… AS BIGINT)` because Postgres sums a `BIGINT` into a `NUMERIC` that will not decode as
+  an `Int`. Both tables set `created_at` themselves rather than through `@Timestamp`, because
+  the month a row falls in decides the allowance and the cap and has to be testable across a
+  month's end. `POST /v1/app-store/notifications` is public and verified by signature — the
+  envelope, the transaction and any renewal info, each against Apple Root CA - G3
+  (`AppStoreVerifier`, `AppStoreSignature.swift`; the rules are in `docs/credits.md`).
+- **A brand's main shop is the brand row; a country's shop is a `storefronts` row**
+  (`StorefrontModel`, `CreateStorefronts`, `Storefronts`). Big retailers run a shop per country —
+  Victoria's Secret UK is a different company from the US one — so a brand maps to its storefront
+  per country: a base URL, a currency, **its own sources** and the **set of countries it serves**.
+  `sources`, `products` and `events` carry a nullable `storefront_id`, and **null is the main
+  shop**. Six details are load-bearing:
+  - **A storefront serves a set of countries** (`storefront_countries`, `StorefrontCountryModel`,
+    `CreateStorefrontCountries`), because brands run one shop for a region: `eu.kith.com` is one
+    shop, in euros, for 48 countries. A join table, not a `TEXT[]`, because an array column
+    cannot be reproduced on SQLite and every serving rule would then be tested by nothing local.
+    **Unique on `(brand_id, country)`** — one shop per brand per country is the schema's rule,
+    not the routes' — with `brand_id` copied from the storefront so the constraint can see it.
+    The migration gave each existing shop its own country as its one entry and wrote nothing
+    else, so nothing was re-polled or re-baselined. `storefronts.country` survives as
+    `homeCountry`, always one of the set: it sits inside the old `(brand_id, country)` unique
+    constraint, SQLite cannot drop a column that does, and the two databases must not diverge.
+    Keeping it a member of the set means that constraint can never fire on its own; taking it
+    out of the set moves it to another member (`Storefronts.narrow`). It is what
+    `StorefrontDTO.country` sends; `StorefrontDTO.countries` is the set.
+  - **The main shop is not a row, and that is what keeps existing data unchanged.** Every source,
+    product and event already in the database is exactly "the main shop", so a null column says
+    so with no backfill, no re-discovery, no new polling and no baseline re-spent. Minting a
+    storefront per brand and re-pointing every source would have rewritten every source and
+    product row — the volume problem `refresh` guards against — to say what null already says.
+    The main shop has no country either: Palace's is British and Kith's American, nothing here
+    knows which, and it is what serves everybody nobody else serves.
+  - **Countries are switched on by `STOREFRONT_COUNTRIES`** (`GB,DE`), read once at boot like
+    `ADMIN_TOKEN`. Unset is none, which is today. An environment variable rather than a table
+    because a country multiplies the polling of every brand followed there, so switching one on
+    is a deployment decision, made rarely and visibly — not a toggle somebody with the admin key
+    flips at a terminal and nobody notices.
+  - **A storefront is polled only while any of its countries is switched on and has a follower
+    of the brand** (`Storefronts.wanted`, `Storefronts.isRead`): a follow's user has that
+    `users.country`. Worked out once per tick, and applied in the claim itself
+    (`storefront_id IS NULL OR storefront_id = ANY(wanted)`), so a paused storefront is never
+    claimed, never fetched and never pushes its schedule forward. `wanted` is a set of
+    storefront ids, so a shop followed from three countries is claimed and fetched **once** —
+    membership decides whether, the claim is per source (`MultiCountryStorefrontTests`, and
+    `StorefrontPostgresClaimTests` against a scratch Postgres). **The main shop's sources are
+    claimed exactly as before** — `PollerStorefrontTests` counts the requests. Its product pages
+    are read by `enrich` under the same rule.
+  - **A storefront that sat idle re-baselines** (`Storefronts.resumeAfter`, a day), as a whole:
+    its sources are read for all its countries at once, so "idle" means nobody in any of them
+    followed the brand. Nothing
+    polls a paused storefront, so the first read after a pause compares against whatever it
+    knew months ago — and would announce every product and restock since as news to the first
+    follower back. Nothing else ever leaves a source unread for a day: the longest backoff is
+    six hours. The baseline is *un-spent* (`baselined_at` cleared) rather than this one read
+    declared one, so a resumed read that fails still owes it — the rule a first poll keeps.
+  - **A caller is served the storefront whose set holds their country, only when it is live** —
+    their country is switched on, the shop is being read (somebody in one of its switched-on
+    countries follows the brand — for a follower that is themselves, for Discover it can be a
+    German follower keeping `eu.kith.com` read for somebody browsing from France), and it has
+    been baselined (`Storefronts.serving`). Otherwise the main shop, exactly as before: an
+    Italian in `eu.kith.com`'s set gets Kith's main shop until Italy is switched on. One rule for
+    `GET /v1/feed`, `GET /v1/brands/:id/feed`, `GET /v1/discover`, every `BrandDTO` and
+    `Notifier`, and it is **one shop per brand per person, never both**: a reader in Britain
+    would otherwise get every drop twice, once in each currency, and a push for each. A brand
+    page's sources and currency are the serving shop's; `BrandDTO.storefront` names it, nil
+    for the main shop, which is all 1.0 ever sees.
+- **Every stored price carries its currency** (`products.currency`, `AddStorefrontColumns`), from
+  the read that produced it — Shopify's `/meta.json`, a JSON-LD offer's `priceCurrency`, UCP's
+  money. An event's previous price is in its product's currency. **Nothing is converted**: there
+  are no exchange rates anywhere in this system, prices are compared within one shop, and a
+  price that changed currency between two reads is not a markdown (`PriceChange.isDrop`'s
+  currency guard). A row from before the column has none, and on the wire falls back to
+  `brands.currency` — correct, because every such row is the main shop's. `FeedItem.currency` and
+  `DiscoverCard.currency` are optional, so 1.0 and 1.1 decode exactly as before.
+- **`users.country` is the caller's country, nullable, and null is the main shop**
+  (`UpdateDevice.country`, `RegisterDevice.country`, `CountryCode`). Sent on `PATCH /v1/devices/me`
+  beside the sizes, and on registration so the first feed is already the right shop. Absent
+  changes nothing and an empty string clears it. **A code that is not one is ignored, not
+  refused**: that PATCH is the first authenticated call of every launch and doubles as the
+  liveness check, and a 400 there would fail the whole sync over a setting.
+- **What only the main shop does.** The brand's name and `brands.currency` come from main-shop
+  sources only, so a British storefront cannot rename the brand or reprice its legacy rows. Both
+  sale detectors read the main shop alone — the catalogue's state lives on the brand row, and the
+  announcement bar is `brands.website` — so a country storefront's readers hear of no `.sale`
+  yet; a sale on the main shop is not one on theirs. `repoint` and `source` rebuild the main
+  shop and leave every storefront alone.
+- **A storefront is attached by hand, for a set of countries**
+  (`POST /admin/brands/:id/storefronts?url=…&countries=DE,FR,IT` — or `country=GB`, or a JSON body
+  `{"countries": [...]}`). It runs ordinary discovery on the URL, through the poller's fetcher.
+  **Naming no countries is the offer and writes nothing**: every country the shop's `/meta.json`
+  ships to, minus those another shop of the brand serves; `countries=all` takes it. An offer
+  rather than a default because a shop's list is not its market — `eu.kith.com`'s 48 include the
+  US and Canada, where Kith's main shop is — so somebody reads it first. A token that is not a
+  country code refuses the whole request rather than attaching for the rest. It refuses three
+  mistakes: nothing watchable there; **a catalogue the brand already reads** — the main shop
+  (a Shopify Markets subfolder like `/en-gb/` is read off the host, so it would be the main shop
+  again in its currency; reading those is not built) or a shop already attached, which is pointed
+  at `…/add` instead; and countries the shop's `/meta.json` says it does not ship to, unless
+  `&force=true`. Measured: Kith's US shop ships to 197 countries, `eu.kith.com` prices in EUR and
+  ships to 48, and Palace's `www.` prices in GBP and ships to five — GB, GG, IM, JE, PH.
+  `/meta.json`'s own `country` is where the *merchant* is (`eu.kith.com` says FR), not who it
+  sells to, and is not read. Attaching for countries another shop serves takes them off it
+  (`Storefronts.release`); a shop left serving nobody is removed with its history, which is what
+  replacing a one-country shop always did. `POST /admin/brands/:id/storefronts/:country/add?countries=`
+  and `…/remove?countries=` change the set of the shop serving `:country` without re-reading or
+  re-baselining anything; `add` refuses a country another shop holds (remove it there, out loud —
+  the people in it change shop) and checks ships-to like attaching, and `remove` refuses the last
+  country, which is `…/delete`. `POST /admin/brands/:id/storefronts/:country/delete` removes the
+  whole shop, for every country it serves, with its sources, products and events — the products
+  by hand (`Storefronts.remove`), because `products.source_id` is `ON DELETE SET NULL` from the
+  initial schema and the cascade from the storefront stops at its sources. `GET /admin/catalog`
+  prints each shop's whole set. Nothing discovers country storefronts automatically.
 - **`HTTPFetching`, not `HTTPClient`** — Vapor re-exports `AsyncHTTPClient.HTTPClient` and
   an unqualified collision in the server target is nastier than the wordier name.
 - **Don't name a test helper `withApp`.** VaporTesting exports a generic `withApp<T>` that

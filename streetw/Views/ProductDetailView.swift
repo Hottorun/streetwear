@@ -159,14 +159,14 @@ struct ProductDetailView: View {
                 .fixedSize(horizontal: false, vertical: true)
 
             HStack(alignment: .firstTextBaseline, spacing: 12) {
-                if let price = update.priceText {
+                if let price = update.priceLabel {
                     Text(price)
                         .font(.data(15, .medium))
                         .foregroundStyle(Color.ink)
                 }
                 // Any kind, not only a markdown event: a product that went live discounted is
                 // announced as a drop and still carries the brand's own "was".
-                if let was = update.wasPriceText {
+                if let was = update.wasPriceLabel {
                     Text(was)
                         .font(.data(12))
                         .foregroundStyle(Color.muted)

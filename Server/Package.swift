@@ -14,7 +14,12 @@ let package = Package(
         .package(url: "https://github.com/vapor/fluent.git", from: "4.9.0"),
         .package(url: "https://github.com/vapor/fluent-postgres-driver.git", from: "2.8.0"),
         .package(url: "https://github.com/vapor/fluent-sqlite-driver.git", from: "4.6.0"),
-        .package(url: "https://github.com/vapor/apns.git", from: "4.0.0")
+        .package(url: "https://github.com/vapor/apns.git", from: "4.0.0"),
+        // Both already in the graph through Vapor; declared because the server verifies what
+        // Apple signs itself: RS256 identity tokens (`_CryptoExtras`) and StoreKit's `x5c`
+        // chains (`X509`). Floors are the resolved versions, so declaring them moves nothing.
+        .package(url: "https://github.com/apple/swift-crypto.git", from: "3.15.1"),
+        .package(url: "https://github.com/apple/swift-certificates.git", from: "1.19.4")
     ],
     targets: [
         .executableTarget(
@@ -25,14 +30,19 @@ let package = Package(
                 .product(name: "Fluent", package: "fluent"),
                 .product(name: "FluentPostgresDriver", package: "fluent-postgres-driver"),
                 .product(name: "FluentSQLiteDriver", package: "fluent-sqlite-driver"),
-                .product(name: "VaporAPNS", package: "apns")
+                .product(name: "VaporAPNS", package: "apns"),
+                .product(name: "Crypto", package: "swift-crypto"),
+                .product(name: "_CryptoExtras", package: "swift-crypto"),
+                .product(name: "X509", package: "swift-certificates")
             ]
         ),
         .testTarget(
             name: "StreetwServerTests",
             dependencies: [
                 .target(name: "StreetwServer"),
-                .product(name: "VaporTesting", package: "vapor")
+                .product(name: "VaporTesting", package: "vapor"),
+                .product(name: "_CryptoExtras", package: "swift-crypto"),
+                .product(name: "X509", package: "swift-certificates")
             ]
         )
     ]

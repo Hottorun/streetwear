@@ -533,6 +533,36 @@ Changing these silently will break intended behavior:
   added later stays invisible to every build until it can draw it, and it skips a kind it does
   not know (`FeedItem.knownKind`) rather than drawing it as a product. A push is not filtered: a
   sale push to a 1.0 phone carries no event id, so tapping it opens the brand, which 1.0 has.
+- **Location is a setting, and all it ever does is choose between a brand's own shops** (You ›
+  Location, `LocationSetting`, `users.country`). It defaults to the phone's region and is held on
+  the server, because the server decides which shop's events and pushes reach you — see
+  `docs/server.md` for the storefront model. It never converts a price, never hides a brand and
+  never filters a feed: a brand with no shop for your country, or one in a country not yet
+  switched on, is its main shop, exactly as before. The row says that in as many words — "Prices
+  and shops for the United Kingdom where a brand runs one; elsewhere the brand's main shop" —
+  and there is no list of countries that are coming, because a setting that mostly says "not
+  yet" is the app talking about itself. Standalone has no server and no storefronts; the setting
+  is kept on the phone and changes nothing there. What it changes is visible where it changes
+  something: a brand page names the shop it is showing ("UNITED KINGDOM SHOP · GBP" against
+  "MAIN SHOP · USD"), under the host it is on. A shop serves a set of countries, so a regional
+  one is named for who it serves, never for the reader's country — "EUROPE SHOP · EUR" under
+  `EU.KITH.COM` when every country in its set is European, "SHOP FOR 48 COUNTRIES" when they are
+  not (`ShopReach`). Calling `eu.kith.com` "the German shop" to somebody in Berlin would be a
+  claim about a shop that is not German.
+- **A switch is forward-only.** Rows a phone already holds were the main shop's when they arrived
+  and stay so; what arrives after the server serves a country's shop is that shop's. Rewriting
+  history to the new shop would mean re-sending every event under a second identity, and the
+  merge keys on the event.
+- **Every price prints in its own currency, written the reader's way** (`PriceFormat`,
+  `BrandUpdate.currencyCode`, `FeedItem.currency`). A price used to be printed exactly as the
+  server formatted it, on a Linux box, in the server's locale — and a "$" means something else to
+  somebody in Canada. With the amount and the shop's currency both known the phone formats it in
+  its own locale ("US$180" in Toronto, "$180" in New York, "£180" either side of the Atlantic);
+  without them, on a row older than the field, the stored text prints verbatim, which is what it
+  always did. **The brand's currency is never used to print a row**: once somebody changes
+  country it names a different shop from the one that row came from, and a dollar price would
+  print with a pound sign. Nothing is converted, anywhere — a markdown is measured within one
+  shop's currency, and a price that changed currency between two reads is not a markdown.
 - **Restock is the only reason a seen item resurfaces.** `SyncEngine.refresh` re-flags an update —
   unread, and arriving now, so it lands above the line — only when a *variant* goes false→true, recording which sizes returned in `restockedSizes`
   (falling back to whole-product `isAvailable` for sources without variants).

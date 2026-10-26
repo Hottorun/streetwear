@@ -63,12 +63,25 @@ enum SharedSaveImporter {
     ///   item afterwards. Until this, a share simply appeared in the collection with no
     ///   acknowledgement at all and no way to act on it in the moment.
     @discardableResult
+    ///
+    /// - Parameter scope: whose store `context` is. Only that profile's shares are filed; the
+    ///   rest wait in the inbox until their profile is current — except a share for a profile
+    ///   this phone no longer has, which the holder takes rather than leaving it forever.
     static func drain(
         into context: ModelContext,
+        scope: ProfileScope? = nil,
         route: PushRoute? = nil,
         confirm: SaveConfirmation? = nil
     ) async -> Int {
-        let pending = SharedInbox.pending()
+        let scope = scope ?? ProfileScope.active
+        let known = ProfileScope.known
+        // By store, never by "whoever is current": a share filed while another Apple ID was
+        // signed in waits for that account rather than landing in this one's wall.
+        let pending = SharedInbox.pending().filter { item in
+            guard let owner = item.save.profileID else { return scope.home == nil }
+            guard known.contains(owner) else { return scope.isHolder }
+            return owner == scope.home
+        }
         log.info("inbox: container \(SharedInbox.isAvailable ? "ok" : "MISSING"), \(pending.count) pending")
         guard !pending.isEmpty else { return 0 }
 
@@ -387,6 +400,9 @@ enum SharedSaveImporter {
         )
         update.variants = product?.variants ?? []
         update.productExternalID = product?.externalID
+        // Only the catalogue's says which currency its price is in; Open Graph's price text
+        // is printed as the page wrote it.
+        update.currencyCode = product?.currency
         // Free: the Open Graph pass has already read the page, and `og:site_name` is the
         // brand's own name for itself. `identifySites` improves on it later where it can
         // (and is the only source at all on the catalogue path, which fetches no HTML), but
@@ -453,6 +469,7 @@ enum SharedSaveImporter {
         update.isAvailable = product.isAvailable
         update.priceText = product.priceText ?? update.priceText
         update.priceAmount = product.priceAmount ?? update.priceAmount
+        if product.priceAmount != nil, let currency = product.currency { update.currencyCode = currency }
     }
 
     /// Attaches the save to a brand already being watched, when it is the same brand.

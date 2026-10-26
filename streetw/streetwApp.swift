@@ -16,130 +16,96 @@ struct streetwApp: App {
     @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @Environment(\.scenePhase) private var scenePhase
 
-    let sharedModelContainer: ModelContainer
-
     // Built here, not in a `.task`, so they exist before any view body runs. Creating
     // them asynchronously raced with child views' own `.task`s: FeedView could run
     // first, see nil, and silently skip the sync — the server looked "not working".
     @State private var settings: ServerSettings
-    @State private var sizes: SizeProfileStore
-    /// What the wearer has said about their own style, in words. Built here with the rest
-    /// so a view's `.task` can never see a nil where a preference should be.
-    @State private var statement: StyleStatementStore
-    @State private var remote: RemoteSync
-    @State private var engine: SyncEngine
-    @State private var suggestions: BrandSuggestions
-    /// The Discover tab's supply. Built here rather than by the view for the reason every
-    /// other shared object is: a `.task` that creates it races the child views' own tasks,
-    /// and a deck that is nil when the tab first appears looks exactly like a broken feed.
-    /// Holding it here also means the pages survive switching tabs.
-    @State private var deck: DiscoverDeck
-    /// Cutouts and colour for the cards on screen. Held beside the deck so the measurements
-    /// survive a tab switch — they are a fetch and two Vision requests each.
+    /// The account's profiles and the current one's `ProfileSession` — its store, sizes, style
+    /// statement, sync, Discover deck, recommendations, save confirmation, collection route and
+    /// drop-hint status. Everything about one person lives there and is rebuilt on a switch;
+    /// what stays here is about the phone. See `docs/profiles.md`.
+    @State private var profiles: ProfileStore
+    /// Cutouts and colour for the cards on screen. Held at the app rather than in a profile's
+    /// session: they are measurements of photographs, not of a person, and they survive a tab
+    /// switch — they are a fetch and two Vision requests each.
     @State private var analysis: DiscoveryAnalysis
     @State private var route: PushRoute
-    /// Owned here rather than by a card: the card that triggered a save lives in a
-    /// `LazyVStack` and is routinely recycled or scrolled off before the confirmation has
-    /// been acted on.
-    @State private var confirmation: SaveConfirmation
-    /// How your taste, on You, asks the collection to open at a facet.
-    @State private var collection: CollectionRoute
     /// Whether the You page is up. One for the app, so the page is presented once from the
     /// root whichever tab's avatar was tapped — see `YouRoute`.
     @State private var you: YouRoute
-    /// What the server said about each poll hint, so the drop calendar can say per row
-    /// whether anything is actually going to be watching. See `DropHintStore`.
-    @State private var hints: DropHintStore
+    /// Which country's shops the account is served. **The account's, not a profile's** — a
+    /// profile is somebody you shop for, and the shop is still where you are — so it is held
+    /// here, read by every profile's `RemoteSync`, and survives a switch. See `docs/profiles.md`.
+    @State private var location: LocationSetting
+    /// The balance and the packs, and the listener that credits an interrupted purchase.
+    /// Built here because the listener must be running before StoreKit delivers anything —
+    /// see `CreditStore.start`. **The account's, not a profile's**: every profile spends from
+    /// the one ledger, so a switch must neither rebuild it nor ask the server again.
+    @State private var credits: CreditStore
 
     init() {
         Net.configureSharedCache()
         Appearance.configure()
 
-        let schema = Schema([
-            Brand.self, BrandUpdate.self, SavedItem.self, Board.self, StockWatch.self, Fit.self,
-            BrandDismissal.self, PlannedDrop.self
-        ])
-        let container: ModelContainer
-        do {
-            // The store location is pinned explicitly, and that is load-bearing.
-            //
-            // A default `ModelConfiguration` picks its own location — and once the app
-            // gained an App Group entitlement (for the share extension), SwiftData
-            // started placing the store in the *shared group container* instead of the
-            // app's own. The app then opens an empty database and every brand and save
-            // appears to have been wiped, while the real data sits untouched in the old
-            // location. Naming the URL keeps existing installs pointed at their data,
-            // and stops an unrelated capability from silently moving the database again.
-            let storeURL = URL.applicationSupportDirectory.appending(path: "default.store")
-            container = try ModelContainer(
-                for: schema,
-                configurations: [ModelConfiguration(schema: schema, url: storeURL)]
-            )
-        } catch {
-            fatalError("Could not create ModelContainer: \(error)")
-        }
-        sharedModelContainer = container
-
-        // Before any view exists, so nothing ever draws a board with half its saves still
-        // filed the 1.0 way. Does nothing once the store has been through it. See
-        // `BoardFiling`.
-        MainActor.assumeIsolated { BoardFiling.adoptLegacy(in: container.mainContext) }
-        // Same moment, same reason: the 1.0 unread queue becomes the feed's news before the
-        // feed first draws, or it would open on nothing. See `FeedHistory`.
-        MainActor.assumeIsolated { FeedHistory.adoptLegacy(in: container.mainContext) }
-
         let settings = ServerSettings()
-        let sizes = SizeProfileStore()
-        let remote = RemoteSync(context: container.mainContext, settings: settings)
+        let location = MainActor.assumeIsolated { LocationSetting() }
         // Built here for the same reason as the rest, and one more: a push that
         // cold-launches the app delivers its tap before any view exists, so the
         // destination has to have somewhere to land before `ContentView` appears.
         let route = MainActor.assumeIsolated { PushRoute() }
+        // The store is opened inside, for whichever profile is current — the holder's is the
+        // `default.store` every earlier build wrote. The app delegate is built by UIKit and
+        // can't be handed these, so each session is published the moment it becomes valid.
+        let profiles = MainActor.assumeIsolated {
+            ProfileStore(settings: settings, location: location) { session in
+                BackgroundServices.install(
+                    remote: session.remote,
+                    sizes: session.sizes,
+                    settings: settings,
+                    route: route
+                )
+                UsageCounts.install(settings: settings, remote: session.remote)
+            }
+        }
+        MainActor.assumeIsolated { BackgroundServices.profiles = profiles }
+        let credits = MainActor.assumeIsolated { CreditStore(settings: settings) }
+        MainActor.assumeIsolated { credits.start() }
+        _location = State(initialValue: location)
+        _credits = State(initialValue: credits)
         _settings = State(initialValue: settings)
-        _sizes = State(initialValue: sizes)
-        _statement = State(initialValue: MainActor.assumeIsolated { StyleStatementStore() })
-        _remote = State(initialValue: remote)
-        _engine = State(initialValue: SyncEngine(context: container.mainContext))
-        _suggestions = State(initialValue: BrandSuggestions(remote: remote, settings: settings))
-        _deck = State(initialValue: MainActor.assumeIsolated { DiscoverDeck() })
+        _profiles = State(initialValue: profiles)
         _analysis = State(initialValue: MainActor.assumeIsolated { DiscoveryAnalysis() })
         _route = State(initialValue: route)
-        _confirmation = State(initialValue: MainActor.assumeIsolated { SaveConfirmation() })
-        _collection = State(initialValue: MainActor.assumeIsolated { CollectionRoute() })
         _you = State(initialValue: MainActor.assumeIsolated { YouRoute() })
-        _hints = State(initialValue: MainActor.assumeIsolated { DropHintStore() })
-
-        // The app delegate is built by UIKit and can't be handed these, so they are
-        // published here — the same moment they become valid.
-        MainActor.assumeIsolated {
-            BackgroundServices.install(
-                remote: remote,
-                sizes: sizes,
-                settings: settings,
-                route: route
-            )
-            UsageCounts.install(settings: settings, remote: remote)
-        }
     }
 
     var body: some Scene {
         WindowGroup {
+            let session = profiles.session
             ContentView()
+                // **Keyed on the profile.** Every `@State` and `@Query` below belongs to one
+                // person's store, and a switch must rebuild them against the new one rather than
+                // carry a feed, a scroll position or a half-made save across.
+                .id(session.scope)
                 .environment(settings)
-                .environment(sizes)
-                .environment(statement)
-                .environment(remote)
-                .environment(engine)
-                .environment(suggestions)
-                .environment(deck)
+                .environment(profiles)
+                .environment(session.sizes)
+                .environment(location)
+                .environment(credits)
+                .environment(session.statement)
+                .environment(session.remote)
+                .environment(session.engine)
+                .environment(session.suggestions)
+                .environment(session.deck)
                 .environment(analysis)
                 .environment(route)
-                .environment(confirmation)
-                .environment(collection)
+                .environment(session.confirmation)
+                .environment(session.collection)
                 .environment(you)
-                .environment(hints)
+                .environment(session.hints)
+                .modelContainer(session.container)
                 .task {
-                    await DevSeed.runIfRequested(in: sharedModelContainer.mainContext)
+                    await DevSeed.runIfRequested(in: session.container.mainContext)
                     // Screenshot affordance: `-demoOpen <externalID>` lands on one product
                     // page, through the same route a notification tap takes.
                     if let id = UserDefaults.standard.string(forKey: "demoOpen"), !id.isEmpty {
@@ -147,20 +113,25 @@ struct streetwApp: App {
                     }
                 }
         }
-        .modelContainer(sharedModelContainer)
         .onChange(of: scenePhase) { _, phase in
+            // Whoever is current at the moment of the change, captured once: the work below
+            // runs for one person's store even if somebody switches while it is in flight.
+            let session = profiles.session
             // Queue the next wake-up on the way out. Submitting while active is allowed
             // but pointless — the system only ever runs it once we're backgrounded.
             if phase == .background {
                 AppDelegate.schedule()
                 UsageCounts.reportOnTheWayOut()
+                #if DEBUG
+                AppDelegate.debugPassIfRequested()
+                #endif
             }
 
             // The Discover ledger is written in batches rather than once per card — see
             // `DiscoverDeck.markSeen` — so leaving the foreground is where it gets settled.
             // `.inactive` as well as `.background`: that is the phase a swipe-up to the app
             // switcher reaches, and the one before a kill.
-            if phase != .active { deck.persistSeen() }
+            if phase != .active { session.deck.persistSeen() }
 
             // Anything shared while the app was closed is filed on the way back in.
             // On becoming active rather than on launch, because the usual path is
@@ -174,7 +145,7 @@ struct streetwApp: App {
             // something you just shared was unreachable except on a cold launch, and even
             // then only if that `.task` won the race against this.
             if phase == .active {
-                let context = sharedModelContainer.mainContext
+                let context = session.container.mainContext
                 // Permission can be granted in iOS Settings, which tells the app nothing.
                 // Without this the token is only ever asked for at launch, so somebody who
                 // turned alerts on by hand went on receiving none until they next killed the
@@ -187,10 +158,10 @@ struct streetwApp: App {
                 // below — a share somebody is waiting on outranks a poll nobody asked for.
                 Task {
                     await FeedRefresh.runIfStale(
-                        remote: remote,
-                        engine: engine,
+                        remote: session.remote,
+                        engine: session.engine,
                         settings: settings,
-                        sizes: sizes
+                        sizes: session.sizes
                     )
                     // After the refresh rather than beside it: if the token has gone stale,
                     // the sync is what notices and re-registers, and a report racing it
@@ -200,8 +171,9 @@ struct streetwApp: App {
                 Task {
                     await SharedSaveImporter.drain(
                         into: context,
+                        scope: session.scope,
                         route: route,
-                        confirm: confirmation
+                        confirm: session.confirmation
                     )
                     // After the inbox, never before it: a share that just arrived is what
                     // somebody is waiting on, and the repair queue is a backlog nobody
@@ -233,14 +205,14 @@ struct streetwApp: App {
                     // passes without a word. It is a rewrite from the store, so running it
                     // on every foreground costs a handful of writes and is the repair for
                     // every other way this can drift too.
-                    await DropReminders.refresh(in: context)
+                    await DropReminders.refresh(in: context, scope: session.scope)
                     // And the server's half of the same fact. The reminder fires at eleven;
                     // this is what makes the products be *there* at eleven, on the brands
                     // whose rhythm the poller cannot read. On foreground for the same
                     // reason the line above is — a drop written down offline, or on a build
                     // before this existed, would otherwise never be sent — and it costs
                     // nothing when the set has not changed. See `DropHints`.
-                    await DropHints.refresh(in: context, via: remote, status: hints)
+                    await DropHints.refresh(in: context, via: session.remote, status: session.hints)
                 }
             }
         }

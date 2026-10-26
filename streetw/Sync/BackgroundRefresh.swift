@@ -31,6 +31,9 @@ enum BackgroundServices {
     private(set) static var sizes: SizeProfileStore?
     private(set) static var settings: ServerSettings?
     private(set) static var route: PushRoute?
+    /// So a tapped alert about another profile can switch to it first. The three above are
+    /// the current profile's and are re-installed on every switch.
+    static var profiles: ProfileStore?
 
     static func install(
         remote: RemoteSync,
@@ -44,13 +47,89 @@ enum BackgroundServices {
         self.route = route
     }
 
-    /// One sync pass, safe to call from a background wake-up.
+    /// One sync of the current profile — what a tap and a stale token need, nothing more.
     @discardableResult
     static func syncNow() async -> Bool {
         guard let remote, let sizes, settings?.isConfigured == true else { return false }
         await remote.sync(sizes: sizes.profile)
         return remote.lastError == nil
     }
+
+    /// What a pass did: whether every profile it reached synced, and how many rows landed.
+    struct PassResult {
+        var ok = true
+        var merged = 0
+    }
+
+    /// Brings every profile on the account up to date, each into its own store, until
+    /// `deadline` — the background refresh's and a push wake's pass.
+    ///
+    /// **Not only the profile on screen.** This synced the current store and nothing else, so
+    /// another profile's feed was as old as the last time somebody switched to it, and the
+    /// alerts that are said on the phone — `PriceAlerts` on that profile's saves, `WatchNotifier`
+    /// — waited for the same switch. Each profile goes through the very `RemoteSync.sync` the
+    /// foreground uses, with its own store, keys and header (`ProfileStore.syncer`): one merge
+    /// path, called per store, and its alerts are labelled "For Anna: …" by its own scope.
+    ///
+    /// **iOS allows about thirty seconds**, so the order matters more than the total: the
+    /// profile a push names, then the current one, then the rest by how long since a pass last
+    /// reached them. A pass cut short — out of time, or expired by iOS — stops between profiles
+    /// and leaves the stragglers at the head of the next one rather than starving them.
+    /// A store the foreground is already syncing is skipped, never waited for.
+    ///
+    /// - Parameters:
+    ///   - named: the profile a push was about, by server user id.
+    ///   - limit: at most this many profiles — one, for a push arriving with the app open,
+    ///     whose banner waits on this.
+    static func syncProfiles(first named: UUID? = nil, until deadline: Date, limit: Int = .max) async -> PassResult {
+        guard settings?.isConfigured == true, let profiles else { return PassResult(ok: false) }
+        var order = profiles.scopes
+        let current = order.removeFirst()
+        let stamps = passStamps
+        order.sort { (stamps[stampKey($0)] ?? .distantPast) < (stamps[stampKey($1)] ?? .distantPast) }
+        order.insert(current, at: 0)
+        if let named,
+           let index = order.firstIndex(where: { $0.id == named || ($0.isHolder && profiles.holder?.id == named) }) {
+            order.insert(order.remove(at: index), at: 0)
+        }
+
+        var result = PassResult()
+        for scope in order.prefix(limit) {
+            guard !Task.isCancelled, Date() < deadline else { break }
+            guard let syncer = profiles.syncer(for: scope) else { continue }
+            let ran = await syncer.remote.sync(sizes: syncer.sizes.profile, ifIdle: true)
+            // Cancelled mid-sync: what landed is saved page by page, and the profile stays
+            // unstamped, so the next pass reaches it early.
+            if Task.isCancelled { break }
+            if ran {
+                if syncer.remote.lastError == nil {
+                    passStamps[stampKey(scope)] = Date()
+                    result.merged += syncer.remote.newItemCount
+                } else {
+                    result.ok = false
+                }
+            }
+            // From the store, so a profile that is not current still has its reminders armed
+            // after permission was granted while somebody else's was on screen.
+            await DropReminders.refresh(in: syncer.context, scope: scope)
+        }
+        return result
+    }
+
+    /// When a background pass last synced each store, by `ProfileScope.home`. The phone's, not
+    /// a person's: it only orders the next pass.
+    private static var passStamps: [String: Date] {
+        get { UserDefaults.standard.dictionary(forKey: "backgroundPassAt") as? [String: Date] ?? [:] }
+        set { UserDefaults.standard.set(newValue, forKey: "backgroundPassAt") }
+    }
+
+    private static func stampKey(_ scope: ProfileScope) -> String {
+        scope.home?.uuidString ?? "default"
+    }
+
+    /// How long a pass may start new work for. iOS gives a refresh and a push wake about
+    /// thirty seconds; the margin is for the sync already running when this passes.
+    static let passBudget: TimeInterval = 22
 
     /// The APNs environment this build's token belongs to. A token from the development
     /// environment is simply invalid at the production host and vice versa, so the
@@ -118,19 +197,24 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
     ///
     /// `nonisolated` because the payload is `[AnyHashable: Any]`, which is not `Sendable` and
     /// cannot be handed to a main-actor implementation — an error in Swift 6 language mode.
-    /// Nothing here reads it, which is the point of a content-free push, so there is nothing
-    /// to hop onto the main actor with: both calls below are already `await`s onto actors of
-    /// their own.
+    /// Only the profile id is read out of it, here, and a `UUID` crosses to the main actor
+    /// where the whole payload could not.
     nonisolated func application(
         _ application: UIApplication,
         didReceiveRemoteNotification userInfo: [AnyHashable: Any]
     ) async -> UIBackgroundFetchResult {
-        let ok = await BackgroundServices.syncNow()
-        guard ok else { return .failed }
-        // `sync` zeroes this at the start of each pass, so it already means "new in this
-        // pass" — comparing against a value read beforehand would always say no.
-        let merged = await BackgroundServices.remote?.newItemCount ?? 0
-        return merged > 0 ? .newData : .noData
+        // The one thing read: whose alert it is, so that profile is synced first.
+        let profileID = Self.profileID(in: userInfo)
+        let deadline = Date().addingTimeInterval(BackgroundServices.passBudget)
+        let pass = await BackgroundServices.syncProfiles(first: profileID, until: deadline)
+        guard pass.ok else { return .failed }
+        // `sync` zeroes its count at the start of each run, so the sum already means "new in
+        // this pass" — comparing against a value read beforehand would always say no.
+        return pass.merged > 0 ? .newData : .noData
+    }
+
+    nonisolated private static func profileID(in userInfo: [AnyHashable: Any]) -> UUID? {
+        (userInfo["profileID"] as? String).flatMap(UUID.init(uuidString:))
     }
 
     // MARK: Background refresh
@@ -141,11 +225,14 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         // opens the app again, there must still be a future wake-up queued.
         schedule()
 
-        let work = Task { await BackgroundServices.syncNow() }
+        // Every profile, the current one first, stopping between profiles once the budget is
+        // spent — and at once if iOS expires the task first. See `syncProfiles`.
+        let deadline = Date().addingTimeInterval(BackgroundServices.passBudget)
+        let work = Task { await BackgroundServices.syncProfiles(until: deadline) }
         task.expirationHandler = { work.cancel() }
 
-        let ok = await work.value
-        task.setTaskCompleted(success: ok)
+        let pass = await work.value
+        task.setTaskCompleted(success: pass.ok)
     }
 
     /// iOS treats this as a hint and throttles hard on how often the app is opened —
@@ -163,6 +250,28 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
     }
 }
 
+#if DEBUG
+extension AppDelegate {
+    /// `-debugBackgroundPass YES` runs the background refresh's pass every time the app is
+    /// backgrounded, under a background-task assertion and the same budget.
+    ///
+    /// The simulator offers no way to run a `BGAppRefreshTask` without a debugger attached —
+    /// `_simulateLaunchForTaskWithIdentifier:` needs lldb — and refuses a silent `simctl push`
+    /// as having no visible content, so neither real path can be driven from a script.
+    @MainActor
+    static func debugPassIfRequested() {
+        guard UserDefaults.standard.bool(forKey: "debugBackgroundPass") else { return }
+        let deadline = Date().addingTimeInterval(BackgroundServices.passBudget)
+        let work = Task { await BackgroundServices.syncProfiles(until: deadline) }
+        let assertion = UIApplication.shared.beginBackgroundTask { work.cancel() }
+        Task {
+            _ = await work.value
+            UIApplication.shared.endBackgroundTask(assertion)
+        }
+    }
+}
+#endif
+
 extension AppDelegate: UNUserNotificationCenterDelegate {
     /// Show the alert even with the app open — a drop is worth interrupting for, and the
     /// feed the user is looking at is exactly what just changed.
@@ -170,7 +279,11 @@ extension AppDelegate: UNUserNotificationCenterDelegate {
         _ center: UNUserNotificationCenter,
         willPresent notification: UNNotification
     ) async -> UNNotificationPresentationOptions {
-        await BackgroundServices.syncNow()
+        // The profile the alert is about — "For Anna" lands in Anna's store even with the
+        // holder on screen — and only that one: the banner waits on this.
+        let profileID = (notification.request.content.userInfo["profileID"] as? String)
+            .flatMap(UUID.init(uuidString:))
+        _ = await BackgroundServices.syncProfiles(first: profileID, until: .distantFuture, limit: 1)
         // Always shown. Whether a brand may interrupt somebody is its follow mode, which
         // the server applies before anything is sent — this used to second-guess it with a
         // phone-only mute that only ever worked with the app open, since iOS shows a push
@@ -186,6 +299,12 @@ extension AppDelegate: UNUserNotificationCenterDelegate {
         _ center: UNUserNotificationCenter,
         didReceive response: UNNotificationResponse
     ) async {
+        // "For Anna: …" opens in Anna's profile: switched before the sync, so the pull and the
+        // lookup both run against her store. The holder's id switches back to the holder; an
+        // alert with none — from a build or a server before profiles — opens where it is.
+        let profileID = (response.notification.request.content.userInfo["profileID"] as? String)
+            .flatMap(UUID.init(uuidString:))
+        await MainActor.run { BackgroundServices.profiles?.adopt(pushedFor: profileID) }
         await BackgroundServices.syncNow()
         BackgroundServices.route?.open(
             PushDestination(response.notification.request.content.userInfo)
