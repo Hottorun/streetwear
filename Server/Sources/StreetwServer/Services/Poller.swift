@@ -15,6 +15,9 @@ actor Poller {
     private let app: Application
     private let http: any HTTPFetching
     private var isRunning = false
+    /// The country storefronts being read this pass — `Storefronts.wanted`, asked once per tick.
+    /// Kept for `enrich`, which reads product pages under the same rule the claim does.
+    private var wantedStorefronts: Set<UUID> = []
 
     init(app: Application, http: any HTTPFetching = Net.live) {
         self.app = app
@@ -114,6 +117,10 @@ actor Poller {
         // Once per tick, not once per source: the answer is the same for every source in
         // the pass, and it decides both claims as well as each source's next cadence.
         let hinted = await activeHintedBrandIDs()
+        // Which country shops somebody there is following — the only ones claimed. Empty
+        // whenever no country is switched on, which leaves every claim reading the main
+        // shops alone, exactly as before storefronts existed.
+        wantedStorefronts = await liveStorefrontIDs()
 
         let due: [SourceModel]
         do {
@@ -221,8 +228,10 @@ actor Poller {
 
     private func enrichmentQueue(limit: Int) async throws -> [ProductModel] {
         let db = app.db
+        let wanted = wantedStorefronts
         var queue = try await ProductModel.query(on: db)
             .filter(\.$pendingAnnouncement != nil)
+            .group(.or) { shops in Self.readable(shops, wanted: wanted) }
             .sort(\.$firstSeenAt)
             .limit(limit)
             .with(\.$variants)
@@ -253,6 +262,7 @@ actor Poller {
         let held = Set(queue.compactMap(\.id))
         let unread = try await ProductModel.query(on: db)
             .filter(\.$externalID =~ "sitemap:")
+            .group(.or) { shops in Self.readable(shops, wanted: wanted) }
             .filter(\.$enrichedAt == nil)
             .filter(\.$kind == UpdateKind.product.rawValue)
             .sort(\.$firstSeenAt, .descending)
@@ -261,6 +271,15 @@ actor Poller {
             .all()
         queue += unread.filter { $0.id.map { !held.contains($0) } ?? false }.prefix(limit - queue.count)
         return queue
+    }
+
+    /// The main shop, or a country shop somebody there follows: the products whose pages may
+    /// be read. A product page is a request to a storefront like any other, and a paused
+    /// storefront is not read at all. Grouped with `.or`, so the main shop alone is
+    /// `storefront_id IS NULL` — what every product was before storefronts existed.
+    private static func readable(_ group: QueryBuilder<ProductModel>, wanted: Set<UUID>) {
+        group.filter(\.$storefrontID == nil)
+        if !wanted.isEmpty { group.filter(\.$storefrontID ~~ Array(wanted)) }
     }
 
     /// What one page read means for its row.
@@ -305,8 +324,12 @@ actor Poller {
         // Owed, and either the page confirmed it or it was surely a product all along. A
         // page that failed costs the announcement its details, never the announcement.
         if let owed, owed == .announce || outcomeIsProduct(outcome), let productID = product.id {
-            try await EventModel(brandID: product.$brand.id, productID: productID, kind: .product)
-                .save(on: db)
+            try await EventModel(
+                brandID: product.$brand.id,
+                productID: productID,
+                storefrontID: product.storefrontID,
+                kind: .product
+            ).save(on: db)
         }
     }
 
@@ -327,6 +350,7 @@ actor Poller {
             kind: UpdateKind(rawValue: product.kind) ?? .product,
             priceText: product.priceText,
             priceAmount: product.priceAmount,
+            currency: product.currency,
             originalPriceAmount: product.originalPriceAmount,
             originalPriceText: product.originalPriceText,
             isAvailable: product.isAvailable,
@@ -376,6 +400,14 @@ actor Poller {
 
         let now = Date()
         let lease = now.addingTimeInterval(Self.leaseDuration)
+        // **The main shop always, a country shop only while somebody there follows the brand**
+        // — see `Storefronts.wanted`. The one fragment the statements below share, and the
+        // only one built at all: with no country switched on it is `storefront_id IS NULL`,
+        // which every source written before storefronts existed is.
+        let wanted = Array(wantedStorefronts)
+        let shops: SQLQueryString = wanted.isEmpty
+            ? "storefront_id IS NULL"
+            : "(storefront_id IS NULL OR storefront_id = ANY(\(bind: wanted)))"
         let ids: [UUID]
         do {
             // Three literal statements rather than one composed from fragments. The
@@ -395,6 +427,7 @@ actor Poller {
                     WHERE id IN ( \
                         SELECT id FROM sources \
                         WHERE enabled = true AND next_check_at <= \(bind: now) \
+                        AND \(shops) \
                         ORDER BY next_check_at LIMIT \(bind: limit) \
                         FOR UPDATE SKIP LOCKED \
                     ) RETURNING id
@@ -405,6 +438,7 @@ actor Poller {
                     WHERE id IN ( \
                         SELECT id FROM sources \
                         WHERE enabled = true AND next_check_at <= \(bind: now) \
+                        AND \(shops) \
                         AND brand_id = ANY(\(bind: brands)) \
                         ORDER BY next_check_at LIMIT \(bind: limit) \
                         FOR UPDATE SKIP LOCKED \
@@ -416,6 +450,7 @@ actor Poller {
                     WHERE id IN ( \
                         SELECT id FROM sources \
                         WHERE enabled = true AND next_check_at <= \(bind: now) \
+                        AND \(shops) \
                         AND brand_id <> ALL(\(bind: brands)) \
                         ORDER BY next_check_at LIMIT \(bind: limit) \
                         FOR UPDATE SKIP LOCKED \
@@ -435,6 +470,7 @@ actor Poller {
         return try await SourceModel.query(on: db)
             .filter(\.$id ~~ ids)
             .with(\.$brand)
+            .with(\.$storefront)
             .all()
     }
 
@@ -443,9 +479,14 @@ actor Poller {
         brandIDs: Set<UUID> = [],
         matching: Bool = false
     ) async throws -> [SourceModel] {
+        let wanted = Array(wantedStorefronts)
         var builder = SourceModel.query(on: app.db)
             .filter(\.$enabled == true)
             .filter(\.$nextCheckAt <= Date())
+            .group(.or) { shops in
+                shops.filter(\.$storefront.$id == nil)
+                if !wanted.isEmpty { shops.filter(\.$storefront.$id ~~ wanted) }
+            }
         if !brandIDs.isEmpty {
             let brands = Array(brandIDs)
             builder = matching
@@ -456,6 +497,7 @@ actor Poller {
             .sort(\.$nextCheckAt)
             .limit(limit)
             .with(\.$brand)
+            .with(\.$storefront)
             .all()
     }
 
@@ -478,6 +520,18 @@ actor Poller {
             return Set(rows.map { $0.$brand.id })
         } catch {
             app.logger.error("poller: could not read poll hints: \(error)")
+            return []
+        }
+    }
+
+    /// The country storefronts somebody there follows, once per tick. Failure is silent and
+    /// empty, for the reason a hint's is: the main shops are polled either way, and a queue
+    /// that stopped because this could not be read would be the worse trade.
+    private func liveStorefrontIDs() async -> Set<UUID> {
+        do {
+            return try await Storefronts.wanted(enabled: app.storefrontCountries, on: app.db)
+        } catch {
+            app.logger.error("poller: could not read which storefronts are followed: \(error)")
             return []
         }
     }
@@ -513,6 +567,16 @@ actor Poller {
         // not `lastCheckedAt == nil`: that is stamped below before the fetch and survives
         // a failure, so a source that errored once would count its first real batch as
         // news and announce a whole back catalogue.
+        //
+        // A country shop that sat unread — nobody there followed the brand for a while — owes
+        // a baseline again, because whatever it knew is months old and everything since would
+        // otherwise go out as news to the first follower back. The baseline is *unspent* rather
+        // than this one poll declared one, so a resumed poll that fails leaves it owed, exactly
+        // as a first poll that fails does. See `Storefronts.resumeAfter`.
+        let storefront = source.$storefront.id == nil ? nil : source.storefront
+        if storefront != nil, Storefronts.hasLapsed(since: source.lastCheckedAt) {
+            source.baselinedAt = nil
+        }
         let isFirstPoll = source.baselinedAt == nil
         let since = source.lastCheckedAt
 
@@ -528,11 +592,20 @@ actor Poller {
             if let fingerprint = result.fingerprint { source.fingerprint = fingerprint }
 
             source.lockedAt = result.isLocked ? (source.lockedAt ?? Date()) : nil
-            if let currency = result.shopCurrency, brand.currency != currency {
+            // **A country shop's currency is its own**, and it must not reach the brand row:
+            // `brands.currency` is the main shop's, and the price of every row from before
+            // currencies were stored is read in it. Nor may a country shop rename the brand —
+            // the name is the brand's, and a British shop's `/meta.json` can say "Palace UK".
+            if let storefront {
+                if let currency = result.shopCurrency, storefront.currency != currency {
+                    storefront.currency = currency
+                    try await storefront.save(on: db)
+                }
+            } else if let currency = result.shopCurrency, brand.currency != currency {
                 brand.currency = currency
                 try await brand.save(on: db)
             }
-            if let name = result.shopName, brand.usesGeneratedName {
+            if storefront == nil, let name = result.shopName, brand.usesGeneratedName {
                 brand.name = name
                 brand.usesGeneratedName = false
                 try await brand.save(on: db)
@@ -547,6 +620,7 @@ actor Poller {
                     result.items,
                     brand: brand,
                     sourceID: sourceID,
+                    storefrontID: storefront?.id,
                     isBaseline: isFirstPoll || result.isBaseline,
                     kind: kind
                 )
@@ -559,7 +633,7 @@ actor Poller {
             // while every release already on somebody's feed keeps falling back to the word
             // match — which is what put five board shorts inside a hat.
             if kind == .collections, !isFirstPoll {
-                try? await fillMemberships(brandID: brandID, store: source.asBrandSource.url)
+                try? await fillMemberships(brandID: brandID, storefrontID: storefront?.id, store: source.asBrandSource.url)
             }
 
             // Only now, once a fetch has completed and its batch is stored, is the
@@ -643,10 +717,13 @@ actor Poller {
     /// is exactly the class of difference that passes locally and fails on the deployment.
     /// The window keeps the scan small enough that reading a few extra rows is cheaper than
     /// being clever about it.
-    private func fillMemberships(brandID: UUID, store: URL) async throws {
+    private func fillMemberships(brandID: UUID, storefrontID: UUID?, store: URL) async throws {
         let since = Date().addingTimeInterval(-Self.membershipBackfillDays * 86_400)
         let stale = try await ProductModel.query(on: app.db)
             .filter(\.$brand.$id == brandID)
+            // This shop's collections, asked of this shop — a British release is not in the
+            // American catalogue.
+            .filter(\.$storefrontID == storefrontID)
             .filter(\.$kind == UpdateKind.collection.rawValue)
             .filter(\.$publishedAt >= since)
             .sort(\.$publishedAt, .descending)
@@ -695,10 +772,13 @@ actor Poller {
     ///
     /// - Parameter kind: the source's. A new sitemap product is stored with its event held
     ///   back for its page to be read — see `PendingAnnouncement` and `enrich`.
+    /// - Parameter storefrontID: the country shop the source reads, nil for the main shop —
+    ///   copied onto every product and event this writes.
     private func merge(
         _ items: [FetchedItem],
         brand: BrandModel,
         sourceID: UUID,
+        storefrontID: UUID? = nil,
         isBaseline: Bool,
         kind: BrandSource.Kind
     ) async throws -> Bool {
@@ -730,7 +810,7 @@ actor Poller {
                 }
             } else {
                 reading.count(now: item.priceAmount, original: item.originalPriceAmount, previous: nil)
-                let product = ProductModel(brandID: brandID, sourceID: sourceID, item: item)
+                let product = ProductModel(brandID: brandID, sourceID: sourceID, storefrontID: storefrontID, item: item)
                 if holdsAnnouncements {
                     product.pendingAnnouncement = (item.isTentative
                         ? PendingAnnouncement.confirm
@@ -755,6 +835,7 @@ actor Poller {
                         try await EventModel(
                             brandID: brandID,
                             productID: productID,
+                            storefrontID: storefrontID,
                             kind: kind,
                             previousPriceText: isMarkdown ? item.originalPriceText : nil,
                             previousPriceAmount: isMarkdown ? item.originalPriceAmount : nil
@@ -764,7 +845,11 @@ actor Poller {
                 }
             }
         }
-        if try await settleSale(reading, of: brand, isBaseline: isBaseline) { producedEvent = true }
+        // The main shop's alone: the sale state lives on the brand row, and a British shop
+        // marking down is not the brand's main shop going on sale. See `docs/server.md`.
+        if storefrontID == nil, try await settleSale(reading, of: brand, isBaseline: isBaseline) {
+            producedEvent = true
+        }
         return producedEvent
     }
 
@@ -851,7 +936,10 @@ actor Poller {
 
         // Checked before the incoming price overwrites the stored one — and kept, because
         // the event needs to say what it dropped *from* and by how much.
-        let dropped = PriceChange.isDrop(from: product.priceAmount, to: item.priceAmount)
+        let dropped = PriceChange.isDrop(
+            from: product.priceAmount, in: product.currency,
+            to: item.priceAmount, in: item.currency
+        )
         let wasText = product.priceText
         let wasAmount = product.priceAmount
 
@@ -882,6 +970,12 @@ actor Poller {
         product.isAvailable = isAvailable
         product.priceText = priceText
         product.priceAmount = priceAmount
+        // The currency follows the price it belongs to, and only a read that priced the row
+        // may change it — a sitemap says nothing about either.
+        if let currency = item.currency, item.priceAmount != nil, product.currency != currency {
+            product.currency = currency
+            changed = true
+        }
         // The brand's original follows the price it belongs to. A source that publishes a
         // price says every time whether it is marked down — compare-at comes back null once
         // a sale ends, which must clear it — and one that publishes no price says nothing
@@ -941,6 +1035,7 @@ actor Poller {
             try await EventModel(
                 brandID: brandID,
                 productID: productID,
+                storefrontID: product.storefrontID,
                 kind: .restock,
                 sizes: returnedSizes.filter { $0 != "Default Title" && !$0.isEmpty }
             ).save(on: db)
@@ -951,6 +1046,7 @@ actor Poller {
             try await EventModel(
                 brandID: brandID,
                 productID: productID,
+                storefrontID: product.storefrontID,
                 kind: .priceDrop,
                 previousPriceText: wasText,
                 previousPriceAmount: wasAmount

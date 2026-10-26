@@ -34,6 +34,7 @@ extension DiscoverCard: @retroactive Content {}
 extension DiscoverResponse: @retroactive Content {}
 extension UsageReport: @retroactive Content {}
 extension UsageReceipt: @retroactive Content {}
+extension StorefrontDTO: @retroactive Content {}
 
 extension BrandSourceDTO {
     init(_ source: SourceModel) {
@@ -58,18 +59,30 @@ extension BrandDTO {
     /// route into a compile error at the call site.
     /// - Parameter followMode: the caller's own follow, for the one route that is about
     ///   the caller's follows. Nil everywhere else, which the client reads as "not said".
-    init(_ brand: BrandModel, sources: [SourceModel], followMode: FollowMode? = nil) {
+    /// - Parameter storefront: the country shop serving the caller (`Storefronts.serving`), or
+    ///   nil for the main shop. **The sources and the currency are that shop's**, and only that
+    ///   shop's: a brand page lists how the shop it is showing is watched, and a main shop's
+    ///   page that listed a British shop's sources beside its own — which is what `sources`
+    ///   holds once one is attached — would be describing two shops as one.
+    init(
+        _ brand: BrandModel,
+        sources: [SourceModel],
+        followMode: FollowMode? = nil,
+        storefront: StorefrontModel? = nil
+    ) {
+        let shop = storefront?.id
         self.init(
             id: brand.id,
             name: brand.name,
             slug: brand.slug,
             website: brand.website,
             instagramHandle: brand.instagramHandle,
-            currency: brand.currency,
+            currency: storefront.map(\.currency) ?? brand.currency,
             lockedForDrop: brand.lockedForDrop,
             logoURL: brand.logoURL,
-            sources: sources.map(BrandSourceDTO.init),
-            followMode: followMode
+            sources: sources.filter { $0.$storefront.id == shop }.map(BrandSourceDTO.init),
+            followMode: followMode,
+            storefront: storefront?.asDTO
         )
     }
 }
@@ -99,6 +112,9 @@ extension FeedItem {
             imageURLs: product?.imageURLs ?? [],
             priceText: product?.priceText,
             priceAmount: product?.priceAmount,
+            // The shop's own, so the phone can write it the reader's way — and never a
+            // different shop's: see `ProductModel.priceCurrency`.
+            currency: product?.priceCurrency(main: event.brand.currency),
             previousPriceText: event.previousPriceText,
             previousPriceAmount: event.previousPriceAmount,
             // The product's own, beside its price — both what is true now.
@@ -152,9 +168,13 @@ extension DiscoverCard {
     ///   server down with `Children relation not eager loaded` the first time the second
     ///   caller existed. An explicit parameter turns that into a compile error at the call
     ///   site instead.
+    /// - Parameter mainCurrency: the brand's own `currency` — the main shop's, which is what a
+    ///   row from before currencies were stored is in. Passed rather than read off `brand`,
+    ///   whose currency is the *serving* shop's.
     init(
         _ product: ProductModel,
         brand: BrandDTO,
+        mainCurrency: String?,
         variants: [VariantModel],
         spread: [String],
         vector: BrandVector?,
@@ -173,6 +193,7 @@ extension DiscoverCard {
             linkURL: product.linkURL,
             priceText: product.priceText,
             priceAmount: product.priceAmount,
+            currency: product.priceCurrency(main: mainCurrency),
             isAvailable: product.isAvailable,
             // The classifier's inputs travel with its verdict, for the same reason they do
             // on a feed row: `GarmentSlot`, `Gender` and every judgement `Pairing` makes are

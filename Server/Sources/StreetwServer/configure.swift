@@ -84,6 +84,8 @@ func configure(_ app: Application) async throws {
     app.migrations.add(AddProductEnrichment())
     app.migrations.add(AddProductOriginalPrice())
     app.migrations.add(AddSaleLedgers())
+    app.migrations.add(CreateStorefronts())
+    app.migrations.add(AddStorefrontColumns())
     if Environment.get("AUTO_MIGRATE") != "false" {
         try await app.autoMigrate()
     }
@@ -143,6 +145,12 @@ func configure(_ app: Application) async throws {
     } else {
         app.logger.warning("admin: ADMIN_TOKEN not set — every /admin route will refuse")
     }
+
+    // Read once, here, like the admin key — a country multiplies the polling of every brand
+    // followed there, so which ones are on is a deployment decision and the boot log says it.
+    let countries = Storefronts.countries(from: Environment.get("STOREFRONT_COUNTRIES"))
+    app.storage[StorefrontCountriesKey.self] = countries
+    app.logger.notice("storefronts: \(countries.isEmpty ? "no countries switched on" : countries.sorted().joined(separator: ","))")
 
     let sender = app.configureAPNS()
     app.storage[APNSConfiguredKey.self] = sender != nil

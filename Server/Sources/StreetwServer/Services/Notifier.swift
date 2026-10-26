@@ -404,6 +404,17 @@ actor Notifier {
                 uniquingKeysWith: { first, _ in first }
             )
 
+            // The country shops of the brands in this pass, so each follower hears only from the
+            // shop they are served — see `Storefronts`. Not asked at all while no country is
+            // switched on, which leaves every follower on the main shop as before.
+            let enabled = app.storefrontCountries
+            let shops = enabled.isEmpty ? [] : (try? await StorefrontModel.query(on: db)
+                .filter(\.$brand.$id ~~ Array(Set(fresh.map { $0.$brand.id })))
+                .filter(\.$country ~~ Array(enabled))
+                .with(\.$sources)
+                .all()) ?? []
+            let shopsByBrand = Dictionary(grouping: shops, by: { $0.$brand.id })
+
             let cooling = Set(quiet)
             for (brandID, events) in Dictionary(grouping: fresh, by: { $0.$brand.id }) where !cooling.contains(brandID) {
                 let brand = byID[brandID]
@@ -411,6 +422,7 @@ actor Notifier {
                 await notify(
                     brandID: brandID,
                     events: events,
+                    storefronts: shopsByBrand[brandID] ?? [],
                     using: sender,
                     skipping: claimed,
                     into: &result
@@ -672,9 +684,15 @@ actor Notifier {
     }
 
     /// Everyone following one brand hears about that brand's batch at most once.
+    ///
+    /// - Parameter storefronts: the brand's country shops in a switched-on country, with their
+    ///   sources. Each follower hears only of events in the shop serving them — their country's
+    ///   where it is live, the main shop otherwise — so a reader in Britain is not woken twice
+    ///   for one drop, once in each currency.
     private func notify(
         brandID: UUID,
         events: [EventModel],
+        storefronts: [StorefrontModel] = [],
         using sender: any PushSending,
         skipping claimed: Set<Pair> = [],
         into result: inout NotifyResult
@@ -713,7 +731,20 @@ actor Notifier {
 
                 let profile = user.sizeProfile
                 let mode = modes[userID] ?? .everything
-                let relevant = events.filter { Self.isRelevant($0, to: profile, mode: mode) }
+                // They follow the brand, so somebody in their country does: whether the shop is
+                // live is then only whether it has been read.
+                let shop = storefronts.first { storefront in
+                    Storefronts.serves(
+                        country: storefront.country,
+                        to: user.country,
+                        enabled: app.storefrontCountries,
+                        followedThere: true,
+                        baselined: storefront.sources.contains { $0.baselinedAt != nil }
+                    )
+                }?.id
+                let relevant = events.filter {
+                    $0.storefrontID == shop && Self.isRelevant($0, to: profile, mode: mode)
+                }
                 guard let copy = Self.summary(brand: brandName, events: relevant) else { continue }
                 // Only when the alert names one thing. A counted summary ("3 restocks and
                 // 2 new items") has no single product behind it, and picking one of them

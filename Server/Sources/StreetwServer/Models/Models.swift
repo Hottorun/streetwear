@@ -43,6 +43,7 @@ final class BrandModel: Model, @unchecked Sendable {
 
     @Children(for: \.$brand) var sources: [SourceModel]
     @Children(for: \.$brand) var products: [ProductModel]
+    @Children(for: \.$brand) var storefronts: [StorefrontModel]
 
     init() {}
 
@@ -56,11 +57,53 @@ final class BrandModel: Model, @unchecked Sendable {
     }
 }
 
+/// One country's shop for a brand, when it runs one apart from its main shop.
+///
+/// **The main shop is not a row.** It is the brand itself — `brands.website`,
+/// `brands.currency` and every source whose `storefront_id` is null — which is what let every
+/// brand already in the catalogue keep working unchanged: no backfill, no re-discovery, no
+/// baseline spent twice. A storefront exists only where somebody attached one
+/// (`POST /admin/brands/:id/storefronts`), and is only polled while somebody in its country
+/// follows the brand — see `Storefronts`.
+///
+/// Catalogue, not personal: one row per real-world shop, shared by everybody in that country.
+final class StorefrontModel: Model, @unchecked Sendable {
+    static let schema = "storefronts"
+
+    @ID(key: .id) var id: UUID?
+    @Parent(key: "brand_id") var brand: BrandModel
+    /// ISO 3166-1 alpha-2, as `CountryCode` writes it. One per brand.
+    @Field(key: "country") var country: String
+    /// The shop's own base URL — what discovery was run on, and what a brand page names.
+    @Field(key: "url") var url: String
+    /// What this shop charges in, from its own `/meta.json` when it publishes one. Kept apart
+    /// from `brands.currency`, which is the main shop's and would otherwise be overwritten by
+    /// whichever of the two shops polled last.
+    @OptionalField(key: "currency") var currency: String?
+    @Timestamp(key: "created_at", on: .create) var createdAt: Date?
+
+    @Children(for: \.$storefront) var sources: [SourceModel]
+
+    init() {}
+
+    init(brandID: UUID, country: String, url: String, currency: String?) {
+        self.$brand.id = brandID
+        self.country = country
+        self.url = url
+        self.currency = currency
+    }
+
+    var asDTO: StorefrontDTO { StorefrontDTO(country: country, url: url, currency: currency) }
+}
+
 final class SourceModel: Model, @unchecked Sendable {
     static let schema = "sources"
 
     @ID(key: .id) var id: UUID?
     @Parent(key: "brand_id") var brand: BrandModel
+    /// The country shop this source reads, or nil for the brand's main shop — which every
+    /// source written before storefronts existed is. See `StorefrontModel`.
+    @OptionalParent(key: "storefront_id") var storefront: StorefrontModel?
     @Field(key: "kind") var kind: String
     @Field(key: "url") var url: String
     @Field(key: "enabled") var enabled: Bool
@@ -85,8 +128,9 @@ final class SourceModel: Model, @unchecked Sendable {
 
     init() {}
 
-    init(brandID: UUID, kind: BrandSource.Kind, url: String) {
+    init(brandID: UUID, kind: BrandSource.Kind, url: String, storefrontID: UUID? = nil) {
         self.$brand.id = brandID
+        self.$storefront.id = storefrontID
         self.kind = kind.rawValue
         self.url = url
         self.enabled = true
@@ -127,6 +171,16 @@ final class ProductModel: Model, @unchecked Sendable {
     /// The numeric price, so a markdown is detectable. `price_text` is formatted for
     /// display and two different strings say nothing about direction.
     @OptionalField(key: "price_amount") var priceAmount: Double?
+    /// The ISO 4217 code of both prices, from the read that produced them — nil when the source
+    /// did not say, and on every row from before the column, all of which are the main shop's
+    /// and so in `brands.currency`. See `AddStorefrontColumns`.
+    @OptionalField(key: "currency") var currency: String?
+    /// The storefront this row was read from, copied from its source when the row is made —
+    /// nil for the main shop. Here as well as on the source because Discover asks for one
+    /// shop's products and the feed for one shop's events, and neither should have to join
+    /// through `sources` to say which shop it means. A source never changes storefront, so
+    /// the copy cannot go stale.
+    @OptionalField(key: "storefront_id") var storefrontID: UUID?
     /// What the brand says it cost before it was marked down — `compare_at_price`. Beside
     /// the price rather than on an event, because it describes the product as it is now.
     /// See `AddProductOriginalPrice`.
@@ -153,9 +207,11 @@ final class ProductModel: Model, @unchecked Sendable {
 
     init() { self.memberExternalIDs = [] }
 
-    init(brandID: UUID, sourceID: UUID?, item: FetchedItem) {
+    init(brandID: UUID, sourceID: UUID?, storefrontID: UUID? = nil, item: FetchedItem) {
         self.$brand.id = brandID
         self.$source.id = sourceID
+        self.storefrontID = storefrontID
+        self.currency = item.currency
         self.externalID = item.externalID
         self.title = item.title
         self.summary = item.summary
@@ -261,12 +317,17 @@ final class EventModel: Model, @unchecked Sendable {
     /// other kind, which is drawn from its product.
     @OptionalField(key: "title") var title: String?
     @OptionalField(key: "summary") var summary: String?
+    /// Which of the brand's shops this happened in — its product's storefront, nil for the
+    /// main shop. A `.sale` is the main shop's: both detectors read it alone. The feed and
+    /// `Notifier` serve each person one shop per brand, and this is what they serve by.
+    @OptionalField(key: "storefront_id") var storefrontID: UUID?
 
     init() {}
 
     init(
         brandID: UUID,
         productID: UUID?,
+        storefrontID: UUID? = nil,
         kind: UpdateKind,
         sizes: [String] = [],
         previousPriceText: String? = nil,
@@ -276,6 +337,7 @@ final class EventModel: Model, @unchecked Sendable {
     ) {
         self.$brand.id = brandID
         self.$product.id = productID
+        self.storefrontID = storefrontID
         self.kind = kind.rawValue
         self.sizes = sizes
         self.previousPriceText = previousPriceText
@@ -317,6 +379,12 @@ final class UserModel: Model, @unchecked Sendable {
     /// Nullable: absent means "everything", which is the default for a new profile and
     /// the honest reading of someone who has never expressed a preference.
     @OptionalField(key: "gender") var gender: String?
+    /// Which country's shops this person is served, as `CountryCode` writes it. Nullable, and
+    /// null is the main shop of every brand — what every user was before this existed, what 1.0
+    /// always is, and the honest reading of somebody who has never said. Not part of
+    /// `sizeProfile`: it says nothing about what fits, and it is set by its own field on
+    /// `UpdateDevice`. See `Storefronts`.
+    @OptionalField(key: "country") var country: String?
 
     init() {
         self.apparelSizes = []
