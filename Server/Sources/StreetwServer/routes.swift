@@ -131,6 +131,7 @@ func routes(_ app: Application) throws {
 
         let user = UserModel()
         if let sizes = body.sizes { user.sizeProfile = sizes.asProfile }
+        user.country = CountryCode.normalized(body.country)
         try await user.save(on: req.db)
 
         guard let userID = user.id else { throw Abort(.internalServerError) }
@@ -179,10 +180,25 @@ func routes(_ app: Application) throws {
             try await claimAPNsToken(token, for: try device.requireID(), on: req.db)
         }
 
-        if let sizes = body.sizes {
+        if body.sizes != nil || body.country != nil {
             let user = try await device.$user.get(on: req.db)
-            user.sizeProfile = sizes.asProfile
-            try await user.save(on: req.db)
+            var changed = false
+            if let sizes = body.sizes {
+                user.sizeProfile = sizes.asProfile
+                changed = true
+            }
+            // Absent says nothing, empty clears, a code sets — and a code that is not one is
+            // ignored rather than refused: this body is the first authenticated call of every
+            // launch, and a 400 here would fail the whole sync over a setting. See
+            // `UpdateDevice.country`.
+            if let raw = body.country {
+                let country = raw.isEmpty ? nil : CountryCode.normalized(raw)
+                if raw.isEmpty || country != nil, user.country != country {
+                    user.country = country
+                    changed = true
+                }
+            }
+            if changed { try await user.save(on: req.db) }
         }
         return .noContent
     }
@@ -214,6 +230,7 @@ func routes(_ app: Application) throws {
     /// which is exactly what discovery keys on, so "https://www.kith.com/products/foo"
     /// finds the Kith that is already here rather than proposing to create a second one.
     authed.get("brands") { req async throws -> [BrandDTO] in
+        let device = try await req.authenticatedDevice()
         let raw = (try? req.query.get(String.self, at: "q"))?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
 
@@ -237,12 +254,15 @@ func routes(_ app: Application) throws {
                 builder = builder.filter(\.$name, insensitive, "%\(raw)%")
             }
         }
-        return try await builder
+        let brands = try await builder
             .sort(\.$name)
             .limit(25)
             .with(\.$sources)
             .all()
-            .map { BrandDTO($0, sources: $0.sources) }
+        // The caller's shop for each, as on every route that hands over a brand: the phone
+        // stores one row per brand whichever route it arrived on.
+        let serving = try await Storefronts.serving(req, device: device, brandIDs: brands.compactMap(\.id))
+        return brands.map { BrandDTO($0, sources: $0.sources, storefront: $0.id.flatMap { serving[$0] }) }
     }
 
     /// What other people are watching, most-followed first.
@@ -322,6 +342,7 @@ func routes(_ app: Application) throws {
             .with(\.$sources)
             .all()
         let byID = Dictionary(brands.compactMap { b in b.id.map { ($0, b) } }, uniquingKeysWith: { a, _ in a })
+        let serving = try await Storefronts.serving(req, device: device, brandIDs: ranked.map(\.key))
 
         // Recent images per brand, so a recommendation shows the clothes rather than
         // asking someone to take a wordmark on faith.
@@ -347,6 +368,8 @@ func routes(_ app: Application) throws {
         for id in ranked.map(\.key) {
             let rows = try await ProductModel.query(on: req.db)
                 .filter(\.$brand.$id == id)
+                // The shop the caller would be following: its photographs, not another's.
+                .filter(\.$storefrontID == serving[id]?.id)
                 .sort(\.$publishedAt, .descending)
                 .limit(previewFetchPerBrand)
                 .all()
@@ -359,7 +382,7 @@ func routes(_ app: Application) throws {
         return ranked.compactMap { entry in
             guard let brand = byID[entry.key] else { return nil }
             return PopularBrand(
-                brand: BrandDTO(brand, sources: brand.sources),
+                brand: BrandDTO(brand, sources: brand.sources, storefront: serving[entry.key]),
                 followers: entry.value,
                 previewImageURLs: previews[entry.key] ?? [],
                 // Sent so the client can re-rank against a taste profile built from its
@@ -411,7 +434,10 @@ func routes(_ app: Application) throws {
         }
         let domain = BrandDiscovery.registrableDomain(of: base.host() ?? body.url)
         if let existing = try await BrandCatalog.existing(domain: domain, on: req.db) {
-            return BrandDTO(existing, sources: existing.sources)
+            let serving = try await Storefronts.serving(
+                req, device: try await req.authenticatedDevice(), brandIDs: existing.id.map { [$0] } ?? []
+            )
+            return BrandDTO(existing, sources: existing.sources, storefront: existing.id.flatMap { serving[$0] })
         }
 
         let found = await BrandDiscovery.discover(
@@ -578,9 +604,18 @@ func routes(_ app: Application) throws {
             // since it does no polling and never discovered these itself.
             .with(\.$brand) { $0.with(\.$sources) }
             .all()
+        let serving = try await Storefronts.serving(req, device: device, brandIDs: follows.map(\.$brand.id))
         // With the mode, because this is the only list that is about the caller's follows
-        // and the phone decides the feed with it — see `FollowMode.admits`.
-        return follows.map { BrandDTO($0.brand, sources: $0.brand.sources, followMode: $0.mode) }
+        // and the phone decides the feed with it — see `FollowMode.admits`. And with the shop
+        // serving the caller, whose sources and currency are the brand page's.
+        return follows.map {
+            BrandDTO(
+                $0.brand,
+                sources: $0.brand.sources,
+                followMode: $0.mode,
+                storefront: serving[$0.$brand.id]
+            )
+        }
     }
 
     // MARK: Discover
@@ -629,9 +664,10 @@ func routes(_ app: Application) throws {
     ///
     /// Recency is checked in the query and the judgement in Swift, because `Release.isRelease`
     /// is a vocabulary rather than anything SQL can express.
-    @Sendable func newestRelease(_ brandID: UUID, on db: any Database) async throws -> ProductModel? {
+    @Sendable func newestRelease(_ brandID: UUID, storefrontID: UUID?, on db: any Database) async throws -> ProductModel? {
         let collections = try await ProductModel.query(on: db)
             .filter(\.$brand.$id == brandID)
+            .filter(\.$storefrontID == storefrontID)
             .filter(\.$kind == UpdateKind.collection.rawValue)
             .sort(\.$publishedAt, .descending)
             .limit(40)
@@ -665,6 +701,7 @@ func routes(_ app: Application) throws {
             let wanted = release.memberExternalIDs
             matched = try await ProductModel.query(on: db)
                 .filter(\.$brand.$id == brandID)
+                .filter(\.$storefrontID == release.storefrontID)
                 .filter(\.$externalID ~~ wanted)
                 .sort(\.$publishedAt, .descending)
                 .limit(releaseScan)
@@ -679,6 +716,7 @@ func routes(_ app: Application) throws {
 
             let recent = try await ProductModel.query(on: db)
                 .filter(\.$brand.$id == brandID)
+                .filter(\.$storefrontID == release.storefrontID)
                 .filter(\.$kind == UpdateKind.product.rawValue)
                 .sort(\.$publishedAt, .descending)
                 .limit(releaseScan)
@@ -774,6 +812,10 @@ func routes(_ app: Application) throws {
         // every brand is reached rather than only the first twenty forever.
         let groups = max(1, (brands.count + discoverBrandsPerPage - 1) / discoverBrandsPerPage)
         let vectors = await req.application.similarity?.all() ?? [:]
+        // The caller's country shop for each brand that has one being read, and the main shop
+        // for the rest. Every brand rather than the page's slice: one query either way, and
+        // none at all while no country is switched on.
+        let serving = try await Storefronts.serving(req, device: device)
 
         /// One page's worth, or nil when this group is exhausted at this depth.
         func build(page: Int) async throws -> (cards: [DiscoverCard], sawRows: Bool) {
@@ -801,6 +843,7 @@ func routes(_ app: Application) throws {
                 // silently skipped ten of each brand's products, and nothing anywhere would
                 // ever have reported them missing.
                 let offset = depth * discoverPerBrand
+                let shop = serving[brandID]
                 // **No `.with(\.$variants)` here, and that is most of the payload.** The
                 // window is 24 rows wide only so the spread has photographs to draw from,
                 // and a spread entry is a *URL* — but eager loading joined every variant of
@@ -810,6 +853,10 @@ func routes(_ app: Application) throws {
                 // which they are.
                 let rows = try await ProductModel.query(on: req.db)
                     .filter(\.$brand.$id == brandID)
+                    // One shop per brand: the caller's country's where it is served, the
+                    // main shop otherwise — never both, or a jacket would be dealt twice in
+                    // two currencies.
+                    .filter(\.$storefrontID == shop?.id)
                     .sort(\.$publishedAt, .descending)
                     .offset(offset)
                     .limit(discoverFetchPerBrand)
@@ -855,7 +902,7 @@ func routes(_ app: Application) throws {
                     by: { $0.$product.id }
                 )
 
-                let dto = BrandDTO(brand, sources: brand.sources)
+                let dto = BrandDTO(brand, sources: brand.sources, storefront: shop)
                 let spread = PreviewImages.pick(
                     from: rows.map { (title: $0.title, imageURL: $0.imageURLs.first) },
                     limit: discoverSpread
@@ -870,7 +917,7 @@ func routes(_ app: Application) throws {
                 // designers a multi-brand shop stocks). So it gets its own path rather than
                 // competing in the product enumeration, and only at depth zero: a brand has
                 // one current season, not one per page.
-                if depth == 0, let release = try await newestRelease(brandID, on: req.db) {
+                if depth == 0, let release = try await newestRelease(brandID, storefrontID: shop?.id, on: req.db) {
                     let contents = try await members(of: release, brandID: brandID, on: req.db)
                     // A release with nothing found in it is not shown. The card is drawn out
                     // of its members' photographs — the release row itself carries none — so
@@ -880,6 +927,7 @@ func routes(_ app: Application) throws {
                             DiscoverCard(
                                 release,
                                 brand: dto,
+                                mainCurrency: brand.currency,
                                 // A release has none, and the query deliberately does not
                                 // load them.
                                 variants: [],
@@ -897,6 +945,7 @@ func routes(_ app: Application) throws {
                         DiscoverCard(
                             product,
                             brand: dto,
+                            mainCurrency: brand.currency,
                             // Never `product.variants`: the query above deliberately does
                             // not eager load them, and Fluent's `@Children` accessor traps
                             // rather than returning empty when it was not asked to.
@@ -980,6 +1029,14 @@ func routes(_ app: Application) throws {
             .all()
             .map(\.$brand.id)
         guard !followed.isEmpty else { return FeedResponse(items: [], nextCursor: nil) }
+        // Which shop each brand's events come from for this caller. Applied to the window
+        // itself, below, so the paging ranks only what this person can be sent.
+        let serving = try await Storefronts.serving(
+            country: user.country,
+            enabled: req.application.storefrontCountries,
+            brandIDs: followed,
+            on: req.db
+        )
 
         // The whole window, three columns a row, so the ranking can see every brand's share
         // of it; products and variants are loaded for the one page afterwards.
@@ -996,10 +1053,14 @@ func routes(_ app: Application) throws {
             .field(\.$id)
             .field(\.$brand.$id)
             .field(\.$createdAt)
+            .field(\.$storefrontID)
             .all()
             .compactMap { event -> FeedPaging.Row? in
                 guard let id = event.id, let createdAt = event.createdAt else { return nil }
                 if let until = resumed?.until, createdAt > until { return nil }
+                // One shop per brand. In Swift, for the reason the bound is: the choice is a
+                // different shop per brand, and the window is three columns a row.
+                guard event.storefrontID == serving[event.$brand.id]?.id else { return nil }
                 return FeedPaging.Row(id: id, brandID: event.$brand.id, createdAt: createdAt)
             }
         guard let until = resumed?.until ?? window.map(\.createdAt).max() else {
@@ -1067,8 +1128,17 @@ func routes(_ app: Application) throws {
         // The same contract as `/v1/feed`: nothing the client did not name.
         let kinds = FeedKinds.accepted(try? req.query.get(String.self, at: FeedKinds.parameter))
 
+        // The shop this caller is served, and only its history — the same choice the feed
+        // makes, or following a brand would hand over the other shop's back catalogue.
+        let serving = try await Storefronts.serving(
+            country: user.country,
+            enabled: req.application.storefrontCountries,
+            brandIDs: [brandID],
+            on: req.db
+        )
         let events = try await EventModel.query(on: req.db)
             .filter(\.$brand.$id == brandID)
+            .filter(\.$storefrontID == serving[brandID]?.id)
             .filter(\.$createdAt > since)
             .filter(\.$kind ~~ kinds)
             .sort(\.$createdAt, .descending)
@@ -1427,7 +1497,11 @@ func routes(_ app: Application) throws {
     ///
     /// Sorted with the emptiest first, because the list is read to find what is broken.
     admin.get("catalog") { req async throws -> String in
-        let brands = try await BrandModel.query(on: req.db).with(\.$sources).sort(\.$name).all()
+        let brands = try await BrandModel.query(on: req.db)
+            .with(\.$sources)
+            .with(\.$storefronts)
+            .sort(\.$name)
+            .all()
 
         // Counted in one grouped pass rather than a query per brand: this is 50+ brands and
         // growing, and a route that gets slower with the catalogue is a route nobody runs.
@@ -1455,7 +1529,14 @@ func routes(_ app: Application) throws {
             guard let id = brand.id else { return nil }
             let products = counts[id] ?? 0
             let host = brand.website.flatMap { URL(string: $0)?.host() } ?? brand.slug
-            let kinds = brand.sources.map(\.kind).joined(separator: "+")
+            let kinds = brand.sources.filter { $0.$storefront.id == nil }.map(\.kind).joined(separator: "+")
+            // A country's shop, where one is attached, after the main shop's sources — with
+            // the kinds it is read by, so a storefront that found nothing shows as one.
+            let shops: String = brand.storefronts.sorted { $0.country < $1.country }.map { shop -> String in
+                let read = brand.sources.filter { $0.$storefront.id == shop.id }.map(\.kind)
+                let host = URL(string: shop.url)?.host() ?? shop.url
+                return " · \(shop.country) \(host) \(read.joined(separator: "+"))"
+            }.joined()
             let failing = brand.sources.compactMap(\.lastError).first
             let note = failing.map { " ⚠ \($0.prefix(50))" } ?? ""
             let never = brand.sources.allSatisfy { $0.lastCheckedAt == nil } ? " (not checked yet)" : ""
@@ -1473,7 +1554,8 @@ func routes(_ app: Application) throws {
                 brand.name.padding(toLength: 26, withPad: " ", startingAt: 0),
                 host.padding(toLength: 30, withPad: " ", startingAt: 0)
             ].joined()
-            return (products, cells + kinds + never + dupe + note)
+            let line: String = [cells, kinds, shops, never, dupe, note].joined()
+            return (products, line)
         }
 
         return ([
@@ -1533,9 +1615,14 @@ func routes(_ app: Application) throws {
         let usable = found.sources.filter { $0.kind.isAutomatic }
         guard !usable.isEmpty else { return "refused: nothing watchable at \(raw), leaving \(brand.name) as it was" }
 
-        let before = try await ProductModel.query(on: req.db).filter(\.$brand.$id == brandID).count()
-        try await ProductModel.query(on: req.db).filter(\.$brand.$id == brandID).delete()
-        try await SourceModel.query(on: req.db).filter(\.$brand.$id == brandID).delete()
+        // The main shop only. A country's storefront has a URL of its own and is rebuilt by
+        // attaching it again; repointing the brand must not take it down with the main shop.
+        let before = try await ProductModel.query(on: req.db)
+            .filter(\.$brand.$id == brandID).filter(\.$storefrontID == nil).count()
+        try await ProductModel.query(on: req.db)
+            .filter(\.$brand.$id == brandID).filter(\.$storefrontID == nil).delete()
+        try await SourceModel.query(on: req.db)
+            .filter(\.$brand.$id == brandID).filter(\.$storefront.$id == nil).delete()
 
         brand.website = base.absoluteString
         brand.slug = base.host() ?? brand.slug
@@ -1580,8 +1667,10 @@ func routes(_ app: Application) throws {
 
         // The replaced source's products go with it. They were keyed on the old source, so
         // leaving them would put the same garment on screen twice once the new one fills.
+        // The main shop's — a country storefront's sources are its own business.
         let replaced = try await SourceModel.query(on: req.db)
-            .filter(\.$brand.$id == brandID).filter(\.$kind == kind.rawValue).all()
+            .filter(\.$brand.$id == brandID).filter(\.$storefront.$id == nil)
+            .filter(\.$kind == kind.rawValue).all()
         for old in replaced {
             try await ProductModel.query(on: req.db).filter(\.$source.$id == old.id!).delete()
             try await old.delete(on: req.db)
@@ -1590,6 +1679,111 @@ func routes(_ app: Application) throws {
 
         return "\(brand.name): \(kind.rawValue) now \(url.absoluteString)"
             + (replaced.isEmpty ? "" : " (replaced \(replaced.count))")
+    }
+
+    /// Attach a brand's shop for one country, by URL — `?country=GB&url=https://…`.
+    ///
+    /// **By hand, because nothing finds these on its own.** A shop per country is the norm for
+    /// big retailers and the exception for streetwear labels, and where one exists it is
+    /// usually a different host (`eu.kith.com`), a different company, or both. Guessing at
+    /// them would mean probing every brand's every plausible host for every country, which is
+    /// a crawl, not a poll. So an operator names the shop, and this runs ordinary discovery on
+    /// it — through the poller's fetcher, robots.txt and spacing included.
+    ///
+    /// Refuses three mistakes rather than storing them:
+    ///
+    /// - **Nothing watchable there.** The same bar as adding a brand.
+    /// - **A catalogue the brand already reads.** A Shopify Markets subfolder (`/en-gb/`) is
+    ///   read off the host, so it would be the main shop again under another name, polled
+    ///   twice; and one country shop serving several countries (`eu.kith.com` ships to 48)
+    ///   can be attached for one of them, not read twice for two.
+    /// - **A shop that says it does not ship there**, from its own `/meta.json`, unless
+    ///   `&force=true`. Palace's `www.` ships to five countries; serving it to somebody in
+    ///   Germany would be serving a shop they cannot buy from.
+    ///
+    /// Attaching a country that already has a shop replaces it, history and all. The new
+    /// sources start un-baselined, so their first read is context rather than news — and
+    /// nothing is read at all until the country is switched on and somebody there follows
+    /// the brand.
+    admin.post("brands", ":brandID", "storefronts") { req async throws -> String in
+        guard let brandID = req.parameters.get("brandID", as: UUID.self),
+              let brand = try await BrandModel.query(on: req.db)
+                  .filter(\.$id == brandID).with(\.$sources).first(),
+              let country = CountryCode.normalized(try? req.query.get(String.self, at: "country")),
+              let raw = try? req.query.get(String.self, at: "url"),
+              let base = BrandDiscovery.normalizedURL(raw)
+        else { throw Abort(.badRequest, reason: "pass ?country=<ISO code>&url=https://…") }
+        let force = (try? req.query.get(Bool.self, at: "force")) ?? false
+
+        let found = await BrandDiscovery.discover(website: raw, instagramHandle: nil, http: req.application.fetcher)
+        let usable = found.sources.filter { $0.kind.isAutomatic }
+        guard !usable.isEmpty else {
+            return "refused: nothing watchable at \(base.host() ?? raw); \(brand.name) is unchanged"
+        }
+
+        let replaced = try await StorefrontModel.query(on: req.db)
+            .filter(\.$brand.$id == brandID).filter(\.$country == country).first()
+        // Every catalogue the brand reads, less the one being replaced.
+        let read = Set(
+            brand.sources
+                .filter { replaced == nil || $0.$storefront.id != replaced?.id }
+                .map(\.url)
+        )
+        if let same = usable.first(where: { read.contains($0.url.absoluteString) }) {
+            return "refused: \(same.url.absoluteString) is a catalogue \(brand.name) already reads — "
+                + "the main shop, or another country's. One shop is read once."
+        }
+        if !found.shipsTo.isEmpty, !found.shipsTo.contains(country), !force {
+            return "refused: \(base.host() ?? raw) says it ships to \(found.shipsTo.count) "
+                + "countr\(found.shipsTo.count == 1 ? "y" : "ies") and not \(country) "
+                + "(\(found.shipsTo.prefix(8).joined(separator: ","))\(found.shipsTo.count > 8 ? ",…" : "")). "
+                + "Re-run with &force=true if that is wrong."
+        }
+
+        let storefront = StorefrontModel(
+            brandID: brandID,
+            country: country,
+            url: base.absoluteString,
+            currency: found.currency
+        )
+        let cleared = try await req.db.transaction { db -> Int in
+            var cleared = 0
+            if let replaced, let id = replaced.id {
+                cleared = try await Storefronts.remove(id, on: db)
+            }
+            try await storefront.save(on: db)
+            let storefrontID = try storefront.requireID()
+            for source in usable {
+                try await SourceModel(
+                    brandID: brandID,
+                    kind: source.kind,
+                    url: source.url.absoluteString,
+                    storefrontID: storefrontID
+                ).save(on: db)
+            }
+            return cleared
+        }
+        let switchedOn = req.application.storefrontCountries.contains(country)
+        return "\(brand.name): \(country) shop is \(base.host() ?? raw)"
+            + (found.currency.map { " in \($0)" } ?? "")
+            + ", watched by \(usable.map(\.kind.rawValue).joined(separator: "+"))"
+            + (replaced == nil ? "" : " (replaced the last one, \(cleared) product(s) cleared)")
+            + (switchedOn ? "" : ". \(country) is not in STOREFRONT_COUNTRIES, so nothing is read yet")
+    }
+
+    /// Remove a brand's shop for one country, with everything read from it. Its followers
+    /// there are served the main shop from the next request.
+    admin.post("brands", ":brandID", "storefronts", ":country", "delete") { req async throws -> String in
+        guard let brandID = req.parameters.get("brandID", as: UUID.self),
+              let country = CountryCode.normalized(req.parameters.get("country")),
+              let storefront = try await StorefrontModel.query(on: req.db)
+                  .filter(\.$brand.$id == brandID).filter(\.$country == country).first(),
+              let id = storefront.id
+        else { throw Abort(.notFound) }
+        let cleared = try await req.db.transaction { db in
+            try await Storefronts.remove(id, on: db)
+        }
+        return "removed the \(country) shop (\(storefront.url)) — \(cleared) product(s)"
     }
 
     /// Correct a brand's name — the one trusted path, since the public one no longer exists.

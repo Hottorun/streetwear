@@ -23,6 +23,7 @@ struct streetwApp: App {
     // first, see nil, and silently skip the sync — the server looked "not working".
     @State private var settings: ServerSettings
     @State private var sizes: SizeProfileStore
+    @State private var location: LocationSetting
     /// What the wearer has said about their own style, in words. Built here with the rest
     /// so a view's `.task` can never see a nil where a preference should be.
     @State private var statement: StyleStatementStore
@@ -94,13 +95,15 @@ struct streetwApp: App {
 
         let settings = ServerSettings()
         let sizes = SizeProfileStore()
-        let remote = RemoteSync(context: container.mainContext, settings: settings)
+        let location = LocationSetting()
+        let remote = RemoteSync(context: container.mainContext, settings: settings, location: location)
         // Built here for the same reason as the rest, and one more: a push that
         // cold-launches the app delivers its tap before any view exists, so the
         // destination has to have somewhere to land before `ContentView` appears.
         let route = MainActor.assumeIsolated { PushRoute() }
         _settings = State(initialValue: settings)
         _sizes = State(initialValue: sizes)
+        _location = State(initialValue: location)
         _statement = State(initialValue: MainActor.assumeIsolated { StyleStatementStore() })
         _remote = State(initialValue: remote)
         _engine = State(initialValue: SyncEngine(context: container.mainContext))
@@ -134,6 +137,7 @@ struct streetwApp: App {
             ContentView()
                 .environment(settings)
                 .environment(sizes)
+                .environment(location)
                 .environment(statement)
                 .environment(remote)
                 .environment(engine)

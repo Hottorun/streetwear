@@ -29,6 +29,15 @@ final class BrandUpdate {
     /// The numeric price, kept so a markdown can be *detected*. `priceText` is formatted
     /// for display and two different strings tell you nothing about direction.
     var priceAmount: Double?
+    /// The ISO 4217 code every price on this row is in — now, before, and the brand's own
+    /// original — from the shop that published it (`FetchedItem.currency`,
+    /// `FeedItem.currency`).
+    ///
+    /// On the row rather than read from the brand, because a brand runs a shop per country
+    /// and the brand's currency is the serving shop's *now*, not the one this row came from.
+    /// Nil on rows older than the field and wherever the source did not say; those print the
+    /// stored text as they always did. See `priceLabel`.
+    var currencyCode: String?
     /// A start time the source explicitly announced. Nil is the normal case — most
     /// storefronts never publish a machine-readable release time.
     var releaseDate: Date?
@@ -687,6 +696,21 @@ final class BrandUpdate {
     var wasPriceText: String? {
         guard let base = markdownBase else { return nil }
         return base == originalPriceAmount ? originalPriceText : previousPriceText
+    }
+
+    /// The price to print, in this row's own currency and written the reader's way —
+    /// `PriceFormat`. Every screen that prints a price prints this, never `priceText`, which
+    /// is what the server's locale made of it.
+    var priceLabel: String? {
+        PriceFormat.display(text: priceText, amount: priceAmount, currency: currencyCode)
+    }
+
+    /// `wasPriceText`, written the same way as `priceLabel` so the pair agrees.
+    var wasPriceLabel: String? {
+        guard let base = markdownBase else { return nil }
+        return base == originalPriceAmount
+            ? PriceFormat.display(text: originalPriceText, amount: originalPriceAmount, currency: currencyCode)
+            : PriceFormat.display(text: previousPriceText, amount: previousPriceAmount, currency: currencyCode)
     }
 
     /// "−33%", when a cut is known. Printed on any kind, because a product that went live

@@ -8,6 +8,11 @@ public struct DiscoveredSources: Sendable {
     public var suggestedName: String?
     /// The brand's own mark, taken from the icon the site publishes for home screens.
     public var logoURL: URL?
+    /// What `/meta.json` said about the shop that answered, on a Shopify store — read in
+    /// the same request as the name, so knowing them costs nothing. What a storefront
+    /// attached for a country is checked against (`ShopifySource.ShopInfo.shipsTo`).
+    public var currency: String?
+    public var shipsTo: [String] = []
 
     public init() {}
 
@@ -66,7 +71,10 @@ public enum BrandDiscovery {
                 // authoritative answer there is — "Billionaire Boys Club", never
                 // "Bbcicecream". Asked for here rather than waiting for the first sync,
                 // because the name is shown on the very next screen.
-                shopName = await ShopifySource.shopInfo(for: store, http: http)?.name
+                let shop = await ShopifySource.shopInfo(for: store, http: http)
+                shopName = shop?.name
+                result.currency = shop?.currency
+                result.shipsTo = shop?.shipsTo ?? []
             }
             if let feed = await FeedSource.detect(at: base, http: http) {
                 result.sources.append(BrandSource(kind: .feed, url: feed))

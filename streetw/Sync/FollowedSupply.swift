@@ -119,6 +119,7 @@ enum FollowedSupply {
             linkURL: update.linkURL?.absoluteString,
             priceText: update.priceText,
             priceAmount: update.priceAmount,
+            currency: update.currencyCode,
             isAvailable: update.isAvailable,
             productType: update.productType,
             tags: update.tags,

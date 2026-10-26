@@ -387,6 +387,9 @@ enum SharedSaveImporter {
         )
         update.variants = product?.variants ?? []
         update.productExternalID = product?.externalID
+        // Only the catalogue's says which currency its price is in; Open Graph's price text
+        // is printed as the page wrote it.
+        update.currencyCode = product?.currency
         // Free: the Open Graph pass has already read the page, and `og:site_name` is the
         // brand's own name for itself. `identifySites` improves on it later where it can
         // (and is the only source at all on the catalogue path, which fetches no HTML), but
@@ -453,6 +456,7 @@ enum SharedSaveImporter {
         update.isAvailable = product.isAvailable
         update.priceText = product.priceText ?? update.priceText
         update.priceAmount = product.priceAmount ?? update.priceAmount
+        if product.priceAmount != nil, let currency = product.currency { update.currencyCode = currency }
     }
 
     /// Attaches the save to a brand already being watched, when it is the same brand.

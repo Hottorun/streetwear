@@ -229,7 +229,7 @@ struct MemberTile: View {
                     wraps: true
                 )
                 Spacer(minLength: 4)
-                if let price = update.priceText {
+                if let price = update.priceLabel {
                     Text(price)
                         .font(.data(11, .medium))
                         .foregroundStyle(Color.muted)

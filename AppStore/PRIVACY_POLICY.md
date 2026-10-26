@@ -76,6 +76,10 @@ Deleting the app deletes all of it. We hold no copy and cannot recover it.
   for.
 - **Your size preferences and your gender filter.** These are held so that a restock alert in a
   size you do not wear is never sent to you. That targeting is the only reason we have them.
+- **The country you shop in** — your phone's region, unless you choose another under You ›
+  Location. It is held so that, where a brand runs a separate shop for your country, your feed
+  and alerts come from that shop and its prices. It is a country and nothing finer: never your
+  location, your address or your phone's position.
 - **A brand and a time, when you enter a release date yourself and are following that brand**,
   so our server can check that storefront more often around that moment. Only the brand and the
   instant are sent — never the title or the note you wrote, and never any date for a brand you

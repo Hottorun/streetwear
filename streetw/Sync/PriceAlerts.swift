@@ -99,7 +99,7 @@ enum PriceAlerts {
         // The server's wording for a watched markdown, so the two paths read the same.
         content.body = PriceChange.alert(
             title: drop.title,
-            priceText: drop.priceText,
+            priceText: drop.priceLabel,
             percent: PriceChange.percentOff(
                 previous: drop.previousPriceAmount,
                 original: drop.originalPriceAmount,

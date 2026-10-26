@@ -22,6 +22,17 @@ public enum PriceChange {
         return (old - new) / old >= minimumDropShare
     }
 
+    /// The same, for two reads that each say what currency they were in.
+    ///
+    /// **Two numbers in two currencies are not a markdown.** A shop that moves its prices from
+    /// dollars to pounds has not cut anything by a fifth, and nothing here converts. A side
+    /// that does not say — a row stored before currencies were — is taken to be the same
+    /// currency, which is what every comparison assumed until it could know.
+    public static func isDrop(from old: Double?, in oldCurrency: String?, to new: Double?, in newCurrency: String?) -> Bool {
+        if let oldCurrency, let newCurrency, oldCurrency != newCurrency { return false }
+        return isDrop(from: old, to: new)
+    }
+
     /// How much came off, as a whole-number percentage — for "30% OFF" on a card.
     public static func dropPercentage(from old: Double?, to new: Double?) -> Int? {
         guard isDrop(from: old, to: new), let old, let new else { return nil }

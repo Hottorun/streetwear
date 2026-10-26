@@ -297,8 +297,18 @@ rebuilding anything.
 - [ ] **Profiles**, each with its own sizes, gender filter, follows, saves and taste — one server
       user per profile under the account. Alerts are labelled, and each profile can turn its own
       off.
-- [ ] **The location setting** and the region-aware price model (see *Decided*), defaulting to the
+- [x] **The location setting** and the region-aware price model (see *Decided*), defaulting to the
       phone's region.
+      *Done:* You › Location, the phone's region unless chosen, held on the server as
+      `users.country`. A brand's main shop stays the brand row and every existing source, product
+      and event is it (`storefront_id` null — no backfill, no re-poll, no baseline spent); a
+      country's shop is a `storefronts` row attached by hand (`POST /admin/brands/:id/storefronts`),
+      polled only while somebody there follows the brand and its country is in
+      `STOREFRONT_COUNTRIES`, and each person is served one shop per brand in the feed, a brand's
+      feed, Discover, every brand on the wire and pushes. Every stored price carries its currency,
+      nothing converts, and the app prints each row in its own currency in the reader's locale.
+      None switched on yet. Gaps: one storefront serves one country; sale detection and Shopify
+      Markets subfolders are main-shop only. See `docs/server.md`.
 - [x] **Cost metering and credits.** Every AI action records its real cost; consumable packs via
       StoreKit; usage shown ("this month: 23 searches"); prices set after a few weeks of
       measurement.

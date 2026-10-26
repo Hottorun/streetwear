@@ -178,6 +178,7 @@ enum DemoCatalog {
                 variants: variants
             )
             update.productExternalID = productID
+            update.currencyCode = "USD"
             update.discoveredAt = published
             update.restockedSizes = piece.restocked
             if let was = piece.was {

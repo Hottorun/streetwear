@@ -166,6 +166,10 @@ enum Accounts {
         }
 
         target.sizeProfile = mergedSizes(account: target.sizeProfile, device: anonymous.sizeProfile)
+        // The same rule as a ladder: the account's country where it has one. Without it a
+        // reinstall in another country would serve the account the main shop until the app's
+        // next sizes push — and the reinstall's own guess is the phone's region, not a choice.
+        if target.country == nil { target.country = anonymous.country }
         try await target.save(on: db)
 
         try await anonymous.delete(on: db)

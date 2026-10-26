@@ -122,6 +122,7 @@ public struct ProductPage: Sendable, Hashable {
         if item.tags.isEmpty, let color { item.tags = [color] }
         if let price, let currency {
             item.priceText = ShopifySource.formatPrice(String(price), currency: currency)
+            item.currency = CurrencyCode.normalized(currency)
         }
         item.priceAmount = price ?? item.priceAmount
         item.isAvailable = isAvailable ?? item.isAvailable

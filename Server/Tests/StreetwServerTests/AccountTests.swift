@@ -568,6 +568,33 @@ struct AccountTests {
         }
     }
 
+    @Test("The account's country survives a sign-in, and an empty one takes the device's")
+    func countryMerges() async throws {
+        try await withServer { app in
+            app.appleSignIn = AppleSignInConfiguration(verifier: StubVerifier(), tokens: nil)
+
+            let (firstHeaders, first) = try await register(app)
+            _ = try await signIn(app, as: "alice", headers: firstHeaders)
+            let (secondHeaders, second) = try await register(app)
+            for (id, country) in [(first.$user.id, "GB"), (second.$user.id, "DE")] {
+                let user = try #require(try await UserModel.find(id, on: app.db))
+                user.country = country
+                try await user.save(on: app.db)
+            }
+            _ = try await signIn(app, as: "alice", headers: secondHeaders)
+            #expect(try await UserModel.find(first.$user.id, on: app.db)?.country == "GB")
+
+            let (thirdHeaders, third) = try await register(app)
+            _ = try await signIn(app, as: "bob", headers: thirdHeaders)
+            let (fourthHeaders, fourth) = try await register(app)
+            let anonymous = try #require(try await UserModel.find(fourth.$user.id, on: app.db))
+            anonymous.country = "FR"
+            try await anonymous.save(on: app.db)
+            _ = try await signIn(app, as: "bob", headers: fourthHeaders)
+            #expect(try await UserModel.find(third.$user.id, on: app.db)?.country == "FR")
+        }
+    }
+
     @Test("Sizes merge per ladder")
     func sizesMergePerLadder() {
         var account = SizeProfile()

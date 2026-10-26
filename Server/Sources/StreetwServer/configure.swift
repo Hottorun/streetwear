@@ -87,6 +87,8 @@ func configure(_ app: Application) async throws {
     app.migrations.add(CreateAccounts())
     app.migrations.add(CreateCreditLedger())
     app.migrations.add(CreateCostRecords())
+    app.migrations.add(CreateStorefronts())
+    app.migrations.add(AddStorefrontColumns())
     if Environment.get("AUTO_MIGRATE") != "false" {
         try await app.autoMigrate()
     }
@@ -148,6 +150,11 @@ func configure(_ app: Application) async throws {
     }
 
     app.appleSignIn = AppleSignInConfiguration.make(for: app)
+    // Read once, here, like the admin key — a country multiplies the polling of every brand
+    // followed there, so which ones are on is a deployment decision and the boot log says it.
+    let countries = Storefronts.countries(from: Environment.get("STOREFRONT_COUNTRIES"))
+    app.storage[StorefrontCountriesKey.self] = countries
+    app.logger.notice("storefronts: \(countries.isEmpty ? "no countries switched on" : countries.sorted().joined(separator: ","))")
 
     let sender = app.configureAPNS()
     app.storage[APNSConfiguredKey.self] = sender != nil

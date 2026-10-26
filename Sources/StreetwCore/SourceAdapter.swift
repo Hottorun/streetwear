@@ -36,6 +36,14 @@ public struct FetchedItem: Sendable, Hashable {
     /// what makes a *price drop* detectable, which is the one silent product edit worth
     /// telling someone about.
     public var priceAmount: Double?
+    /// The ISO 4217 code both prices are in, when the source said — Shopify's `/meta.json`,
+    /// a JSON-LD offer's `priceCurrency`, UCP's money.
+    ///
+    /// **Every stored price carries its currency**, because a brand runs a shop per country
+    /// and two reads of "the same" brand can be in two currencies. Nil means the source did
+    /// not say, not that it is dollars: the display text was formatted on a guess, and a guess
+    /// must not be stored as a fact.
+    public var currency: String?
     /// What the brand says this cost before it was marked down — Shopify's
     /// `compare_at_price` — when that is meaningfully above `priceAmount`.
     ///
@@ -93,6 +101,7 @@ public struct FetchedItem: Sendable, Hashable {
         kind: UpdateKind,
         priceText: String? = nil,
         priceAmount: Double? = nil,
+        currency: String? = nil,
         originalPriceAmount: Double? = nil,
         originalPriceText: String? = nil,
         releaseDate: Date? = nil,
@@ -113,6 +122,7 @@ public struct FetchedItem: Sendable, Hashable {
         self.kind = kind
         self.priceText = priceText
         self.priceAmount = priceAmount
+        self.currency = currency
         self.originalPriceAmount = originalPriceAmount
         self.originalPriceText = originalPriceText
         self.releaseDate = releaseDate

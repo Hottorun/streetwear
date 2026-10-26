@@ -56,6 +56,7 @@ an unchanged catalog produces nothing, and a failing source backs off.
 | `POLITE_INTERVAL` | `2.0` | Minimum seconds between requests to one host |
 | `CREDITS_ALLOW_SANDBOX` | off | `true` to credit sandbox purchases on a production server — App Review and TestFlight need it. `Xcode` purchases are never credited on production. See `docs/credits.md` |
 | `CREDITS_UNVERIFIED_TRANSACTIONS` | off | `true` believes any well-formed StoreKit transaction, for following a simulated purchase locally. **Ignored on `--env production`** |
+| `STOREFRONT_COUNTRIES` | — | Countries whose shops are read and served, e.g. `GB,DE`. Unset: every brand's main shop for everybody. See `docs/server.md` |
 | `PORT` | 8080 | Read in `configure.swift`; hosts assign this at runtime |
 | `HOST` | `0.0.0.0` | Must not be localhost inside a container |
 | `APNS_KEY_P8` | — | Contents of the `.p8`. `\n` escapes are accepted, so it pastes as one line |
