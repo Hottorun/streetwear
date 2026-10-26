@@ -66,6 +66,7 @@ cost.
 | `docs/drop-calendar.md` | `PlannedDrop`, local reminders, and poll hints |
 | `docs/recommendations.md` | `BrandVector`, similarity, popularity, dismissals |
 | `docs/ucp.md` | Reading a storefront that has closed its catalogue |
+| `docs/credits.md` | Credits, the ledger, StoreKit purchases and refunds, and AI cost metering |
 
 ## Build environment
 
@@ -873,11 +874,15 @@ Three tiers, and the middle one is the part that was wrong for a long time.
 - **Public**: `GET /health` and `GET /.well-known/ucp`. The first must stay cheap and must
   not fail the deploy when the database blinks; the second has to be fetchable by a merchant
   before it will answer a catalogue query, and is a fixed statement about the software naming
-  no device, user or brand.
-- **Device token** — everything under `/v1` except registration. The account routes
-  (`/v1/account`) are device routes too: an account is reached *through* a device, so signing
-  in needs a registered device first, and the token keeps working after it. There is no
-  account-level credential.
+  no device, user or brand. And `POST /v1/app-store/notifications`, because Apple holds no
+  device token: it is authenticated by Apple's signature on the body alone, verified the same
+  way as a purchase, and rate-limited per address (`docs/credits.md`).
+- **Device token** — everything under `/v1` except registration and the App Store
+  notifications. The account routes (`/v1/account`) are device routes too: an account is
+  reached *through* a device, so signing in needs a registered device first, and the token
+  keeps working after it. There is no account-level credential. Credits additionally need the
+  device's user to have an account: without one, a spend or a purchase answers
+  `403 Sign in to use credits`.
 - **`ADMIN_TOKEN`** — everything under `/admin`, including `/status`, `/admin/accounts` and
   the owner's unlimited-credits switch.
 
@@ -948,6 +953,8 @@ the local path in the `else`. Adding a new one means adding both halves:
 | poll hints from the drop calendar | `PUT /v1/poll-hints` (whole set; no-op standalone) |
 | anonymous usage counts | `POST /v1/usage` (daily tallies; standalone counts and sends nothing) — read back with `GET /admin/usage`, see `docs/server.md` |
 | recommendations | `GET /v1/brands/popular` |
+| credits: balance, this month's usage, the packs | `GET /v1/credits` (`signedIn: false` and nothing else without an account; no standalone equivalent, and the section is hidden) |
+| buying a pack | StoreKit, then `POST /v1/credits/purchases` with the signed transaction — finished only once the server took it (`CreditStore`). Refunds arrive from Apple at `POST /v1/app-store/notifications`; costs read back with `GET /admin/costs`, see `docs/credits.md` |
 | the Discover feed | `GET /v1/discover` (no standalone equivalent — the phone only holds brands somebody already followed, which is the opposite of the question) |
 
 **Discovery is a check, not a request.** A site that is not on Shopify takes longer to read than
@@ -1057,6 +1064,21 @@ SQLite**; a failed poll must still advance `next_check_at`; the poll claim is a 
 products; `Poller.refresh` guards every write, because rewrites — not rows — are what fill the
 volume; and only the *unexpected* is worth a buzz (`Notifier.isWorthWaking`), one push per brand per
 **cooldown**.
+
+### Credits
+
+AI is paid for with credits (`ROADMAP.md`, *Decided*); no AI action exists yet, and the ledger
+and the meter are built so Phase 4 only calls `CreditLedger.spend` before a provider call,
+`CostMeter.record` after every one, and `CreditLedger.undo` when the action failed. **Read
+`docs/credits.md` before touching `CreditLedger`, `CostMeter`, `AppStorePurchases`,
+`PurchasePolicy`, `CreditPacks`, `CreditStore`, `CreditsSection` or `streetw.storekit`.** The
+short form: the ledger is the balance (a sum, serialised per account by a row lock that only a
+real Postgres can test); credits need an account; unlimited writes zero rows and is still
+metered; the purchase verifier **refuses** (503) until the crypto dependencies are approved; the
+unverified double needs a non-production server *and* `CREDITS_UNVERIFIED_TRANSACTIONS=true`;
+an `Xcode` transaction is never believed on production; a refund may take the balance negative;
+the phone finishes a transaction only once the server took it; and the StoreKit configuration
+applies only when Xcode itself launches the app.
 
 ### The collection
 

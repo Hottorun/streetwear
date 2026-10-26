@@ -1,0 +1,69 @@
+{
+  "identifier" : "5C3E9A41",
+  "nonRenewingSubscriptions" : [
+
+  ],
+  "products" : [
+    {
+      "displayPrice" : "0.99",
+      "familyShareable" : false,
+      "internalID" : "6740000050",
+      "localizations" : [
+        {
+          "description" : "50 credits for AI in Dropwall. Credits never expire.",
+          "displayName" : "50 credits",
+          "locale" : "en_US"
+        }
+      ],
+      "productID" : "com.kern.functional.streetw.credits.50",
+      "referenceName" : "Credits 50 (placeholder)",
+      "type" : "Consumable"
+    },
+    {
+      "displayPrice" : "2.99",
+      "familyShareable" : false,
+      "internalID" : "6740000150",
+      "localizations" : [
+        {
+          "description" : "150 credits for AI in Dropwall. Credits never expire.",
+          "displayName" : "150 credits",
+          "locale" : "en_US"
+        }
+      ],
+      "productID" : "com.kern.functional.streetw.credits.150",
+      "referenceName" : "Credits 150 (placeholder)",
+      "type" : "Consumable"
+    },
+    {
+      "displayPrice" : "8.99",
+      "familyShareable" : false,
+      "internalID" : "6740000500",
+      "localizations" : [
+        {
+          "description" : "500 credits for AI in Dropwall. Credits never expire.",
+          "displayName" : "500 credits",
+          "locale" : "en_US"
+        }
+      ],
+      "productID" : "com.kern.functional.streetw.credits.500",
+      "referenceName" : "Credits 500 (placeholder)",
+      "type" : "Consumable"
+    }
+  ],
+  "settings" : {
+    "_developerTeamID" : "JD6NETLE45",
+    "_failTransactionsEnabled" : false,
+    "_locale" : "en_US",
+    "_storefront" : "USA",
+    "_storeKitErrors" : [
+
+    ]
+  },
+  "subscriptionGroups" : [
+
+  ],
+  "version" : {
+    "major" : 4,
+    "minor" : 0
+  }
+}

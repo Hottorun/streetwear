@@ -13,10 +13,10 @@
 // `List`: this is where somebody comes to see what the app thinks of them, and a grouped
 // settings form is the one shape that says "this is the app's plumbing".
 //
-// Nothing here is a placeholder. Profiles, location and credits are planned and not built, and
-// a row for each saying so would be three rows of the app talking about itself. Sign-in leads
-// the page, quietly, because it is the one setting about whether any of the rest survives a
-// reinstall — see `AccountSection`.
+// Nothing here is a placeholder. Profiles and location are planned and not built, and a row
+// for each saying so would be two rows of the app talking about itself. Sign-in leads the page,
+// quietly, because it is the one setting about whether any of the rest survives a reinstall —
+// see `AccountSection`. Credits are drawn only for an account (`CreditsSection`).
 
 import StreetwCore
 import SwiftData
@@ -27,6 +27,7 @@ struct YouView: View {
     @Environment(SizeProfileStore.self) private var sizes: SizeProfileStore
     @Environment(ServerSettings.self) private var settings: ServerSettings
     @Environment(RemoteSync.self) private var remote: RemoteSync
+    @Environment(CreditStore.self) private var credits: CreditStore
 
     @Query(sort: \SavedItem.savedAt, order: .reverse) private var saves: [SavedItem]
     /// Only the boards with a taste setting — see `Board.shapingTaste`. Usually none.
@@ -58,6 +59,7 @@ struct YouView: View {
                     sizesSection
                     following
                     waitingFor
+                    CreditsSection()
                     NotificationsSection()
                     StyleStatementSection()
                     AboutSection()
@@ -72,6 +74,12 @@ struct YouView: View {
             // `.task` that fires once, gets a 401 and swallows it would leave the account
             // section missing for the whole session.
             .task(id: settings.token) { await remote.refreshAccount() }
+            // Whether there is a Credits section at all is the server's answer, so it is asked
+            // every time the page opens, and again when signing in or out on this page changes
+            // the account — otherwise the section appears only once You is reopened.
+            .task(id: CreditsKey(token: settings.token, account: settings.account?.id)) {
+                await credits.refresh()
+            }
             .navigationTitle("You")
             .toolbarTitleDisplayMode(.inlineLarge)
             .toolbar {
@@ -332,6 +340,12 @@ extension YouView {
 // MARK: - Pieces
 
 /// One line on the page: a name, what it is set to, and a chevron when it opens something.
+/// What the Credits section's `.task` is keyed on: a new token, or signing in or out.
+private struct CreditsKey: Hashable {
+    var token: String?
+    var account: UUID?
+}
+
 struct YouRow: View {
     let title: String
     var detail: String?

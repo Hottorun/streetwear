@@ -173,8 +173,9 @@ struct AccountSection: View {
             } message: {
                 Text("""
                     Dropwall's server deletes your account and everything it keeps under it — \
-                    follows, sizes, watches and drop dates — on every phone signed in. This phone \
-                    keeps its brands and saves, and carries on without an account.
+                    follows, sizes, watches and drop dates — on every phone signed in, and any unused \
+                    credits. This phone keeps its brands and saves, and carries on without an \
+                    account.
                     """)
             }
         }

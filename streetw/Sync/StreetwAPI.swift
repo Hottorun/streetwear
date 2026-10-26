@@ -297,6 +297,22 @@ struct StreetwAPI: Sendable {
         try await send(path: "v1/usage", method: "POST", body: report)
     }
 
+    /// The balance, this month's usage and the packs — or `signedIn: false` and nothing else.
+    /// See `CreditStore`.
+    func credits() async throws -> CreditsSummary {
+        try await send(path: "v1/credits", method: "GET", body: Optional<Never>.none)
+    }
+
+    /// Hands one StoreKit transaction to the server, exactly as StoreKit signed it. Any 2xx
+    /// is final; anything else leaves the transaction to be posted again.
+    func postPurchase(signedTransaction: String) async throws -> CreditPurchaseReceipt {
+        try await send(
+            path: "v1/credits/purchases",
+            method: "POST",
+            body: CreditPurchase(signedTransaction: signedTransaction)
+        )
+    }
+
     /// One brand's recent history, outside the feed cursor. See the route's own note for
     /// why this cannot be a `since` on `/v1/feed`.
     func brandFeed(brandID: UUID, limit: Int = 60) async throws -> FeedResponse {
