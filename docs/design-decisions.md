@@ -544,7 +544,11 @@ Changing these silently will break intended behavior:
   yet" is the app talking about itself. Standalone has no server and no storefronts; the setting
   is kept on the phone and changes nothing there. What it changes is visible where it changes
   something: a brand page names the shop it is showing ("UNITED KINGDOM SHOP · GBP" against
-  "MAIN SHOP · USD").
+  "MAIN SHOP · USD"), under the host it is on. A shop serves a set of countries, so a regional
+  one is named for who it serves, never for the reader's country — "EUROPE SHOP · EUR" under
+  `EU.KITH.COM` when every country in its set is European, "SHOP FOR 48 COUNTRIES" when they are
+  not (`ShopReach`). Calling `eu.kith.com` "the German shop" to somebody in Berlin would be a
+  claim about a shop that is not German.
 - **A switch is forward-only.** Rows a phone already holds were the main shop's when they arrived
   and stay so; what arrives after the server serves a country's shop is that shop's. Rewriting
   history to the new shop would mean re-sending every event under a second identity, and the

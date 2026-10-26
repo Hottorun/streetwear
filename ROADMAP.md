@@ -319,13 +319,13 @@ fit editor; the starter pack of six womenswear and six menswear shops. See
       *Done:* You › Location, the phone's region unless chosen, held on the server as
       `users.country`. A brand's main shop stays the brand row and every existing source, product
       and event is it (`storefront_id` null — no backfill, no re-poll, no baseline spent); a
-      country's shop is a `storefronts` row attached by hand (`POST /admin/brands/:id/storefronts`),
-      polled only while somebody there follows the brand and its country is in
-      `STOREFRONT_COUNTRIES`, and each person is served one shop per brand in the feed, a brand's
-      feed, Discover, every brand on the wire and pushes. Every stored price carries its currency,
-      nothing converts, and the app prints each row in its own currency in the reader's locale.
-      None switched on yet. Gaps: one storefront serves one country; sale detection and Shopify
-      Markets subfolders are main-shop only. See `docs/server.md`.
+      country's shop is a `storefronts` row attached by hand (`POST /admin/brands/:id/storefronts`)
+      for a set of countries — `eu.kith.com` is one shop for 48 — polled once while any of them is
+      in `STOREFRONT_COUNTRIES` and has a follower of the brand, and each person is served one
+      shop per brand in the feed, a brand's feed, Discover, every brand on the wire and pushes.
+      Every stored price carries its currency, nothing converts, and the app prints each row in
+      its own currency in the reader's locale. None switched on yet. Gaps: sale detection and
+      Shopify Markets subfolders are main-shop only. See `docs/server.md`.
 - [x] **Cost metering and credits.** Every AI action records its real cost; consumable packs via
       StoreKit; usage shown ("this month: 23 searches"); prices set after a few weeks of
       measurement.

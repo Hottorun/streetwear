@@ -204,12 +204,18 @@ struct BrandDetailView: View {
     }
 
     /// Which of the brand's shops this page is showing, and what it prices in — "UNITED
-    /// KINGDOM SHOP · GBP" where a country's shop serves this phone, "MAIN SHOP · USD"
-    /// otherwise. The one place the location setting is visible, so it is said where it
+    /// KINGDOM SHOP · GBP" where a country's shop serves this phone, "EUROPE SHOP · EUR" for a
+    /// regional one (`ShopReach`), "MAIN SHOP · USD" otherwise; the host above it names which
+    /// site that is. The one place the location setting is visible, so it is said where it
     /// changes something rather than promised on the setting. See `LocationSetting`.
     private var shopLine: String? {
-        if let country = brand.storefrontCountry {
-            return ["\(LocationSetting.name(of: country).uppercased()) SHOP", brand.currencyCode]
+        if let reach = brand.storefrontReach {
+            let shop = switch reach {
+            case .country(let code): "\(LocationSetting.name(of: code).uppercased()) SHOP"
+            case .europe: "EUROPE SHOP"
+            case .countries(let count): "SHOP FOR \(count) COUNTRIES"
+            }
+            return [shop, brand.currencyCode]
                 .compactMap { $0 }
                 .joined(separator: " · ")
         }

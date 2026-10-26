@@ -86,6 +86,16 @@ final class Brand {
     /// brand page say which shop it is showing.
     var storefrontCountry: String?
     var storefrontURLString: String?
+    /// Every country that shop serves (`StorefrontDTO.servedCountries`) — one for a country's
+    /// shop, several for a regional one like `eu.kith.com`. Optional because it was added after
+    /// stores were written; nil reads as `storefrontCountry` alone.
+    var storefrontCountries: [String]?
+
+    /// Who the shop serving this phone serves, or nil for the main shop.
+    var storefrontReach: ShopReach? {
+        guard let storefrontCountry else { return nil }
+        return ShopReach(countries: storefrontCountries ?? [storefrontCountry])
+    }
 
     /// The shop to send somebody to: the country's that serves this phone, else the brand's
     /// own site.

@@ -1,4 +1,5 @@
 import Fluent
+import FluentPostgresDriver
 import Foundation
 import StreetwCore
 import Testing
@@ -75,8 +76,9 @@ func seedBrand(
     try await main.save(on: app.db)
     guard storefront else { return (brandID, main, nil, nil) }
 
-    let shop = StorefrontModel(brandID: brandID, country: "GB", url: "https://uk.example.com", currency: "GBP")
+    let shop = StorefrontModel(brandID: brandID, homeCountry: "GB", url: "https://uk.example.com", currency: "GBP")
     try await shop.save(on: app.db)
+    try await Storefronts.add(["GB"], to: shop, on: app.db)
     let source = SourceModel(
         brandID: brandID, kind: .shopify, url: "https://uk.example.com", storefrontID: try shop.requireID()
     )
@@ -472,12 +474,41 @@ struct UserCountryTests {
     @Test("The rule, without a database")
     func servingRule() {
         let on: Set<String> = ["GB"]
-        #expect(Storefronts.serves(country: "GB", to: "gb", enabled: on, followedThere: true, baselined: true))
-        #expect(!Storefronts.serves(country: "GB", to: "GB", enabled: [], followedThere: true, baselined: true))
-        #expect(!Storefronts.serves(country: "GB", to: "GB", enabled: on, followedThere: false, baselined: true))
-        #expect(!Storefronts.serves(country: "GB", to: "GB", enabled: on, followedThere: true, baselined: false))
-        #expect(!Storefronts.serves(country: "GB", to: "DE", enabled: on, followedThere: true, baselined: true))
-        #expect(!Storefronts.serves(country: "GB", to: nil, enabled: on, followedThere: true, baselined: true))
+        let gb: Set<String> = ["GB"]
+        #expect(Storefronts.serves(countries: gb, to: "gb", enabled: on, isRead: true, baselined: true))
+        #expect(!Storefronts.serves(countries: gb, to: "GB", enabled: [], isRead: true, baselined: true))
+        #expect(!Storefronts.serves(countries: gb, to: "GB", enabled: on, isRead: false, baselined: true))
+        #expect(!Storefronts.serves(countries: gb, to: "GB", enabled: on, isRead: true, baselined: false))
+        #expect(!Storefronts.serves(countries: gb, to: "DE", enabled: on, isRead: true, baselined: true))
+        #expect(!Storefronts.serves(countries: gb, to: nil, enabled: on, isRead: true, baselined: true))
+
+        // A regional shop serves each of its countries that is switched on, and no other.
+        let europe: Set<String> = ["DE", "FR", "IT"]
+        let some: Set<String> = ["DE", "FR"]
+        #expect(Storefronts.serves(countries: europe, to: "DE", enabled: some, isRead: true, baselined: true))
+        #expect(Storefronts.serves(countries: europe, to: "FR", enabled: some, isRead: true, baselined: true))
+        #expect(!Storefronts.serves(countries: europe, to: "IT", enabled: some, isRead: true, baselined: true),
+                "Italy is in the set and not switched on")
+        #expect(!Storefronts.serves(countries: europe, to: "ES", enabled: ["ES"], isRead: true, baselined: true))
+    }
+
+    @Test("A shop is read while any of its switched-on countries has a follower")
+    func readRule() {
+        let brand = UUID()
+        let followedInItaly: Set<Storefronts.Following> = [.init(brand: brand, country: "IT")]
+        #expect(Storefronts.isRead(["DE", "IT"], brand: brand, enabled: ["DE", "IT"], followed: followedInItaly))
+        #expect(!Storefronts.isRead(["DE", "IT"], brand: brand, enabled: ["DE"], followed: followedInItaly),
+                "the only follower is in a country not switched on")
+        #expect(!Storefronts.isRead(["DE", "IT"], brand: UUID(), enabled: ["DE", "IT"], followed: followedInItaly))
+    }
+
+    @Test("Countries are read from a list, `all`, or nothing — and nonsense refuses the whole request")
+    func readsRequestedCountries() {
+        #expect(Storefronts.requested([]) == .unnamed)
+        #expect(Storefronts.requested([""]) == .unnamed)
+        #expect(Storefronts.requested(["all"]) == .all)
+        #expect(Storefronts.requested(["de, fr", "IT"]) == .these(["DE", "FR", "IT"]))
+        #expect(Storefronts.requested(["DE,Deutschland"]) == .invalid(["Deutschland"]))
     }
 }
 
@@ -511,9 +542,9 @@ struct StorefrontAdminTests {
             let (brandID, _, _, _) = try await seedBrand(app, storefront: false)
 
             let said = try await post(app, "admin/brands/\(brandID)/storefronts?country=gb&url=https://uk.example.com")
-            #expect(said.contains("GB shop"))
+            #expect(said.contains("uk.example.com serves GB in GBP"))
             let shop = try #require(try await StorefrontModel.query(on: app.db).first())
-            #expect(shop.country == "GB")
+            #expect(shop.homeCountry == "GB")
             #expect(shop.currency == "GBP")
             let sources = try await SourceModel.query(on: app.db).filter(\.$storefront.$id == shop.id).all()
             #expect(sources.map(\.url) == ["https://uk.example.com"])
@@ -542,7 +573,7 @@ struct StorefrontAdminTests {
             #expect(try await StorefrontModel.query(on: app.db).count() == 0)
 
             #expect(!(try await post(app, path + "&force=true")).hasPrefix("refused"))
-            #expect(try await StorefrontModel.query(on: app.db).first()?.country == "DE")
+            #expect(try await StorefrontModel.query(on: app.db).with(\.$countries).first()?.countryCodes == ["DE"])
         }
     }
 
@@ -565,6 +596,431 @@ struct StorefrontAdminTests {
             #expect(try await SourceModel.query(on: app.db).filter(\.$storefront.$id != nil).count() == 0)
             #expect(try await ProductModel.query(on: app.db).filter(\.$storefrontID != nil).count() == 0)
             #expect(try await EventModel.query(on: app.db).filter(\.$storefrontID != nil).count() == 0)
+        }
+    }
+}
+
+// MARK: - One shop, several countries
+
+/// A brand on `example.com` and its European shop on `eu.example.com`, serving `countries`,
+/// with one event in each: "US Tee" in the main shop, "EU Tee" in euros in the European one.
+private func seedEurope(
+    _ app: Application,
+    countries: Set<String> = ["DE", "FR", "IT"],
+    baselined: Bool = true
+) async throws -> (brandID: UUID, shop: StorefrontModel, shopSource: SourceModel) {
+    let (brandID, main, _, _) = try await seedBrand(app, storefront: false, baselined: baselined)
+    let shop = StorefrontModel(
+        brandID: brandID, homeCountry: countries.sorted()[0], url: "https://eu.example.com", currency: "EUR"
+    )
+    try await shop.save(on: app.db)
+    try await Storefronts.add(countries, to: shop, on: app.db)
+    let source = SourceModel(
+        brandID: brandID, kind: .shopify, url: "https://eu.example.com", storefrontID: try shop.requireID()
+    )
+    if baselined { source.baselinedAt = Date().addingTimeInterval(-86_400 * 3) }
+    try await source.save(on: app.db)
+
+    let us = ProductModel(
+        brandID: brandID, sourceID: main.id,
+        item: FetchedItem(
+            externalID: "shopify:1", title: "US Tee", imageURLStrings: ["https://cdn.example.com/1.jpg"],
+            publishedAt: Date(), kind: .product, priceText: "$180", priceAmount: 180, currency: "USD"
+        )
+    )
+    try await us.save(on: app.db)
+    try await EventModel(brandID: brandID, productID: try us.requireID(), kind: .product).save(on: app.db)
+    let eu = ProductModel(
+        brandID: brandID, sourceID: source.id, storefrontID: shop.id,
+        item: FetchedItem(
+            externalID: "shopify:1", title: "EU Tee", imageURLStrings: ["https://cdn.example.com/3.jpg"],
+            publishedAt: Date(), kind: .product, priceText: "€170", priceAmount: 170, currency: "EUR"
+        )
+    )
+    try await eu.save(on: app.db)
+    try await EventModel(brandID: brandID, productID: try eu.requireID(), storefrontID: shop.id, kind: .product)
+        .save(on: app.db)
+    return (brandID, shop, source)
+}
+
+@Suite("A shop for several countries")
+struct MultiCountryStorefrontTests {
+    @Test("A German and a French follower are both served the European shop; Italy, not switched on, the main one")
+    func servedAcrossItsCountries() async throws {
+        try await withServer { app in
+            app.storefrontCountries = ["DE", "FR"]
+            let (brandID, _, _) = try await seedEurope(app)
+            let german = try await reader(app, country: "DE", follows: brandID)
+            let french = try await reader(app, country: "FR", follows: brandID)
+            let italian = try await reader(app, country: "IT", follows: brandID)
+            let american = try await reader(app, country: nil, follows: brandID)
+
+            let de = try await feedTitles(app, german)
+            #expect(de.map(\.title) == ["EU Tee"])
+            #expect(de.first?.currency == "EUR")
+            #expect(try await feedTitles(app, french).map(\.title) == ["EU Tee"])
+            #expect(try await feedTitles(app, italian).map(\.title) == ["US Tee"],
+                    "Italy is in the shop's set, but not switched on")
+            #expect(try await feedTitles(app, american).map(\.title) == ["US Tee"])
+
+            func follows(_ auth: HTTPHeaders) async throws -> BrandDTO? {
+                var brands: [BrandDTO] = []
+                try await app.testing().test(.GET, "v1/follows", headers: auth) { res async throws in
+                    brands = try res.content.decode([BrandDTO].self)
+                }
+                return brands.first
+            }
+            let shop = try #require(try await follows(french)?.storefront)
+            #expect(shop.url == "https://eu.example.com")
+            #expect(shop.servedCountries == ["DE", "FR", "IT"])
+            #expect(shop.country == "DE", "one of its countries, for a client that reads no set")
+            #expect(try await follows(italian)?.storefront == nil)
+
+            // And a push each, from the shop that serves them.
+            try await follower(app, of: brandID, country: "DE", token: "german")
+            try await follower(app, of: brandID, country: "FR", token: "french")
+            try await follower(app, of: brandID, country: "IT", token: "italian")
+            let sender = RecordingSender()
+            await Notifier(app: app, sender: sender).dispatch()
+            let bodies = Dictionary(uniqueKeysWithValues: sender.sent.map { ($0.deviceToken, $0.body) })
+            #expect(bodies["german"] == "New: EU Tee")
+            #expect(bodies["french"] == "New: EU Tee")
+            #expect(bodies["italian"] == "New: US Tee")
+        }
+    }
+
+    /// Discover is about brands the caller does not follow, so "is the shop read" may be on
+    /// another of its countries' account.
+    @Test("Somebody browsing from France is dealt the European shop a German follower keeps read")
+    func discoverAcrossCountries() async throws {
+        try await withServer { app in
+            app.storefrontCountries = ["DE", "FR"]
+            let (brandID, _, _) = try await seedEurope(app)
+            func titles(_ auth: HTTPHeaders) async throws -> [String] {
+                var cards: [DiscoverCard] = []
+                try await app.testing().test(.GET, "v1/discover", headers: auth) { res async throws in
+                    cards = try res.content.decode(DiscoverResponse.self).cards
+                }
+                return cards.map(\.title)
+            }
+            let browsing = try await reader(app, country: "FR", follows: nil)
+            #expect(try await titles(browsing) == ["US Tee"], "nobody in any of its countries follows it")
+            _ = try await reader(app, country: "IT", follows: brandID)
+            #expect(try await titles(browsing) == ["US Tee"], "an Italian follower does not keep it read: Italy is off")
+            _ = try await reader(app, country: "DE", follows: brandID)
+            #expect(try await titles(browsing) == ["EU Tee"])
+        }
+    }
+
+    @Test("A shop is polled once per tick, not once per country it serves")
+    func polledOncePerTick() async throws {
+        try await withServer { app in
+            app.storefrontCountries = ["DE", "FR", "IT"]
+            let http = HostHTTP()
+            http.stub("example.com", catalogPath, body: shopifyCatalog(id: 1, title: "US Tee"))
+            http.stub("example.com", "/meta.json", body: meta(currency: "USD"))
+            http.stub("eu.example.com", catalogPath, body: shopifyCatalog(id: 1, title: "EU Tee", price: "170.00"))
+            http.stub("eu.example.com", "/meta.json", body: meta(currency: "EUR"))
+            let (brandID, shop, shopSource) = try await seedEurope(app, baselined: false)
+            for country in ["DE", "FR", "IT"] { try await follower(app, of: brandID, country: country) }
+
+            #expect(try await Storefronts.wanted(enabled: app.storefrontCountries, on: app.db) == [try shop.requireID()])
+            await Poller(app: app, http: http).tick()
+            #expect(http.requested.filter { $0 == "eu.example.com" + catalogPath }.count == 1)
+            let after = try #require(try await SourceModel.find(shopSource.id, on: app.db))
+            #expect(after.baselinedAt != nil)
+        }
+    }
+
+    @Test("A shop with a follower only in a country not switched on is not read")
+    func notReadForACountryThatIsOff() async throws {
+        try await withServer { app in
+            app.storefrontCountries = ["DE"]
+            let http = HostHTTP()
+            let (brandID, _, _) = try await seedEurope(app, baselined: false)
+            try await follower(app, of: brandID, country: "IT")
+            #expect(try await Storefronts.wanted(enabled: app.storefrontCountries, on: app.db).isEmpty)
+            await Poller(app: app, http: http).tick()
+            #expect(!http.requested.contains { $0.hasPrefix("eu.example.com") })
+        }
+    }
+
+    @Test("A brand with only a main shop is served exactly as before with countries switched on")
+    func mainShopOnly() async throws {
+        try await withServer { app in
+            app.storefrontCountries = ["DE", "FR"]
+            let (brandID, main, _, _) = try await seedBrand(app, storefront: false, baselined: true)
+            let product = ProductModel(
+                brandID: brandID, sourceID: main.id,
+                item: FetchedItem(
+                    externalID: "shopify:1", title: "US Tee", imageURLStrings: ["https://cdn.example.com/1.jpg"],
+                    publishedAt: Date(), kind: .product, priceText: "$180", priceAmount: 180
+                )
+            )
+            try await product.save(on: app.db)
+            try await EventModel(brandID: brandID, productID: try product.requireID(), kind: .product).save(on: app.db)
+            let german = try await reader(app, country: "DE", follows: brandID)
+
+            let items = try await feedTitles(app, german)
+            #expect(items.map(\.title) == ["US Tee"])
+            #expect(items.first?.currency == "USD")
+            try await app.testing().test(.GET, "v1/follows", headers: german) { res async throws in
+                let brand = try #require(try res.content.decode([BrandDTO].self).first)
+                #expect(brand.storefront == nil)
+                #expect(brand.sources.map(\.url) == ["https://example.com"])
+            }
+            #expect(try await Storefronts.wanted(enabled: app.storefrontCountries, on: app.db).isEmpty)
+        }
+    }
+
+    /// phase-2's schema has `storefronts.country` and no `storefront_countries`; running the
+    /// migration over it must serve everybody exactly what they were, and touch no source.
+    @Test("The migration gives each existing shop its one country and leaves its sources alone")
+    func migratesExistingShops() async throws {
+        try await withServer { app in
+            let (_, _, shop, shopSource) = try await seedBrand(app, storefront: true, baselined: true)
+            let source = try #require(shopSource)
+            source.lastCheckedAt = Date().addingTimeInterval(-600)
+            try await source.update(on: app.db)
+            let before = try #require(try await SourceModel.find(source.id, on: app.db))
+
+            try await CreateStorefrontCountries().revert(on: app.db)
+            try await CreateStorefrontCountries().prepare(on: app.db)
+
+            let rows = try await StorefrontCountryModel.query(on: app.db).all()
+            #expect(rows.map(\.country) == ["GB"])
+            #expect(rows.first?.$storefront.id == shop?.id)
+            #expect(rows.first?.brandID == shop?.$brand.id)
+            let after = try #require(try await SourceModel.find(source.id, on: app.db))
+            #expect(after.baselinedAt == before.baselinedAt)
+            #expect(after.lastCheckedAt == before.lastCheckedAt)
+            #expect(after.nextCheckAt == before.nextCheckAt)
+        }
+    }
+
+    @Test("No two shops of one brand can serve one country")
+    func uniquePerBrandAndCountry() async throws {
+        try await withServer { app in
+            let (brandID, _, _) = try await seedEurope(app, countries: ["DE", "FR"])
+            let other = StorefrontModel(brandID: brandID, homeCountry: "GB", url: "https://uk.example.com", currency: "GBP")
+            try await other.save(on: app.db)
+            await #expect(throws: (any Error).self) {
+                try await Storefronts.add(["FR"], to: other, on: app.db)
+            }
+        }
+    }
+}
+
+/// The claim itself, which only Postgres runs: SQLite has neither `SKIP LOCKED` nor `= ANY`, so
+/// on SQLite the poller takes `dueWithoutClaim` and the suites above never reach the statement
+/// that decides which shops are fetched. Runs only when `STREETW_TEST_POSTGRES_URL` names a
+/// scratch database — the whole migration chain is applied and reverted, as `CreditRaceTests`
+/// does.
+@Suite(
+    "Storefront claims on Postgres",
+    .enabled(if: ProcessInfo.processInfo.environment["STREETW_TEST_POSTGRES_URL"] != nil),
+    .serialized
+)
+struct StorefrontPostgresClaimTests {
+    private func withPostgres(_ body: (Application) async throws -> Void) async throws {
+        let url = try #require(ProcessInfo.processInfo.environment["STREETW_TEST_POSTGRES_URL"])
+        let app = try await Application.make(.testing)
+        var config = try SQLPostgresConfiguration(url: url)
+        config.coreConfiguration.tls = .disable
+        app.databases.use(.postgres(configuration: config, maxConnectionsPerEventLoop: 8), as: .psql)
+        addMigrations(to: app)
+        do {
+            try await app.autoMigrate()
+            try await body(app)
+            try await app.autoRevert()
+        } catch {
+            try? await app.autoRevert()
+            try await app.asyncShutdown()
+            throw error
+        }
+        try await app.asyncShutdown()
+    }
+
+    @Test("The claim reads a regional shop once for all its followers, and never for a country that is off")
+    func claimsTheShopOnce() async throws {
+        try await withPostgres { app in
+            app.storefrontCountries = ["DE", "FR"]
+            let http = HostHTTP()
+            http.stub("example.com", catalogPath, body: shopifyCatalog(id: 1, title: "US Tee"))
+            http.stub("example.com", "/meta.json", body: meta(currency: "USD"))
+            http.stub("eu.example.com", catalogPath, body: shopifyCatalog(id: 1, title: "EU Tee", price: "170.00"))
+            http.stub("eu.example.com", "/meta.json", body: meta(currency: "EUR"))
+            let (brandID, shop, shopSource) = try await seedEurope(app, baselined: false)
+
+            // Only Italy follows, and Italy is off: the main shop is claimed, the European one not.
+            try await follower(app, of: brandID, country: "IT")
+            let poller = Poller(app: app, http: http)
+            await poller.tick()
+            #expect(http.requested.contains("example.com" + catalogPath))
+            #expect(!http.requested.contains { $0.hasPrefix("eu.example.com") })
+            #expect(try await SourceModel.find(shopSource.id, on: app.db)?.lastCheckedAt == nil)
+
+            // Germany and France follow: one claim, one read.
+            try await follower(app, of: brandID, country: "DE")
+            try await follower(app, of: brandID, country: "FR")
+            await poller.tick()
+            #expect(http.requested.filter { $0 == "eu.example.com" + catalogPath }.count == 1)
+            let read = try #require(try await SourceModel.find(shopSource.id, on: app.db))
+            #expect(read.baselinedAt != nil)
+            #expect(try await ProductModel.query(on: app.db).filter(\.$storefrontID == shop.id).count() == 1)
+        }
+    }
+}
+
+@Suite("Attaching a shop for several countries")
+struct MultiCountryAdminTests {
+    private func stubbed(_ app: Application) -> HostHTTP {
+        let http = HostHTTP()
+        http.stub("example.com", catalogPath, body: shopifyCatalog(id: 1, title: "US Tee"))
+        http.stub("example.com", "/meta.json", body: meta(currency: "USD"))
+        http.stub("eu.example.com", catalogPath, body: shopifyCatalog(id: 1, title: "EU Tee"))
+        http.stub("eu.example.com", "/meta.json", body: meta(currency: "EUR", shipsTo: ["DE", "FR", "IT", "ES", "GB", "US"]))
+        http.stub("uk.example.com", catalogPath, body: shopifyCatalog(id: 1, title: "UK Tee"))
+        http.stub("uk.example.com", "/meta.json", body: meta(currency: "GBP", shipsTo: ["GB", "IE"]))
+        app.storage[FetcherKey.self] = http
+        return http
+    }
+
+    private func post(_ app: Application, _ path: String, json: [String]? = nil) async throws -> String {
+        var body = ""
+        try await app.testing().test(.POST, path, headers: adminAuth, beforeRequest: { req in
+            if let json { try req.content.encode(StorefrontAdmin.CountriesBody(countries: json)) }
+        }, afterResponse: { res async throws in
+            #expect(res.status == .ok)
+            body = res.body.string
+        })
+        return body
+    }
+
+    private func served(_ app: Application) async throws -> [String: [String]] {
+        let shops = try await StorefrontModel.query(on: app.db).with(\.$countries).all()
+        return Dictionary(uniqueKeysWithValues: shops.map { ($0.url, $0.countryCodes) })
+    }
+
+    @Test("One read, several countries — by query or by body")
+    func attachesSeveral() async throws {
+        try await withServer { app in
+            _ = stubbed(app)
+            let (brandID, _, _, _) = try await seedBrand(app, storefront: false)
+            let said = try await post(app, "admin/brands/\(brandID)/storefronts?url=https://eu.example.com&countries=de,FR")
+            #expect(said.contains("serves DE,FR in EUR"))
+            #expect(try await served(app) == ["https://eu.example.com": ["DE", "FR"]])
+            #expect(try await SourceModel.query(on: app.db).filter(\.$storefront.$id != nil).count() == 1,
+                    "one shop, read once")
+
+            // The same shop again is refused, and pointed at `add`.
+            let again = try await post(app, "admin/brands/\(brandID)/storefronts?url=https://eu.example.com&countries=IT")
+            #expect(again.hasPrefix("refused"))
+            #expect(again.contains("/add?countries="))
+        }
+        try await withServer { app in
+            _ = stubbed(app)
+            let (brandID, _, _, _) = try await seedBrand(app, storefront: false)
+            _ = try await post(app, "admin/brands/\(brandID)/storefronts?url=https://eu.example.com", json: ["DE", "IT"])
+            #expect(try await served(app) == ["https://eu.example.com": ["DE", "IT"]])
+        }
+    }
+
+    @Test("Naming nothing is the offer and writes nothing; `all` takes it, less what another shop serves")
+    func offersWhatItShipsTo() async throws {
+        try await withServer { app in
+            _ = stubbed(app)
+            let (brandID, _, _, _) = try await seedBrand(app, storefront: true)
+            let offer = try await post(app, "admin/brands/\(brandID)/storefronts?url=https://eu.example.com")
+            #expect(offer.hasPrefix("offer"))
+            #expect(offer.contains("DE,ES,FR,IT,US"), "every country it ships to but Britain, which has a shop")
+            #expect(offer.contains("Nothing was attached"))
+            #expect(try await StorefrontModel.query(on: app.db).count() == 1)
+
+            _ = try await post(app, "admin/brands/\(brandID)/storefronts?url=https://eu.example.com&countries=all")
+            let shops = try await served(app)
+            #expect(shops["https://eu.example.com"] == ["DE", "ES", "FR", "IT", "US"])
+            #expect(shops["https://uk.example.com"] == ["GB"], "the British shop keeps Britain")
+        }
+    }
+
+    @Test("Countries it does not ship to are refused unless forced")
+    func refusesUnshipped() async throws {
+        try await withServer { app in
+            _ = stubbed(app)
+            let (brandID, _, _, _) = try await seedBrand(app, storefront: false)
+            let path = "admin/brands/\(brandID)/storefronts?url=https://eu.example.com&countries=DE,PL"
+            let said = try await post(app, path)
+            #expect(said.hasPrefix("refused"))
+            #expect(said.contains("not PL"))
+            #expect(try await StorefrontModel.query(on: app.db).count() == 0)
+            _ = try await post(app, path + "&force=true")
+            #expect(try await served(app) == ["https://eu.example.com": ["DE", "PL"]])
+        }
+    }
+
+    @Test("Attaching for countries another shop serves takes them, and removes a shop left with none")
+    func takesCountriesFromAnotherShop() async throws {
+        try await withServer { app in
+            _ = stubbed(app)
+            let (brandID, _, _, _) = try await seedBrand(app, storefront: false)
+            _ = try await post(app, "admin/brands/\(brandID)/storefronts?url=https://eu.example.com&countries=DE,GB")
+            // Britain moves to its own shop; the European one keeps Germany and re-homes there.
+            let said = try await post(app, "admin/brands/\(brandID)/storefronts?url=https://uk.example.com&countries=GB")
+            #expect(said.contains("took GB from eu.example.com"))
+            #expect(try await served(app) == ["https://eu.example.com": ["DE"], "https://uk.example.com": ["GB"]])
+            let eu = try #require(try await StorefrontModel.query(on: app.db).filter(\.$url == "https://eu.example.com").first())
+            #expect(eu.homeCountry == "DE")
+
+            // A shop wholly taken over is replaced, history and all.
+            let replaced = try await post(app, "admin/brands/\(brandID)/storefronts?url=https://uk.example.com&countries=GB,IE")
+            #expect(replaced.contains("replaced uk.example.com"))
+            #expect(try await served(app) == ["https://eu.example.com": ["DE"], "https://uk.example.com": ["GB", "IE"]])
+        }
+    }
+
+    @Test("Countries are added to and removed from a shop by any country it serves")
+    func addsAndRemoves() async throws {
+        try await withServer { app in
+            _ = stubbed(app)
+            app.storefrontCountries = ["DE", "FR"]
+            let (brandID, shop, _) = try await seedEurope(app, countries: ["DE"])
+            let uk = StorefrontModel(brandID: brandID, homeCountry: "GB", url: "https://uk.example.com", currency: "GBP")
+            try await uk.save(on: app.db)
+            try await Storefronts.add(["GB"], to: uk, on: app.db)
+
+            let added = try await post(app, "admin/brands/\(brandID)/storefronts/de/add?countries=FR,IT")
+            #expect(added.contains("now serves DE,FR,IT"))
+            #expect(added.contains("IT not in STOREFRONT_COUNTRIES"))
+            #expect(try await post(app, "admin/brands/\(brandID)/storefronts/FR/add?countries=GB").hasPrefix("refused"),
+                    "Britain is the British shop's")
+            #expect(try await post(app, "admin/brands/\(brandID)/storefronts/FR/add?countries=PL").hasPrefix("refused"),
+                    "it does not ship to Poland")
+            _ = try await post(app, "admin/brands/\(brandID)/storefronts/FR/add?countries=all")
+            #expect(try await served(app)["https://eu.example.com"] == ["DE", "ES", "FR", "IT", "US"])
+
+            // Removing keeps what was read, and re-homes the shop when its home goes.
+            let removed = try await post(app, "admin/brands/\(brandID)/storefronts/IT/remove?countries=DE,US")
+            #expect(removed.contains("now serves ES,FR,IT"))
+            let eu = try #require(try await StorefrontModel.find(shop.id, on: app.db))
+            #expect(eu.homeCountry == "ES")
+            #expect(try await ProductModel.query(on: app.db).filter(\.$storefrontID == shop.id).count() == 1)
+            #expect(try await post(app, "admin/brands/\(brandID)/storefronts/FR/remove?countries=ES,FR,IT").hasPrefix("refused"),
+                    "that is deleting the shop")
+
+            // The catalogue shows the set.
+            var catalog = ""
+            try await app.testing().test(.GET, "admin/catalog", headers: adminAuth) { res async throws in
+                catalog = res.body.string
+            }
+            #expect(catalog.contains("· ES,FR,IT eu.example.com shopify"))
+            #expect(catalog.contains("· GB uk.example.com"))
+
+            // And deleting it by any of its countries takes it whole.
+            let deleted = try await post(app, "admin/brands/\(brandID)/storefronts/it/delete")
+            #expect(deleted.contains("the shop for ES,FR,IT"))
+            #expect(try await served(app) == ["https://uk.example.com": ["GB"]])
+            #expect(try await StorefrontCountryModel.query(on: app.db).count() == 1)
         }
     }
 }

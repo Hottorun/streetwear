@@ -117,9 +117,10 @@ actor Poller {
         // Once per tick, not once per source: the answer is the same for every source in
         // the pass, and it decides both claims as well as each source's next cadence.
         let hinted = await activeHintedBrandIDs()
-        // Which country shops somebody there is following — the only ones claimed. Empty
-        // whenever no country is switched on, which leaves every claim reading the main
-        // shops alone, exactly as before storefronts existed.
+        // Which country shops somebody in one of their countries follows — the only ones
+        // claimed, and each once however many of its countries ask. Empty whenever no
+        // country is switched on, which leaves every claim reading the main shops alone,
+        // exactly as before storefronts existed.
         wantedStorefronts = await liveStorefrontIDs()
 
         let due: [SourceModel]
@@ -400,7 +401,8 @@ actor Poller {
 
         let now = Date()
         let lease = now.addingTimeInterval(Self.leaseDuration)
-        // **The main shop always, a country shop only while somebody there follows the brand**
+        // **The main shop always, a country shop only while somebody in one of its countries
+        // follows the brand**
         // — see `Storefronts.wanted`. The one fragment the statements below share, and the
         // only one built at all: with no country switched on it is `storefront_id IS NULL`,
         // which every source written before storefronts existed is.
@@ -524,7 +526,8 @@ actor Poller {
         }
     }
 
-    /// The country storefronts somebody there follows, once per tick. Failure is silent and
+    /// The country storefronts somebody in one of their countries follows, once per tick.
+    /// Failure is silent and
     /// empty, for the reason a hint's is: the main shops are polled either way, and a queue
     /// that stopped because this could not be read would be the worse trade.
     private func liveStorefrontIDs() async -> Set<UUID> {
@@ -568,7 +571,8 @@ actor Poller {
         // a failure, so a source that errored once would count its first real batch as
         // news and announce a whole back catalogue.
         //
-        // A country shop that sat unread — nobody there followed the brand for a while — owes
+        // A country shop that sat unread — nobody in any of its countries followed the brand
+        // for a while — owes
         // a baseline again, because whatever it knew is months old and everything since would
         // otherwise go out as news to the first follower back. The baseline is *unspent* rather
         // than this one poll declared one, so a resumed poll that fails leaves it owed, exactly

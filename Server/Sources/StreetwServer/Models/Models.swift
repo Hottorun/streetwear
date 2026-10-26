@@ -57,23 +57,34 @@ final class BrandModel: Model, @unchecked Sendable {
     }
 }
 
-/// One country's shop for a brand, when it runs one apart from its main shop.
+/// A brand's shop for a set of countries, when it runs one apart from its main shop.
 ///
 /// **The main shop is not a row.** It is the brand itself — `brands.website`,
 /// `brands.currency` and every source whose `storefront_id` is null — which is what let every
 /// brand already in the catalogue keep working unchanged: no backfill, no re-discovery, no
 /// baseline spent twice. A storefront exists only where somebody attached one
-/// (`POST /admin/brands/:id/storefronts`), and is only polled while somebody in its country
-/// follows the brand — see `Storefronts`.
+/// (`POST /admin/brands/:id/storefronts`), and is only polled while somebody in one of its
+/// countries follows the brand — see `Storefronts`.
 ///
-/// Catalogue, not personal: one row per real-world shop, shared by everybody in that country.
+/// **A shop serves a set of countries** (`countries`, `storefront_countries`). `eu.kith.com`
+/// is one shop, in euros, for 48 of them; when a row was one country it could be attached for
+/// one, and attaching it for a second was refused as a catalogue already read.
+///
+/// Catalogue, not personal: one row per real-world shop, shared by everybody it serves.
 final class StorefrontModel: Model, @unchecked Sendable {
     static let schema = "storefronts"
 
     @ID(key: .id) var id: UUID?
     @Parent(key: "brand_id") var brand: BrandModel
-    /// ISO 3166-1 alpha-2, as `CountryCode` writes it. One per brand.
-    @Field(key: "country") var country: String
+    /// One of `countries`, always: the first, alphabetically, of those it was attached for.
+    ///
+    /// **Not who it serves — `countries` is.** This is the column a shop was identified by
+    /// when it served one country, kept because it sits inside the `(brand_id, country)` unique
+    /// constraint and SQLite cannot drop a column that does, and the two databases must not
+    /// diverge. Kept *in* the set so that constraint can never fire on its own — the set is
+    /// unique per brand, so its members are — and sent as `StorefrontDTO.country` to a client
+    /// that reads no set. Removing it from the set moves it to another member.
+    @Field(key: "country") var homeCountry: String
     /// The shop's own base URL — what discovery was run on, and what a brand page names.
     @Field(key: "url") var url: String
     /// What this shop charges in, from its own `/meta.json` when it publishes one. Kept apart
@@ -83,17 +94,50 @@ final class StorefrontModel: Model, @unchecked Sendable {
     @Timestamp(key: "created_at", on: .create) var createdAt: Date?
 
     @Children(for: \.$storefront) var sources: [SourceModel]
+    /// Who it serves. Never empty: removing the last is refused, because that is deleting
+    /// the shop.
+    @Children(for: \.$storefront) var countries: [StorefrontCountryModel]
 
     init() {}
 
-    init(brandID: UUID, country: String, url: String, currency: String?) {
+    init(brandID: UUID, homeCountry: String, url: String, currency: String?) {
         self.$brand.id = brandID
-        self.country = country
+        self.homeCountry = homeCountry
         self.url = url
         self.currency = currency
     }
 
-    var asDTO: StorefrontDTO { StorefrontDTO(country: country, url: url, currency: currency) }
+    /// The codes it serves, sorted. Needs `countries` loaded.
+    var countryCodes: [String] { countries.map(\.country).sorted() }
+
+    /// Needs `countries` loaded, which every storefront `Storefronts.serving` hands back has.
+    var asDTO: StorefrontDTO {
+        StorefrontDTO(country: homeCountry, url: url, currency: currency, countries: countryCodes)
+    }
+}
+
+/// One country a storefront serves.
+///
+/// **Unique on (brand, country), which is "one shop per brand per person" written into the
+/// schema.** The brand is copied onto the row for that alone — a constraint cannot reach
+/// through the storefront to its brand — and it is always the storefront's. Two shops of one
+/// brand for one country would leave which of them a person there is served undecided.
+final class StorefrontCountryModel: Model, @unchecked Sendable {
+    static let schema = "storefront_countries"
+
+    @ID(key: .id) var id: UUID?
+    @Parent(key: "storefront_id") var storefront: StorefrontModel
+    @Field(key: "brand_id") var brandID: UUID
+    /// ISO 3166-1 alpha-2, as `CountryCode` writes it.
+    @Field(key: "country") var country: String
+
+    init() {}
+
+    init(storefrontID: UUID, brandID: UUID, country: String) {
+        self.$storefront.id = storefrontID
+        self.brandID = brandID
+        self.country = country
+    }
 }
 
 final class SourceModel: Model, @unchecked Sendable {
