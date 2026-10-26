@@ -56,7 +56,7 @@ shot() {  # name, settle seconds, extra launch args...
 shot feed     10 -startTab feed -feedLastVisitHours 5
 shot product  25 -startTab feed -demoOpen "restock:shopify:910001"
 shot search   12 -startTab shop -shopQuery "black trousers under 200"
-shot picks    14 -startTab shop
+shot picks    40 -startTab shop
 shot saved    40 -startTab saved
 shot fit      14 -startTab style -demoSheet fit    # style opens Saved › Fits
 shot calendar 10 -startTab feed -feedFilter upcoming

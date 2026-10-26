@@ -80,12 +80,18 @@ def main() -> None:
             page = pathlib.Path(tmp) / f"{name}.html"
             page.write_text(html)
             png = pathlib.Path(tmp) / f"{name}.png"
-            subprocess.run([
-                CHROME, "--headless", "--disable-gpu", "--hide-scrollbars",
-                "--force-device-scale-factor=1", "--allow-file-access-from-files",
-                "--virtual-time-budget=8000", f"--window-size={W},{H}",
-                f"--screenshot={png}", page.as_uri(),
-            ], check=True, capture_output=True)
+            # Headless Chrome exits 2 now and then when memory is short; a retry is enough.
+            for attempt in range(3):
+                done = subprocess.run([
+                    CHROME, "--headless", "--disable-gpu", "--hide-scrollbars",
+                    "--force-device-scale-factor=1", "--allow-file-access-from-files",
+                    "--virtual-time-budget=8000", f"--window-size={W},{H}",
+                    f"--screenshot={png}", page.as_uri(),
+                ], capture_output=True)
+                if done.returncode == 0 and png.exists():
+                    break
+            else:
+                done.check_returncode()
             target = OUT / f"{index:02d}-{name}.jpg"
             subprocess.run(["sips", "-s", "format", "jpeg", "-s", "formatOptions", "92",
                             str(png), "--out", str(target)], check=True, capture_output=True)
