@@ -302,6 +302,20 @@ Part of the streetw guidance set; see `CLAUDE.md` for the index and the build ru
   kinds travel inside the continuation (`FeedContinuation.kinds`, nil in an older token, read as
   legacy) so one read is one window to its last page — the new client sends its kinds on every
   page, but a token stored across an app update must not change its window halfway.
+- **Credits and cost metering have their own doc** (`docs/credits.md`); the server rules in
+  short. `credit_ledger` is the balance — no stored total — and a spend locks the account row
+  (`FOR UPDATE`) before summing, which SQLite cannot exercise: `CreditRaceTests` runs against a
+  scratch Postgres named by `STREETW_TEST_POSTGRES_URL` and is skipped otherwise. Two unique
+  constraints *are* the idempotency — `(apple_transaction_id, reason)` credits and refunds a
+  purchase once each, `(account_id, allowance_month)` grants a month once — and both rely on
+  NULLs never colliding, on Postgres and SQLite alike. `ai_costs` keeps numbers only, with both
+  keys `ON DELETE SET NULL` so deleting an account unnames its costs and keeps the measurement;
+  the ledger cascades. Every amount and token count is a `BIGINT`, and a sum is
+  `CAST(… AS BIGINT)` because Postgres sums a `BIGINT` into a `NUMERIC` that will not decode as
+  an `Int`. Both tables set `created_at` themselves rather than through `@Timestamp`, because
+  the month a row falls in decides the allowance and the cap and has to be testable across a
+  month's end. `POST /v1/app-store/notifications` is public and verified by signature; the
+  purchase verifier refuses until the crypto dependencies are approved.
 - **`HTTPFetching`, not `HTTPClient`** — Vapor re-exports `AsyncHTTPClient.HTTPClient` and
   an unqualified collision in the server target is nastier than the wordier name.
 - **Don't name a test helper `withApp`.** VaporTesting exports a generic `withApp<T>` that

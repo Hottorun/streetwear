@@ -288,9 +288,19 @@ rebuilding anything.
       off.
 - [ ] **The location setting** and the region-aware price model (see *Decided*), defaulting to the
       phone's region.
-- [ ] **Cost metering and credits.** Every AI action records its real cost; consumable packs via
+- [x] **Cost metering and credits.** Every AI action records its real cost; consumable packs via
       StoreKit; usage shown ("this month: 23 searches"); prices set after a few weeks of
       measurement.
+      *Done:* `CostMeter` writes numbers only to `ai_costs`, read back per action with p50/p90 at
+      `GET /admin/costs`; `credit_ledger` is the balance, spent under a per-account row lock, with
+      a lazy free monthly allowance, the owner's unlimited switch and monthly cost cap; StoreKit
+      purchases credited once per transaction at `POST /v1/credits/purchases`, refunds from App
+      Store Server Notifications V2; Credits on You for signed-in accounts, with a local
+      `streetw.storekit`. See `docs/credits.md`. **Before it ships:** approve swift-crypto and
+      swift-certificates and write the verifier — until then purchases are refused (503) and kept
+      unfinished on the phone; create the three products in App Store Connect; give it the
+      notifications URL; set `CREDITS_ALLOW_SANDBOX=true` for review; set the prices and the
+      allowance from a few weeks of `/admin/costs` once Phase 4 runs.
 - [ ] **The new privacy policy and App Store privacy label**, before any of the above ships.
 
 ### Phase 3 — the catalogue and search behind the AI
