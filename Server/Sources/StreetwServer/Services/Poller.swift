@@ -1014,15 +1014,26 @@ actor Poller {
     /// and rewriting it each time is the volume problem `refresh` guards against.
     private func settleSale(_ reading: CatalogueSale.Reading, of brand: BrandModel, isBaseline: Bool) async throws -> Bool {
         guard let brandID = brand.id else { return false }
-        let state = CatalogueSale.State(
-            measuredAt: brand.saleMeasuredAt,
-            since: brand.saleSince,
-            catalogueShare: brand.catalogueShare,
-            catalogueMeasuredAt: brand.catalogueMeasuredAt
-        )
+        func state(of brand: BrandModel) -> CatalogueSale.State {
+            CatalogueSale.State(
+                measuredAt: brand.saleMeasuredAt,
+                since: brand.saleSince,
+                catalogueShare: brand.catalogueShare,
+                catalogueMeasuredAt: brand.catalogueMeasuredAt
+            )
+        }
+        var decision = CatalogueSale.decide(reading, state: state(of: brand), isBaseline: isBaseline)
+        guard decision != .unchanged else { return false }
+        // The row was loaded when the source was claimed, a fetch ago, and the daily scan may
+        // have recorded the catalogue's share or started a sale since. A transition is rare and
+        // is decided on the row as it is now, or this poll could end a sale the scan has just
+        // said holds — and the next scan would announce it again.
+        if let fresh = try await BrandModel.find(brandID, on: app.db) {
+            decision = CatalogueSale.decide(reading, state: state(of: fresh), isBaseline: isBaseline)
+        }
         let next: CatalogueSale.State
         let started: Bool
-        switch CatalogueSale.decide(reading, state: state, isBaseline: isBaseline) {
+        switch decision {
         case .unchanged: return false
         case .record(let recorded): (next, started) = (recorded, false)
         case .started(let recorded): (next, started) = (recorded, true)
