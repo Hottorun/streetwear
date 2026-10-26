@@ -917,10 +917,12 @@ Three tiers, and the middle one is the part that was wrong for a long time.
   write a row into a catalogue everybody shares. `RequireDevice` now sits in the group, so
   membership *is* the guarantee it looks like and a new route cannot be accidentally public
   by forgetting a line inside its body.
-- **A server that cannot verify Apple's signature refuses every sign-in**, for the same reason
-  as the admin key below. It does not accept the token on trust. Until the RSA dependency is
-  approved, that means every deployment. `SIWA_TEST_TOKENS=true` (unsigned tokens, every claim
-  still checked) is ignored on a `production` environment. See `docs/server.md`.
+- **Sign-in believes Apple's signature, never the token on trust.** RS256 only — `none` and
+  HS256 are refused before a key is looked at — against Apple's JWKS, cached and re-read on an
+  unknown `kid` at most once per five minutes so a forged `kid` cannot make the server hammer
+  Apple (`AppleIdentityTokenVerifier`, `AppleSigningKeys`); the claims are read only after.
+  `SIWA_TEST_TOKENS=true` (unsigned tokens, every claim still checked) is ignored on a
+  `production` environment. See `docs/server.md`.
 - **A missing `ADMIN_TOKEN` refuses rather than allows.** `/admin/poll` makes the server
   fetch fifty storefronts, `/admin/push-test` wakes every phone holding a token, and
   `delete?force=true` removes a brand and cascades away every follow on it. "Open when unset
@@ -1116,8 +1118,10 @@ and the meter are built so Phase 4 only calls `CreditLedger.spend` before a prov
 `PurchasePolicy`, `CreditPacks`, `CreditStore`, `CreditsSection` or `streetw.storekit`.** The
 short form: the ledger is the balance (a sum, serialised per account by a row lock that only a
 real Postgres can test); credits need an account; unlimited writes zero rows and is still
-metered; the purchase verifier **refuses** (503) until the crypto dependencies are approved; the
-unverified double needs a non-production server *and* `CREDITS_UNVERIFIED_TRANSACTIONS=true`;
+metered; a StoreKit JWS is believed only on a chain to the compiled-in **Apple Root CA - G3**
+(never the token's own root) carrying Apple's two marker OIDs, valid at the payload's
+`signedDate`, with no online revocation check (`AppStoreVerifier`); a notification's envelope,
+transaction and renewal info are each verified; the unverified double needs a non-production server *and* `CREDITS_UNVERIFIED_TRANSACTIONS=true`;
 an `Xcode` transaction is never believed on production; a refund may take the balance negative;
 the phone finishes a transaction only once the server took it; and the StoreKit configuration
 applies only when Xcode itself launches the app.
