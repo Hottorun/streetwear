@@ -243,7 +243,7 @@ actor Poller {
     /// A UCP product the protocol has read this recently is still in its window, and is left
     /// to it: those reads carry prices and live stock already, and a page that prints the
     /// price a little differently would otherwise argue with them every few hours.
-    /// `refresh` refreshes `last_seen_at` once a day, so two days is "still being read".
+    /// `refresh` stamps `last_seen_at` at most once a day, so two days is "still being read".
     static let ucpCoverage: TimeInterval = 2 * 86_400
 
     /// The queue beyond what is owed an announcement is a scan of the products table, and
