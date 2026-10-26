@@ -26,13 +26,14 @@ public enum CatalogueSale {
     /// would describe yesterday.
     ///
     /// **The daily scan measures the same thirty per cent over the whole catalogue, of what
-    /// can be bought** (`decideScan`). Only buyable stock, because a full catalogue is mostly
-    /// history: years of sold-out products, many still carrying the compare-at of a sale that
-    /// ended long ago. Counted in, they hold the share wherever last season left it — and a
-    /// brand that sits over the line for good can never be seen going on sale again, since a
-    /// start is a transition — while none of them can be bought anyway. Of what *is* on the
-    /// shelf, thirty per cent cut is a sale on any measure, and it is what a sale on older
-    /// stock looks like: exactly the sale the newest 250 cannot see.
+    /// can be bought** (`decideScan`). Only buyable stock, because a whole catalogue carries
+    /// what the newest 250 mostly do not: products kept listed after they sold out, whose
+    /// price says nothing about a sale anybody can act on. Counted in, they move the share
+    /// either way — diluting a real sale, or, where an old sale's leftovers keep their
+    /// compare-at, holding the share over the line for good, and a brand that never drops
+    /// under it can never be seen going on sale again, since a start is a transition. Of what
+    /// *is* on the shelf, thirty per cent cut is a sale on any measure, and it is what a sale
+    /// on older stock looks like: exactly the sale the newest 250 cannot see.
     public static let startShare = 0.30
 
     /// …and the share it has to fall back under before the sale counts as over and the

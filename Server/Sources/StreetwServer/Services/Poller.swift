@@ -240,6 +240,12 @@ actor Poller {
     /// and the daily scan's.
     static let recheckedPrefixes = ["sitemap:", "ucp:"]
 
+    /// A UCP product the protocol has read this recently is still in its window, and is left
+    /// to it: those reads carry prices and live stock already, and a page that prints the
+    /// price a little differently would otherwise argue with them every few hours.
+    /// `refresh` refreshes `last_seen_at` once a day, so two days is "still being read".
+    static let ucpCoverage: TimeInterval = 2 * 86_400
+
     /// The queue beyond what is owed an announcement is a scan of the products table, and
     /// has no business running every thirty seconds.
     static let backfillInterval: TimeInterval = 5 * 60
@@ -346,6 +352,7 @@ actor Poller {
             .limit(Self.recheckCandidates)
             .with(\.$variants)
             .all()
+            .filter { !$0.externalID.hasPrefix("ucp:") || now.timeIntervalSince($0.lastSeenAt) > Self.ucpCoverage }
             .sorted { ($0.enrichedAt ?? .distantPast) < ($1.enrichedAt ?? .distantPast) }
 
         var perHost: [String: Int] = [:]
@@ -404,7 +411,17 @@ actor Poller {
             // Price, stock and variants go through the poll's own `refresh`, so a watched
             // product read again raises the same restock and price-drop events a Shopify
             // poll would. A first read is a baseline: there is nothing to compare it with.
-            _ = try await refresh(product, with: item, brandID: product.$brand.id, isBaseline: firstRead)
+            //
+            // A UCP product's `last_seen_at` is left to the protocol's own reads, because it is
+            // how `watchedRechecks` tells a product the UCP poll still covers from one that
+            // has fallen out of its window.
+            _ = try await refresh(
+                product,
+                with: item,
+                brandID: product.$brand.id,
+                isBaseline: firstRead,
+                marksSeen: !product.externalID.hasPrefix("ucp:")
+            )
             try await product.save(on: db)
 
         case .notAProduct, .unreachable(retryable: false):

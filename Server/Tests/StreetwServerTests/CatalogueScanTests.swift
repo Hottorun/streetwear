@@ -478,7 +478,9 @@ struct ScanRetentionTests {
             let sitemap = SourceModel(brandID: brandID, kind: .sitemap, url: "https://shop.example/sitemap.xml")
             try await sitemap.save(on: app.db)
 
-            func make(_ id: String, source: UUID, lastSeenDaysAgo: Double, unlistedDaysAgo: Double? = nil) async throws {
+            let user = UserModel()
+            try await user.save(on: app.db)
+            func make(_ id: String, source: UUID, lastSeenDaysAgo: Double, unlistedDaysAgo: Double? = nil, watched: Bool = false) async throws {
                 let product = ProductModel(
                     brandID: brandID, sourceID: source,
                     item: FetchedItem(externalID: id, title: id, publishedAt: Date(), kind: .product)
@@ -486,16 +488,22 @@ struct ScanRetentionTests {
                 product.lastSeenAt = Date().addingTimeInterval(-lastSeenDaysAgo * 86_400)
                 product.unlistedAt = unlistedDaysAgo.map { Date().addingTimeInterval(-$0 * 86_400) }
                 try await product.save(on: app.db)
+                if watched {
+                    try await WatchModel(userID: try user.requireID(), brandID: brandID, productID: try product.requireID(),
+                                         size: "M", color: nil).save(on: app.db)
+                }
             }
             try await make("shopify:1", source: sourceID, lastSeenDaysAgo: 400, unlistedDaysAgo: 200)
             try await make("shopify:2", source: sourceID, lastSeenDaysAgo: 400)
             try await make("shopify:3", source: sourceID, lastSeenDaysAgo: 400, unlistedDaysAgo: 30)
             try await make("sitemap:4", source: try sitemap.requireID(), lastSeenDaysAgo: 400)
+            try await make("ucp:5", source: try sitemap.requireID(), lastSeenDaysAgo: 400, watched: true)
 
             let result = await Reaper(app: app, eventDays: 30, productDays: 180).sweep()
             #expect(result.products == 2)
             let left = try await ProductModel.query(on: app.db).all().map(\.externalID).sorted()
-            #expect(left == ["shopify:2", "shopify:3"])
+            #expect(left == ["shopify:2", "shopify:3", "ucp:5"])
+            #expect(try await WatchModel.query(on: app.db).count() == 1, "a watched product is not pruned out from under its watch")
         }
     }
 }
@@ -512,12 +520,13 @@ struct PerItemRecheckTests {
             let user = UserModel()
             try await user.save(on: app.db)
 
-            func watched(_ id: String, link: String, readHoursAgo: Double?) async throws {
+            func watched(_ id: String, link: String, readHoursAgo: Double?, seenDaysAgo: Double = 0) async throws {
                 let product = ProductModel(
                     brandID: brandID, sourceID: nil,
                     item: FetchedItem(externalID: id, title: id, linkURL: URL(string: link), publishedAt: Date(), kind: .product)
                 )
                 product.enrichedAt = readHoursAgo.map { Date().addingTimeInterval(-$0 * 3600) }
+                product.lastSeenAt = Date().addingTimeInterval(-seenDaysAgo * 86_400)
                 try await product.save(on: app.db)
                 try await WatchModel(userID: try user.requireID(), brandID: brandID, productID: try product.requireID(),
                                      size: nil, color: nil).save(on: app.db)
@@ -525,16 +534,73 @@ struct PerItemRecheckTests {
             for n in 1...5 {
                 try await watched("sitemap:big-\(n)", link: "https://big.example/p/\(n)", readHoursAgo: n == 5 ? nil : Double(6 + n))
             }
-            try await watched("ucp:gid://shopify/Product/9", link: "https://small.example/products/nine", readHoursAgo: nil)
+            try await watched("ucp:gid://shopify/Product/9", link: "https://small.example/products/nine", readHoursAgo: nil, seenDaysAgo: 5)
+            try await watched("ucp:gid://shopify/Product/8", link: "https://small.example/products/eight", readHoursAgo: nil)
             try await watched("sitemap:fresh", link: "https://small.example/p/fresh", readHoursAgo: 1)
             try await watched("shopify:7", link: "https://small.example/products/seven", readHoursAgo: nil)
 
             let chosen = try await Poller(app: app, http: StubHTTP()).watchedRechecks(limit: 6).map(\.externalID)
             #expect(chosen.filter { $0.hasPrefix("sitemap:big") } == ["sitemap:big-5", "sitemap:big-4"])
-            #expect(chosen.contains("ucp:gid://shopify/Product/9"))
+            #expect(chosen.contains("ucp:gid://shopify/Product/9"), "fallen out of the protocol's window")
+            #expect(!chosen.contains("ucp:gid://shopify/Product/8"), "the protocol read it today")
             #expect(!chosen.contains("sitemap:fresh"), "read an hour ago")
             #expect(!chosen.contains("shopify:7"), "the poll's and the scan's")
             #expect(chosen.count == 3)
+        }
+    }
+
+    /// A UCP product past the protocol's window: its page is the only thing left that can say
+    /// a size came back, and it says so in the page's own variant names.
+    @Test("A watched UCP product's page re-read raises the restock on the size held")
+    func ucpRestockFromThePage() async throws {
+        try await withServer { app in
+            let brand = BrandModel(name: "Shop", slug: "shop.example", website: "https://shop.example",
+                                   instagramHandle: nil, usesGeneratedName: false)
+            try await brand.save(on: app.db)
+            let brandID = try brand.requireID()
+            let product = ProductModel(
+                brandID: brandID, sourceID: nil,
+                item: FetchedItem(
+                    externalID: "ucp:gid://shopify/Product/9", title: "Cordura Shoulder Bag",
+                    linkURL: URL(string: "https://shop.example/products/bag"), publishedAt: Date(), kind: .product,
+                    priceText: "£198.00", priceAmount: 198, currency: "GBP", isAvailable: false
+                )
+            )
+            product.enrichedAt = Date().addingTimeInterval(-Poller.recheckAfter - 60)
+            product.lastSeenAt = Date().addingTimeInterval(-5 * 86_400)
+            try await product.save(on: app.db)
+            let productID = try product.requireID()
+            for (id, size) in [("gid://shopify/ProductVariant/1", "M"), ("gid://shopify/ProductVariant/2", "L")] {
+                try await VariantModel(productID: productID, info: VariantInfo(id: id, title: size, available: false, price: "£198.00", size: size))
+                    .save(on: app.db)
+            }
+            let user = UserModel()
+            try await user.save(on: app.db)
+            try await WatchModel(userID: try user.requireID(), brandID: brandID, productID: productID, size: "M", color: nil)
+                .save(on: app.db)
+
+            let http = StubHTTP()
+            http.stub("/products/bag", body: """
+                <html><head><script type="application/ld+json">
+                {"@context": "https://schema.org", "@type": "ProductGroup", "name": "Bag | Shop",
+                 "hasVariant": [
+                   {"@type": "Product", "sku": "SKU-M", "size": "M", "offers": {"@type": "Offer", "price": 198,
+                    "priceCurrency": "GBP", "availability": "https://schema.org/InStock"}},
+                   {"@type": "Product", "sku": "SKU-L", "size": "L", "offers": {"@type": "Offer", "price": 198,
+                    "priceCurrency": "GBP", "availability": "https://schema.org/OutOfStock"}}]}
+                </script></head><body></body></html>
+                """)
+            await Poller(app: app, http: http).enrich()
+
+            let events = try await EventModel.query(on: app.db).all()
+            #expect(events.map(\.kind) == [UpdateKind.restock.rawValue])
+            #expect(events.first?.sizes == ["M"])
+            let variants = try await VariantModel.query(on: app.db).all()
+            #expect(variants.count == 2, "the page's names are not stored beside the protocol's")
+            #expect(variants.first { $0.size == "M" }?.available == true)
+            let reread = try #require(try await ProductModel.find(productID, on: app.db))
+            #expect(reread.title == "Cordura Shoulder Bag", "a catalogue named it")
+            #expect(reread.enrichedAt.map { Date().timeIntervalSince($0) < 60 } == true)
         }
     }
 

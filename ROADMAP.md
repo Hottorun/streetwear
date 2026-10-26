@@ -349,7 +349,7 @@ fit editor; the starter pack of six womenswear and six menswear shops. See
       this is the pgvector template plus a dump and restore — a planned migration with a new
       `DATABASE_URL`, not a toggle. Turn on daily snapshots, and keep the server on the private
       database URL; over the public one, the traffic is billed as egress.
-- [ ] **Catalogues at two speeds.** The fast "what's new" poll stays as it is. A daily full scan
+- [x] **Catalogues at two speeds.** The fast "what's new" poll stays as it is. A daily full scan
       stores every product with its price and stock; for Shopify a 5,000-product shop is ~20
       requests. Today a Shopify brand's baseline is its newest 2,500 and only the newest ~250 are
       re-read, so older stock — exactly what goes on sale — is invisible to sale alerts and would
@@ -357,6 +357,18 @@ fit editor; the starter pack of six womenswear and six menswear shops. See
       at 2s is ~11 hours per brand), so there new products are enriched once, and price tracking
       is **per item**: whatever somebody has saved or watches has its own page re-checked.
       Brand-wide sale detection is not available for those.
+      *Done:* every Shopify source is read to the end once a day on its own loop, at a slot fixed
+      by its id, under a `FOR UPDATE SKIP LOCKED` lease on `catalogue_scans`, four pages a turn and
+      resumable; it writes only what changed, stores what it meets first silently, leaves anything
+      published in the last day to the poll, and is a baseline the first time, so a first scan of a
+      5,000-product shop emits nothing and a later markdown on old stock emits exactly that.
+      Missing from two complete scans in a row is unlisted and ages out through retention.
+      `CatalogueSale` also measures the buyable catalogue; either reading may start a sale, only
+      both together end one. Country shops are scanned while read. Per item: watched sitemap and
+      UCP products, two pages per host a pass — the server only knows watches, since saves never
+      leave the phone. Measured: Aimé Leon Dore live, 900 products in 4 pages and 8s; on Postgres
+      ~3.2 MB per 1,000 products, and an unchanged scan rewrites nothing. `/admin/status` reports
+      `databaseBytes`. See `docs/server.md`.
 - [ ] **Product search.** None exists — the only search is `ILIKE` on brand names. Postgres
       full-text plus pgvector embeddings of each product's text and photograph, built once per
       product. The same index serves "more like this", Shop's ranking, daily picks and the scan.

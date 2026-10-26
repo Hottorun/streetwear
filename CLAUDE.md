@@ -60,7 +60,7 @@ cost.
 | `docs/discover.md` | Shop's search and daily picks; the Discover deck, its supply, ranking, presentation and card |
 | `docs/fits.md` | The fit canvas, the studio, suggestions, and judging a whole outfit |
 | `docs/collection.md` | Saves, boards, the archive page, and everything the photograph is asked |
-| `docs/server.md` | The poller, the schema, migrations, retention, `Notifier`, storefronts per country |
+| `docs/server.md` | The poller, the daily catalogue scan, the schema, migrations, retention, `Notifier`, storefronts per country |
 | `docs/performance.md` | Every rule written after measuring — queries, bodies, decoding, sorts |
 | `docs/share-extension.md` | The App Group inbox, enrichment, brand attribution |
 | `docs/drop-calendar.md` | `PlannedDrop`, local reminders, and poll hints |
@@ -209,7 +209,7 @@ plutil -p /tmp/streetw-dd/Build/Products/Debug-iphonesimulator/streetw.app/Info.
 ### Tests
 
 ```bash
-swift test                                    # all 709
+swift test                                    # all 716
 swift test --filter "Size normalisation"      # one suite
 swift test --filter relockFiresAgain          # one test
 ```
@@ -299,6 +299,16 @@ Adapters live in `streetw/Sources/` and are resolved through `SourceAdapters.ada
 
 Discovery prefers them in that order, so a page watch is now genuinely a fallback rather
 than the common case for non-Shopify brands.
+
+**On the server the catalogue is read at two speeds.** The poll above is the fast half and the
+only thing that may call a product new. Once a day every Shopify source is also read to the end
+(`Poller.scanTick` on its own `ScanLoop`, `ShopifySource.cataloguePage`, `catalogue_scans`), so
+older stock's price and stock are current — but it says nothing new: a first scan is a baseline,
+products it meets first are stored silently, anything published in the last day is left for the
+poll, and events come only from `refresh`'s existing rules. Sources that cannot be scanned
+honestly (sitemap, UCP) get per-item rechecks of whatever is *watched* instead — never saved,
+which the server cannot know. Read `docs/server.md` (*The catalogue is read at two speeds*)
+before touching either.
 
 `BrandDiscovery` (in `Sync/`) probes a bare domain, attaches whatever it finds, and falls back to a
 page watch so every brand yields some signal.
@@ -1120,8 +1130,9 @@ SQLite**; a failed poll must still advance `next_check_at`; the poll claim is a 
 (`FOR UPDATE SKIP LOCKED`); `UserModel.sizeProfile` is discrete columns, so a new
 `SizeProfile` field is silently dropped without a migration; retention prunes events before
 products; `Poller.refresh` guards every write, because rewrites — not rows — are what fill the
-volume; and only the *unexpected* is worth a buzz (`Notifier.isWorthWaking`), one push per brand per
-**cooldown**.
+volume; the daily scan is a baseline the first time, never stores what the poll has yet to
+announce, and does not stamp `last_seen_at`; and only the *unexpected* is worth a buzz
+(`Notifier.isWorthWaking`), one push per brand per **cooldown**.
 
 ### Credits
 

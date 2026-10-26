@@ -173,7 +173,13 @@ Part of the streetw guidance set; see `CLAUDE.md` for the index and the build ru
 - **Retention prunes events before products, never the reverse.** `events.product_id` is
   `ON DELETE CASCADE`, so pruning a product takes feed history with it; and deleting a
   product the source still lists makes the next poll announce it as a new drop. Only
-  products unseen for `PRODUCT_RETENTION_DAYS` *with no events left* are eligible.
+  products gone for `PRODUCT_RETENTION_DAYS` *with no events left* are eligible — for a source
+  the daily scan has completed within that window, "gone" is `unlisted_at` (two complete scans
+  in a row did not find it), counted from then; for everything else it is `last_seen_at`, as
+  before. The scan does not stamp `last_seen_at`, so a listed product in a scanned shop must
+  never be judged by it. **Nor is a product with an active watch pruned**: `watches.product_id`
+  cascades, so retention used to delete the watch with it, silently — and a product only its own
+  page re-reads can go unseen by any catalogue for months while being watched throughout.
 - **What fills the volume is rewrites, not rows.** Postgres does not edit a row in place:
   every `UPDATE` writes a new tuple and leaves the old one dead until autovacuum reclaims
   it — and reclaimed space goes back to the *table* for reuse, not to the filesystem, so a
@@ -265,6 +271,138 @@ Part of the streetw guidance set; see `CLAUDE.md` for the index and the build ru
   Victoria's Secret's at 02:31, Hollister's cached at the edge for a day — and Subdued's is 7.2 MB
   a read. Its memory of what it has seen lives in `sources.fingerprint` (`SitemapMemory`), which
   is only rewritten when it changed.
+- **The catalogue is read at two speeds** (`CatalogueScan.swift`, `Poller.scanTick`, `ScanLoop`,
+  `catalogue_scans`, `CreateCatalogueScans`). The poll is the fast half and is unchanged: it
+  reads a shop's newest products every few minutes, its baseline is the newest 2,500 and it
+  re-reads only the newest ~250. Everything older — exactly what goes on sale — sat at whatever
+  price it had the day it fell out of that window, invisible to a markdown, a restock, a watch,
+  `CatalogueSale` and search. **Once a day, every Shopify source is read to the end** of
+  `/products.json` (`ShopifySource.cataloguePage`, 250 a page) and every product, variant, price,
+  `compare_at_price` and stock is stored or updated. Measured live against Aimé Leon Dore on
+  2026-10-26: 900 products and 4,015 variants in 4 pages, 7.9 MB of JSON, 8 seconds at the
+  two-second politeness interval — so the roadmap's 5,000-product shop is 21 pages and under a
+  minute of one host's budget. Load-bearing, each with what it prevents:
+  - **The scan says nothing new.** It writes catalogue state, and its events come only from
+    `refresh` by the poll's own rules — a size back, a markdown past 5% — and from
+    `CatalogueSale`. Three rules hold that:
+    - **A first scan is a baseline**, and so is one after no scan has finished for three days
+      (`CatalogueScan.staleAfter`) or after the poll re-spent its baseline (a country shop back
+      from a pause) — `Poller.scanIsBaseline`. On the day this shipped, every product past the
+      newest 250 held months-old prices and stock, and comparing against them would have
+      announced every markdown and restock since as news. Decided when a scan begins and kept
+      in its row, so one scan is one or the other from its first page to its last.
+    - **A product the scan meets for the first time is stored silently** — old stock the
+      poll's window never reached is not a drop.
+    - **…and one published within a day of the poll's last read is not stored at all**
+      (`newsMargin`), nor is anything new while the poll is failing. "New" is the poll's word:
+      a scan that stored a drop first would have left the poll finding it already known, and
+      the drop would never have been announced. A day rather than "since the poll's last read"
+      because a storefront's `/products.json` is cached at the edge and a product can appear in
+      it later than its `published_at`.
+    `firstScanIsSilentAndAMarkdownIsNot` scans a 5,000-product shop whose older half moved
+    since the baseline and asserts no event, then a markdown on one old product and asserts
+    exactly that one `.priceDrop`.
+  - **An unchanged product causes no write**, which is `refresh`'s rule, and the scan also does
+    not stamp `last_seen_at` (`refresh(marksSeen: false)`) — a daily stamp would be a rewrite of
+    the whole catalogue a day, the exact churn `refresh` exists to stop. Measured on Postgres: a
+    second scan of an unchanged 5,400-product catalogue updated **zero** product and variant rows
+    (`pg_stat_user_tables`), plus one brand row and three scan-row writes; the test pins the same
+    with triggers on SQLite. Retention reads `unlisted_at` for scanned shops instead.
+  - **Scheduling.** One row per Shopify source in `catalogue_scans`, made by the scanner itself
+    for any source without one (`enrolScans`) — five paths make sources, and a scan that relied
+    on each of them remembering would be missing for whichever forgot. A source's scan falls at a
+    fixed second of the UTC day taken from its id (`CatalogueScan.slot`), so a few hundred
+    sources spread across the day rather than bursting at midnight, and a deploy spreads the
+    first scans over the next 24 hours. The next scan is the source's slot at least twelve hours
+    after the last *started*: one per slot, at most once a day, and a late start does not push
+    the next a day later. Only sources the poll has baselined: a scan before the poll's first
+    read would take the newest products for old ones.
+  - **The lease is the poll claim's, on its own table.** `due_at` is pushed forward by
+    `leaseDuration` in the statement that picks the rows, `FOR UPDATE OF catalogue_scans SKIP
+    LOCKED`, so two instances never scan one source, and only the scan row is locked — the poll's
+    claim locks `sources` every tick and must never skip one because a scan holds it.
+    `CatalogueScanPostgresTests` runs two scanners at once against eight shops and counts eight
+    pages, not sixteen. SQLite keeps a plain query.
+  - **Budgeted, and resumable.** At most `pagesPerTurn` (4) pages a source per pass and
+    `scansPerPass` (3) sources per pass, one pass a minute: twelve pages a minute at most, far more
+    than a daily read of every catalogue needs. A source with pages left goes back in the queue
+    at once, behind every scan that has waited longer, so a 30,000-product shop (120 pages) takes
+    thirty turns and its share of the fetcher, never all of it. Hard cap `maxPages` (200, 50,000
+    products): a scan that reaches it stops, keeps what it read, says so (`last_truncated`) and
+    does not count as complete. Between turns the row holds the next page, the products seen so
+    far as 32-bit digests (`ScanDigests`, ~27 KB at 5,400 products) and the sale reading, so a
+    deploy mid-scan resumes on whichever instance claims it next; a scan in progress for twelve
+    hours (`abandonAfter`) starts again rather than stitching a catalogue from two days. A lock
+    waits an hour, `hostBusy` waits its retry, and a failure backs off from five minutes to six
+    hours.
+  - **It never slows the poll.** Its own loop (`ScanLoop`), not a step of `PollLoop`, with one
+    page in flight at a time through the shared `PoliteFetcher` — a poll to the same host waits at
+    most one politeness slot. Merges of one brand are serialised (`Poller.holdBrand`), because a
+    poll and a scan comparing the same product at once would both see a size come back and both
+    write the restock; held around the merge only, so a poll waits at most one page being
+    written. That is per instance: the two claims keep two instances off one *source* each, not
+    a poll on one instance off a scan on another.
+  - **Removal is two complete scans in a row.** `/products.json` is paged by number, so a product
+    removed mid-read shifts the next page up by one and a listed row goes unseen. The first miss
+    sets `products.missing_since`, the second `unlisted_at`; any read that sees it again clears
+    both. Only products first stored before the scan began are judged. A scan that finds more
+    than half a shop missing (and more than 25 products) marks nothing and logs — a storefront
+    that stopped answering past some page reads exactly like a mass delisting. Nothing is deleted:
+    retention takes an unlisted product six months on, and Discover stops dealing it.
+  - **`CatalogueSale` over the whole catalogue counts only what can be bought.** A complete scan
+    records `brands.catalogue_share` and when; a whole catalogue carries stock kept listed after
+    it sold out, whose price says nothing about a sale anyone can act on, and counted in it either
+    dilutes a real sale or holds the share over the line for good. The thresholds keep their
+    meaning — 30% of the buyable catalogue cut is a sale — and the first scan is a baseline. The
+    two readings can disagree for weeks (old stock marked down: 40% to the scan, 5% to the poll),
+    so **either may start a sale and only the poll may end one, when its read and a scan from
+    the last three days are both under 10%**; letting either end what the other held would
+    announce the sale again every few days. Main shop only, like the poll's.
+  - **Country storefronts** are scanned exactly when they are polled — the claim applies
+    `Storefronts.wanted` — and a paused one is never claimed and never fetched.
+  - **`DISABLE_CATALOGUE_SCAN=true`** stops the scan and nothing else. Its cost is mostly storage,
+    so on a volume near its cap it is the one background job to switch off.
+  - **What it costs to store**, measured on Postgres 17 by replaying Aimé Leon Dore's real pages
+    six times over with fresh ids (5,400 products, 24,090 variants — 4.5 a product, a typical
+    streetwear size run): products 10.6 MB (1.66 KB a row, heap 9.5 MB, indexes 0.8 MB),
+    variants 6.4 MB (129 bytes a row, heap 3.3 MB, indexes 3.0 MB), 17.0 MB of database growth.
+    **About 3.2 MB per 1,000 products**: ALD's 900 is ~2.8 MB, a 5,000-product shop ~16 MB, a
+    30,000-product one ~95 MB, one at the 50,000 cap ~160 MB. The scan alone reaches 5 GB only
+    somewhere past 1.5 million products, before events, dead tuples and whatever search adds —
+    so how near Hobby's cap it brings the volume depends on which brands are in the catalogue,
+    and `databaseBytes` is where to watch it. A change is one new
+    tuple per changed row: re-pricing one page of 250 products rewrote 250 product and 1,027
+    variant rows (~0.5 MB of dead tuples), so a whole-catalogue sale costs about one more copy
+    of that brand until autovacuum reuses it.
+  - **`/admin/status` says `databaseBytes`** (`pg_database_size`, nil on SQLite), the number the
+    volume cap is measured against and one no row count stands in for, beside `scansFinishedToday`,
+    `scansInProgress` and `unlistedProducts`.
+- **A watched product that no catalogue re-reads has its own page re-read** (`Poller.watchedRechecks`,
+  inside `enrich`). A sitemap names a URL and nothing else, and a UCP search pages a bounded
+  window with no order, so a watched product from either would otherwise never be priced or
+  stocked again — and a huge non-Shopify retailer cannot be scanned honestly (20,000 pages at 2s
+  is eleven hours a brand). So its page is read again through `ProductPage` every `recheckAfter`
+  (six hours), which gives price and stock, and so a markdown and a restock by `refresh`'s rules
+  — the watch fires on them as on a Shopify product. Four details:
+  - **Watched, not saved.** Saves never leave the phone (`docs/collection.md`), so the server
+    cannot know what is saved and must not be told; the per-item set is the watches, and "Notify"
+    on a save is what makes one. Anything a later opt-in sends would join the same queue.
+  - **Budgeted per host**: at most `recheckPerHost` (2) of one host's pages a pass, never-read
+    first then oldest, inside the pass's `enrichmentBudget`. A host with more watched products
+    than that covers in six hours is re-read less often rather than harder.
+  - **A UCP product the protocol still reads is left to it** (`ucpCoverage`, two days of
+    `last_seen_at`, which a page read of a UCP product does not stamp): those reads carry prices
+    and live stock already, and a page printing the price slightly differently would argue with
+    them every six hours. Only one that has fallen out of the search window is read by its page.
+  - **A page never brings a second vocabulary of variants.** A UCP product's variants are named
+    by the protocol and its page's by its JSON-LD; taking the page's would store every size twice
+    and never see one come back. They are matched on size and colour onto the held ones
+    (`Poller.translated`), and only a clean match is used; otherwise only the product's own price
+    and stock are read, which still gives a markdown and a whole-product restock. Nor does a page
+    rename a product a catalogue named.
+  - **No brand-wide sale detection for these sources** — the scan's share needs the whole
+    catalogue, and a handful of watched pages is not one. Their banner reads still announce a
+    code sale (`SaleBanners`).
 - **A brand going on sale is said once, by whichever detector sees it first** (`SaleEvents`,
   `.sale`). Both write through `SaleEvents.announce`, which refuses a second `.sale` for the brand
   inside `quietPeriod` (24h): an end-of-season sale marks the catalogue down *and* puts "SALE NOW
@@ -281,8 +419,10 @@ Part of the streetw guidance set; see `CLAUDE.md` for the index and the build ru
     against — and **the first measurement is a baseline**: measured against Motel Rocks, 1,155 of
     2,748 products were already marked down, which a deploy would otherwise have announced. It is
     a share of the *read* (the newest 250 for an incremental Shopify poll), not of the stored
-    catalogue, whose prices are whatever they were when last seen; older stock nobody re-reads is
-    the roadmap's Phase 3 blind spot.
+    catalogue, whose prices are whatever they were when last read. **The daily scan measures the
+    whole buyable catalogue too** (`CatalogueSale.decideScan`, `brands.catalogue_share`), which is
+    the sale on older stock the newest 250 cannot see — see *The catalogue is read at two speeds*
+    below. Either may start a sale; only the poll ends one, and only while a fresh scan agrees.
   - **The announcement bar** (`SaleBanners`, `SaleBanner`, `SaleBannerLedger`): a code sale moves
     no price, so the homepage is read every 30–60 minutes per brand (fixed per brand by its id, so
     reads do not bunch), three a pass, through the shared `PoliteFetcher`. Only brands somebody

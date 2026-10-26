@@ -87,8 +87,15 @@ actor Reaper {
             // window, a sitemap, a feed — keeps the old reading, unseen for six months. A
             // listed product deleted here would come back as a new row on the next read;
             // that is why this asks the scan rather than the clock.
+            //
+            // **And never a product somebody is still waiting on.** `watches.product_id`
+            // cascades, so pruning a watched product deleted the watch with it, silently — and a
+            // product only its own page re-reads (`Poller.watchedRechecks`) can sit unseen by
+            // any catalogue for months while being watched the whole time.
             let eligible: SQLQueryString = """
                 NOT EXISTS (SELECT 1 FROM events WHERE events.product_id = products.id) \
+                AND NOT EXISTS (SELECT 1 FROM watches \
+                    WHERE watches.product_id = products.id AND watches.fired_at IS NULL) \
                 AND ( \
                     (unlisted_at IS NOT NULL AND unlisted_at < \(bind: productCutoff)) \
                     OR (unlisted_at IS NULL AND last_seen_at < \(bind: productCutoff) \
