@@ -145,3 +145,13 @@ interaction — screenshots are far too coarse:
 DB="$(xcrun simctl get_app_container "$DEVICE" com.kern.functional.streetw data)/Library/Application Support/default.store"
 sqlite3 "$DB" "select count(*) from ZBRANDUPDATE where ZISSEEN=0;"
 ```
+
+## On the server
+
+**Fluent hydration is the cost, not the query.** Product search read 600 candidate
+`ProductModel`s and their four thousand `VariantModel`s through Fluent to build listings for a
+page of forty: 380ms of a 650ms search in release, against 90ms of SQL. Reading the candidates as
+rows into values (`ProductSearch.load`) and building models for the page alone took the whole
+search to 20–130ms on eight thousand products. Anything that reads hundreds of rows to show a few
+should do the same. Time the stages with `ContinuousClock` before guessing, and read
+`log_min_duration_statement = 0` on a scratch Postgres for the SQL half.

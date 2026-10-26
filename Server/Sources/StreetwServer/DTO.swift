@@ -246,6 +246,12 @@ extension ProductModel {
     /// already has, so a stored copy would need a migration *and* a backfill, and would
     /// then go stale the moment the classifier improves.
     var gender: Gender {
+        Self.gender(title: title, productType: productType, tags: tags, linkURL: linkURL)
+    }
+
+    /// The same verdict from the columns alone, for a caller that read them without a model —
+    /// product search reads hundreds of candidates and hydrates only the page.
+    static func gender(title: String, productType: String?, tags: [String], linkURL: String?) -> Gender {
         GenderClassifier.classify(
             title: title,
             productType: productType,
@@ -264,7 +270,17 @@ extension ProductModel {
     ///   accessor traps when the relation was not eager loaded, and the notifier holds
     ///   events whose products were loaded without them.
     func sizeContext(sizes: [String]) -> SizeContext {
+        Self.sizeContext(title: title, productType: productType, tags: tags, linkURL: linkURL, sizes: sizes)
+    }
+
+    static func sizeContext(title: String, productType: String?, tags: [String], linkURL: String?, sizes: [String]) -> SizeContext {
         guard SizeContext.matters(for: sizes) else { return .unknown }
-        return SizeContext.of(gender: gender, title: title, productType: productType, tags: tags, sizes: sizes)
+        return SizeContext.of(
+            gender: gender(title: title, productType: productType, tags: tags, linkURL: linkURL),
+            title: title,
+            productType: productType,
+            tags: tags,
+            sizes: sizes
+        )
     }
 }

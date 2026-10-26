@@ -68,7 +68,8 @@ cost.
 | `docs/discover.md` | Shop's search and daily picks; the Discover deck, its supply, ranking, presentation and card |
 | `docs/fits.md` | The fit canvas, the studio, suggestions, and judging a whole outfit |
 | `docs/collection.md` | Saves, boards, the archive page, and everything the photograph is asked |
-| `docs/server.md` | The poller, the daily catalogue scan, the schema, migrations, retention, `Notifier`, storefronts per country |
+| `docs/server.md` | The poller, the daily catalogue scan, the schema, migrations, retention, `Notifier`, storefronts per country, product search, pgvector, the embedding sidecar |
+| `docs/pgvector-migration.md` | The owner's runbook for moving production onto a Postgres with pgvector and deploying the embedding service |
 | `docs/performance.md` | Every rule written after measuring — queries, bodies, decoding, sorts |
 | `docs/share-extension.md` | The App Group inbox, enrichment, brand attribution |
 | `docs/drop-calendar.md` | `PlannedDrop`, local reminders, and poll hints |
@@ -762,10 +763,16 @@ while it is empty, and the deck one row below. **Read `docs/discover.md` (*Shop*
 `ShopView`, `ShopCatalogue`, `PickLedger`, `ShopQuery`, `ShopSearch` or `DailyPicks`.** The rules
 most easily broken:
 
-- **It searches your shops, on this phone, and says so** — "IN YOUR SHOPS · N PRODUCTS ON THIS
-  PHONE" under the box, never AI or the web, a magnifying glass and not a sparkle. Phase 3 widens
-  the catalogue and Phase 4 puts a model behind the same field; until then the copy must not
-  promise either.
+- **It searches your shops, and says where** — in server mode every product the server holds for
+  them (`GET /v1/products/search`, "IN YOUR SHOPS · N PRODUCTS"), standalone the ones on this
+  phone ("… ON THIS PHONE"); never AI or the web, a magnifying glass and not a sparkle. Phase 4
+  puts a model behind the same field; until then the copy must not promise one. Every other shop
+  the server watches is one quiet row under the answer, asked only when tapped, and shows only
+  what your shops did not. A request that failed says it failed, never "no results".
+- **One grammar on both ends**: the server parses the text with the same `ShopQuery` and runs the
+  same `ShopSearch.run` over candidates its full-text index found (`ProductSearch`), told by the
+  database which words exist at all (`knows:`). A query must not mean something different on the
+  phone and the server; `ProductSearchTests.parity` holds them to it.
 - **The grammar is small, in the core, and printed back**: whole-token words over title, type,
   tags, colourways, measured colour and shop name; price bounds (a bare number is a name); "in my
   size" by `claims`; "no …" rules out; "cheap"/"formal" set the chips' own flags. Prices are
@@ -1010,6 +1017,8 @@ the local path in the `else`. Adding a new one means adding both halves:
 | poll hints from the drop calendar | `PUT /v1/poll-hints` (whole set; no-op standalone) |
 | anonymous usage counts | `POST /v1/usage` (daily tallies; standalone counts and sends nothing) — read back with `GET /admin/usage`, see `docs/server.md` |
 | recommendations | `GET /v1/brands/popular` |
+| Shop's search field | `GET /v1/products/search?q=&scope=followed\|all&cheaper=&formal=&inMySize=&cursor=` — standalone, `ShopSearch` over `ShopCatalogue` |
+| "more like this" on a product page | `GET /v1/products/:id/similar?brand=` (the external id, one escaped segment) — falls back to the phone's own `SimilarItems` answer when it fails, and is that answer standalone |
 | credits: balance, this month's usage, the packs | `GET /v1/credits` (`signedIn: false` and nothing else without an account; no standalone equivalent, and the section is hidden) |
 | buying a pack | StoreKit, then `POST /v1/credits/purchases` with the signed transaction — finished only once the server took it (`CreditStore`). Refunds arrive from Apple at `POST /v1/app-store/notifications`; costs read back with `GET /admin/costs`, see `docs/credits.md` |
 | the Discover feed | `GET /v1/discover` (no standalone equivalent — the phone only holds brands somebody already followed, which is the opposite of the question) |
@@ -1141,6 +1150,22 @@ products; `Poller.refresh` guards every write, because rewrites — not rows —
 volume; the daily scan is a baseline the first time, never stores what the poll has yet to
 announce, and does not stamp `last_seen_at`; and only the *unexpected* is worth a buzz
 (`Notifier.isWorthWaking`), one push per brand per **cooldown**.
+
+**Product search and embeddings** (`ProductSearch`, `CatalogueText.swift`, `Embeddings.swift`) have
+their own sections there. In short: the index finds and the grammar decides; `products.search` is a
+generated `simple` tsvector, so the poller writes nothing new; which words exist is asked of the whole
+scope; ranking quality is a Postgres property and SQLite is only `LIKE`. pgvector is installed only
+where `pg_available_extensions` has it — at every boot as well as in the migration, because a dump
+and restore carries the migration record and not the extension — and every vector is keyed by its
+model id, which the sidecar reports and the server never assumes. There is **one**
+`EmbeddingProvider` protocol, and `SidecarEmbeddingProvider` is its only production conformer: on
+when `EMBEDDING_URL` and `EMBEDDING_TOKEN` are both set, off otherwise, said at boot either way. A
+query gets 1.5 s to be embedded (`withTimeout`, which returns at the deadline even though an HTTP
+request in flight does not hear cancellation) and falls back to full-text. A photograph the sidecar
+cannot read costs its product only the image vector — `.gone` is written off for that URL,
+`.unavailable` is asked again further apart and written off on the fifth answer — so the backfill
+never re-asks one on every pass. Search, "more like this" and the backfill all leave out what the
+scan has unlisted.
 
 ### Credits
 

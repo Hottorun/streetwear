@@ -141,8 +141,33 @@ async def test_size_cap_on_declared_and_streamed_length():
 
 @pytest.mark.anyio
 async def test_http_error_status_is_reported():
-    with pytest.raises(FetchRefused, match="HTTP 403"):
+    with pytest.raises(FetchRefused, match="HTTP 403") as refused:
         await fetch("https://cdn.example/a.png", lambda r: httpx.Response(403))
+    assert refused.value.transient is False
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("status,transient", [
+    (404, False), (410, False), (403, False), (429, True), (500, True), (503, True), (408, True),
+])
+async def test_which_statuses_may_answer_later(status, transient):
+    with pytest.raises(FetchRefused) as refused:
+        await fetch("https://cdn.example/a.png", lambda r: httpx.Response(status))
+    assert refused.value.transient is transient
+
+
+@pytest.mark.anyio
+async def test_a_connection_failure_is_transient_and_a_refused_address_is_not():
+    def broken(request):
+        raise httpx.ConnectError("connection refused")
+
+    with pytest.raises(FetchRefused) as refused:
+        await fetch("https://cdn.example/a.png", broken)
+    assert refused.value.transient is True
+
+    with pytest.raises(FetchRefused) as refused:
+        await fetch("http://internal.example/a.png", ok)
+    assert refused.value.transient is False
 
 
 @pytest.fixture

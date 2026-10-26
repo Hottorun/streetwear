@@ -135,10 +135,13 @@ def create_app(
         results = await asyncio.gather(*(load(u) for u in urls), return_exceptions=True)
         errors, images, positions = [], [], []
         for index, result in enumerate(results):
-            if isinstance(result, (FetchRefused, UnreadableImage)):
-                errors.append({"index": index, "error": str(result)})
+            # `transient` tells the caller whether to ask again later or write the photo off.
+            if isinstance(result, FetchRefused):
+                errors.append({"index": index, "error": str(result), "transient": result.transient})
+            elif isinstance(result, UnreadableImage):
+                errors.append({"index": index, "error": str(result), "transient": False})
             elif isinstance(result, BaseException):
-                errors.append({"index": index, "error": "could not be read"})
+                errors.append({"index": index, "error": "could not be read", "transient": True})
             else:
                 images.append(result)
                 positions.append(index)

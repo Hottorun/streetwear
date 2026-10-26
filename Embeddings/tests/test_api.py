@@ -87,8 +87,24 @@ def test_embed_image_urls_keeps_order_and_reports_failures(client_for, embedder)
     assert [e["index"] for e in body["errors"]] == [1, 2]
     assert "404" in body["errors"][0]["error"]
     assert "non-public" in body["errors"][1]["error"]
+    # Neither will answer differently if asked again.
+    assert [e["transient"] for e in body["errors"]] == [False, False]
     # The two good images went to the model together, as one batch.
     assert embedder.calls == [("image", 2)]
+
+
+def test_a_photo_that_may_answer_later_says_so(client_for):
+    def handler(request: httpx.Request):
+        if request.url.path == "/busy.png":
+            return httpx.Response(503)
+        return httpx.Response(200, content=b"<html>not an image</html>")
+
+    body = client_for(handler=handler).post("/embed/image", json={"urls": [
+        "https://cdn.example/busy.png",
+        "https://cdn.example/page.png",
+    ]}, headers=auth()).json()
+    assert body["vectors"] == [None, None]
+    assert [(e["index"], e["transient"]) for e in body["errors"]] == [(0, True), (1, False)]
 
 
 def test_embed_image_wrong_content_type(client_for):

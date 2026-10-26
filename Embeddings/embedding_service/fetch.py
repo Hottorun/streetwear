@@ -24,8 +24,22 @@ Resolver = Callable[[str, int], Awaitable[list[IPAddress]]]
 _NAT64 = ipaddress.ip_network("64:ff9b::/96")
 
 
+# Statuses that may answer differently later. Every other non-200 is the server saying what
+# it will go on saying, and asking again gets the same answer.
+TRANSIENT_STATUSES = {408, 425, 429, 500, 502, 503, 504}
+
+
 class FetchRefused(Exception):
-    """The URL was refused or could not be read. The message says which, for the caller."""
+    """The URL was refused or could not be read. The message says which, for the caller.
+
+    `transient` says whether asking again later could help: a timeout, a 5xx or a host that
+    did not resolve might; a 404, a refused address or an oversized image will not. The
+    caller writes off only the second kind, as the phone's `ImageTagger` does.
+    """
+
+    def __init__(self, message: str, *, transient: bool = False):
+        super().__init__(message)
+        self.transient = transient
 
 
 def is_public(address: IPAddress) -> bool:
@@ -47,7 +61,8 @@ async def system_resolver(host: str, port: int) -> list[IPAddress]:
     try:
         infos = await loop.getaddrinfo(host, port, type=socket.SOCK_STREAM)
     except socket.gaierror as error:
-        raise FetchRefused(f"{host} does not resolve") from error
+        # From here, no answer and a DNS outage look the same.
+        raise FetchRefused(f"{host} does not resolve", transient=True) from error
     # A scoped IPv6 address carries "%iface"; the scope is irrelevant to the check.
     return [ipaddress.ip_address(info[4][0].split("%")[0]) for info in infos]
 
@@ -99,9 +114,9 @@ class ImageFetcher:
             async with asyncio.timeout(self.timeout):
                 return await self._fetch(raw)
         except TimeoutError as error:
-            raise FetchRefused("timed out") from error
+            raise FetchRefused("timed out", transient=True) from error
         except httpx.HTTPError as error:
-            raise FetchRefused(f"could not be read ({type(error).__name__})") from error
+            raise FetchRefused(f"could not be read ({type(error).__name__})", transient=True) from error
 
     async def _fetch(self, raw: str) -> bytes:
         for _ in range(MAX_REDIRECTS + 1):
@@ -136,7 +151,8 @@ class ImageFetcher:
                     raw = str(url.join(location))
                     continue
                 if response.status_code != 200:
-                    raise FetchRefused(f"HTTP {response.status_code}")
+                    raise FetchRefused(f"HTTP {response.status_code}",
+                                       transient=response.status_code in TRANSIENT_STATUSES)
                 declared = response.headers.get("content-length")
                 if declared and declared.isdigit() and int(declared) > self.max_bytes:
                     raise FetchRefused("image is larger than the size cap")

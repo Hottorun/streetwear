@@ -236,6 +236,10 @@ func routes(_ app: Application) throws {
     accountRoutes(authed: authed, admin: admin)
     profileRoutes(authed: authed)
 
+    // MARK: Products
+
+    productRoutes(authed: authed)
+
     // MARK: Brands
 
     /// Search the shared catalog by name *or* address.
@@ -1978,6 +1982,27 @@ func routes(_ app: Application) throws {
         guard let reaper = req.application.reaper else { throw Abort(.serviceUnavailable) }
         let result = await reaper.sweep()
         return "pruned \(result.events) events, \(result.products) products"
+    }
+
+    /// One batch of the embedding backfill, now — or `?batches=` of them, stopping early
+    /// when nothing is due. Says why when there is nothing to embed with, since "embedded 0"
+    /// reads the same whether the backlog is empty or semantic search is off.
+    admin.post("embed") { req async throws -> String in
+        guard req.application.semanticSearch != nil else {
+            switch req.application.semanticStatus {
+            case .unavailable(let why): return "semantic search unavailable (\(why))"
+            case .installed: return "no embedding provider — EMBEDDING_URL and EMBEDDING_TOKEN are not both set"
+            }
+        }
+        let batches = min(max((try? req.query.get(Int.self, at: "batches")) ?? 1, 1), 100)
+        let backfill = req.application.storage[EmbeddingBackfillKey.self] ?? EmbeddingBackfill(app: req.application)
+        var lines: [String] = []
+        for _ in 0..<batches {
+            let pass = try await backfill.runOnce()
+            lines.append(pass.description)
+            if pass.embedded == 0 { break }
+        }
+        return lines.joined(separator: "\n")
     }
 
     try creditRoutes(app, v1: v1, authed: authed, admin: admin)

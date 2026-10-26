@@ -6,11 +6,14 @@
 // type, its slot, its brand) was already stored and read by nothing at the moment it was
 // most useful, which is while you are deciding.
 //
-// Deliberately drawn from what is already followed rather than from the whole catalog.
-// That keeps it a **local** computation over rows the phone already holds — no request,
-// nothing about what you are browsing leaving the device — and it is the more useful
-// answer anyway: a similar piece from a brand you have already chosen to watch is one you
-// can act on, where one from a brand you have never heard of is a second decision.
+// Deliberately drawn from what is already followed rather than from the whole catalog: a
+// similar piece from a brand you have already chosen to watch is one you can act on, where
+// one from a brand you have never heard of is a second decision.
+//
+// Standalone it is a local computation over rows the phone holds. In server mode it asks
+// `GET /v1/products/:id/similar` — the same shops, their whole catalogues — which sends the
+// server the id of the product on screen; Phase 3 traded that for an answer from more than
+// the newest few hundred products per shop. The local answer is still the fallback.
 
 import StreetwCore
 import SwiftData
@@ -20,8 +23,21 @@ import Vision
 struct SimilarItems: View {
     @Environment(SizeProfileStore.self) private var sizes: SizeProfileStore
     @Environment(\.modelContext) private var context
+    @Environment(ServerSettings.self) private var settings: ServerSettings
+    @Environment(RemoteSync.self) private var remote: RemoteSync
+    @Environment(SaveConfirmation.self) private var confirmation: SaveConfirmation
 
     private let subject: BrandUpdate
+
+    /// In server mode, the answer from `GET /v1/products/:id/similar` — the same shops you
+    /// follow, but their whole catalogues on the server rather than the few hundred products
+    /// this phone keeps, and by vector once products are embedded. It sends the server one
+    /// product id, which is what asking costs. A failed request falls back to the answer this
+    /// phone can give on its own: the row is a suggestion with the same label either way, and
+    /// a suggestion that is merely narrower is still true.
+    @State private var served: [DiscoverCard] = []
+    @State private var viewing: DiscoverCard?
+    @Query(sort: \SavedItem.savedAt, order: .reverse) private var saves: [SavedItem]
 
     /// The answer, worked out once after the page is on screen.
     ///
@@ -147,16 +163,78 @@ struct SimilarItems: View {
     }
 
     var body: some View {
-        content
+        // A container that is always there, so the task has a view to run on while the row
+        // has nothing to show — which, in server mode, is until the answer arrives.
+        VStack(spacing: 0) { content }
             // Keyed on the subject, so paging from one product to another recomputes and
             // nothing else does. `ProductDetailView` saves twice on appearance and neither
             // of those may cost this scan again.
-            .task(id: subject.id) { found = matches() }
+            .task(id: subject.id) { await load() }
+            .sheet(item: $viewing) { card in
+                DiscoverProductSheet(
+                    card: card,
+                    isSaved: savedKeys.contains(card.productExternalID),
+                    onSave: {
+                        guard let update = DiscoverSave.save(card, in: context) else { return }
+                        confirmation.confirm(update, destination: SavedItem.SaveType.inspiration.label)
+                    }
+                )
+            }
+    }
+
+    private func load() async {
+        served = []
+        if settings.isConfigured, let brandID = subject.brand?.remoteID {
+            let key = subject.productExternalID ?? subject.externalID
+            if let answer = try? await remote.similarProducts(productExternalID: key, brandID: brandID) {
+                guard !Task.isCancelled else { return }
+                served = answer.products
+                found = []
+                return
+            }
+        }
+        found = matches()
+    }
+
+    private var savedKeys: Set<String> {
+        var keys: Set<String> = []
+        for update in saves.compactMap(\.update) {
+            keys.insert(update.externalID)
+            if let product = update.productExternalID { keys.insert(product) }
+        }
+        return keys
     }
 
     @ViewBuilder
     private var content: some View {
-        if !found.isEmpty {
+        if !served.isEmpty {
+            VStack(alignment: .leading, spacing: 14) {
+                Rule().padding(.horizontal, 20)
+
+                VStack(alignment: .leading, spacing: 5) {
+                    Text("More like this")
+                        .font(.editorial(19))
+                        .foregroundStyle(Color.ink)
+                    DataLabel(text: "FROM BRANDS YOU FOLLOW")
+                }
+                .padding(.horizontal, 20)
+
+                ScrollView(.horizontal) {
+                    LazyHStack(alignment: .top, spacing: 14) {
+                        ForEach(served) { card in
+                            SimilarCardTile(card: card)
+                                .contentShape(.rect)
+                                .onTapGesture { viewing = card }
+                                .accessibilityAddTraits(.isButton)
+                        }
+                    }
+                    .padding(.horizontal, 20)
+                }
+                .scrollIndicators(.hidden)
+            }
+            .padding(.top, 6)
+            .padding(.bottom, 28)
+        } else if !found.isEmpty {
             VStack(alignment: .leading, spacing: 14) {
                 Rule().padding(.horizontal, 20)
 
@@ -181,6 +259,35 @@ struct SimilarItems: View {
             }
             .padding(.top, 6)
             .padding(.bottom, 28)
+        }
+    }
+}
+
+/// `SimilarTile` for a product the server found, which the phone may hold no row for.
+private struct SimilarCardTile: View {
+    let card: DiscoverCard
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            UpdateImage(
+                url: card.imageURLs.first.flatMap(URL.init(string:)),
+                aspect: 1,
+                drawnWidth: 200,
+                mark: card.brand.name
+            )
+            .frame(width: 132)
+
+            Text(card.title)
+                .font(.editorial(13))
+                .foregroundStyle(Color.ink)
+                .lineLimit(2)
+                .multilineTextAlignment(.leading)
+                .frame(width: 132, alignment: .leading)
+                .fixedSize(horizontal: false, vertical: true)
+
+            if let price = card.priceLabel {
+                DataLabel(text: price, size: 10)
+            }
         }
     }
 }

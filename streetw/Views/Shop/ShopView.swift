@@ -27,6 +27,8 @@ struct ShopView: View {
     @Environment(StyleStatementStore.self) private var statement: StyleStatementStore
     @Environment(RemoteSync.self) private var remote: RemoteSync
     @Environment(SyncEngine.self) private var engine: SyncEngine
+    @Environment(ServerSettings.self) private var settings: ServerSettings
+    @Environment(SaveConfirmation.self) private var confirmation: SaveConfirmation
 
     /// The collection, for what you own and what is already kept. Unpredicated for the reason
     /// `GoesWith`'s is — the question is genuinely about everything saved — and harmless here
@@ -64,6 +66,44 @@ struct ShopView: View {
         var result = ShopSearch.Result()
     }
 
+    // MARK: - Server mode
+
+    /// The server's answer for one scope — and, as a case of its own, that it gave none.
+    /// "Couldn't ask" and "asked, nothing there" must never draw the same screen.
+    private enum Answer {
+        case idle
+        case looking
+        case failed(String)
+        case answered(ProductSearchResponse)
+
+        var response: ProductSearchResponse? {
+            if case .answered(let response) = self { return response }
+            return nil
+        }
+    }
+
+    /// The last server search: the query the answers are for, your shops' answer, and every
+    /// other shop's, which is only asked for when somebody asks.
+    private struct Served {
+        var query = ShopQuery()
+        var shops: Answer = .idle
+        var elsewhere: Answer = .idle
+    }
+
+    @State private var served = Served()
+    /// "Also look in every shop we watch" was asked for, so a new query asks it too. Cleared
+    /// with the field, like the chips.
+    @State private var looksElsewhere = false
+    /// How many products the server holds for your shops, from the last answer — the count
+    /// under the field.
+    @State private var searchedCount: Int?
+    @State private var viewing: DiscoverCard?
+    @State private var isLoadingMore = false
+
+    /// In server mode the field searches the catalogue the server holds; standalone, the
+    /// products on this phone, exactly as before.
+    private var isServer: Bool { settings.isConfigured }
+
     // MARK: - Keys
 
     /// When the store may have moved under the index: a sync landed, or the app came back.
@@ -82,6 +122,9 @@ struct ShopView: View {
         var inMySize: Bool
         var catalogue: Int
         var profile: SizeProfile
+        var server: Bool
+        var token: String?
+        var elsewhere: Bool
     }
 
     /// Everything the picks read, as scalars — nothing here classifies or faults a
@@ -138,7 +181,11 @@ struct ShopView: View {
                     VStack(alignment: .leading, spacing: 0) {
                         field
                         if isSearching {
-                            results(profile: profile)
+                            if isServer {
+                                serverResults(profile: profile)
+                            } else {
+                                results(profile: profile)
+                            }
                         } else {
                             picksSection(day: day)
                             discoverEntry
@@ -180,7 +227,11 @@ struct ShopView: View {
             formal: formal,
             inMySize: inMySize,
             catalogue: catalogue.version,
-            profile: profile
+            profile: profile,
+            server: isServer,
+            // An authenticated route on first launch keys on the token — see `DiscoverFeedView`.
+            token: settings.token,
+            elsewhere: looksElsewhere
         )) {
             await search()
         }
@@ -198,10 +249,19 @@ struct ShopView: View {
         // Clearing the field clears what refined it: chips left on from a search about
         // trousers would silently narrow the next one about shoes.
         .onChange(of: isSearching) { _, searching in
-            if !searching { cheaper = false; formal = false; inMySize = false }
+            if !searching { cheaper = false; formal = false; inMySize = false; looksElsewhere = false }
         }
         .sheet(item: $fitting) { pick in
             FitCanvas(fit: nil, starting: .around(.product(pick.update), anchor: pick.partner?.pairingID))
+        }
+        // A server result has no row on this phone and must not be given one to be looked at,
+        // so it opens the page the deck's cards open — `DiscoverProductSheet`'s reason.
+        .sheet(item: $viewing) { card in
+            DiscoverProductSheet(
+                card: card,
+                isSaved: savedKeys.contains(card.productExternalID),
+                onSave: { save(card) }
+            )
         }
     }
 
@@ -253,6 +313,15 @@ struct ShopView: View {
 
     /// What is being searched, in so many words, always under the box.
     private var scope: String {
+        if isServer {
+            // The server's catalogue, not this phone's — so never "on this phone", and the
+            // count is the one the last answer gave.
+            if catalogue.phase == .ready, catalogue.shops == 0 {
+                return "SEARCHES THE SHOPS YOU FOLLOW — YOU DON'T FOLLOW ANY YET"
+            }
+            guard let searchedCount else { return "IN YOUR SHOPS" }
+            return "IN YOUR SHOPS · \(searchedCount.formatted()) \(searchedCount == 1 ? "PRODUCT" : "PRODUCTS")"
+        }
         switch catalogue.phase {
         case .unread, .reading:
             return "READING YOUR SHOPS…"
@@ -268,15 +337,12 @@ struct ShopView: View {
 
     // MARK: - Results
 
-    @ViewBuilder
-    private func results(profile: SizeProfile) -> some View {
-        let query = found.query
-        let result = found.result
-        // The flags the words alone set, so a chip can tell a word in the field from its own
-        // state. Parsing is microseconds; it is the search that waits for the typing to settle.
+    /// The chips under the field. The flags the words alone set are read off the text, so a
+    /// chip can tell a word in the field from its own state — parsing is microseconds; it is
+    /// the search that waits for the typing to settle.
+    private var chips: some View {
         let typed = ShopQuery.parse(text)
-
-        ScrollView(.horizontal) {
+        return ScrollView(.horizontal) {
             HStack(spacing: 8) {
                 ShopChip(title: "Cheaper", isOn: cheaper || typed.cheaper, isTyped: typed.cheaper) { cheaper.toggle() }
                 ShopChip(title: "More formal", isOn: formal || typed.formal, isTyped: typed.formal) { formal.toggle() }
@@ -286,6 +352,14 @@ struct ShopView: View {
         }
         .scrollIndicators(.hidden)
         .padding(.bottom, 18)
+    }
+
+    @ViewBuilder
+    private func results(profile: SizeProfile) -> some View {
+        let query = found.query
+        let result = found.result
+
+        chips
 
         if catalogue.phase != .ready {
             reading(label: "READING YOUR SHOPS")
@@ -303,21 +377,72 @@ struct ShopView: View {
             // Typed, not yet settled. The previous answer, if any, stays rather than blinking.
             reading(label: "LOOKING")
         } else {
-            understood(query: query, result: result)
-            outcome(result: result, profile: profile)
+            understood(query: query, unknown: result.unknown, cheaperThan: result.cheaperThan, outcome: result.outcome, place: .phone)
+            switch result.outcome {
+            case .found, .closest:
+                VStack(alignment: .leading, spacing: 0) {
+                    DataLabel(text: summary(total: result.total, shown: result.exact.count, isCapped: false, place: .phone), size: 10)
+                        .padding(.horizontal, 20)
+                        .padding(.bottom, 16)
+                    grid(result.exact)
+                    if !result.partial.isEmpty {
+                        if !result.exact.isEmpty { partlyMatching }
+                        grid(result.partial)
+                    }
+                }
+            default:
+                failure(result.outcome, query: query, profile: profile, place: .phone, searched: catalogue.shown)
+            }
+        }
+    }
+
+    /// Where a search looked, in the words the screen uses for it. Every line that names the
+    /// scope reads it from here, so a server answer never says "on this phone" and the
+    /// phone's never claims more than it holds.
+    private enum Place {
+        /// Standalone: the products from your shops on this phone.
+        case phone
+        /// Server mode: every product the server holds for your shops.
+        case yourShops
+        /// Server mode: the shops the server watches that you don't follow.
+        case elsewhere
+
+        /// "in your shops", as a title's ending.
+        var phrase: String {
+            switch self {
+            case .phone, .yourShops: "in your shops"
+            case .elsewhere: "in the other shops we watch"
+            }
+        }
+
+        var label: String { phrase.uppercased() }
+
+        /// What "none of the N products … says it" counts.
+        func searched(_ count: Int) -> String {
+            switch self {
+            case .phone: "NONE OF THE \(count.formatted()) PRODUCTS FROM YOUR SHOPS ON THIS PHONE SAYS IT — TRY ANOTHER WORD"
+            case .yourShops: "NONE OF THE \(count.formatted()) PRODUCTS IN YOUR SHOPS SAYS IT — TRY ANOTHER WORD"
+            case .elsewhere: "NONE OF THE \(count.formatted()) PRODUCTS IN EVERY SHOP WE WATCH SAYS IT"
+            }
         }
     }
 
     /// What the field took from the sentence, said back in the data voice.
     @ViewBuilder
-    private func understood(query: ShopQuery, result: ShopSearch.Result) -> some View {
+    private func understood(
+        query: ShopQuery,
+        unknown: [String],
+        cheaperThan: Double?,
+        outcome: ShopSearch.Outcome,
+        place: Place
+    ) -> some View {
         let words = query.reading.map { term in
-            if term == "cheaper", let middle = result.cheaperThan {
+            if term == "cheaper", let middle = cheaperThan {
                 return "cheaper — under \(ShopQuery.amount(middle))"
             }
             return term
         }
-        let unknown = Set(result.unknown)
+        let struck = Set(unknown)
         VStack(alignment: .leading, spacing: 5) {
             if !words.isEmpty {
                 // A word in no product is struck through rather than dropped from the reading:
@@ -325,7 +450,7 @@ struct ShopView: View {
                 // the way a size that is gone is struck in a run.
                 words.enumerated().reduce(Text(verbatim: "")) { line, entry in
                     let word = Text(verbatim: entry.element.uppercased())
-                    let piece = unknown.contains(entry.element)
+                    let piece = struck.contains(entry.element)
                         ? word.strikethrough(color: .muted).foregroundStyle(Color.muted)
                         : word
                     return entry.offset == 0 ? Text("\(line)\(piece)") : Text("\(line) · \(piece)")
@@ -337,10 +462,10 @@ struct ShopView: View {
             // Set aside, and said: the search went on without these rather than returning
             // nothing because one word of a sentence is in no product title. Not when every
             // word was unknown — the empty state under this says exactly that, larger.
-            if !result.unknown.isEmpty, result.outcome != .notInYourShops(result.unknown) {
+            if !unknown.isEmpty, outcome != .notInYourShops(unknown) {
                 DataLabel(
-                    text: "NO " + result.unknown.map { "“\($0.uppercased())”" }.joined(separator: ", ")
-                        + " IN YOUR SHOPS — LEFT OUT",
+                    text: "NO " + unknown.map { "“\($0.uppercased())”" }.joined(separator: ", ")
+                        + " \(place.label) — LEFT OUT",
                     size: 10
                 )
             }
@@ -356,38 +481,19 @@ struct ShopView: View {
         .padding(.bottom, 18)
     }
 
+    /// Which constraint emptied the list — the same six answers wherever the search ran.
     @ViewBuilder
-    private func outcome(result: ShopSearch.Result, profile: SizeProfile) -> some View {
-        switch result.outcome {
+    private func failure(_ outcome: ShopSearch.Outcome, query: ShopQuery, profile: SizeProfile, place: Place, searched: Int) -> some View {
+        switch outcome {
         case .found, .closest:
-            VStack(alignment: .leading, spacing: 0) {
-                DataLabel(text: summary(of: result), size: 10)
-                    .padding(.horizontal, 20)
-                    .padding(.bottom, 16)
-                grid(result.exact)
-                if !result.partial.isEmpty {
-                    if !result.exact.isEmpty {
-                        VStack(alignment: .leading, spacing: 12) {
-                            Rule()
-                            DataLabel(text: "ALSO PARTLY MATCHING", size: 10, color: .ink)
-                        }
-                        .padding(.horizontal, 20)
-                        .padding(.top, 30)
-                        .padding(.bottom, 16)
-                    }
-                    grid(result.partial)
-                }
-            }
+            EmptyView()
         case .nothingToSearch:
             emptyState(
                 title: "Nothing to search for yet",
                 action: "NAME A GARMENT, A COLOUR OR A PRICE — “BLACK TROUSERS UNDER 200”"
             )
         case .notInYourShops(let words):
-            emptyState(
-                title: "No \(quoted(words)) in your shops",
-                action: "NONE OF THE \(catalogue.shown.formatted()) PRODUCTS FROM YOUR SHOPS ON THIS PHONE SAYS IT — TRY ANOTHER WORD"
-            )
+            emptyState(title: "No \(quoted(words)) \(place.phrase)", action: place.searched(searched))
         case .allRuledOut(let words):
             emptyState(
                 title: "Everything that matched is \(words.joined(separator: " or "))",
@@ -400,7 +506,7 @@ struct ShopView: View {
             )
         case .outsidePrice(let count, let cheapest):
             emptyState(
-                title: "\(matches(count)), none \(bound(of: found.query))",
+                title: "\(matches(count)), none \(bound(of: query))",
                 action: cheapest.map { "THE CHEAPEST IS \(ShopQuery.amount($0))" } ?? "NONE OF THEM HAS A PRICE"
             )
         case .noSizes:
@@ -416,15 +522,25 @@ struct ShopView: View {
         }
     }
 
+    private var partlyMatching: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Rule()
+            DataLabel(text: "ALSO PARTLY MATCHING", size: 10, color: .ink)
+        }
+        .padding(.horizontal, 20)
+        .padding(.top, 30)
+        .padding(.bottom, 16)
+    }
+
+    private var columns: [GridItem] {
+        [
+            GridItem(.flexible(), spacing: 14, alignment: .top),
+            GridItem(.flexible(), alignment: .top)
+        ]
+    }
+
     private func grid(_ hits: [ShopSearch.Hit]) -> some View {
-        LazyVGrid(
-            columns: [
-                GridItem(.flexible(), spacing: 14, alignment: .top),
-                GridItem(.flexible(), alignment: .top)
-            ],
-            alignment: .leading,
-            spacing: 28
-        ) {
+        LazyVGrid(columns: columns, alignment: .leading, spacing: 28) {
             ForEach(hits) { hit in
                 if let update = catalogue.row(hit.id) {
                     ShopResultTile(
@@ -438,12 +554,15 @@ struct ShopView: View {
         .padding(.horizontal, 16)
     }
 
-    private func summary(of result: ShopSearch.Result) -> String {
-        guard !result.exact.isEmpty else { return "NOTHING HAS ALL OF IT — THE CLOSEST, MOST FIRST" }
-        let count = result.total == 1 ? "1 MATCH" : "\(result.total.formatted()) MATCHES"
-        return result.total > result.exact.count
-            ? "\(count) IN YOUR SHOPS · THE FIRST \(result.exact.count)"
-            : "\(count) IN YOUR SHOPS"
+    private func summary(total: Int, shown: Int, isCapped: Bool, place: Place) -> String {
+        guard shown > 0 else { return "NOTHING HAS ALL OF IT — THE CLOSEST, MOST FIRST" }
+        // "200+": the server's candidates reached their bound, so the count is a floor.
+        let count = isCapped
+            ? "\(total.formatted())+ MATCHES"
+            : (total == 1 ? "1 MATCH" : "\(total.formatted()) MATCHES")
+        return total > shown
+            ? "\(count) \(place.label) · THE FIRST \(shown)"
+            : "\(count) \(place.label)"
     }
 
     private func matches(_ count: Int) -> String {
@@ -483,16 +602,22 @@ struct ShopView: View {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
             found = Found()
+            served = Served()
             return
         }
         // A pause before reading a sentence still being typed. A chip, or the index landing,
         // changes no text and answers at once.
-        if found.query.text != trimmed {
-            try? await Task.sleep(for: .milliseconds(250))
+        let answered = isServer ? served.query.text : found.query.text
+        if answered != trimmed {
+            try? await Task.sleep(for: .milliseconds(isServer ? 400 : 250))
             guard !Task.isCancelled else { return }
         }
-        guard catalogue.phase == .ready else { return }
         let query = ShopQuery.parse(trimmed).refined(cheaper: cheaper, formal: formal, inMySize: inMySize)
+        if isServer {
+            await searchServer(query)
+            return
+        }
+        guard catalogue.phase == .ready else { return }
         let profile = sizes.profile
         let result = ShopSearch.run(
             query,
@@ -501,6 +626,240 @@ struct ShopView: View {
             fits: { catalogue.fits($0, profile: profile) }
         )
         found = Found(query: query, result: result)
+    }
+
+    // MARK: - Searching on the server
+
+    /// Your shops first; every other shop only once somebody has asked for it.
+    ///
+    /// The previous answer stays on screen while the next is asked for, the local search's
+    /// rule, and a request that fails says it failed — never "no results", which would be a
+    /// claim about the catalogue made by a search that did not run.
+    private func searchServer(_ query: ShopQuery) async {
+        if served.shops.response == nil { served.shops = .looking }
+        let shops = await ask(query, scope: .followed)
+        guard !Task.isCancelled else { return }
+        var next = Served(query: query, shops: shops, elsewhere: .idle)
+        if let response = shops.response { searchedCount = response.searched }
+        if looksElsewhere {
+            next.elsewhere = .looking
+            served = next
+            let elsewhere = await ask(query, scope: .all)
+            guard !Task.isCancelled else { return }
+            next.elsewhere = elsewhere
+        }
+        served = next
+    }
+
+    private func ask(_ query: ShopQuery, scope: ProductSearchScope, cursor: String? = nil) async -> Answer {
+        do {
+            // The text as typed, and the chips as their own flags: the server parses the text
+            // with the same `ShopQuery`, so the words set the same flags there as here.
+            let response = try await remote.searchProducts(
+                query.text, scope: scope, cheaper: cheaper, formal: formal, inMySize: inMySize, cursor: cursor
+            )
+            return .answered(response)
+        } catch {
+            return .failed(error.localizedDescription)
+        }
+    }
+
+    /// The next page of exact matches, appended.
+    private func loadMore(_ scope: ProductSearchScope) async {
+        let current = scope == .followed ? served.shops : served.elsewhere
+        guard !isLoadingMore, let response = current.response, let cursor = response.nextCursor else { return }
+        isLoadingMore = true
+        defer { isLoadingMore = false }
+        let query = served.query
+        guard case .answered(let page) = await ask(query, scope: scope, cursor: cursor), served.query == query else { return }
+        var merged = response
+        merged.exact += page.exact
+        merged.nextCursor = page.nextCursor
+        if scope == .followed { served.shops = .answered(merged) } else { served.elsewhere = .answered(merged) }
+    }
+
+    @ViewBuilder
+    private func serverResults(profile: SizeProfile) -> some View {
+        chips
+
+        switch served.shops {
+        case .idle, .looking:
+            reading(label: "LOOKING IN YOUR SHOPS")
+        case .failed(let message):
+            didNotRun(message)
+        case .answered(let response):
+            if response.shops == 0 {
+                emptyState(
+                    title: "You don't follow any shops yet",
+                    action: "SHOP SEARCHES THE SHOPS YOU FOLLOW — YOU CAN STILL LOOK IN EVERY SHOP WE WATCH, BELOW"
+                )
+            } else {
+                understood(
+                    query: served.query,
+                    unknown: response.unknown,
+                    cheaperThan: response.cheaperThan,
+                    outcome: response.outcome,
+                    place: .yourShops
+                )
+                answered(response, place: .yourShops, profile: profile, hiding: [])
+            }
+            elsewhereSection(profile: profile, shown: response)
+        }
+    }
+
+    /// A search that did not run, said as one — and the way to run it again.
+    private func didNotRun(_ message: String) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            emptyState(
+                title: "The search didn't run",
+                action: "COULDN'T REACH DROPWALL — \(message.uppercased())"
+            )
+            Button {
+                Task { await searchServer(ShopQuery.parse(text).refined(cheaper: cheaper, formal: formal, inMySize: inMySize)) }
+            } label: {
+                DataLabel(text: "TRY AGAIN", size: 10, color: .ink)
+                    .padding(.horizontal, 20)
+                    .frame(minHeight: 44, alignment: .leading)
+                    .contentShape(.rect)
+            }
+            .buttonStyle(.borderless)
+        }
+    }
+
+    /// One server answer: the summary, the exact matches, the partial ones, a way to the next
+    /// page — or which constraint emptied it.
+    ///
+    /// - Parameter hiding: brands whose products are already on screen above, so a product
+    ///   from a shop you follow is not shown twice.
+    @ViewBuilder
+    private func answered(_ response: ProductSearchResponse, place: Place, profile: SizeProfile, hiding: Set<UUID>) -> some View {
+        let saved = savedKeys
+        let exact = response.exact.filter { !hiding.contains($0.card.brand.id ?? UUID()) }
+        let partial = response.partial.filter { !hiding.contains($0.card.brand.id ?? UUID()) }
+        switch response.outcome {
+        case .found, .closest:
+            if exact.isEmpty, partial.isEmpty {
+                DataLabel(text: "NOTHING MORE \(place.label)", size: 10)
+                    .padding(.horizontal, 20)
+            } else {
+                VStack(alignment: .leading, spacing: 0) {
+                    // Counts are what this list holds once your own shops are taken out of it,
+                    // where they are; the server's total is everybody's.
+                    DataLabel(
+                        text: hiding.isEmpty
+                            ? summary(total: response.total, shown: exact.count, isCapped: response.isCapped, place: place)
+                            : (exact.isEmpty ? "NOTHING HAS ALL OF IT — THE CLOSEST, MOST FIRST" : "\(place.label) · \(exact.count)\(response.nextCursor == nil ? "" : "+")"),
+                        size: 10
+                    )
+                    .padding(.horizontal, 20)
+                    .padding(.bottom, 16)
+                    cardGrid(exact, saved: saved)
+                    if response.nextCursor != nil {
+                        Button {
+                            Task { await loadMore(place == .elsewhere ? .all : .followed) }
+                        } label: {
+                            HStack(spacing: 8) {
+                                if isLoadingMore { ProgressView().controlSize(.mini).tint(.muted) }
+                                DataLabel(text: "MORE", size: 10, color: .ink)
+                            }
+                            .padding(.horizontal, 20)
+                            .frame(minHeight: 44, alignment: .leading)
+                            .contentShape(.rect)
+                        }
+                        .buttonStyle(.borderless)
+                        .padding(.top, 12)
+                    }
+                    if !partial.isEmpty {
+                        if !exact.isEmpty { partlyMatching }
+                        cardGrid(partial, saved: saved)
+                    }
+                }
+            }
+        default:
+            failure(response.outcome, query: served.query, profile: profile, place: place, searched: response.searched)
+        }
+    }
+
+    private func cardGrid(_ hits: [ProductSearchHit], saved: Set<String>) -> some View {
+        LazyVGrid(columns: columns, alignment: .leading, spacing: 28) {
+            ForEach(hits) { hit in
+                ShopCardTile(
+                    card: hit.card,
+                    matched: hit.matched,
+                    isSaved: saved.contains(hit.card.productExternalID),
+                    onSave: { save(hit.card) },
+                    onOpen: { viewing = hit.card }
+                )
+            }
+        }
+        .padding(.horizontal, 16)
+    }
+
+    /// Every other shop the server watches: offered, quietly, under your own shops' answer,
+    /// and asked only when somebody asks — your shops are what Shop searches, and this is a
+    /// second, wider look, labelled as one.
+    @ViewBuilder
+    private func elsewhereSection(profile: SizeProfile, shown: ProductSearchResponse) -> some View {
+        // Every shop you follow, not only those in the answer above: their products past its
+        // first page belong to that answer too, not to this one.
+        let followed = Set(
+            ((try? context.fetch(FetchDescriptor<Brand>(predicate: #Predicate { $0.followed }))) ?? []).compactMap(\.remoteID)
+        )
+        VStack(alignment: .leading, spacing: 0) {
+            Rule()
+                .padding(.horizontal, 20)
+                .padding(.bottom, 14)
+            switch served.elsewhere {
+            case .idle:
+                Button {
+                    looksElsewhere = true
+                } label: {
+                    HStack(alignment: .firstTextBaseline) {
+                        VStack(alignment: .leading, spacing: 5) {
+                            Text("Also look in every shop we watch")
+                                .font(.editorial(17))
+                                .foregroundStyle(Color.ink)
+                            DataLabel(text: "SHOPS YOU DON'T FOLLOW, AS WELL AS YOURS", size: 10)
+                        }
+                        Spacer(minLength: 8)
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(Color.muted)
+                    }
+                    .padding(.horizontal, 20)
+                    .contentShape(.rect)
+                }
+                .buttonStyle(.borderless)
+            case .looking:
+                reading(label: "LOOKING IN EVERY SHOP WE WATCH")
+            case .failed(let message):
+                emptyState(title: "The wider search didn't run", action: "COULDN'T REACH DROPWALL — \(message.uppercased())")
+            case .answered(let response):
+                DataLabel(text: "IN EVERY SHOP WE WATCH", size: 10, color: .ink)
+                    .padding(.horizontal, 20)
+                    .padding(.bottom, 10)
+                // Your own shops' products are above already; this is what the others add.
+                answered(response, place: .elsewhere, profile: profile, hiding: followed)
+            }
+        }
+        .padding(.top, 36)
+    }
+
+    /// Product keys already in the collection, for the bookmark on a card with no row.
+    private var savedKeys: Set<String> {
+        var keys: Set<String> = []
+        for update in saves.compactMap(\.update) {
+            keys.insert(update.externalID)
+            if let product = update.productExternalID { keys.insert(product) }
+        }
+        return keys
+    }
+
+    /// Keeps a server result — `DiscoverSave`, which lands it on the row the phone may already
+    /// hold, and mints one only for this.
+    private func save(_ card: DiscoverCard) {
+        guard let update = DiscoverSave.save(card, in: context) else { return }
+        confirmation.confirm(update, destination: SavedItem.SaveType.inspiration.label)
     }
 
     // MARK: - Picks

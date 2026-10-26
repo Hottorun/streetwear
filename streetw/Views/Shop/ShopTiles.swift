@@ -263,6 +263,93 @@ struct ShopResultTile: View {
     }
 }
 
+/// One search result the server found — a product the phone may hold no row for.
+///
+/// `ShopResultTile` in every way it can be: the same photograph, title, wordmark, price,
+/// size run and MATCHED line, so a search answered by the server looks like one answered by
+/// the phone. What differs is what it can lean on. There is no `BrandUpdate`, and minting one
+/// to draw a tile would put the catalogue into the store — `DiscoverSave`'s rule — so saving
+/// goes through `DiscoverSave` and the tap opens `DiscoverProductSheet`.
+struct ShopCardTile: View {
+    @Environment(SizeProfileStore.self) private var sizes: SizeProfileStore
+
+    let card: DiscoverCard
+    /// As `ShopResultTile.matched`.
+    let matched: [String]?
+    let isSaved: Bool
+    let onSave: () -> Void
+    let onOpen: () -> Void
+
+    private var isAvailable: Bool {
+        let variants = card.variants ?? []
+        return variants.isEmpty ? (card.isAvailable ?? true) : variants.contains(where: \.available)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            ZStack(alignment: .topTrailing) {
+                UpdateImage(
+                    url: card.imageURLs.first.flatMap(URL.init(string:)),
+                    aspect: 1,
+                    drawnWidth: 200,
+                    mark: card.brand.name
+                )
+                Button(action: onSave) {
+                    Image(systemName: isSaved ? "bookmark.fill" : "bookmark")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(isSaved ? Color.signal : Color.ink)
+                        .frame(width: 30, height: 30)
+                        .background(Color.paper.opacity(0.92), in: Circle())
+                        // Drawn at 30pt, hit at 44 — `SaveAction`'s reason.
+                        .frame(width: 44, height: 44)
+                        .contentShape(.rect)
+                }
+                .buttonStyle(.borderless)
+                .sensoryFeedback(.selection, trigger: isSaved)
+                .accessibilityLabel(isSaved ? "Saved" : "Save")
+            }
+
+            Text(card.title)
+                .font(.editorial(13))
+                .foregroundStyle(Color.ink)
+                .lineLimit(2)
+                .multilineTextAlignment(.leading)
+                .fixedSize(horizontal: false, vertical: true)
+
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Wordmark(name: card.brand.name, size: 9)
+                Spacer(minLength: 4)
+                if let price = card.priceLabel {
+                    Text(price)
+                        .font(.data(11, .medium))
+                        .foregroundStyle(Color.ink)
+                        .fixedSize()
+                        .layoutPriority(1)
+                }
+            }
+
+            if isAvailable {
+                SizeRun(
+                    entries: SizeRun.entries(for: card.variants ?? [], in: card.sizeContext, profile: sizes.profile),
+                    size: 10,
+                    limit: 5,
+                    wraps: true
+                )
+            } else {
+                DataLabel(text: "SOLD OUT", size: 9)
+            }
+
+            if let matched, !matched.isEmpty {
+                DataLabel(text: "MATCHED " + matched.joined(separator: " · ").uppercased(), size: 8.5)
+                    .lineLimit(1)
+            }
+        }
+        .contentShape(.rect)
+        .onTapGesture(perform: onOpen)
+        .accessibilityAddTraits(.isButton)
+    }
+}
+
 /// The price as the feed prints it — the brand's own cut beside it when there is one.
 struct ShopPrice: View {
     let update: BrandUpdate

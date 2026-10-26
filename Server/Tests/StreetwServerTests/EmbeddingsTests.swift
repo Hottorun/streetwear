@@ -80,11 +80,13 @@ private final class StubSidecar: Sendable {
     }
 
     func provider(
-        token: String = sidecarToken, batchSize: Int = 32, timeout: Duration = .seconds(2)
+        token: String = sidecarToken, batchSize: Int = 32, imageBatchSize: Int = 8,
+        timeout: Duration = .seconds(2)
     ) -> SidecarEmbeddingProvider {
         var configuration = SidecarEmbeddingProvider.Configuration(
             baseURL: "http://127.0.0.1:\(port)", token: token)
         configuration.batchSize = batchSize
+        configuration.imageBatchSize = imageBatchSize
         configuration.healthTimeout = timeout
         configuration.textTimeout = timeout
         configuration.imageTimeout = timeout
@@ -136,10 +138,9 @@ struct EmbeddingsTests {
         try await withSidecar { stub in
             stub.reply("/health", .init(json: healthJSON(dimension: 768)))
             let provider = stub.provider()
-            let dimension = try await provider.dimension
-            let modelID = try await provider.modelID
-            #expect(dimension == 768)
-            #expect(modelID == "Marqo/marqo-fashionSigLIP@c56244cc94f9")
+            let space = try await provider.space
+            _ = try await provider.space
+            #expect(space == EmbeddingSpace(model: "Marqo/marqo-fashionSigLIP@c56244cc94f9", dimension: 768))
             #expect(stub.requests.filter { $0.path == "/health" }.count == 1)
         }
     }
@@ -149,7 +150,7 @@ struct EmbeddingsTests {
             stub.reply("/health", .init(status: .serviceUnavailable,
                                         json: #"{"model":null,"dimension":null,"ready":false}"#))
             await #expect(throws: EmbeddingError.unavailable("the service is up but not ready")) {
-                try await stub.provider().dimension
+                try await stub.provider().space
             }
         }
     }
@@ -173,21 +174,49 @@ struct EmbeddingsTests {
         try await withSidecar { stub in
             stub.reply("/embed/image", .init(json: answerJSON([[1, 0, 0]])))
             let url = try #require(URL(string: "https://cdn.shopify.com/s/files/a.jpg?v=1"))
-            #expect(try await stub.provider().embed(imageURLs: [url]) == [[1, 0, 0]])
+            #expect(try await stub.provider().embed(imageURLs: [url]) == [.vector([1, 0, 0])])
             let body = try #require(stub.requests.first?.body)
             #expect(body.contains(#""urls""#) && body.contains("cdn.shopify.com"))
         }
     }
 
-    @Test func unreadableImagesAreReportedByPositionInTheWholeInput() async throws {
+    /// One unreadable photograph is an answer in its place, not a failure of the batch — and
+    /// the sidecar's `transient` says whether asking again could help.
+    @Test func unreadableImagesAreAnsweredInPlaceAcrossBatches() async throws {
         try await withSidecar { stub in
             stub.reply("/embed/image",
-                       .init(json: answerJSON([[1, 0, 0], [0, 1, 0]])),
                        .init(json: answerJSON([[1, 0, 0], nil],
-                                              errors: #"[{"index":1,"error":"HTTP 404"}]"#)))
+                                              errors: #"[{"index":1,"error":"timed out","transient":true}]"#)),
+                       .init(json: answerJSON([nil, nil],
+                                              errors: #"[{"index":0,"error":"HTTP 404","transient":false},{"index":1,"error":"could not be read"}]"#)))
             let urls = (0..<4).compactMap { URL(string: "https://cdn.example/\($0).jpg") }
-            await #expect(throws: EmbeddingError.unreadableImages([3: "HTTP 404"])) {
-                try await stub.provider(batchSize: 2).embed(imageURLs: urls)
+            let answers = try await stub.provider(imageBatchSize: 2).embed(imageURLs: urls)
+            #expect(answers == [
+                .vector([1, 0, 0]),
+                .unavailable("timed out"),
+                .gone("HTTP 404"),
+                // An older sidecar names no permanence; the safe reading is to ask again.
+                .unavailable("could not be read"),
+            ])
+            #expect(stub.requests.filter { $0.path == "/embed/image" }.count == 2)
+        }
+    }
+
+    @Test func aNullVectorWithNoErrorIsRefused() async throws {
+        try await withSidecar { stub in
+            stub.reply("/embed/image", .init(json: answerJSON([nil])))
+            let url = try #require(URL(string: "https://cdn.example/a.jpg"))
+            await #expect(throws: EmbeddingError.malformedResponse("a null vector with no error for it")) {
+                try await stub.provider().embed(imageURLs: [url])
+            }
+        }
+    }
+
+    @Test func anAnswerOfTheWrongLengthIsRefused() async throws {
+        try await withSidecar { stub in
+            stub.reply("/embed/text", .init(json: answerJSON([[1, 0, 0]])))
+            await #expect(throws: EmbeddingError.wrongCount(expected: 2, got: 1)) {
+                try await stub.provider().embed(texts: ["a", "b"])
             }
         }
     }
@@ -197,12 +226,12 @@ struct EmbeddingsTests {
             stub.reply("/health", .init(json: healthJSON(model: "old@1")))
             stub.reply("/embed/text", .init(json: answerJSON([[1, 0, 0]], model: "new@2")))
             let provider = stub.provider()
-            let before = try await provider.modelID
+            let before = try await provider.space.model
             #expect(before == "old@1")
             await #expect(throws: EmbeddingError.modelChanged(from: "old@1", to: "new@2")) {
                 try await provider.embed(texts: ["x"])
             }
-            let after = try await provider.modelID
+            let after = try await provider.space.model
             let vectors = try await provider.embed(texts: ["x"])
             #expect(after == "new@2")
             #expect(vectors == [[1, 0, 0]])

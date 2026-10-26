@@ -663,45 +663,166 @@ Part of the streetw guidance set; see `CLAUDE.md` for the index and the build ru
   no routes and everything 404s, while multi-statement closures resolve to yours and pass.
   The local helper is called `withServer`.
 
+## Product search
+
+`GET /v1/products/search` and `GET /v1/products/:id/similar` (`ProductRoutes.swift`,
+`ProductSearch`, `CatalogueText.swift`). The phone's half and the screen's rules are in
+`docs/discover.md` (*Shop*); these are the server's.
+
+- **One grammar, both ends.** The text is parsed by `ShopQuery` and matched, constrained, ranked
+  and explained by `ShopSearch.run` — the code the phone runs over its own store. The server only
+  adds what a phone does not need: an index to *find* candidates in a catalogue too large to load,
+  and the database's answer to which words exist at all. `ProductSearchTests.parity` runs the same
+  queries through the route and through `ShopSearch` over the same products and compares the
+  pages, the partial matches, the struck words, the outcome and the "cheaper" bound.
+- **The index finds; the grammar decides.** `CatalogueTextIndex.candidates` hands over the best
+  `ProductSearch.pool` (600) products in scope carrying any of the words — every word first, then
+  `ts_rank_cd`, then recency and id — and `ShopSearch` keeps what really matches. So it errs wide:
+  a category word looks for every token `GarmentClassifier.vocabulary` can place there, a compound
+  ("tshirt") for its parts in order, a shop's name by brand id. What can be said in SQL — a price
+  bound, a ruled-out word in the vector — narrows the candidates, and a second read of 200 without
+  them is what lets an empty answer still say how many matched and what the cheapest was.
+- **Which words exist is asked of the whole scope** (`existing`, one `EXISTS` per word), never read
+  off the candidates. A rare word crowded out of 600 would otherwise be "not in your shops" on the
+  server and required on the phone — `rareWordsAreRequired` reproduces exactly that. `ShopSearch.run`
+  takes it as `knows:`.
+- **`simple`, not `english`** (`AddProductSearch`). Product names are not prose: the English
+  configuration drops "on", "off" and "all" as stop words (On Running, Off-White, All Saints), and
+  stems "Vans" to "van" and "boxy" to "boxi". The grammar spells out a word's other number and its
+  synonyms itself, the same on both ends, so a stemmer would only add matches the phone never makes.
+- **`products.search` is a generated column** — `setweight` A title, B product type, D tags, through
+  `streetw_fold` (accents folded with `translate`, because `unaccent` is not `IMMUTABLE`) and
+  `streetw_join` (`array_to_string` is only `STABLE`). Nothing that writes a product changes; the
+  poller is untouched. A generated column sees one row of one table, so the brand's name is matched
+  in Swift and the colourways through an expression index on `variants`
+  (`idx_variants_color_search`), one index scan per word: an aggregate asking every word per variant
+  recomputed the vector each time, 68ms of an 80ms query.
+- **Ranking quality is a property of Postgres.** SQLite (`PortableTextIndex`) reads the same fields
+  with `LIKE`, newest first, no rank, and the candidates' vocabulary stands in for `existing`. It is
+  there so the tests drive the route, the scopes and the grammar end to end; tune nothing against it.
+  `ProductSearchPostgresTests` covers the rank, the spellings and `existing` against
+  `STREETW_TEST_POSTGRES_URL`.
+- **What is searched** (`CatalogueScope.predicate`): `kind = 'product'`, a photograph, the shop that
+  serves the caller (`Storefronts.serving` — one shop per brand, never both), announced
+  (`pending_announcement IS NULL`) and still listed (`unlisted_at IS NULL`). Scope `followed` is
+  every follow whatever its mode — *Quiet* still shapes search; `all` is every brand. The gender
+  filter and "in my size" are applied by the grammar, so an empty answer can say it was the filter.
+- **Candidates are read as columns, the page as models.** Hydrating 600 `ProductModel`s and four
+  thousand `VariantModel`s through Fluent was 380ms of a 650ms search; reading rows into values and
+  building `DiscoverCard`s for the page alone brought "black hoodie" to 105ms and the rest to 20–70ms,
+  measured in release on eight thousand products. The size context is worked out only for the
+  listings "in my size" is asked about.
+- **Paging is an offset into one query's ranking** (`cursor`, opaque). Total, with no randomness, so
+  the same query pages the same way; a catalogue that changes between two pages can repeat or skip a
+  product at the seam, which is the price of not holding a cursor's state.
+- **"More like this"** takes the product's id, or the external id the phone holds with `?brand=` —
+  percent-encoded as one segment, because a sitemap product's key is its whole URL. By vector where
+  this product has one under the current model, otherwise by its own words read as a query and
+  scored the way `SimilarItems` scores (the same slot, each shared word, half a point for the same
+  shop, at least two). `basis` says which.
+
 ## Embeddings
 
-Phase 3's search, "find similar" and photo matching all compare vectors, and the vectors come
-from one place: **`Embeddings/`, a Python service running Marqo FashionSigLIP, deployed as a
-second Railway service beside this one.** The server sends it text or image URLs and gets back
-unit vectors. It stores nothing, and nothing in either Swift package refers to it.
+Search and "more like this" compare vectors, and the vectors come from one place: **`Embeddings/`,
+a Python service running FashionSigLIP, deployed as a second Railway service beside this one.** The
+server sends it text or image URLs and gets back unit vectors; it stores nothing. The server decides
+what to embed and when, stores each vector in pgvector beside the model id that produced it, and does
+the comparing in Postgres. Nothing in either Swift package imports anything from the sidecar, and the
+phone never talks to it.
 
-- **What runs where.** The sidecar holds the model, fetches the photos it is asked about, and
-  returns vectors. The server decides what to embed and when, stores each vector with the model
-  id that produced it, and does the comparing in Postgres. `SidecarEmbeddingProvider`
-  (`Services/Embeddings.swift`) is the server's half of the wire. The phone never talks to the
-  sidecar.
+It is off in production until two things are true, and each is said at boot: a Postgres with pgvector
+(`docs/pgvector-migration.md`), and the sidecar deployed with `EMBEDDING_URL` and `EMBEDDING_TOKEN`
+set on this service.
+
+### The sidecar
+
 - **Self-hosted, not an API.** A query embedding is on the path of every search, and an image
   embedding on every product the poller sees. A third-party API would put a stranger's uptime
   in front of the search box and a per-call bill on the catalogue. It would also send every
   query a person typed to somebody else, which `StyleStatement` was kept local to avoid. The
   model is 200M parameters and runs on CPU at roughly 3–10 images a second on 2 vCPU
   (measured in Docker and natively; Railway's own number is still to be taken), and embedding
-  100k products once costs well under a dollar. There is nothing to buy. `Embeddings/README.md` and `Embeddings/eval/README.md` have the
-  measurements.
+  100k products once costs well under a dollar. There is nothing to buy. `Embeddings/README.md`
+  and `Embeddings/eval/README.md` have the measurements.
 - **Python, in its own service.** torch has no Swift equivalent worth the port, and putting it
   in the server's image would put a 2 GB toolchain into every server deploy. A separate service
   also lets the model's memory be sized and restarted on its own.
-- **FashionSigLIP v1, because v2 is not public.** Marqo offers v2 only commercially ("Contact
-  Marqo"). v1 is Apache-2.0 and pinned by revision in `download_model.py`. On our catalogues
-  it beat the base SigLIP it was tuned from by only a few points, within the noise of a
-  100-query eval (`Embeddings/eval/README.md`). The case for it is that it costs nothing over
-  the base: same architecture, same speed.
-- **`modelID` is stored beside every vector, and includes the revision.** Two models, or two
-  revisions of one, do not share a space. A vector from one compared with a query from the
-  other still produces a ranking, and the ranking is noise. If an answer names a different
-  model from the one `modelID` reported, the provider throws `modelChanged` rather than
-  return the vectors under the old id.
-- **Unset is off, and off is a supported state.** With `EMBEDDING_URL` or `EMBEDDING_TOKEN`
-  unset, `SidecarEmbeddingProvider.make` returns nil and search is full-text. Every failure
-  is an `EmbeddingError` naming which one it was (unreachable, refused, malformed, model
-  changed, unreadable photos), so search can fall back without guessing. Text timeouts are
-  3 s: a person is waiting on the box, and full-text beats a spinner.
+- **FashionSigLIP v1 by default, because Marqo's v2 is not public.** Marqo offers v2 only
+  commercially ("Contact Marqo"). v1 is Apache-2.0 and pinned by revision. On our catalogues it
+  beat the base SigLIP it was tuned from by only a few points, within the noise of a 100-query
+  eval (`Embeddings/eval/README.md`); the case for it is that it costs nothing over the base.
+  **The model is a build argument of the image** (`EMBEDDING_MODEL_REPO`, `_REVISION`), so the
+  owner can switch to the third-party `srpone/zooclaw-fashionsiglip2` — Apache-2.0, eleven points
+  better on text R@1 in the same eval, about four times slower per image — without a code change.
+  `Embeddings/README.md` (*Choosing the model*) has the switch and its cost.
+- **The model id names the repository and the revision**, and is stored beside every vector. Two
+  models, or two revisions of one, do not share a space: a vector from one compared with a query
+  from the other still produces a ranking, and the ranking is noise. If an answer names a
+  different model from the one the provider last reported, `SidecarEmbeddingProvider` throws
+  `modelChanged` rather than return the vectors under the old id, and the backfill's next batch
+  starts re-embedding under the new one.
 - **The sidecar fetches URLs, so it is an SSRF surface, and it sits next to Postgres.** It
   refuses non-public addresses on every hop and pins the connection to the address it
   checked. It requires a token, compared in constant time, and refuses everything without
   one, like `ADMIN_TOKEN`. It has no public domain.
+
+### The server's half
+
+- **One protocol, `EmbeddingProvider`** (`Services/Embeddings.swift`): `space` (the model id and
+  the dimension, as the provider reports them — asynchronous, because the sidecar learns them from
+  its own `/health`), `embedsImages`, `embed(texts:)` → `[[Float]]` and `embed(imageURLs:)` → one
+  `ImageEmbedding` per URL. The dimension is never hard-coded — SigLIP-base is 768.
+  `SidecarEmbeddingProvider` is the production conformer, `FakeEmbeddingProvider` the tests'.
+- **Unset is off, and off is a supported state.** With `EMBEDDING_URL` or `EMBEDDING_TOKEN` unset,
+  `SidecarEmbeddingProvider.make` returns nil, logs `embeddings: off — …` (a warning when only one
+  is set), and search is full-text. Set, it logs `embeddings: sidecar at …`. Every failure is an
+  `EmbeddingError` naming which one it was (unreachable, refused, malformed, model changed, wrong
+  count or dimension, timed out), so search can fall back without guessing.
+- **pgvector is installed only where it is available.** `AddProductEmbeddings` runs
+  `CREATE EXTENSION IF NOT EXISTS vector` only when `pg_available_extensions` lists it, and creates
+  `product_embeddings (product_id, model, text_embedding vector, image_embedding vector,
+  embedded_at, image_url, image_failure, image_attempts, image_retry_at)`. Where it is not —
+  production today, and SQLite — the migration records itself and does nothing, and boot logs
+  `search: full-text; semantic search unavailable (…)`.
+- **The same work runs again at every boot** (`SemanticIndex.prepare`), and that is load-bearing:
+  the move to pgvector is a dump and restore, the restored `_fluent_migrations` says the migration
+  ran, and without the boot pass the new database would never get its table. Rehearsed. A column
+  added to the table is added there too, with `ADD COLUMN IF NOT EXISTS`, for the same reason.
+- **The model id is stored beside every vector**, so a new model is a re-embed and not a migration:
+  `EmbeddingBackfill` embeds what has no row or a row from another model, a batch at a time, and a
+  nearest-neighbour query names the model, so two models' vectors are never compared. The column is
+  a bare `vector`; the HNSW index is built per model on `text_embedding::vector(n)`, partial on the
+  model (`SemanticIndex.ensureIndex`), so another dimension is another index. A half-finished
+  re-embed answers from fewer products, never from a mix.
+- **A separate table, not a column on `products`**: the poller and the scan rewrite product rows,
+  and a few kilobytes of floats would ride along on every rewrite — the volume problem above. At
+  768 floats a vector is about 3 KB, so text and image together are roughly 6–7 MB per 1,000
+  products, twice what the scan measured for the products themselves.
+- **What is compared is text with text.** A search embeds its own words and is matched against
+  each product's *text* vector (title, type, brand, colourways, tags — the fields the grammar
+  reads), and "more like this" compares two products' text vectors. The image vector is stored
+  for the photo matching to come and read by no query yet.
+- **A photograph that cannot be read costs its product only the image vector.** The sidecar
+  answers `null` for it with a reason and a `transient` flag, which the provider turns into
+  `.gone` (a 4xx, a 200 that will not decode, a refused address) or `.unavailable` (a timeout,
+  429, 5xx, no DNS answer) — the split `docs/collection.md` makes on the phone. The text vector is
+  written either way. A gone photograph is written off **for that URL**: `image_url` records it,
+  so the row leaves the backlog, and a different lead photograph later makes it due again. An
+  unavailable one is asked again at `image_retry_at` — an hour, then four, sixteen, sixty-four —
+  and the fifth unavailable answer writes it off too, because a backlog that never drains
+  re-fetches the same photographs forever. Each write-off is logged with its URL.
+- **Unlisted products are neither searched, offered as "more like this", nor embedded**
+  (`unlisted_at IS NULL` in `CatalogueScope.predicate` and in the backfill's query), as Discover
+  leaves them out.
+- **Query time needs the provider up.** A search embeds its words under a 1.5 s deadline
+  (`ProductSearch.embeddingTimeout`, `withTimeout`); slow or down, the answer is the full-text one,
+  which is complete on its own. Vectors widen the candidates and add to their rank; they never make
+  a match the grammar would not. **`withTimeout` returns at the deadline whether or not the work
+  listens**: a task group cancels its children and then *waits* for them, and an HTTP request on
+  an event loop does not hear cancellation, so a group-based timeout over the sidecar returned
+  when the request's own timeout fired. The abandoned request ends by its own timeout
+  (`textTimeout`, 10 s, sized for the backfill's batches of 32).
+- **`Application.semanticSearch`** is the one switch every semantic path asks — pgvector installed
+  *and* a provider — so nothing runs half on. The backfill loop starts only behind it and only where
+  the poller runs; `POST /admin/embed?batches=` runs batches by hand (and is how a server with
+  `DISABLE_POLLER=true` embeds anything), and says which half is missing when it cannot.

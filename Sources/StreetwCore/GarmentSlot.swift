@@ -378,6 +378,29 @@ public enum GarmentClassifier {
     private static let index: [(slot: GarmentSlot, words: Set<String>)] =
         table.map { ($0.slot, Set($0.words)) }
 
+    /// Every whole token that can place a garment in `slot`, with the plural `match` reads
+    /// back to each and the words of the slot's phrases.
+    ///
+    /// For a full-text index on the server, which has to *find* what a category word like
+    /// "shoes" means before the same `classify` decides it — so the list is wider than the
+    /// verdict, never narrower: anything this classifier places in a slot carries one of
+    /// these. Too wide costs a few candidates the verdict then turns away; too narrow would
+    /// make a slot word mean less on the server than it does on the phone.
+    public static func vocabulary(for slot: GarmentSlot) -> Set<String> {
+        var out: Set<String> = []
+        for entry in index where entry.slot == slot {
+            for word in entry.words {
+                out.insert(word)
+                out.insert(word + "s")
+            }
+        }
+        for entry in phrases where entry.slot == slot {
+            out.formUnion(entry.phrase.split { !$0.isLetter && !$0.isNumber }.map(String.init))
+        }
+        if slot == .top { out.formUnion(setWords) }
+        return out
+    }
+
     private static func match(_ text: String) -> GarmentSlot {
         let lowered = text.lowercased()
         for entry in phrases where lowered.contains(entry.phrase) { return entry.slot }
