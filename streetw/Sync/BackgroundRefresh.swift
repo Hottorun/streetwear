@@ -31,6 +31,9 @@ enum BackgroundServices {
     private(set) static var sizes: SizeProfileStore?
     private(set) static var settings: ServerSettings?
     private(set) static var route: PushRoute?
+    /// So a tapped alert about another profile can switch to it first. The three above are
+    /// the current profile's and are re-installed on every switch.
+    static var profiles: ProfileStore?
 
     static func install(
         remote: RemoteSync,
@@ -186,6 +189,12 @@ extension AppDelegate: UNUserNotificationCenterDelegate {
         _ center: UNUserNotificationCenter,
         didReceive response: UNNotificationResponse
     ) async {
+        // "For Anna: …" opens in Anna's profile: switched before the sync, so the pull and the
+        // lookup both run against her store. The holder's id switches back to the holder; an
+        // alert with none — from a build or a server before profiles — opens where it is.
+        let profileID = (response.notification.request.content.userInfo["profileID"] as? String)
+            .flatMap(UUID.init(uuidString:))
+        await MainActor.run { BackgroundServices.profiles?.adopt(pushedFor: profileID) }
         await BackgroundServices.syncNow()
         BackgroundServices.route?.open(
             PushDestination(response.notification.request.content.userInfo)

@@ -17,6 +17,11 @@ enum APIError: LocalizedError {
     /// Spending the token on that throws away a working identity and, because
     /// `POST /v1/devices` mints a device with no follows, the follow list with it.
     case forbidden(String?)
+    /// The request named a profile this device may no longer act for — deleted on another
+    /// phone, the account deleted, or the device re-registered. Told apart from `.forbidden`
+    /// by the server's exact reason (`ProfileHeader.refusal`), because the repair is to fall
+    /// back to the holder's profile and that must not happen on a 403 from an edge.
+    case profileRefused
     case server(Int, String?)
     case transport(String)
 
@@ -25,6 +30,7 @@ enum APIError: LocalizedError {
         case .notConfigured: "No server URL set"
         case .unauthorized: "This device isn't registered with the server"
         case .forbidden(let reason): reason.map { "\($0) (403)" } ?? "Dropwall refused the request (403)"
+        case .profileRefused: "This profile is no longer on your account"
         case .server(let code, let reason): reason.map { "\($0) (\(code))" } ?? "Server error \(code)"
         case .transport(let message): message
         }
@@ -129,6 +135,10 @@ final class ServerSettings {
 struct StreetwAPI: Sendable {
     let baseURL: URL
     let token: String?
+    /// The profile every request acts for, sent as `ProfileHeader.name`. Nil for the holder —
+    /// and for every install that never signed in — which sends no header at all, so the
+    /// requests are byte for byte what they were before profiles. See `docs/profiles.md`.
+    var profileID: UUID? = nil
 
     private static let session: URLSession = {
         let config = URLSessionConfiguration.default
@@ -168,6 +178,22 @@ struct StreetwAPI: Sendable {
     /// sent with stops working as it answers.
     func deleteAccount() async throws {
         try await sendVoid(path: "v1/account", method: "DELETE", body: Optional<Never>.none)
+    }
+
+    func profiles() async throws -> [ProfileDTO] {
+        try await send(path: "v1/account/profiles", method: "GET", body: Optional<Never>.none)
+    }
+
+    func createProfile(_ body: CreateProfile) async throws -> ProfileDTO {
+        try await send(path: "v1/account/profiles", method: "POST", body: body)
+    }
+
+    func updateProfile(id: UUID, _ body: UpdateProfile) async throws -> ProfileDTO {
+        try await send(path: "v1/account/profiles/\(id.uuidString)", method: "PATCH", body: body)
+    }
+
+    func deleteProfile(id: UUID) async throws {
+        try await sendVoid(path: "v1/account/profiles/\(id.uuidString)", method: "DELETE", body: Optional<Never>.none)
     }
 
     func discover(_ body: DiscoverBrand) async throws -> BrandDTO {
@@ -360,6 +386,9 @@ struct StreetwAPI: Sendable {
         if authenticated {
             guard let token else { throw APIError.unauthorized }
             request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            if let profileID {
+                request.setValue(profileID.uuidString, forHTTPHeaderField: ProfileHeader.name)
+            }
         }
 
         let data: Data
@@ -382,7 +411,9 @@ struct StreetwAPI: Sendable {
         case 401:
             throw APIError.unauthorized
         case 403:
-            throw APIError.forbidden(reason())
+            let said = reason()
+            if profileID != nil, said == ProfileHeader.refusal { throw APIError.profileRefused }
+            throw APIError.forbidden(said)
         default:
             throw APIError.server(code, reason())
         }

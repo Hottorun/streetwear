@@ -34,12 +34,20 @@ final class RemoteSync {
 
     private let context: ModelContext
     private let settings: ServerSettings
+    /// Whose feed this is. Captured once: every request carries its profile header and every
+    /// key below is its own, so a sync still running when somebody switches profile finishes
+    /// in the store, the keys and the profile it started in. See `docs/profiles.md`.
+    let scope: ProfileScope
+
+    /// Told when the server refuses this profile — see `APIError.profileRefused`. Set by
+    /// `ProfileStore`, which falls back to the holder.
+    @ObservationIgnored var profileRefused: (() -> Void)?
 
     /// Cursor of the newest event already merged. Kept out of the model store because it
     /// belongs to the *connection*, not to the data.
     private var cursor: Date? {
-        get { UserDefaults.standard.object(forKey: "feedCursor") as? Date }
-        set { UserDefaults.standard.set(newValue, forKey: "feedCursor") }
+        get { UserDefaults.standard.object(forKey: scope.key("feedCursor")) as? Date }
+        set { UserDefaults.standard.set(newValue, forKey: scope.key("feedCursor")) }
     }
 
     /// Reads of the feed that ran out of budget before they finished — the server's own
@@ -47,8 +55,8 @@ final class RemoteSync {
     /// of the same position: the cursor says where the last read began, these say what of
     /// the earlier ones is still owed. See `FeedPager`.
     private var pendingFeedReads: [String] {
-        get { UserDefaults.standard.stringArray(forKey: "feedPendingReads") ?? [] }
-        set { UserDefaults.standard.set(newValue, forKey: "feedPendingReads") }
+        get { UserDefaults.standard.stringArray(forKey: scope.key("feedPendingReads")) ?? [] }
+        set { UserDefaults.standard.set(newValue, forKey: scope.key("feedPendingReads")) }
     }
 
     /// When this device last changed a brand's mode, per server brand id.
@@ -58,14 +66,15 @@ final class RemoteSync {
     /// back on the page for a minute. A mode set after the list was asked for wins.
     private var modeChangedAt: [UUID: Date] = [:]
 
-    init(context: ModelContext, settings: ServerSettings) {
+    init(context: ModelContext, settings: ServerSettings, scope: ProfileScope = .holder) {
         self.context = context
         self.settings = settings
+        self.scope = scope
     }
 
     private var api: StreetwAPI? {
         guard let baseURL = settings.baseURL else { return nil }
-        return StreetwAPI(baseURL: baseURL, token: settings.token)
+        return StreetwAPI(baseURL: baseURL, token: settings.token, profileID: scope.id)
     }
 
     // MARK: - Registration
@@ -484,11 +493,11 @@ final class RemoteSync {
     /// deleted, which is the whole problem.
     private var pendingUnfollows: [UUID] {
         get {
-            (UserDefaults.standard.array(forKey: "pendingUnfollows") as? [String] ?? [])
+            (UserDefaults.standard.array(forKey: scope.key("pendingUnfollows")) as? [String] ?? [])
                 .compactMap(UUID.init(uuidString:))
         }
         set {
-            UserDefaults.standard.set(newValue.map(\.uuidString), forKey: "pendingUnfollows")
+            UserDefaults.standard.set(newValue.map(\.uuidString), forKey: scope.key("pendingUnfollows"))
         }
     }
 
@@ -571,11 +580,17 @@ final class RemoteSync {
     /// closed. Failure is survivable: the local watch still fires on the next sync, so
     /// this reports rather than throws.
     func createWatch(_ watch: StockWatch) async {
+        // **The product's id, not the row's.** A row from the server feed is keyed
+        // `event:<uuid>`, which names an event, and the route looks the product up by the
+        // catalogue's own id — so every watch set from the feed was refused as "No such
+        // product" and lived only on this phone. `productExternalID` is the catalogue's id;
+        // a standalone or Discover row has none, and its own key already is one.
         guard settings.isConfigured,
               let api,
-              let brandID = watch.update?.brand?.remoteID,
-              let externalID = watch.update?.externalID
+              let update = watch.update,
+              let brandID = update.brand?.remoteID
         else { return }
+        let externalID = update.productExternalID ?? update.externalID
 
         do {
             let created = try await api.createWatch(
@@ -593,33 +608,143 @@ final class RemoteSync {
         }
     }
 
+    /// Stops a watch on the server, remembering the request first.
+    ///
+    /// The ledger exists because `mergeWatches` now *restores* what the server holds: a delete
+    /// that failed would otherwise come straight back on the next sync, which is the "deleted
+    /// locally, restored by the follow list" trap arriving on a second table. Same shape as
+    /// `unfollow` — remembered before it is made, forgotten only on a confirmed success.
     func deleteWatch(_ watch: StockWatch) async {
-        guard let remoteID = watch.remoteID, let api else { return }
+        guard let remoteID = watch.remoteID else { return }
+        rememberWatchDelete(remoteID)
+        guard let api else { return }
         do {
             try await api.deleteWatch(id: remoteID)
+            forgetWatchDelete(remoteID)
         } catch {
             lastError = error.localizedDescription
         }
     }
 
-    /// Pulls the server's verdict on every watch and marks the fired ones locally, so a
-    /// restock that happened while the app was closed is reflected rather than waiting
-    /// for the phone to observe the transition itself.
-    private func mergeWatches() async {
-        guard let api, let remote = try? await api.watches() else { return }
+    private var pendingWatchDeletes: [UUID] {
+        get {
+            (UserDefaults.standard.array(forKey: scope.key("pendingWatchDeletes")) as? [String] ?? [])
+                .compactMap(UUID.init(uuidString:))
+        }
+        set {
+            UserDefaults.standard.set(newValue.map(\.uuidString), forKey: scope.key("pendingWatchDeletes"))
+        }
+    }
 
-        let byID = Dictionary(
-            remote.map { ($0.id, $0) },
+    private func rememberWatchDelete(_ id: UUID) {
+        guard !pendingWatchDeletes.contains(id) else { return }
+        pendingWatchDeletes.append(id)
+    }
+
+    private func forgetWatchDelete(_ id: UUID) {
+        pendingWatchDeletes.removeAll { $0 == id }
+    }
+
+    /// Mirrors the server's watches into this store: marks the fired ones, and **puts back the
+    /// ones this phone does not have.**
+    ///
+    /// The second half is new, and its absence was a bug you could see. After a reinstall and
+    /// a sign-in the account's watches went on firing server-side while the Watching page sat
+    /// empty — the one list of things somebody asked for by name, claiming they had asked for
+    /// nothing. The same is true of a profile opened on a second phone. So a watch the server
+    /// holds and this store does not is rebuilt here: against the row the store already has
+    /// for that product when there is one, and otherwise against a row made from what
+    /// `GET /v1/watches` says about the product, stored read so it is never news.
+    ///
+    /// Three things are deliberately not restored: a watch whose deletion this phone is still
+    /// trying to send (`pendingWatchDeletes`), a watch whose brand is not in the store (the
+    /// follow list arrives first, so this is a brand being unfollowed), and a duplicate of a
+    /// local watch the create call never confirmed — that one is adopted instead, by product,
+    /// size and colour, which is the identity the server's unique constraint uses.
+    private func mergeWatches() async {
+        guard let api else { return }
+        for id in pendingWatchDeletes {
+            do {
+                try await api.deleteWatch(id: id)
+                forgetWatchDelete(id)
+            } catch {
+                break
+            }
+        }
+        guard let remote = try? await api.watches() else { return }
+
+        let local = (try? context.fetch(FetchDescriptor<StockWatch>())) ?? []
+        let byRemoteID = Dictionary(
+            local.compactMap { watch in watch.remoteID.map { ($0, watch) } },
             uniquingKeysWith: { first, _ in first }
         )
-        let local = (try? context.fetch(FetchDescriptor<StockWatch>())) ?? []
+        var unconfirmed = local.filter { $0.remoteID == nil }
+        let pending = Set(pendingWatchDeletes)
 
-        for watch in local {
-            guard let id = watch.remoteID, let dto = byID[id] else { continue }
-            guard watch.firedAt == nil, let firedAt = dto.firedAt else { continue }
-            watch.firedAt = firedAt
+        for dto in remote where !pending.contains(dto.id) {
+            if let watch = byRemoteID[dto.id] {
+                if watch.firedAt == nil, let firedAt = dto.firedAt {
+                    watch.firedAt = firedAt
+                    watch.firedSizes = dto.firedSizes
+                }
+                continue
+            }
+            if let index = unconfirmed.firstIndex(where: { watch in
+                guard let update = watch.update else { return false }
+                return (update.productExternalID ?? update.externalID) == dto.productExternalID
+                    && watch.size == dto.size && watch.color == dto.color
+            }) {
+                unconfirmed[index].remoteID = dto.id
+                unconfirmed.remove(at: index)
+                continue
+            }
+            guard let update = watchedRow(for: dto) else { continue }
+            let watch = StockWatch(update: update, size: dto.size, color: dto.color)
+            watch.remoteID = dto.id
+            watch.createdAt = dto.createdAt
+            watch.firedAt = dto.firedAt
             watch.firedSizes = dto.firedSizes
+            context.insert(watch)
         }
+    }
+
+    /// The row a restored watch hangs off: the newest this store holds for the product, or one
+    /// made from the watch's own description.
+    private func watchedRow(for dto: WatchDTO) -> BrandUpdate? {
+        let product = dto.productExternalID
+        var descriptor = FetchDescriptor<BrandUpdate>(
+            predicate: #Predicate { $0.productExternalID == product || $0.externalID == product },
+            sortBy: [SortDescriptor(\.publishedAt, order: .reverse)]
+        )
+        descriptor.fetchLimit = 1
+        if let held = try? context.fetch(descriptor).first { return held }
+
+        // Nothing to build a product page from on an older server; better no row than a
+        // blank one.
+        guard let title = dto.productTitle, dto.imageURLs != nil else { return nil }
+        let brandID = dto.brandID
+        var brands = FetchDescriptor<Brand>(predicate: #Predicate { $0.remoteID == brandID })
+        brands.fetchLimit = 1
+        guard let brand = try? context.fetch(brands).first else { return nil }
+
+        let update = BrandUpdate(
+            externalID: product,
+            brand: brand,
+            title: title,
+            linkURL: dto.productURL.flatMap(URL.init(string:)),
+            imageURLStrings: dto.imageURLs ?? [],
+            publishedAt: dto.createdAt,
+            kind: .product,
+            priceText: dto.priceText,
+            variants: dto.variants ?? []
+        )
+        update.productExternalID = product
+        // Context for a watch, not news: it is a product somebody already knew about.
+        update.isSeen = true
+        update.refreshMerchandise()
+        update.refreshGender()
+        context.insert(update)
+        return update
     }
 
     // MARK: - Sync
@@ -646,6 +771,11 @@ final class RemoteSync {
             guard let api else { return }
 
             if didRegisterAfresh {
+                // **The holder's to spend.** A new anonymous device has no account, so it has
+                // no profiles either; re-following this store's brands on it from a profile
+                // would give the holder Anna's follows. The profile falls back instead, and
+                // the holder's session spends the flag on its own store.
+                guard scope.isHolder else { throw APIError.profileRefused }
                 didRegisterAfresh = false
                 await refollowLocalBrands()
             }
@@ -726,11 +856,14 @@ final class RemoteSync {
             // Also checked locally, not only trusted from the server: the app has the
             // variant data in hand and a push can be missed, denied or throttled. Firing
             // is edge-triggered, so the two paths can't produce two alerts.
-            await WatchNotifier.run(in: context)
+            await WatchNotifier.run(in: context, scope: scope)
             // A markdown on something saved, which the server cannot know about.
-            await PriceAlerts.run(in: context, serverPushesWatches: true)
+            await PriceAlerts.run(in: context, serverPushesWatches: true, scope: scope)
 
             lastSyncedAt = Date()
+        } catch APIError.profileRefused {
+            lastError = APIError.profileRefused.localizedDescription
+            profileRefused?()
         } catch {
             lastError = error.localizedDescription
         }

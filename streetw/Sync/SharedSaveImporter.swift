@@ -63,12 +63,22 @@ enum SharedSaveImporter {
     ///   item afterwards. Until this, a share simply appeared in the collection with no
     ///   acknowledgement at all and no way to act on it in the moment.
     @discardableResult
+    ///
+    /// - Parameter scope: whose store `context` is. Only that profile's shares are filed; the
+    ///   rest wait in the inbox until their profile is current — except a share for a profile
+    ///   this phone no longer has, which the holder takes rather than leaving it forever.
     static func drain(
         into context: ModelContext,
+        scope: ProfileScope? = nil,
         route: PushRoute? = nil,
         confirm: SaveConfirmation? = nil
     ) async -> Int {
-        let pending = SharedInbox.pending()
+        let scope = scope ?? ProfileScope.active
+        let known = ProfileScope.known
+        let pending = SharedInbox.pending().filter { item in
+            guard let owner = item.save.profileID, known.contains(owner) else { return scope.isHolder }
+            return owner == scope.id
+        }
         log.info("inbox: container \(SharedInbox.isAvailable ? "ok" : "MISSING"), \(pending.count) pending")
         guard !pending.isEmpty else { return 0 }
 

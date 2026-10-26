@@ -24,6 +24,7 @@ struct AccountSection: View {
     @Environment(ServerSettings.self) private var settings: ServerSettings
     @Environment(RemoteSync.self) private var remote: RemoteSync
     @Environment(SizeProfileStore.self) private var sizes: SizeProfileStore
+    @Environment(ProfileStore.self) private var profiles: ProfileStore
     @Environment(\.colorScheme) private var colorScheme
 
     /// The raw nonce for the sheet in flight. Its hash goes to Apple; the value itself goes
@@ -131,9 +132,11 @@ struct AccountSection: View {
             sizes: sizes
         )
         self.nonce = nil
-        // What the account kept — another phone's follows, a reinstall's whole list — arrives
-        // with the follow list, so read it now rather than at the next foreground.
+        // What the account kept — another phone's follows, a reinstall's whole list, its
+        // watches — arrives with the sync, so read it now rather than at the next foreground.
         await remote.sync(sizes: sizes.profile)
+        // And the profiles on it, which a reinstall has no record of.
+        await profiles.refresh()
     }
 
     // MARK: - Signed in
@@ -161,20 +164,18 @@ struct AccountSection: View {
                 titleVisibility: .visible
             ) {
                 Button("Delete account", role: .destructive) {
-                    run {
-                        try await remote.deleteAccount(sizes: sizes.profile)
-                        // Puts this phone's brands back on the new anonymous device now,
-                        // rather than at the next foreground — until then nothing would
-                        // be watched for it.
-                        await remote.sync(sizes: sizes.profile)
-                    }
+                    // Through the profile store: it has to switch back to your own profile
+                    // first, which rebuilds this page, and then remove every other profile's
+                    // store. See `ProfileStore.deleteAccount`.
+                    Task { await profiles.deleteAccount() }
                 }
                 Button("Keep", role: .cancel) {}
             } message: {
                 Text("""
                     Dropwall's server deletes your account and everything it keeps under it — \
-                    follows, sizes, watches and drop dates — on every phone signed in. This phone \
-                    keeps its brands and saves, and carries on without an account.
+                    follows, sizes, watches, drop dates and every profile — on every phone signed \
+                    in. Other profiles' saves go from this phone too. Your own brands and saves \
+                    stay, and the app carries on without an account.
                     """)
             }
         }

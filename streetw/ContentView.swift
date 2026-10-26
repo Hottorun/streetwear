@@ -39,6 +39,7 @@ struct ContentView: View {
     @Environment(\.modelContext) private var context
     @Environment(RemoteSync.self) private var remote: RemoteSync
     @Environment(ServerSettings.self) private var settings: ServerSettings
+    @Environment(ProfileStore.self) private var profiles: ProfileStore
     @Environment(SizeProfileStore.self) private var sizes: SizeProfileStore
     @Environment(PushRoute.self) private var route: PushRoute
     @Environment(SaveConfirmation.self) private var confirmation: SaveConfirmation
@@ -57,7 +58,11 @@ struct ContentView: View {
 
     /// Sticky, so skipping the starter pack doesn't offer it again on every launch —
     /// someone who intends to add one brand by hand shouldn't be asked twice.
-    @AppStorage("didOfferStarterPack") private var didOfferStarterPack = false
+    ///
+    /// Per profile: a profile somebody has just added has no brands and has never been
+    /// offered anything, so switching to it opens on onboarding — the right first screen for
+    /// setting somebody else up. The root is rebuilt on a switch, so the key is read afresh.
+    @AppStorage(ProfileScope.active.key("didOfferStarterPack")) private var didOfferStarterPack = false
 
     /// Latched, **not** derived from `brands.isEmpty`.
     ///
@@ -166,6 +171,9 @@ struct ContentView: View {
             if settings.isConfigured, remote.lastAttemptedAt == nil {
                 await remote.sync(sizes: sizes.profile)
             }
+            // Whether the profiles this phone holds still exist. After the sync, so a token
+            // the sync had to replace is the one asked with.
+            if settings.account != nil { await profiles.refresh() }
             // Only after that sync has had its chance to populate `brands`, so a
             // returning user isn't shown a starter pack while their follows are in
             // flight. In standalone mode there is nothing to wait for and this is
@@ -200,7 +208,11 @@ struct ContentView: View {
         // launch has no previous phase to change from — so anything shared while the app
         // was not running would sit in the inbox until the user backgrounded and
         // returned. Draining twice is harmless; the inbox empties itself.
-        .task { await SharedSaveImporter.drain(into: context, route: route, confirm: confirmation) }
+        .task {
+            await SharedSaveImporter.drain(
+                into: context, scope: remote.scope, route: route, confirm: confirmation
+            )
+        }
         // Only when there is genuinely nothing to show. A returning user who has removed
         // all their brands is a deliberate act, which is what `didOfferStarterPack`
         // remembers.

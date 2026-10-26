@@ -13,10 +13,11 @@
 // `List`: this is where somebody comes to see what the app thinks of them, and a grouped
 // settings form is the one shape that says "this is the app's plumbing".
 //
-// Nothing here is a placeholder. Profiles, location and credits are planned and not built, and
-// a row for each saying so would be three rows of the app talking about itself. Sign-in leads
-// the page, quietly, because it is the one setting about whether any of the rest survives a
-// reinstall — see `AccountSection`.
+// Nothing here is a placeholder. Location and credits are planned and not built, and a row for
+// each saying so would be two rows of the app talking about itself. Sign-in leads the page,
+// quietly, because it is the one setting about whether any of the rest survives a reinstall —
+// see `AccountSection` — and profiles follow it, because everything below them is about
+// whichever profile is current. See `ProfilesSection`.
 
 import StreetwCore
 import SwiftData
@@ -27,6 +28,7 @@ struct YouView: View {
     @Environment(SizeProfileStore.self) private var sizes: SizeProfileStore
     @Environment(ServerSettings.self) private var settings: ServerSettings
     @Environment(RemoteSync.self) private var remote: RemoteSync
+    @Environment(ProfileStore.self) private var profiles: ProfileStore
 
     @Query(sort: \SavedItem.savedAt, order: .reverse) private var saves: [SavedItem]
     /// Only the boards with a taste setting — see `Board.shapingTaste`. Usually none.
@@ -54,6 +56,7 @@ struct YouView: View {
                 // is division enough.
                 VStack(alignment: .leading, spacing: 40) {
                     AccountSection()
+                    ProfilesSection()
                     taste(reading)
                     sizesSection
                     following
@@ -71,7 +74,10 @@ struct YouView: View {
             // Keyed on the token: the page can appear before registration finishes, and a
             // `.task` that fires once, gets a 401 and swallows it would leave the account
             // section missing for the whole session.
-            .task(id: settings.token) { await remote.refreshAccount() }
+            .task(id: settings.token) {
+                await remote.refreshAccount()
+                await profiles.refresh()
+            }
             .navigationTitle("You")
             .toolbarTitleDisplayMode(.inlineLarge)
             .toolbar {

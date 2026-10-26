@@ -26,7 +26,10 @@ enum WatchNotifier {
     /// Checks every active watch against the current variant data and fires the ones that
     /// just became satisfiable. Safe to call after any sync.
     @discardableResult
-    static func run(in context: ModelContext) async -> Int {
+    ///
+    /// - Parameter scope: whose store this is. A profile's alerts are labelled "For Anna: …"
+    ///   and carry its id, as the server's do — see `docs/profiles.md`.
+    static func run(in context: ModelContext, scope: ProfileScope = .holder) async -> Int {
         let watches = (try? context.fetch(FetchDescriptor<StockWatch>())) ?? []
         var fired = 0
 
@@ -58,7 +61,7 @@ enum WatchNotifier {
             newestEvent(for: update, in: context).arrive()
             fired += 1
 
-            await notify(update: update, watch: watch, sizes: back)
+            await notify(update: update, watch: watch, sizes: back, scope: scope)
         }
 
         if fired > 0 { try? context.save() }
@@ -92,15 +95,18 @@ enum WatchNotifier {
     /// the wrong moment — permission is requested from Settings, deliberately behind an
     /// explicit action — and a watch that can't announce itself still shows up in the
     /// feed and on the product page.
-    private static func notify(update: BrandUpdate, watch: StockWatch, sizes: [String]) async {
+    private static func notify(update: BrandUpdate, watch: StockWatch, sizes: [String], scope: ProfileScope) async {
         let centre = UNUserNotificationCenter.current()
         guard await centre.notificationSettings().authorizationStatus != .denied else { return }
 
         let content = UNMutableNotificationContent()
         content.title = update.brand?.name ?? "Back in stock"
-        content.body = sizes.isEmpty
-            ? "\(update.title) is back in stock"
-            : "\(update.title) is back in \(list(sizes))"
+        content.body = scope.labelled(
+            sizes.isEmpty
+                ? "\(update.title) is back in stock"
+                : "\(update.title) is back in \(list(sizes))"
+        )
+        if let profileID = scope.id { content.userInfo = ["profileID": profileID.uuidString] }
         content.sound = .default
         // **One thread for the app, not one per brand** — `PushGrouping.threadID`, the same
         // value the server sends. This threaded by `brand.id` and said it was matching the
