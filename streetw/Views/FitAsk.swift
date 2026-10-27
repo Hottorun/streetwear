@@ -177,6 +177,8 @@ struct FitJudgementPanel: View {
     let isCurrent: Bool
     let onClose: () -> Void
 
+    @State private var isExpanded = false
+
     private var verdictLabel: String {
         switch judgement.verdict.verdict.lowercased() {
         case "works": "IT WORKS"
@@ -209,13 +211,21 @@ struct FitJudgementPanel: View {
                 .font(.editorial(16))
                 .foregroundStyle(Color.ink)
                 .fixedSize(horizontal: false, vertical: true)
-            ForEach(Array(judgement.verdict.notes.prefix(4).enumerated()), id: \.offset) { _, note in
-                HStack(alignment: .firstTextBaseline, spacing: 6) {
-                    Text("—").font(.data(11)).foregroundStyle(Color.muted)
-                    Text(note)
-                        .font(.editorial(13))
-                        .foregroundStyle(Color.ink)
-                        .fixedSize(horizontal: false, vertical: true)
+            // **Folded by default**, because the panel lies over the canvas and the piece it
+            // marks is as often as not the shoes, at the foot of it — four notes open hid the
+            // one thing the verdict was pointing at.
+            if isExpanded {
+                ForEach(Array(judgement.verdict.notes.prefix(4).enumerated()), id: \.offset) { _, note in
+                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                        Text("—").font(.data(11)).foregroundStyle(Color.muted)
+                        Text(note)
+                            .font(.editorial(13))
+                            .foregroundStyle(Color.ink)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                if let line = judgement.charge.line {
+                    DataLabel(text: line, size: 9)
                 }
             }
             if judgement.swap != nil, isCurrent {
@@ -224,10 +234,12 @@ struct FitJudgementPanel: View {
             if !isCurrent {
                 DataLabel(text: "THE FIT HAS CHANGED SINCE THIS WAS SAID", size: 9)
             }
-            if let line = judgement.charge.line {
-                DataLabel(text: line, size: 9)
+            if !isExpanded, !judgement.verdict.notes.isEmpty {
+                DataLabel(text: judgement.verdict.notes.count == 1 ? "TAP FOR THE NOTE" : "TAP FOR \(min(judgement.verdict.notes.count, 4)) NOTES", size: 9)
             }
         }
+        .contentShape(.rect)
+        .onTapGesture { withAnimation(.easeOut(duration: 0.2)) { isExpanded.toggle() } }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color.paper, in: Rectangle())
@@ -269,7 +281,7 @@ struct FitAskedTile: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
             FitPieceImage(item: suggestion.save)
-                .frame(width: 76, height: 76)
+                .frame(width: 64, height: 64)
                 .background(Color.paper)
                 .overlay {
                     if isPlaced { Rectangle().stroke(Color.ink, lineWidth: 1.5) }

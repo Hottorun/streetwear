@@ -9,10 +9,13 @@
 // anything else is sent as it was taken, which is the fallback on a device too.
 
 import Foundation
+import OSLog
 import StreetwCore
 import UIKit
 
 enum ScanPhoto {
+    private static let log = Logger(subsystem: "com.kern.functional.streetw", category: "scan")
+
     struct Prepared {
         /// Upright, at most `AIScan.maxEdge` on its long side, opaque.
         var photo: UIImage
@@ -24,14 +27,28 @@ enum ScanPhoto {
 
     static func prepare(_ image: UIImage) async -> Prepared? {
         let photo = upright(image, maxEdge: CGFloat(AIScan.maxEdge))
-        // `writeFile: false`: nothing is kept until somebody chooses to keep it, and then it
-        // goes beside the store rather than into the catalogue's cutout directory. The photo
-        // is drawn opaque, so a mask coming back can only be a lift — `Cutout` hands back the
-        // source's own outline only when the source carries transparency.
-        let lift = await Cutout.make(from: photo, named: "scan", writeFile: false)
-        let cutout = lift.mask.map { UIImage(cgImage: $0) }
+        // **A written file is the only proof of a lift.** `Lift.mask` is also the source's own
+        // outline when the source carries an alpha channel, and a renderer's image carries one
+        // even when it is drawn opaque — so reading the mask kept the whole photograph, backdrop
+        // and all, as the "cutout". The file is read back and removed at once: nothing is kept
+        // until somebody chooses to keep it, and then it goes beside the store (`OwnPhotos`).
+        let name = "scan-\(UUID().uuidString).png"
+        let lift = await Cutout.make(from: photo, named: name)
+        var cutout: UIImage?
+        if lift.file != nil {
+            // Read into memory before the file goes; a lazily decoded image would draw nothing.
+            cutout = (try? Data(contentsOf: Cutout.url(for: name))).flatMap(UIImage.init(data:))
+            Cutout.remove(name)
+        }
         let sent = cutout.map { onWhite($0, maxEdge: CGFloat(AIScan.maxEdge)) } ?? photo
         guard let upload = jpeg(sent) else { return nil }
+        // Which photograph left the phone is worth being able to tell afterwards: a lift that
+        // kept its backdrop and one that found nothing look alike on screen.
+        log.notice("""
+            scan prepared: photo \(Int(photo.size.width), privacy: .public)×\(Int(photo.size.height), privacy: .public), \
+            cutout \(cutout.map { "\(Int($0.size.width))×\(Int($0.size.height)) alpha \($0.cgImage?.alphaInfo.rawValue ?? 0)" } ?? "none", privacy: .public), \
+            sent \(upload.count, privacy: .public) bytes
+            """)
         return Prepared(photo: photo, cutout: cutout, upload: upload)
     }
 

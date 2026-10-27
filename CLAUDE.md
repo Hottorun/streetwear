@@ -862,7 +862,10 @@ why the sold-out prompt is asked by the app rather than the extension.
   lenient `init(from:)` for the same reason — it lives in `UserDefaults` on real phones.
 - The schema is `Brand`, `BrandUpdate`, `SavedItem`, `Board`, `StockWatch`, `Fit`,
   `BrandDismissal`, `PlannedDrop`. A new `@Model` that isn't listed in `ProfileSession.schema`
-  simply doesn't exist at runtime.
+  simply doesn't exist at runtime. The scan added **no** model: a garment of your own is a
+  `SavedItem` with no `update` and optional `own…` columns, which a lightweight migration adds to
+  any earlier store (verified by installing over a store the previous build wrote). Prefer that
+  shape — new optional attributes on an existing model — over a new model or a migration plan.
 - **There is one store per profile, not a profile id on every model** (`ProfileSession`,
   `docs/profiles.md`). `default.store` and the unscoped `UserDefaults` keys are the phone's own —
   used signed out, and kept by the first account to sign in (`ProfileStores.owner`) — so data from
@@ -1199,9 +1202,15 @@ consumer goes through it, or Your taste and the recommendations disagree about t
 crops and does not invert: `Color.sweep` is the one fixed colour in the app, because photographs
 don't invert either.
 
+**Not every save has a product behind it any more.** A garment you scanned is a `SavedItem` with
+`update == nil` and the reading on the save (`ownPhotoFile` and the other `own…` columns), its
+photograph a file in `<store>-photos/` beside the store (`OwnPhotos`). Ask the save —
+`garment`, `hasPhotograph`, `displayTitle`, `coverURL`, `pairingID`, `garmentKey`, `hasSubject` —
+never reach through `update`, or the new surface silently leaves those garments out.
+
 **Read `docs/collection.md` before touching `SavedView`, `SaveDetailView`, `SaveConfirmation`,
 `ImageTagger`, `Cutout`, `Seamless`, `Silhouette`, `VisualReading`, `ProductShot`, `ColorNamer`,
-`FitsPage` or `YouView`.** The rules most easily broken: only saved items get image analysis and the pass
+`FitsPage`, `YouView`, `OwnGarment` or the scan.** The rules most easily broken: only saved items get image analysis and the pass
 **drains** its backlog; a photograph that did not answer is not one that never will (`.gone` vs
 `.unavailable`); the first photograph is not necessarily a photograph of the product; a lift is
 verified before it is believed; bumping `Cutout.version` means bumping `VisualReading.version` with

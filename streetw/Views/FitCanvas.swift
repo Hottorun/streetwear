@@ -368,9 +368,11 @@ struct FitCanvas: View {
                         .allowsHitTesting(false)
                 }
             }
-            // What the model said, laid over the foot of the canvas the way the save
-            // confirmation lies over the feed: dismissible, and never in the way of the tray.
-            .overlay(alignment: .bottom) {
+            // What the model said, laid over the canvas the way the save confirmation lies over
+            // the feed: dismissible, and never in the way of the tray. At the foot unless the
+            // piece it marks is down there — usually the shoes — when it moves to the head, so
+            // the verdict never covers the one thing it is pointing at.
+            .overlay(alignment: judgementAtTop ? .top : .bottom) {
                 if let judgement {
                     FitJudgementPanel(
                         judgement: judgement,
@@ -750,6 +752,13 @@ struct FitCanvas: View {
     }
 
     // MARK: - Asking
+
+    private var judgementAtTop: Bool {
+        guard let swap = judgement?.swap,
+              let placement = placements.first(where: { $0.itemID == swap })
+        else { return false }
+        return placement.y > 0.5
+    }
 
     /// The placed pieces, head down, as the model is shown them — paired with the placement
     /// each stands for, so an answer that names a piece by index can be drawn on the canvas.

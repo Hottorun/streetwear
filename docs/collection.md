@@ -258,6 +258,50 @@ Part of the streetw guidance set; see `CLAUDE.md` for the index and the build ru
   and deterministic, so the row doesn't reshuffle on every render; keeping one turns it into a
   stored `Fit` and it stops being regenerated.
 
+## A garment of your own
+
+Until Phase 4 every save had a `BrandUpdate` behind it. The clothes scan (`ScanView`,
+`docs/ai.md`) adds the first that does not: a jacket you photographed, read by the model, and
+kept with **your** photograph and no product at all.
+
+- **`update` is nil and the reading lives on the save.** `ownPhotoFile` is the marker, beside
+  `ownCutoutFile`, `ownAspect`, and what the scan said (`ownTitle`, `ownType`, `ownSlot`,
+  `ownColours`, `ownMaterial`, `ownPattern`, `ownStyle`, `ownSearchText`). All optional or a
+  defaulted array, so a lightweight migration adds them to any earlier store with no plan —
+  verified by installing this build over a store written by the unchanged one (six saves and a
+  note survived, every new column arrived empty). The alternatives were worse: a `BrandUpdate`
+  minted for a garment nobody sells is a product in the catalogue's tables, which the feed,
+  Shop's search on the phone and "more like this" all read — none of them should ever offer
+  somebody their own jacket — and a new `@Model` would have been a second kind of save for every
+  query to union.
+- **The photograph is a file beside the store, named after the store** —
+  `default.store-photos/<save id>.jpg`, `-cutout.png` beside it (`OwnPhotos`). Resolved from the
+  save's own container, never from the current profile, and stored as a name, never a path,
+  because the container moves between installs. The name is the store's prefix on purpose:
+  `ProfileStores.remove` deletes everything in the directory starting with the store's name, so
+  deleting a profile takes the photographs with it; an account's directory goes whole. Deleting
+  the save deletes its files (`CollectionEdit.delete`, `SaveDetailView.remove`); a fit it was in
+  keeps the render it was drawn into, as for any un-save.
+- **Every surface that draws a save asks the save, not its product.** `SavedItem.garment`,
+  `hasPhotograph`, `displayTitle`, `coverURL`, `pairingID` and `garmentKey` answer for both
+  kinds, and a surface that reaches for `update` directly is one that quietly leaves a garment
+  of your own out — the wall was filtering on `update != nil` (it asks `hasSubject` now). What
+  answers for it: the wall and its tile ("YOUR PHOTO" where the wordmark goes, no product menu),
+  the save's page (your photograph, the scan's reading, "find it or something like it", "wear it
+  with" built around it), search, the fit tray, `FitPieceImage` and `FitRender.warm` (local
+  files, decoded inline), `FitSuggestions`, `FitProposal`, `GoesWith`, the gaps, and the taste
+  reading and its facets (`StyleProfile.ownColours`/`ownHaystack`, counted and matched the same
+  way). What leaves it out, by design: `ImageTagger` (there is no catalogue shot to measure — the
+  cutout was made when it was scanned, the colours are the scan's reading of the photograph),
+  the share importer (it repairs `BrandUpdate`s), watches and price alerts (no stock to watch),
+  and the taste *vectors* for brand recommendations and Discover, which are built from catalogue
+  text. Shop's picks and Discover's pairing still read `update` and skip it — owned by Shop, a
+  known gap.
+- **Its slot is the photograph's.** `Garment(slot:)` takes the slot the scan read rather than
+  classifying three words of the scan's own; `.unknown` falls through to the classifier.
+- **Nothing about it leaves the phone afterwards** except where the reader asks: judging a fit
+  sends the JPEG already on disk (`OwnPhotos.upload`). It is never synced, like every save.
+
 ## Leaving things out of your taste
 
 Every engine that infers taste used to read the whole collection, which is wrong in two ordinary

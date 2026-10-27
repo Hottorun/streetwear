@@ -89,6 +89,23 @@ scan 2, fit judge 1, fit suggest 1. Set from `GET /admin/costs` p90 after a few 
   no product behind it. *Does it go with my wardrobe* runs on the phone (`Pairing`, `Outfit`)
   over the reading — the wardrobe never leaves it. *Find this* uses `similar` when the
   embedding service read the photograph, else searches `searchText`.
+- **On the phone** (`ScanView`, `ScanPhoto`, `OwnGarment`): the entry point is `ScanButton`
+  (Saved's "+" offers it as "Scan a garment"; `ScanButton(onFind:)` is the control for Shop's
+  field, and `.scanSheet(isPresented:onFind:)` presents it from a host's own control). Camera
+  where there is one (`NSCameraUsageDescription` is in `streetw-Info.plist`), the photo library
+  everywhere. The price is on the button that sends — "READ IT · 2 CREDITS" — and signed out
+  that button is replaced by the sentence saying why. When `Cutout` lifts nothing (always in the
+  Simulator unless `Seamless` recognises a sweep) the screen says the whole photograph is sent.
+  **Nothing is written until a choice is made**: the reading is held in memory as a
+  `ScannedGarment`; *Add to my wardrobe* makes the save (`docs/collection.md`, *A garment of
+  your own*); *Does it go* is `ScanVerdict` — a count of what it pairs with and up to three
+  `FitProposal.outfits`, each opening the canvas pre-filled; *Find this* is `ScanFindResults`
+  (`similar`, else `GET /v1/products/search` over your shops and then every shop), or the
+  host's own field when it passed `onFind`. A reading that is not a garment offers none of the
+  three.
+- **Availability is one small seam**, `AIAvailability` (`GET /v1/ai`, keyed on the token and the
+  account): `isOffered`, `isSignedIn`, `credits(for:)`. `AIFailure` turns every refusal into the
+  sentence the reader is owed — 402, 403, 429, offline, and a failure the server undid.
 
 ## Fits
 
@@ -98,7 +115,8 @@ scan 2, fit judge 1, fit suggest 1. Set from `GET /admin/costs` p90 after a few 
 - **Suggest** sends the fit and up to twelve candidates the phone already chose
   (`FitSuggestions`); the model only orders them and drops the ones that clash. The rule-based
   row still draws first and for free; asking is a button.
-- Both are things somebody asked for, about garments they chose to send.
+- Both are things somebody asked for, about garments they chose to send. On the phone they are
+  the fit canvas's **Ask** menu (`FitAsk`); see `docs/fits.md`, *Asking about the photographs*.
 
 ## Reading where rules cannot
 
