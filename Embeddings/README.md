@@ -176,9 +176,11 @@ network.
 
 1. **New service.** In the project, *New → GitHub Repo →* this repo. Under *Settings →
    Source*, set **Root Directory** to `Embeddings`. Railway then builds
-   `Embeddings/Dockerfile`, and changes outside that directory don't rebuild it. (The root
-   `railway.json` belongs to the server. This service has none, so its settings live in
-   the dashboard.) Name the service `embeddings`. Its private hostname becomes
+   `Embeddings/Dockerfile`, and changes outside that directory don't rebuild it. Under
+   *Settings → Config-as-code*, set the config file to `/Embeddings/railway.json`: Railway
+   reads the config file from the repo root whatever the Root Directory says, so without
+   this the service picks up the server's `railway.json` and builds `Server/Dockerfile`,
+   failing on `"/Server/Tests": not found`. Name the service `embeddings`. Its private hostname becomes
    `embeddings.railway.internal`.
 2. **No public domain.** Under *Settings → Networking*, don't generate a domain, and delete
    one if Railway offered it. Private networking is on by default.
