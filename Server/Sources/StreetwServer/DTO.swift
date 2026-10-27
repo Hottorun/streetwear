@@ -25,6 +25,7 @@ extension StartBrandCheck: @retroactive Content {}
 extension WatchBrandCheck: @retroactive Content {}
 extension BrandCheck: @retroactive Content {}
 extension FeedResponse: @retroactive Content {}
+extension BrandCategories: @retroactive Content {}
 extension StatusResponse: @retroactive Content {}
 extension DeliveryStatus: @retroactive Content {}
 extension PollHint: @retroactive Content {}
@@ -59,6 +60,7 @@ extension BrandDTO {
     /// route into a compile error at the call site.
     /// - Parameter followMode: the caller's own follow, for the one route that is about
     ///   the caller's follows. Nil everywhere else, which the client reads as "not said".
+    /// - Parameter followFilter: the same follow's filter, nil for *All* — beside the mode only.
     /// - Parameter storefront: the country shop serving the caller (`Storefronts.serving`), or
     ///   nil for the main shop. **The sources and the currency are that shop's**, and only that
     ///   shop's: a brand page lists how the shop it is showing is watched, and a main shop's
@@ -68,6 +70,7 @@ extension BrandDTO {
         _ brand: BrandModel,
         sources: [SourceModel],
         followMode: FollowMode? = nil,
+        followFilter: FollowFilter? = nil,
         storefront: StorefrontModel? = nil
     ) {
         let shop = storefront?.id
@@ -82,6 +85,7 @@ extension BrandDTO {
             logoURL: brand.logoURL,
             sources: sources.filter { $0.$storefront.id == shop }.map(BrandSourceDTO.init),
             followMode: followMode,
+            followFilter: followFilter,
             storefront: storefront?.asDTO
         )
     }

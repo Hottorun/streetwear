@@ -490,11 +490,21 @@ Agreed with the owner on 2026-10-27. 1.4:
 - [ ] **Search by photo.** The sidecar takes image bytes; the scan's "find this" matches the
       picture. The scan's reading gains a short name, used as the save's title, the description
       kept as its note.
-- [ ] **Follow only part of a brand.** A follow gets an optional filter: category chips plus the
+- [x] **Follow only part of a brand.** A follow gets an optional filter: category chips plus the
       reader's own words in the `ShopQuery` grammar, evaluated on both ends like `FollowMode`
       (what it does not admit is stored read and never pushed; tightening it does not resurrect).
       Unplaceable products and brand-wide sales always pass. On every new follow a dialog offers
       All, the brand's three biggest categories, and own words; editable in the follow menu.
+      *Done:* `FollowFilter` (core) is the one rule — chips are alternatives, words are Shop's,
+      exclusions hide what carries the word; unplaced garments, sales, locks, posts, page
+      changes, releases (except an exclusion) and watches pass — asked by `Brand.admits` where a
+      row is written and by `Notifier.isRelevant`. `follows.filter` (JSON text, nullable),
+      `PATCH /v1/follows/:id` `filter`, `BrandDTO.followFilter`, `GET /v1/brands/:id/categories`.
+      The dialog is `FollowFilterView`, asked through `FollowFilterPrompt.ask(brandID:)` and
+      drawn by the top `.followFilterHost()`; inline in the add-brand sheet; the starter pack does
+      not ask. Brand page › What reaches you › Which pieces edits it. Verified against a local
+      server: a jeans-only Taylor Stitch follow stored 14 of 16 new events read and showed the two
+      jeans. See `docs/design-decisions.md`.
 - [ ] **The share sheet stays until Done.** It reads the page Safari already loaded (JavaScript
       preprocessing: title, photographs, price, JSON-LD, product or shop page) — which fixes
       Intimissimi's missing photographs and gives a blocked shop's saves their pictures — offers
@@ -507,8 +517,15 @@ Agreed with the owner on 2026-10-27. 1.4:
       the first shows a person) and a few style words, stored once and sent on the wire; the
       phone's Vision check becomes the fallback. Evaluated against Claude Haiku on ~200 products
       first; switched to Claude only if it clearly wins.
-- [ ] **A blocked shop says why** — "blocks automated readers, saving from Safari still works",
+- [x] **A blocked shop says why** — "blocks automated readers, saving from Safari still works",
       "doesn't sell clothes online".
+      *Done:* `ShopRefusal` reads a check's own requests (`ProbeLog`, which changes none of them):
+      every one a bot-protection page, a dropped connection or a robots refusal is
+      `blocksReaders`; `chanel.com` is on a curated `sellsNoClothes` list, refused before any
+      request; the rest `nothingAnswered`. `BrandCheck.refusal` (optional),
+      `brand_checks.refusal`; the add-brand screen and the "couldn't watch" push say which, and
+      standalone reads the same evidence. One live check of bershka.com confirmed Akamai's
+      signature; never retried another way.
 
 1.5:
 

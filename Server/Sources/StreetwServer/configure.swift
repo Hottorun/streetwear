@@ -309,4 +309,6 @@ func addMigrations(to app: Application) {
     app.migrations.add(AddProductEmbeddings())
     app.migrations.add(CreateAIPickReasons())
     app.migrations.add(AddSaleReading())
+    app.migrations.add(AddFollowFilter())
+    app.migrations.add(AddBrandCheckRefusal())
 }

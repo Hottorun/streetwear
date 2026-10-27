@@ -40,6 +40,7 @@ struct BrandDetailView: View {
     @Environment(RemoteSync.self) private var remote: RemoteSync
     @Environment(ServerSettings.self) private var settings: ServerSettings
     @Environment(SizeProfileStore.self) private var sizes: SizeProfileStore
+    @Environment(FollowFilterPrompt.self) private var followPrompt: FollowFilterPrompt
 
     /// The collection, so "KEPT" can be answered without walking the catalogue — see
     /// `savedFromBrand`. Bounded by how much somebody has kept, which is the size of the
@@ -55,6 +56,8 @@ struct BrandDetailView: View {
     /// the tap visibly landed; and what went wrong if it was refused.
     @State private var pendingMode: FollowMode?
     @State private var modeError: String?
+    /// Editing which part of the brand reaches you — `FollowFilterView`, beside the mode.
+    @State private var isEditingFilter = false
 
     /// The three questions this page can answer about one brand's output.
     ///
@@ -502,6 +505,7 @@ struct BrandDetailView: View {
                         ForEach(FollowMode.allCases) { mode in
                             modeRow(mode)
                         }
+                        filterRow
                         if let modeError {
                             DataLabel(text: modeError, size: 9, color: .signal)
                                 .fixedSize(horizontal: false, vertical: true)
@@ -529,6 +533,45 @@ struct BrandDetailView: View {
             }
         }
         .overlay(alignment: .top) { Rule().padding(.horizontal, 20) }
+    }
+
+    /// Which part of the brand the mode applies to — all of it, or what the follow's filter
+    /// lets through, said the way the dialog reads it back. Under the modes because it
+    /// narrows whichever one is chosen; a quiet brand has nothing for it to narrow.
+    @ViewBuilder
+    private var filterRow: some View {
+        let reading = brand.followFilter?.reading ?? []
+        Button { isEditingFilter = true } label: {
+            HStack(alignment: .firstTextBaseline) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Which pieces")
+                        .font(.data(12, .medium))
+                        .foregroundStyle(Color.ink)
+                    DataLabel(
+                        text: reading.isEmpty
+                            ? "ALL OF IT · OR ONLY SOME CATEGORIES, IN YOUR OWN WORDS"
+                            : "ONLY " + reading.joined(separator: " · ").uppercased() + " · SALES ALWAYS",
+                        size: 9
+                    )
+                    .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 12)
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(Color.muted)
+            }
+            .padding(.horizontal, 20)
+            .padding(.vertical, 12)
+            .contentShape(.rect)
+        }
+        .buttonStyle(.borderless)
+        .disabled(brand.followMode == .quiet)
+        .opacity(brand.followMode == .quiet ? 0.5 : 1)
+        .sheet(isPresented: $isEditingFilter) {
+            FollowFilterView(brand: brand, isNewFollow: false) { isEditingFilter = false }
+                .presentationDetents([.large])
+                .presentationDragIndicator(.visible)
+        }
     }
 
     /// One mode, as a line you can pick. The chosen one is set in ink and ticked; the others
@@ -631,7 +674,12 @@ struct BrandDetailView: View {
     /// The server decides what gets polled, so following has to be recorded there, not
     /// just flagged locally.
     private func syncFollowState() {
-        guard settings.isConfigured, let id = brand.remoteID else { return }
+        guard settings.isConfigured, let id = brand.remoteID else {
+            // Standalone, following again is the whole follow — and it asks what to see, as
+            // every new follow does. In server mode `RemoteSync.follow` asks.
+            if brand.followed { followPrompt.ask(brandID: brand.id) }
+            return
+        }
         let following = brand.followed
         Task {
             if following {

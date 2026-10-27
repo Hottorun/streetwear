@@ -109,6 +109,7 @@ struct streetwApp: App {
                 .environment(session.collection)
                 .environment(you)
                 .environment(session.hints)
+                .environment(session.followPrompt)
                 .modelContainer(session.container)
                 .task {
                     await DevSeed.runIfRequested(in: session.container.mainContext)

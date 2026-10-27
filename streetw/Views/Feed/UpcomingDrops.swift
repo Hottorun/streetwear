@@ -196,11 +196,16 @@ enum UpcomingDrops {
         // A brand whose mode keeps its drops out of the feed keeps them out of here too — it
         // is the feed's view of the future, not the brand's. A date somebody typed is above
         // and stays whatever the mode, because they asked for it by name.
+        // And a product dated ahead that the follow's filter keeps out is not announced either.
         let admitted = Set(brands.filter { $0.followMode.admits(.product) }.map(\.id))
+        var filters: [UUID: FollowFilter.Matcher] = [:]
 
         var announced: [UUID: [Date]] = [:]
         for update in scheduled {
             guard let brand = update.brand, admitted.contains(brand.id) else { continue }
+            let filter = filters[brand.id] ?? brand.followFilterMatcher
+            filters[brand.id] = filter
+            guard filter.admits(update.kind, update.followItem) else { continue }
             if let release = update.releaseDate {
                 guard release > now else { continue }
                 announced[brand.id, default: []].append(release)

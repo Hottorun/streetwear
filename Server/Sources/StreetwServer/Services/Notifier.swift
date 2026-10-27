@@ -795,6 +795,12 @@ actor Notifier {
                 follows.map { ($0.$user.id, $0.mode) },
                 uniquingKeysWith: { first, _ in first }
             )
+            // And which part of it — see `FollowFilter`. Read once per follow, not per event:
+            // parsing the words is the expensive half, and a drop is hundreds of events.
+            let filters = Dictionary(
+                follows.map { ($0.$user.id, FollowFilter.Matcher($0.filter)) },
+                uniquingKeysWith: { first, _ in first }
+            )
             let followers = follows.filter { $0.mode != .quiet }.map(\.$user.id)
             guard !followers.isEmpty else { return }
 
@@ -813,6 +819,7 @@ actor Notifier {
 
                 let profile = user.sizeProfile
                 let mode = modes[userID] ?? .everything
+                let filter = filters[userID] ?? FollowFilter.Matcher(nil)
                 // They follow the brand, so a shop serving their country is being read: whether
                 // it is live is then only whether it has been read once.
                 let shop = storefronts.first { storefront in
@@ -825,7 +832,7 @@ actor Notifier {
                     )
                 }?.id
                 let relevant = events.filter {
-                    $0.storefrontID == shop && Self.isRelevant($0, to: profile, mode: mode)
+                    $0.storefrontID == shop && Self.isRelevant($0, to: profile, mode: mode, filter: filter)
                 }
                 guard let copy = Self.summary(brand: brandName, events: relevant) else { continue }
                 // Only when the alert names one thing. A counted summary ("3 restocks and
@@ -917,10 +924,14 @@ actor Notifier {
     ///   the mode only ever takes away, so a *Sales only* follow is never woken by a kind an
     ///   *Everything* follow would not be. The default is what every follow is until
     ///   somebody chooses otherwise.
+    /// - Parameter filter: which part of the brand this follower follows (`FollowFilter`). The
+    ///   same rule the phone stores the row by, so nothing is pushed that the feed then keeps
+    ///   out; like the mode it only ever takes away, and a watch never asks it.
     static func isRelevant(
         _ event: EventModel,
         to profile: SizeProfile,
-        mode: FollowMode = .everything
+        mode: FollowMode = .everything,
+        filter: FollowFilter.Matcher = FollowFilter.Matcher(nil)
     ) -> Bool {
         // Gender applies to every kind, not just restocks. Being woken at 7am for a
         // women's hoodie is worse than merely seeing one in the feed, so if the filter
@@ -932,6 +943,16 @@ actor Notifier {
 
         let kind = UpdateKind(rawValue: event.kind) ?? .product
         guard Self.isWorthWaking(kind), mode.admits(kind) else { return false }
+        // A sale has no product and always passes; so does anything nothing can place.
+        if let product = event.product {
+            let item = FollowFilter.Item(
+                title: product.title,
+                productType: product.productType,
+                tags: product.tags,
+                price: product.priceAmount
+            )
+            guard filter.admits(kind, item) else { return false }
+        }
 
         guard kind == .restock else { return true }
         guard !profile.isEmpty, !event.sizes.isEmpty else { return true }

@@ -175,9 +175,15 @@ public struct FollowBrand: Codable, Sendable {
 /// Changes how much of an already-followed brand reaches this person. See `FollowMode`.
 public struct UpdateFollow: Codable, Sendable {
     public var mode: FollowMode
+    /// Which part of the brand reaches them (`FollowFilter`). Absent leaves the stored filter
+    /// as it is — every body 1.3 and earlier send — and an empty one clears it, which is how
+    /// *All* is said. Sent beside the mode, never instead of it, so a server that predates
+    /// filters still decodes the body and keeps the mode.
+    public var filter: FollowFilter?
 
-    public init(mode: FollowMode) {
+    public init(mode: FollowMode, filter: FollowFilter? = nil) {
         self.mode = mode
+        self.filter = filter
     }
 }
 
@@ -557,6 +563,10 @@ public struct BrandDTO: Codable, Sendable, Hashable, Identifiable {
     /// keeps the mode it already holds rather than resetting a quiet brand because it
     /// happened to reappear in a search result.
     public var followMode: FollowMode?
+    /// Which part of the brand the caller follows (`FollowFilter`) — on the follow list only,
+    /// beside `followMode`, and there nil is *All*. Every other route leaves it nil, which says
+    /// nothing: the client reads it only where `followMode` is set.
+    public var followFilter: FollowFilter?
     /// The country shop serving the caller, or nil for the brand's main shop. When set,
     /// `currency` and `sources` are that shop's — a brand page describes the shop it is
     /// showing. Optional, and absent from everything 1.0 is sent.
@@ -573,8 +583,10 @@ public struct BrandDTO: Codable, Sendable, Hashable, Identifiable {
         logoURL: String? = nil,
         sources: [BrandSourceDTO] = [],
         followMode: FollowMode? = nil,
+        followFilter: FollowFilter? = nil,
         storefront: StorefrontDTO? = nil
     ) {
+        self.followFilter = followFilter
         self.id = id
         self.name = name
         self.slug = slug
@@ -726,19 +738,44 @@ public struct BrandCheck: Codable, Sendable, Hashable, Identifiable {
     /// Whether the caller has asked to watch it. A check is shared by everybody who asks
     /// about the same shop, so this is the one field that is about *you*.
     public var isWatching: Bool
+    /// Why a refused check was refused, where the server could tell (`Refusal`). Nil on every
+    /// other status and from a server that predates it, which reads as `nothingAnswered`.
+    public var refusal: Refusal?
+
+    /// Why nothing on a site can be watched. Said, because the three have different fixes:
+    /// one is the shop refusing machines (save from Safari instead), one is a brand with no
+    /// clothes to sell online, and only the last is worth trying again.
+    public enum Refusal: String, Codable, Sendable {
+        /// Every request was turned away by bot protection, or the connection was dropped on
+        /// every one: the shop is up and will not be read by a machine. Never worked around —
+        /// see `ROADMAP.md`, *Decided*.
+        case blocksReaders
+        /// The brand sells no clothes online at all — a short, curated list (`ShopRefusal`).
+        case sellsNoClothes
+        /// Nothing answered with anything watchable, and nothing said why.
+        case nothingAnswered
+
+        /// Lenient: a reason a newer server learns reads as the generic one.
+        public init(from decoder: any Decoder) throws {
+            let raw = try decoder.singleValueContainer().decode(String.self)
+            self = Refusal(rawValue: raw) ?? .nothingAnswered
+        }
+    }
 
     public init(
         id: UUID,
         status: Status,
         probe: BrandProbe? = nil,
         brand: BrandDTO? = nil,
-        isWatching: Bool = false
+        isWatching: Bool = false,
+        refusal: Refusal? = nil
     ) {
         self.id = id
         self.status = status
         self.probe = probe
         self.brand = brand
         self.isWatching = isWatching
+        self.refusal = refusal
     }
 }
 

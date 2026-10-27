@@ -84,7 +84,7 @@ struct ProfileScope: Hashable, Sendable {
         "pendingWatchDeletes", "discoverSeen", "shopPicksToday", "shopPicksRefused",
         "shopPickReasons", "shopPicksAnnounced",
         "feedLastOnScreenAt", "feedVisitBoundary", "pollHintsFingerprint", "pollHintState",
-        "didOfferStarterPack"
+        "didOfferStarterPack", "followFilterPrompts", "followFilterChecks"
     ]
 }
 
@@ -228,6 +228,8 @@ final class ProfileSession {
     let confirmation: SaveConfirmation
     let collection: CollectionRoute
     let hints: DropHintStore
+    /// "What do you want to see from them?", asked after every new follow — see `FollowFilterPrompt`.
+    let followPrompt: FollowFilterPrompt
 
     init(scope: ProfileScope, container: ModelContainer, settings: ServerSettings, location: LocationSetting) {
         self.scope = scope
@@ -241,6 +243,8 @@ final class ProfileSession {
         confirmation = SaveConfirmation()
         collection = CollectionRoute()
         hints = DropHintStore(scope: scope)
+        followPrompt = FollowFilterPrompt(scope: scope)
+        remote.followPrompt = followPrompt
     }
 
     static let schema = Schema([

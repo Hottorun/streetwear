@@ -156,6 +156,17 @@ actor BrandChecks {
             return check
         }
 
+        // A brand whose site sells no clothes is refused before anything is fetched: no
+        // request could change the answer (`ShopRefusal.sellsNoClothes`).
+        if ShopRefusal.sellsNoClothes(host: base.host() ?? domain) {
+            let check = BrandCheckModel(domain: domain, url: base.absoluteString, status: .refused)
+            check.refusal = BrandCheck.Refusal.sellsNoClothes.rawValue
+            check.probe = try Self.encode(BrandProbe(suggestedName: nil, sources: []))
+            check.finishedAt = Date()
+            try await check.save(on: db)
+            return check
+        }
+
         let check = BrandCheckModel(domain: domain, url: base.absoluteString, status: .checking)
         try await check.save(on: db)
         let id = try check.requireID()
@@ -205,13 +216,20 @@ actor BrandChecks {
             .filter(\.$check.$id == id)
             .filter(\.$user.$id == userID)
             .count() > 0
+        let status = status(of: check)
         return BrandCheck(
             id: id,
-            status: status(of: check),
+            status: status,
             probe: check.probe.flatMap(Self.decode),
             brand: brand,
-            isWatching: isWatching
+            isWatching: isWatching,
+            refusal: status == .refused ? Self.refusal(of: check) : nil
         )
+    }
+
+    /// A refused check's reason; one refused before reasons were recorded reads as the generic.
+    static func refusal(of check: BrandCheckModel) -> BrandCheck.Refusal {
+        check.refusal.flatMap(BrandCheck.Refusal.init(rawValue:)) ?? .nothingAnswered
     }
 
     private func status(of check: BrandCheckModel) -> BrandCheck.Status {
@@ -280,12 +298,18 @@ actor BrandChecks {
         // Through the shared fetcher, so a check obeys robots.txt and queues behind the
         // poller like everything else. Read here rather than captured at init, so a test
         // can stub it after `configure`.
+        //
+        // Watched by a `ProbeLog`, which changes nothing about the requests and remembers what
+        // each came back with — the only evidence of *why* a site could not be read. A shop
+        // that refuses machines is said to, and never retried another way (`ShopRefusal`).
+        let log = ProbeLog(wrapping: app.fetcher)
         let found = await BrandDiscovery.discover(
-            website: base.absoluteString, instagramHandle: nil, http: app.fetcher
+            website: base.absoluteString, instagramHandle: nil, http: log
         )
         do {
             guard let check = try await BrandCheckModel.find(checkID, on: app.db) else { return }
             check.status = (found.canMonitor ? BrandCheck.Status.ready : .refused).rawValue
+            check.refusal = found.canMonitor ? nil : ShopRefusal.classify(log.outcomes).rawValue
             check.probe = try Self.encode(BrandProbe(
                 suggestedName: found.suggestedName,
                 sources: found.sources.map {
@@ -341,6 +365,11 @@ actor BrandChecks {
         if status(of: check) == .interrupted { return }
 
         guard status(of: check) == .ready else {
+            let body = switch Self.refusal(of: check) {
+            case .blocksReaders: "It blocks automated readers. Saving from Safari still works."
+            case .sellsNoClothes: "It doesn't sell clothes online."
+            case .nothingAnswered: "It publishes nothing Dropwall can read — no catalogue, feed, sitemap or page."
+            }
             for watcher in waiting {
                 watcher.settledAt = Date()
                 try await watcher.save(on: app.db)
@@ -348,7 +377,7 @@ actor BrandChecks {
                     await app.notifier?.tell(
                         userID: watcher.$user.id,
                         title: "Couldn't watch \(host)",
-                        body: "It publishes nothing Dropwall can read — no catalogue, feed, sitemap or page.",
+                        body: body,
                         brandID: nil,
                         collapseID: "check-\(checkID)"
                     )

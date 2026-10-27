@@ -47,6 +47,7 @@ struct ContentView: View {
     @Environment(CollectionRoute.self) private var collection: CollectionRoute
     @Environment(YouRoute.self) private var you: YouRoute
     @Environment(AIStore.self) private var ai: AIStore
+    @Environment(FollowFilterPrompt.self) private var followPrompt: FollowFilterPrompt
     @Environment(\.scenePhase) private var scenePhase
 
     /// Dev affordance, matching `-seedBrands` / `-seedSizes`: `-startTab saved`
@@ -140,6 +141,9 @@ struct ContentView: View {
         }
         // Presented once, here, whichever tab's avatar asked — see `YouRoute`.
         .sheet(isPresented: Bindable(you).isOpen) { YouView() }
+        // "What do you want to see from them?" after a follow made on any tab — see
+        // `FollowFilterPrompt`. You and the sheets below host it too, when they are on top.
+        .followFilterHost()
         // Above the tab bar rather than over the card that was saved: a half-width card has
         // no room for it, and the card in question has usually been scrolled past by the
         // time you decide to amend it anyway.
@@ -185,6 +189,7 @@ struct ContentView: View {
             // in server mode the store is empty until this sync lands, and the flag is
             // documented as working on its own.
             DevSeed.seedSavesIfRequested(in: context)
+            await followPrompt.resolveChecks(using: remote)
         }
         // The anonymous usage counts — see `UsageCounts`. An open is counted here rather
         // than in `streetwApp`, because only this view knows which tab it opened on; and in a
@@ -197,6 +202,8 @@ struct ContentView: View {
         .onChange(of: scenePhase) { _, phase in
             switch phase {
             case .active: UsageCounts.sceneBecameActive(onTab: selection)
+                // A check watched while it ran may have become a follow with the app closed.
+                Task { await followPrompt.resolveChecks(using: remote) }
             case .background: UsageCounts.sceneEnteredBackground()
             default: break
             }
@@ -268,6 +275,7 @@ struct ContentView: View {
                         }
                     }
             }
+            .followFilterHost()
             .tint(.ink)
         }
         // Both driven from the confirmation rather than from the toast, which dismisses

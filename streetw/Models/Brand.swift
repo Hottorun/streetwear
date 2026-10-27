@@ -37,6 +37,13 @@ final class Brand {
     /// In server mode a mirror of the follow row: `RemoteSync` writes it from
     /// `GET /v1/follows` and never decides it alone. Standalone it is the only copy.
     var followModeRaw: String = FollowMode.everything.rawValue
+    /// Which part of this brand reaches the feed and the lock screen (`FollowFilter`), as JSON
+    /// text, or nil for all of it. Optional and new, so a lightweight migration adds it to any
+    /// earlier store as nil — *All*, which is what every follow was.
+    ///
+    /// Like the mode: in server mode a mirror of the follow row (`GET /v1/follows`), changed
+    /// there first; standalone the only copy.
+    var followFilterJSON: String?
     var addedAt: Date = Date()
 
     var sources: [BrandSource] = []
@@ -166,6 +173,44 @@ final class Brand {
         guard followModeRaw != mode.rawValue else { return }
         followModeRaw = mode.rawValue
         for update in updates where (!update.isSeen || update.arrivedAt != nil) && !mode.admits(update.kind) {
+            update.isSeen = true
+            update.arrivedAt = nil
+        }
+    }
+
+    /// Which part of the brand is followed, or nil for all of it — see `FollowFilter`.
+    var followFilter: FollowFilter? {
+        followFilterJSON.flatMap { try? JSONDecoder().decode(FollowFilter.self, from: Data($0.utf8)) }
+    }
+
+    /// The filter, read once for deciding many rows. Hoist it out of a loop: it parses the
+    /// reader's words each time it is built.
+    var followFilterMatcher: FollowFilter.Matcher { FollowFilter.Matcher(followFilter) }
+
+    /// **Whether a row of this kind, about this garment, reaches the feed** — the mode and
+    /// the filter, both of which only take away. The one question every place that writes a
+    /// row as news asks (`RemoteSync.merge`, `SyncEngine.insert` and `refresh`); a watch never
+    /// asks it.
+    func admits(_ kind: UpdateKind, _ item: FollowFilter.Item, filter: FollowFilter.Matcher? = nil) -> Bool {
+        followMode.admits(kind) && (filter ?? followFilterMatcher).admits(kind, item)
+    }
+
+    /// Sets the filter, and takes out of the feed whatever it no longer lets through — the
+    /// same rule `apply(_:)` keeps for a mode, for the same reasons.
+    ///
+    /// **Tightening takes rows out; loosening brings nothing back.** A row the old filter kept
+    /// out was stored read and with no arrival, so it is the brand's history, and turning the
+    /// filter off does not make last week's tees news today. Nothing is deleted: the brand's
+    /// page is its whole catalogue whatever the follow lets through.
+    func apply(_ filter: FollowFilter?) {
+        let stored = filter?.normalized
+        let json = stored.flatMap { try? JSONEncoder().encode($0) }.map { String(decoding: $0, as: UTF8.self) }
+        guard followFilterJSON != json else { return }
+        followFilterJSON = json
+        let matcher = FollowFilter.Matcher(stored)
+        guard !matcher.isEmpty else { return }
+        for update in updates where (!update.isSeen || update.arrivedAt != nil)
+            && !matcher.admits(update.kind, update.followItem) {
             update.isSeen = true
             update.arrivedAt = nil
         }

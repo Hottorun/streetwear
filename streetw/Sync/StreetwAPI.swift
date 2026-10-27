@@ -255,6 +255,21 @@ struct StreetwAPI: Sendable {
         )
     }
 
+    /// The filter, with the mode it sits beside — the body must carry one, and sending the
+    /// one already held changes nothing. An empty filter is *All*.
+    func setFollowFilter(brandID: UUID, mode: FollowMode, filter: FollowFilter) async throws {
+        try await sendVoid(
+            path: "v1/follows/\(brandID.uuidString)",
+            method: "PATCH",
+            body: UpdateFollow(mode: mode, filter: filter)
+        )
+    }
+
+    /// The brand's biggest categories, for the dialog a new follow raises.
+    func categories(brandID: UUID) async throws -> BrandCategories {
+        try await send(path: "v1/brands/\(brandID.uuidString)/categories", method: "GET", body: Optional<Never>.none)
+    }
+
     func unfollow(brandID: UUID) async throws {
         try await sendVoid(path: "v1/follows/\(brandID.uuidString)", method: "DELETE", body: Optional<Never>.none)
     }
