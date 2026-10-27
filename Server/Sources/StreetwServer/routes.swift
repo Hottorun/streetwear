@@ -240,6 +240,10 @@ func routes(_ app: Application) throws {
 
     productRoutes(authed: authed)
 
+    // MARK: AI
+
+    aiRoutes(app, authed: authed)
+
     // MARK: Brands
 
     /// Search the shared catalog by name *or* address.
