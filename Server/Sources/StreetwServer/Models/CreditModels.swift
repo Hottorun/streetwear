@@ -90,3 +90,26 @@ final class CostRecordModel: Model, @unchecked Sendable {
 
     init() {}
 }
+
+/// A daily pick's sentence, shared by everybody whose pick was described the same way. See
+/// `CreateAIPickReasons`.
+final class AIPickReasonModel: Model, @unchecked Sendable {
+    static let schema = "ai_pick_reasons"
+
+    @ID(key: .id) var id: UUID?
+    /// `sha256(productExternalID|anchor|basis)`, hex.
+    @Field(key: "key") var key: String
+    @Field(key: "reason") var reason: String
+    /// The model that wrote it.
+    @Field(key: "model") var model: String
+    @Field(key: "created_at") var createdAt: Date
+
+    init() {}
+
+    init(key: String, reason: String, model: String, createdAt: Date) {
+        self.key = key
+        self.reason = reason
+        self.model = model
+        self.createdAt = createdAt
+    }
+}

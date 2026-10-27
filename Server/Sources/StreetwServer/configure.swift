@@ -157,6 +157,15 @@ func configure(_ app: Application) async throws {
         app.logger.notice("search: full-text; semantic search unavailable (\(why))")
     }
 
+    // On with a key or with the fake, off otherwise, and said here either way — the embedding
+    // provider's rule. See `docs/ai.md`.
+    app.ai = AIService.make(
+        environment: ProcessInfo.processInfo.environment,
+        isProduction: app.environment == .production,
+        client: app.client,
+        logger: app.logger
+    )
+
     if Environment.get("DISABLE_POLLER") != "true" {
         let loop = PollLoop(poller: poller, notifier: notifier, reaper: reaper)
         app.storage[PollLoopKey.self] = loop
@@ -298,4 +307,6 @@ func addMigrations(to app: Application) {
     app.migrations.add(CreateCatalogueScans())
     app.migrations.add(AddProductSearch())
     app.migrations.add(AddProductEmbeddings())
+    app.migrations.add(CreateAIPickReasons())
+    app.migrations.add(AddSaleReading())
 }

@@ -239,6 +239,17 @@ final class RateLimits: @unchecked Sendable {
     /// route being a way to make the server do crypto on a stranger's say-so. Apple sends one
     /// per refund and retries a few times; sixty in a burst, six hundred an hour.
     let storeNotifications = RateLimitStore(capacity: 60, refillPerSecond: 600.0 / 3600)
+
+    /// The model-backed actions, per device. Each one is a provider call that costs money and
+    /// seconds whatever the caller's credits — an unlimited account and a free follow-up turn
+    /// are both still calls. Thirty in a burst and four a minute: somebody refining a search
+    /// by hand types far slower than that.
+    let ai = RateLimitStore(capacity: 30, refillPerSecond: 4.0 / 60)
+
+    /// Model calls for daily-pick sentences, per device: a dozen a day. Only a cache miss
+    /// spends one, and the phone asks once per day's picks, so this is far above an app's need
+    /// and well below a script's — the owner pays for these.
+    let pickReasons = RateLimitStore(capacity: 12, refillPerSecond: 12.0 / 86_400)
 }
 
 extension Application {
