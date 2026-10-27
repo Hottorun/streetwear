@@ -472,6 +472,54 @@ fit editor; the starter pack of six womenswear and six menswear shops. See
       visible text, two a pass. Owner-paid, metered as nobody's, stopped for the UTC day at
       `AI_BACKGROUND_DAILY_CAP_MICROS` ($1 by default). The app does not print the sale's end yet.
 
+### Phase 5 — search at the centre (1.4), then picks from everything (1.5)
+
+Agreed with the owner on 2026-10-27. 1.4:
+
+- [ ] **One search over the whole catalogue.** One ranked list across every shop the server
+      watches, followed brands given a fixed boost; chips "More from my brands" (raises it) and
+      "Only my brands" (limits to them); a "How we sort" note reachable from the results (match,
+      followed brands, taste, size — never commission). The line under the field still says what
+      was searched. The app opens on Shop; the tab order stays.
+- [ ] **Meaning counts.** A product the embeddings find close to the query is a result even
+      without the typed words, with its reason printed; the grammar still decides price bounds,
+      "no …", size and gender. Web search stays an explicit, paid step at the end of the results,
+      offered on its own when the catalogue finds little.
+- [ ] **A search eval.** About fifty real searches with judged answers, run before and after
+      every ranking change.
+- [ ] **Search by photo.** The sidecar takes image bytes; the scan's "find this" matches the
+      picture. The scan's reading gains a short name, used as the save's title, the description
+      kept as its note.
+- [ ] **Follow only part of a brand.** A follow gets an optional filter: category chips plus the
+      reader's own words in the `ShopQuery` grammar, evaluated on both ends like `FollowMode`
+      (what it does not admit is stored read and never pushed; tightening it does not resurrect).
+      Unplaceable products and brand-wide sales always pass. On every new follow a dialog offers
+      All, the brand's three biggest categories, and own words; editable in the follow menu.
+- [ ] **The share sheet stays until Done.** It reads the page Safari already loaded (JavaScript
+      preprocessing: title, photographs, price, JSON-LD, product or shop page) — which fixes
+      Intimissimi's missing photographs and gives a blocked shop's saves their pictures — offers
+      board chips (from a per-profile board list the app writes into the App Group) and, on a shop
+      page, "Follow this shop", saying the app will ask what to see when it next opens. Still no
+      networking and no SwiftData in the extension. Every question a share raises is kept until
+      answered. The app's own fallback reads JSON-LD and retries saves with no photograph.
+- [ ] **The product photograph and style words, read once per product.** FashionSigLIP zero-shot
+      on the server: which photograph is the clean product shot (the others embedded only when
+      the first shows a person) and a few style words, stored once and sent on the wire; the
+      phone's Vision check becomes the fallback. Evaluated against Claude Haiku on ~200 products
+      first; switched to Claude only if it clearly wins.
+- [ ] **A blocked shop says why** — "blocks automated readers, saving from Safari still works",
+      "doesn't sell clothes online".
+
+1.5:
+
+- [ ] **Daily picks from the whole catalogue**, from a numeric taste summary (the average of the
+      saved products' vectors, computed on the phone; opt-in; policy and label first).
+- [ ] **"Find me things like my style"** — a paid web search from a short description of taste.
+- [ ] **Awin product feeds** (the owner applies as KERN AG): a daily feed source; feed shops in
+      search, picks and sale alerts but not drop alerts, "Updated daily"; every feed buy link
+      marked "Ad · Dropwall may earn a commission" ("Werbelink"); commission never ranks;
+      review notes, privacy policy and About updated.
+
 ### Later
 
 - **A UCP cart, handed over to finish.** The sanctioned version of auto-buy: for a shop that
