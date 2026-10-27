@@ -56,6 +56,12 @@ enum FitRender {
         guard !fit.isGone else { return false }
         var isComplete = true
         for entry in fit.placed where entry.item.update?.cutoutFile == nil {
+            // A garment of your own is local files, which `FitPieceImage` decodes inline — so
+            // the only question is whether they are still there.
+            if entry.item.update == nil {
+                if LocalImage.load(entry.item.ownCutoutURL ?? entry.item.ownPhotoURL) == nil { isComplete = false }
+                continue
+            }
             // The same photograph `FitPieceImage` will draw, at the same width — asking for
             // a different one warms a cache entry the renderer never looks in, and writes a
             // fit with a hole where the piece should be.

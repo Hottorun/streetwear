@@ -5,6 +5,7 @@
 //  Created by Dimitris Kern on 09.08.26.
 //
 
+import StreetwCore
 import SwiftData
 import SwiftUI
 
@@ -45,6 +46,7 @@ struct ContentView: View {
     @Environment(SaveConfirmation.self) private var confirmation: SaveConfirmation
     @Environment(CollectionRoute.self) private var collection: CollectionRoute
     @Environment(YouRoute.self) private var you: YouRoute
+    @Environment(AIAvailability.self) private var ai: AIAvailability
     @Environment(\.scenePhase) private var scenePhase
 
     /// Dev affordance, matching `-seedBrands` / `-seedSizes`: `-startTab saved`
@@ -204,6 +206,9 @@ struct ContentView: View {
         // first open is counted before registration has finished, and this is what sends it
         // once it has — and sends again after a stale token has been replaced.
         .task(id: settings.token) { await UsageCounts.report(force: true) }
+        // On the token for the same first-launch reason, and on the account because the answer
+        // says whether the caller can spend — a sign-in changes it with the token unchanged.
+        .task(id: "\(settings.token ?? "")|\(settings.account?.id.uuidString ?? "")") { await ai.refresh() }
         // Also here, not only on `scenePhase`: `onChange` fires on *changes*, and a cold
         // launch has no previous phase to change from — so anything shared while the app
         // was not running would sit in the inbox until the user backgrounded and

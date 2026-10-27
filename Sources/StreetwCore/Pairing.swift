@@ -73,7 +73,8 @@ public struct Garment: Sendable, Hashable {
         secondaryColor: String? = nil,
         busyness: Double = 0,
         textCoverage: Double = 0,
-        silhouette: String? = nil
+        silhouette: String? = nil,
+        slot known: GarmentSlot? = nil
     ) {
         self.id = id
         self.title = title
@@ -87,12 +88,19 @@ public struct Garment: Sendable, Hashable {
         self.silhouette = silhouette
         self.layer = LayerClassifier.layer(title: title, productType: productType, tags: tags)
         self.isSet = GarmentClassifier.isSet(title: title, productType: productType, tags: tags)
-        self.slot = GarmentClassifier.classify(
-            title: title,
-            productType: productType,
-            tags: tags,
-            visionCategories: visionCategories
-        )
+        // A slot somebody already read off the photograph — the scan's — beats one read off
+        // its own few words, which is all the text classifier would have. `.unknown` is not
+        // an answer, so it falls through to the classifier rather than gating the garment out.
+        if let known, known != .unknown {
+            self.slot = known
+        } else {
+            self.slot = GarmentClassifier.classify(
+                title: title,
+                productType: productType,
+                tags: tags,
+                visionCategories: visionCategories
+            )
+        }
         self.vocabulary = Set(
             ([title, productType ?? ""] + tags + visionCategories)
                 .flatMap { $0.lowercased().split { !$0.isLetter && !$0.isNumber } }
