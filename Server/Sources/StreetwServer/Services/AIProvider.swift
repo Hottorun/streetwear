@@ -196,11 +196,22 @@ enum AIPricing {
 /// Nil on `Application` means AI is off, and `GET /v1/ai` says so.
 struct AIService: Sendable {
     var provider: any AIProvider
-    /// Signs `AIThreadToken`s.
-    var threadKey: SymmetricKey
+    /// The key's bytes, not the key. swift-crypto's `SymmetricKey` is `Sendable` on Apple
+    /// platforms (it is CryptoKit's there) and not on Linux, so holding one here compiles on
+    /// the Mac and fails the deploy's build — the trap `AppleClientSecret.keyData` documents.
+    private var threadSecret: Data
     /// What the owner pays per UTC day, at most, for work nobody asked for: background
     /// reading and daily-pick sentences.
     var backgroundDailyCapMicros: Int64
+
+    /// Signs `AIThreadToken`s.
+    var threadKey: SymmetricKey { SymmetricKey(data: threadSecret) }
+
+    init(provider: any AIProvider, threadKey: SymmetricKey, backgroundDailyCapMicros: Int64) {
+        self.provider = provider
+        self.threadSecret = threadKey.withUnsafeBytes { Data($0) }
+        self.backgroundDailyCapMicros = backgroundDailyCapMicros
+    }
 
     static let defaultBackgroundCapMicros: Int64 = 1_000_000
 
