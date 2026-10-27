@@ -192,6 +192,10 @@ struct SaveDetailView: View {
                 // it sits on a product page, which is arguing for the save in the first
                 // place.
                 if let update { GoesWith(subject: update) }
+                // Then alternatives to it, the product page's row — only where a shop's
+                // catalogue stands behind the save. A link from a blog, or a garment of your
+                // own, has no catalogue to be like.
+                if let update, update.brand != nil { SimilarItems(to: update) }
             }
             .scrollIndicators(.hidden)
             .background(Color.paper)

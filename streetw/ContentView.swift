@@ -5,6 +5,7 @@
 //  Created by Dimitris Kern on 09.08.26.
 //
 
+import StreetwCore
 import SwiftData
 import SwiftUI
 
@@ -45,6 +46,7 @@ struct ContentView: View {
     @Environment(SaveConfirmation.self) private var confirmation: SaveConfirmation
     @Environment(CollectionRoute.self) private var collection: CollectionRoute
     @Environment(YouRoute.self) private var you: YouRoute
+    @Environment(AIStore.self) private var ai: AIStore
     @Environment(\.scenePhase) private var scenePhase
 
     /// Dev affordance, matching `-seedBrands` / `-seedSizes`: `-startTab saved`
@@ -204,6 +206,13 @@ struct ContentView: View {
         // first open is counted before registration has finished, and this is what sends it
         // once it has — and sends again after a stale token has been replaced.
         .task(id: settings.token) { await UsageCounts.report(force: true) }
+        // Whether anything AI is drawn, and what it costs, for every tab at once — at the root
+        // because Shop's field and Saved's scan both ask. Keyed on the token (first launch
+        // appears before registration), the account (signing in turns "Sign in to use" into a
+        // price) and, through `.id(session.scope)` above this view, the profile.
+        .task(id: AIStatusKey(token: settings.token, account: settings.account?.id)) {
+            await ai.refresh()
+        }
         // Also here, not only on `scenePhase`: `onChange` fires on *changes*, and a cold
         // launch has no previous phase to change from — so anything shared while the app
         // was not running would sit in the inbox until the user backgrounded and
@@ -350,6 +359,10 @@ struct ContentView: View {
             } else {
                 selection = "feed"
             }
+        case .tab(let name):
+            // Today's picks: a set, not one product, so the tab they are on.
+            you.isOpen = false
+            selection = Tabs.resolve(name)
         case .none:
             break
         }
@@ -374,6 +387,12 @@ struct ContentView: View {
         let hasBrand = ((try? context.fetch(descriptor))?.isEmpty == false)
         isOnboarding = !hasBrand && !didOfferStarterPack
     }
+}
+
+/// What the AI status is asked again on.
+private struct AIStatusKey: Hashable {
+    var token: String?
+    var account: UUID?
 }
 
 #Preview {

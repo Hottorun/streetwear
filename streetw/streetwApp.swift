@@ -42,6 +42,10 @@ struct streetwApp: App {
     /// see `CreditStore.start`. **The account's, not a profile's**: every profile spends from
     /// the one ledger, so a switch must neither rebuild it nor ask the server again.
     @State private var credits: CreditStore
+    /// Whether the model-backed actions exist here and what each costs — and the one way to
+    /// call them, which hands every charge to `credits`. The account's, for `credits`' reason.
+    /// See `AIStore`.
+    @State private var ai: AIStore
 
     init() {
         Net.configureSharedCache()
@@ -72,6 +76,7 @@ struct streetwApp: App {
         MainActor.assumeIsolated { credits.start() }
         _location = State(initialValue: location)
         _credits = State(initialValue: credits)
+        _ai = State(initialValue: MainActor.assumeIsolated { AIStore(settings: settings, credits: credits) })
         _settings = State(initialValue: settings)
         _profiles = State(initialValue: profiles)
         _analysis = State(initialValue: MainActor.assumeIsolated { DiscoveryAnalysis() })
@@ -92,6 +97,7 @@ struct streetwApp: App {
                 .environment(session.sizes)
                 .environment(location)
                 .environment(credits)
+                .environment(ai)
                 .environment(session.statement)
                 .environment(session.remote)
                 .environment(session.engine)
