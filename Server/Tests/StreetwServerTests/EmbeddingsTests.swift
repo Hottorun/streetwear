@@ -120,6 +120,26 @@ private func answerJSON(
 
 @Suite("Embedding sidecar provider")
 struct EmbeddingsTests {
+    /// Alo Yoga's 40 tags made a text the sidecar refused (413), and the backfill stalled on
+    /// that batch in production.
+    @Test func aProductsTextStaysUnderTheSidecarsLimit() {
+        let tags = (1...60).map { "Alo Yoga Legging Tag Number \($0)" }
+        let text = SemanticIndex.text(
+            title: "7/8 High-Waist Airlift Legging", productType: "Leggings",
+            tags: tags, brand: "Alo Yoga", colours: ["Burgundy"]
+        )
+        #expect(text.unicodeScalars.count <= SemanticIndex.maxTextLength)
+        #expect(text.hasPrefix("7/8 High-Waist Airlift Legging · Leggings · Alo Yoga · Burgundy · "))
+        #expect(!text.hasSuffix(" · "))
+        // Whole tags only: whatever was cut, every tag left is complete.
+        #expect(text.components(separatedBy: " · ").dropFirst(4).allSatisfy(tags.contains))
+
+        let long = String(repeating: "é", count: 800)
+        #expect(SemanticIndex.text(title: long, productType: nil, tags: [], brand: "B", colours: [])
+            .unicodeScalars.count == SemanticIndex.maxTextLength)
+        #expect(SemanticIndex.text(title: "Tee", productType: nil, tags: ["a"], brand: "B", colours: []) == "Tee · B · a")
+    }
+
     @Test func offUnlessBothVariablesAreSet() {
         typealias C = SidecarEmbeddingProvider.Configuration
         #expect(C.from(environment: [:]) == nil)

@@ -513,11 +513,31 @@ enum SemanticIndex {
     /// The text a product is embedded from: what it is called, what it is filed as, how it is
     /// tagged, who makes it and what colours it comes in — the fields the grammar reads, so
     /// the two indexes describe the same thing.
+    ///
+    /// **Capped at `maxTextLength`, by whole parts in that order.** The sidecar refuses a text
+    /// over 1,000 characters with a 413 for the whole batch, and Alo Yoga files 40 tags on a
+    /// legging — so the backfill retried the same batch every minute and embedded nothing
+    /// more, in production. Both models read 64 tokens and drop the rest, so nothing cut here
+    /// ever reached a vector. Counted in Unicode scalars because that is what Python's `len`
+    /// counts; a `String.count` of graphemes can be shorter than the sidecar's measure.
+    static let maxTextLength = 500
+
     static func text(title: String, productType: String?, tags: [String], brand: String, colours: [String]) -> String {
-        ([title, productType ?? "", brand] + colours + tags)
+        let parts = ([title, productType ?? "", brand] + colours + tags)
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
-            .joined(separator: " · ")
+        let separator = " · "
+        var out = ""
+        for part in parts {
+            let next = out.isEmpty ? part : out + separator + part
+            if next.unicodeScalars.count > maxTextLength {
+                // The title alone may be over: cut it rather than send nothing.
+                if out.isEmpty { out = String(String.UnicodeScalarView(part.unicodeScalars.prefix(maxTextLength))) }
+                break
+            }
+            out = next
+        }
+        return out
     }
 }
 

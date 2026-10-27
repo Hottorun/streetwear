@@ -1,5 +1,6 @@
 import logging
 import socket
+import sys
 
 import uvicorn
 
@@ -26,7 +27,10 @@ def dual_stack_socket(port: int) -> socket.socket:
 
 
 def main() -> None:
-    logging.basicConfig(level=logging.INFO)
+    # stdout, because Railway marks every stderr line as an error; and no line per photograph
+    # fetched, which during a backfill is a few a second of `200 OK`.
+    logging.basicConfig(level=logging.INFO, stream=sys.stdout)
+    logging.getLogger("httpx").setLevel(logging.WARNING)
     settings = Settings.from_env()
     if not settings.token:
         logging.warning("EMBEDDING_TOKEN is not set: every embed request will be refused")
