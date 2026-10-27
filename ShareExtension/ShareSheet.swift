@@ -51,12 +51,14 @@ final class ShareDraft {
     let colors: [String]
     let marksDownAreSaid: Bool
 
-    var chosenBoards: Set<UUID> = [] { didSet { write() } }
-    var newBoards: [String] = [] { didSet { write() } }
-    var follows = false { didSet { write() } }
-    var notifies = false { didSet { write() } }
-    var chosenSizes: Set<String> = [] { didSet { write() } }
-    var chosenColor: String? { didSet { write() } }
+    // Changed only through the methods below, each of which rewrites the file — never through
+    // property observers, so no choice can be drawn without also being written.
+    private(set) var chosenBoards: Set<UUID> = []
+    private(set) var newBoards: [String] = []
+    private(set) var follows = false
+    private(set) var notifies = false
+    private(set) var chosenSizes: Set<String> = []
+    private(set) var chosenColor: String?
 
     init(failure: Failure) {
         self.failure = failure
@@ -135,6 +137,43 @@ final class ShareDraft {
         } else {
             newBoards.append(name)
         }
+        write()
+    }
+
+    func removeNewBoard(_ name: String) {
+        newBoards.removeAll { $0 == name }
+        write()
+    }
+
+    func toggleBoard(_ id: UUID) {
+        if chosenBoards.contains(id) { chosenBoards.remove(id) } else { chosenBoards.insert(id) }
+        write()
+    }
+
+    func toggleFollow() {
+        follows.toggle()
+        write()
+    }
+
+    func toggleNotify() {
+        notifies.toggle()
+        write()
+    }
+
+    /// Nil is any size.
+    func toggleSize(_ size: String?) {
+        if let size {
+            if chosenSizes.contains(size) { chosenSizes.remove(size) } else { chosenSizes.insert(size) }
+        } else {
+            chosenSizes = []
+        }
+        write()
+    }
+
+    /// Nil is any colour; choosing the chosen one again clears it.
+    func chooseColor(_ color: String?) {
+        chosenColor = color == chosenColor ? nil : color
+        write()
     }
 
     private func write() {
@@ -166,6 +205,7 @@ struct ShareSheet: View {
 
     @State private var isNaming = false
     @State private var boardName = ""
+    @FocusState private var isTyping: Bool
 
     var body: some View {
         VStack(spacing: 0) {
@@ -203,7 +243,7 @@ struct ShareSheet: View {
     private var content: some View {
         if draft.role == .shop {
             header(
-                label: draft.follows ? "NOTHING SAVED · FOLLOWING INSTEAD" : "SAVED AS A LINK",
+                label: draft.follows ? "NOTHING SAVED" : "SAVED AS A LINK",
                 title: draft.shopName
             )
             followSection
@@ -240,10 +280,10 @@ struct ShareSheet: View {
         } else {
             VStack(alignment: .leading, spacing: 10) {
                 ShareChip(
-                    label: draft.follows ? "Following \(draft.shopName)" : "Follow \(draft.shopName)",
+                    label: "Follow \(draft.shopName)",
                     isOn: draft.follows,
                     systemImage: draft.follows ? "checkmark" : "plus"
-                ) { draft.follows.toggle() }
+                ) { draft.toggleFollow() }
                 Text(draft.follows
                      ? "Dropwall will ask what you want to see when you next open it."
                      : "This looks like a shop rather than one product.")
@@ -263,26 +303,26 @@ struct ShareSheet: View {
             ShareFlow(spacing: 8) {
                 ForEach(draft.boards) { board in
                     ShareChip(label: board.name, isOn: draft.chosenBoards.contains(board.id)) {
-                        if draft.chosenBoards.contains(board.id) {
-                            draft.chosenBoards.remove(board.id)
-                        } else {
-                            draft.chosenBoards.insert(board.id)
-                        }
+                        draft.toggleBoard(board.id)
                     }
                 }
                 ForEach(draft.newBoards, id: \.self) { name in
                     ShareChip(label: name, isOn: true, systemImage: "xmark") {
-                        draft.newBoards.removeAll { $0 == name }
+                        draft.removeNewBoard(name)
                     }
                 }
                 if !isNaming {
-                    ShareChip(label: "New board…", isOn: false, systemImage: "plus") { isNaming = true }
+                    ShareChip(label: "New board…", isOn: false, systemImage: "plus") {
+                        isNaming = true
+                        isTyping = true
+                    }
                 }
             }
             if isNaming {
                 HStack(spacing: 10) {
                     TextField("Board name", text: $boardName)
                         .font(ShareStyle.editorial(15))
+                        .focused($isTyping)
                         .submitLabel(.done)
                         .onSubmit(addBoard)
                         .padding(.horizontal, 12)
@@ -311,7 +351,7 @@ struct ShareSheet: View {
                 label: "Notify me",
                 isOn: draft.notifies,
                 systemImage: draft.notifies ? "bell.fill" : "bell"
-            ) { draft.notifies.toggle() }
+            ) { draft.toggleNotify() }
 
             if draft.notifies {
                 if draft.sizes.isEmpty {
@@ -321,15 +361,11 @@ struct ShareSheet: View {
                         ShareLabel(text: "SIZE")
                         ShareFlow(spacing: 8) {
                             ShareChip(label: "Any size", isOn: draft.chosenSizes.isEmpty) {
-                                draft.chosenSizes = []
+                                draft.toggleSize(nil)
                             }
                             ForEach(draft.sizes, id: \.self) { size in
                                 ShareChip(label: size, isOn: draft.chosenSizes.contains(size)) {
-                                    if draft.chosenSizes.contains(size) {
-                                        draft.chosenSizes.remove(size)
-                                    } else {
-                                        draft.chosenSizes.insert(size)
-                                    }
+                                    draft.toggleSize(size)
                                 }
                             }
                         }
@@ -340,17 +376,19 @@ struct ShareSheet: View {
                         ShareLabel(text: "COLOUR")
                         ShareFlow(spacing: 8) {
                             ShareChip(label: "Any colour", isOn: draft.chosenColor == nil) {
-                                draft.chosenColor = nil
+                                draft.chooseColor(nil)
                             }
                             ForEach(draft.colors, id: \.self) { color in
                                 ShareChip(label: color, isOn: draft.chosenColor == color) {
-                                    draft.chosenColor = draft.chosenColor == color ? nil : color
+                                    draft.chooseColor(color)
                                 }
                             }
                         }
                     }
                 }
-                note("Dropwall tells you when one of these is back in stock.")
+                if !draft.sizes.isEmpty {
+                    note("Dropwall tells you when one of these is back in stock.")
+                }
             }
             if draft.marksDownAreSaid {
                 note("If it's marked down, Dropwall tells you that too.")

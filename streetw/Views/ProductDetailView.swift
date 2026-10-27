@@ -570,8 +570,13 @@ struct WatchEditor: View {
     /// matters.
     private var allSizes: [String] {
         var seen = Set<String>()
+        // A variant whose only label is the product's own name is not a size. Intimissimi's
+        // JSON-LD lists each size as a product named exactly like its group, so a shared
+        // Intimissimi page offered "LANGARMSHIRT AUS KASCHMIR-MODAL…" as the one size to watch.
+        let name = update.title.lowercased()
         return update.variants
             .filter(\.isMeaningfulSize)
+            .filter { $0.size != nil || $0.title.lowercased() != name }
             .filter { color == nil || $0.color?.caseInsensitiveCompare(color!) == .orderedSame }
             .map(\.displaySize)
             .filter { seen.insert($0).inserted }

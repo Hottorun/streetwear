@@ -50,6 +50,7 @@ enum SharedSaveImporter {
     /// hang with it: a card with no photograph is a poor card, but a save that never
     /// arrives is a lost one, so the fetch is capped and the item is filed regardless.
     private static let metadataTimeout: Duration = .seconds(12)
+    private static var isDraining = false
 
     /// Files everything waiting in the inbox into the store. Returns how many landed.
     ///
@@ -71,6 +72,13 @@ enum SharedSaveImporter {
         remote: RemoteSync?,
         confirm: SaveConfirmation? = nil
     ) async -> Int {
+        // One drain at a time. A cold launch runs two — `ContentView`'s `.task` and the
+        // scene-phase drain — and both read the same file before either removed it, so every
+        // share was fetched twice and filed once.
+        guard !isDraining else { return 0 }
+        isDraining = true
+        defer { isDraining = false }
+
         let scope = scope ?? ProfileScope.active
         let known = ProfileScope.known
         // By store, never by "whoever is current": a share filed while another Apple ID was
@@ -302,7 +310,14 @@ enum SharedSaveImporter {
         var seen = Set<String>()
         let candidates = (((try? context.fetch(due)) ?? []) + ((try? context.fetch(stale)) ?? []))
             .filter { $0.externalID.hasPrefix("shared:") && seen.insert($0.externalID).inserted }
-            .filter { $0.variants.isEmpty || $0.imageURLStrings.isEmpty }
+            // Thin, or a Shopify product the catalogue did not answer for at import — read from
+            // its page instead, it has sizes but not the `shopify:` identity that lands it on
+            // the row a followed brand's feed already holds.
+            .filter { update in
+                update.variants.isEmpty || update.imageURLStrings.isEmpty
+                    || (update.productExternalID == nil
+                        && update.linkURL.flatMap(ShopifySource.productHandle(in:)) != nil)
+            }
             .prefix(repairBatch)
         guard !candidates.isEmpty else { return 0 }
 
@@ -472,27 +487,18 @@ enum SharedSaveImporter {
     }
 
     private static func fetchPage(_ url: URL) async -> Fetched {
-        await withTaskGroup(of: Fetched?.self) { group in
-            group.addTask {
-                do {
-                    let response = try await Net.live.get(url)
-                    if response.status == 429 || response.status >= 500 { return .failed(.unavailable) }
-                    guard response.status == 200,
-                          let html = String(data: response.data, encoding: .utf8)
-                            ?? String(data: response.data, encoding: .isoLatin1)
-                    else { return .failed(.gone) }
-                    return .page(html: html, base: response.finalURL ?? url)
-                } catch {
-                    return .failed(.unavailable)
-                }
+        await answer(within: metadataTimeout, or: .failed(.unavailable)) {
+            do {
+                let response = try await Net.live.get(url)
+                if response.status == 429 || response.status >= 500 { return .failed(.unavailable) }
+                guard response.status == 200,
+                      let html = String(data: response.data, encoding: .utf8)
+                        ?? String(data: response.data, encoding: .isoLatin1)
+                else { return .failed(.gone) }
+                return .page(html: html, base: response.finalURL ?? url)
+            } catch {
+                return .failed(.unavailable)
             }
-            group.addTask {
-                try? await Task.sleep(for: metadataTimeout)
-                return nil
-            }
-            let first = await group.next() ?? nil
-            group.cancelAll()
-            return first ?? .failed(.unavailable)
         }
     }
 
@@ -501,15 +507,40 @@ enum SharedSaveImporter {
     /// a price, while this gives the size run, the colourways and which of them are gone —
     /// which is the difference between a saved link and something you can put a watch on.
     private static func catalogProduct(for url: URL) async -> FetchedItem? {
-        await withTaskGroup(of: FetchedItem?.self) { group in
-            group.addTask { await ShopifySource.product(at: url) }
-            group.addTask {
-                try? await Task.sleep(for: metadataTimeout)
-                return nil
+        await answer(within: metadataTimeout, or: nil) { await ShopifySource.product(at: url) }
+    }
+
+    /// `work`'s answer, or `fallback` once `limit` has passed — **at the deadline, whether or
+    /// not `work` listens.** These used to be task groups racing a sleep, and a task group
+    /// cancels its children and then *waits for them*: a request that does not hear
+    /// cancellation held the drain until its own timeout, so a share of a Kith product took
+    /// 57 seconds to file against a twelve-second cap while the phone's own sync crowded the
+    /// host. The work runs unstructured instead and is cancelled and left to finish on its own;
+    /// the same conclusion the server's `withTimeout` reached for the embedding sidecar.
+    private static func answer<T: Sendable>(
+        within limit: Duration,
+        or fallback: T,
+        _ work: @escaping @Sendable () async -> T
+    ) async -> T {
+        await withCheckedContinuation { continuation in
+            let once = FirstAnswer(continuation)
+            let worker = Task { once.give(await work()) }
+            Task {
+                try? await Task.sleep(for: limit)
+                once.give(fallback)
+                worker.cancel()
             }
-            let first = await group.next() ?? nil
-            group.cancelAll()
-            return first
+        }
+    }
+
+    /// A continuation resumed by whichever answer arrives first. Main-actor bound, like
+    /// everything here, so the two can never resume it together.
+    private final class FirstAnswer<T> {
+        private var continuation: CheckedContinuation<T, Never>?
+        init(_ continuation: CheckedContinuation<T, Never>) { self.continuation = continuation }
+        func give(_ value: T) {
+            continuation?.resume(returning: value)
+            continuation = nil
         }
     }
 
@@ -577,11 +608,11 @@ enum SharedSaveImporter {
         if let declared = metadata.siteName, let tidied = BrandNaming.tidy(declared) {
             update.siteName = tidied
         }
-        // This read is the enrichment; a repair is owed only by a later revision. With no
-        // photograph because the page did not answer, the first retry is a few minutes off —
-        // the commonest reason is a request that did not get through this once, and the
-        // repair pass right behind this drain would only ask the same page again at once.
-        update.enrichmentVersion = enrichmentVersion
+        // With no photograph because the page did not answer, the first retry is a few minutes
+        // off — the commonest reason is a request that did not get through this once, and the
+        // repair pass right behind this drain would only ask the same page again at once. The
+        // version is left at 0, so a share the catalogue did not answer gets the one repair
+        // look it always had.
         if update.imageURLStrings.isEmpty, reading.outcome == .unavailable {
             update.photoRetryAt = Date().addingTimeInterval(firstPhotoRetry)
         }

@@ -220,7 +220,7 @@ plutil -p /tmp/streetw-dd/Build/Products/Debug-iphonesimulator/streetw.app/Info.
 ### Tests
 
 ```bash
-swift test                                    # all 725
+swift test                                    # all 734
 cd Server && swift test                       # 397, of which 13 need STREETW_TEST_POSTGRES_URL (run those --no-parallel)
 cd Embeddings && pytest                       # 63; -m slow adds 3 against real weights
 swift test --filter "Size normalisation"      # one suite
@@ -832,15 +832,21 @@ things named either side of "with" — and ignores the rest. Written in `Streetw
 
 `Shared/` is compiled into **both** targets and `SharedInbox` is the contract between them. The
 extension does no networking and touches no SwiftData: it writes one JSON file into the App Group
-container and returns. The app enriches on the next foreground (`SharedSaveImporter`), preferring
-the catalogue (`/products/<handle>.js`, which has `available`) over Open Graph.
+container the moment the sheet opens, and the sheet then stays until Done, rewriting that file
+with each choice (boards, Notify me, Follow on a shop's page — all intents). From Safari it carries
+the page as loaded (`ReadPage.js`: tags, raw JSON-LD, pictures). The app enriches on the next
+foreground (`SharedSaveImporter`): the catalogue (`/products/<handle>.js`, which has `available`),
+then Safari's page, then its own fetch, all three read with `ProductPage`. Every question a share
+raises is kept in `ShareQuestions` until it has been seen.
 
 **Read `docs/share-extension.md` before touching `SharedInbox`, `SharedSaveImporter`, the App Group,
 or anything about entitlements.** Notably: adding the App Group silently moved the SwiftData store,
 so `ProfileSession.container(for:)` pins the store URL explicitly — don't remove that. Also covered: one file per save
 with reading separate from deleting, `enrichmentVersion` giving a bad landing another chance,
 `registrableDomain` matching a brand across its hostnames, `brandLabel` when there is no brand, and
-why the sold-out prompt is asked by the app rather than the extension.
+why the sold-out prompt is asked by the app rather than the extension. And the contract-2 rules:
+the lenient versioned inbox file, `isSettled`, `SharedContext` per store, `PageRole`, one question
+answered once, `.gone`/`.unavailable` photo retries, and fetch caps that return at the deadline.
 
 ### SwiftData specifics
 
@@ -1028,6 +1034,7 @@ the local path in the `else`. Adding a new one means adding both halves:
 | price drops on saved items | none — saves never leave the phone; `PriceAlerts` reads the synced markdowns in both modes |
 | brand-wide sales, sale banners | poller only (`CatalogueSale`, `SaleBanners`); standalone detects neither |
 | find a brand | `GET /v1/brands?q=` (name **or** pasted URL) |
+| "Follow this shop" from the share sheet | `GET /v1/brands?q=<host>`, else `POST /v1/brands/checks` + `…/:id/watch`, asked after on later foregrounds (`ShareFollows`); standalone, `BrandDiscovery` |
 | "check site" preview | `POST /v1/brands/checks`, then `GET /v1/brands/checks/:id` until it settles (creates nothing) |
 | add a brand nobody has | `POST /v1/brands/checks/:id/watch` — the server follows it, now or when the check finishes |
 | delete / unfollow | `DELETE /v1/follows/:id` |

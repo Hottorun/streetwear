@@ -495,13 +495,20 @@ Agreed with the owner on 2026-10-27. 1.4:
       (what it does not admit is stored read and never pushed; tightening it does not resurrect).
       Unplaceable products and brand-wide sales always pass. On every new follow a dialog offers
       All, the brand's three biggest categories, and own words; editable in the follow menu.
-- [ ] **The share sheet stays until Done.** It reads the page Safari already loaded (JavaScript
+- [x] **The share sheet stays until Done.** It reads the page Safari already loaded (JavaScript
       preprocessing: title, photographs, price, JSON-LD, product or shop page) — which fixes
       Intimissimi's missing photographs and gives a blocked shop's saves their pictures — offers
       board chips (from a per-profile board list the app writes into the App Group) and, on a shop
       page, "Follow this shop", saying the app will ask what to see when it next opens. Still no
       networking and no SwiftData in the extension. Every question a share raises is kept until
       answered. The app's own fallback reads JSON-LD and retries saves with no photograph.
+      *Done:* `ReadPage.js`, inbox contract 2 (`SharedPage`, choices, `isComplete`), the sheet
+      (`ShareSheet`: board chips and New board…, Notify me with the page's sizes pre-selected from
+      the profile, Follow on a shop page — which then saves nothing), `SharedContext` per store,
+      `ShareFollows` (catalogue first, else a watched check; standalone discovery) announcing to
+      the follow-filter dialog through `NewFollows`, `ShareQuestions` kept until seen, JSON-LD in
+      the app's own fetch, photo retries on `.unavailable`, caps that return at the deadline. See
+      `docs/share-extension.md`.
 - [ ] **The product photograph and style words, read once per product.** FashionSigLIP zero-shot
       on the server: which photograph is the clean product shot (the others embedded only when
       the first shows a person) and a few style words, stored once and sent on the wire; the

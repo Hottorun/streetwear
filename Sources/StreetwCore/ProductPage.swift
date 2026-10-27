@@ -340,7 +340,7 @@ public struct ProductPage: Sendable, Hashable {
                 return VariantInfo(
                     id: id,
                     title: [color, size].compactMap { $0 }.joined(separator: " / ").nonEmpty
-                        ?? text(member["name"]) ?? id,
+                        ?? text(member["name"]).flatMap(cleaned) ?? id,
                     // A variant that says nothing about stock is shown as buyable: the
                     // cautious reading is the one that hides nothing.
                     available: offer?.isAvailable ?? true,

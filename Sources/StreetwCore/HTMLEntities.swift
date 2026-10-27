@@ -78,7 +78,7 @@ public enum HTMLEntities {
 
     /// The named references that turn up in storefront markup. Short on purpose: anything
     /// exotic is written as a number in practice, and numbers are handled above.
-    private static let named: [String: Character] = [
+    private static let named: [String: Character] = latinLetters.merging([
         "amp": "&", "lt": "<", "gt": ">", "quot": "\"", "apos": "'",
         "nbsp": " ", "ndash": "–", "mdash": "—",
         "lsquo": "\u{2018}", "rsquo": "\u{2019}", "sbquo": "\u{201A}",
@@ -89,5 +89,26 @@ public enum HTMLEntities {
         "times": "×", "divide": "÷", "plusmn": "±", "frac12": "½",
         "laquo": "«", "raquo": "»", "shy": "\u{00AD}", "ensp": " ", "emsp": " ",
         "thinsp": "\u{2009}"
-    ]
+    ]) { first, _ in first }
+
+    /// The accented letters of Latin-1 by their HTML names, U+00C0–U+00FF. Not exotic at all on
+    /// a European shop: Intimissimi's JSON-LD writes "f&uuml;r" and "Atmungsaktivit&auml;t",
+    /// and the product's name reached the share sheet with the markup in it.
+    private static let latinLetters: [String: Character] = {
+        let names = [
+            "Agrave", "Aacute", "Acirc", "Atilde", "Auml", "Aring", "AElig", "Ccedil",
+            "Egrave", "Eacute", "Ecirc", "Euml", "Igrave", "Iacute", "Icirc", "Iuml",
+            "ETH", "Ntilde", "Ograve", "Oacute", "Ocirc", "Otilde", "Ouml", "",
+            "Oslash", "Ugrave", "Uacute", "Ucirc", "Uuml", "Yacute", "THORN", "szlig",
+            "agrave", "aacute", "acirc", "atilde", "auml", "aring", "aelig", "ccedil",
+            "egrave", "eacute", "ecirc", "euml", "igrave", "iacute", "icirc", "iuml",
+            "eth", "ntilde", "ograve", "oacute", "ocirc", "otilde", "ouml", "",
+            "oslash", "ugrave", "uacute", "ucirc", "uuml", "yacute", "thorn", "yuml"
+        ]
+        var table: [String: Character] = [:]
+        for (offset, name) in names.enumerated() where !name.isEmpty {
+            if let scalar = Unicode.Scalar(0xC0 + offset) { table[name] = Character(scalar) }
+        }
+        return table
+    }()
 }
