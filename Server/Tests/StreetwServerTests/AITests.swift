@@ -32,6 +32,10 @@ final class ReplayTransport: AnthropicTransport {
     var sent: [JSONValue] {
         state.withLock { $0.sent.compactMap { try? JSONDecoder().decode(JSONValue.self, from: $0) } }
     }
+
+    var raw: [String] {
+        state.withLock { $0.sent.map { String(decoding: $0, as: UTF8.self) } }
+    }
 }
 
 /// The fake, counting how often each action reached it — so a cache hit can be shown to
@@ -146,6 +150,8 @@ struct AnthropicProviderTests {
         #expect(body["tools"]?.array?.first?["strict"] == true)
         #expect(body["output_config"]?["effort"] == "low")
         #expect(body["temperature"] == nil)
+        // Whole numbers go out as integers: the API types `max_tokens` as one.
+        #expect(transport.raw.first?.contains(#""max_tokens":2048"#) == true)
     }
 
     @Test("Haiku is forced onto the tool and sent no effort")

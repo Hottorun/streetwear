@@ -77,6 +77,7 @@ cost.
 | `docs/profiles.md` | Profiles: one server user and one local store per person, the profile header, labelled alerts |
 | `docs/ucp.md` | Reading a storefront that has closed its catalogue |
 | `docs/credits.md` | Credits, the ledger, StoreKit purchases and refunds, and AI cost metering |
+| `docs/ai.md` | Phase 4: the provider layer, prices, the paid actions, search threads, picks, the scan, fits, background reading |
 
 ## Build environment
 
@@ -220,7 +221,7 @@ plutil -p /tmp/streetw-dd/Build/Products/Debug-iphonesimulator/streetw.app/Info.
 
 ```bash
 swift test                                    # all 720
-cd Server && swift test                       # 362, of which 11 need STREETW_TEST_POSTGRES_URL
+cd Server && swift test                       # 397, of which 13 need STREETW_TEST_POSTGRES_URL (run those --no-parallel)
 cd Embeddings && pytest                       # 63; -m slow adds 3 against real weights
 swift test --filter "Size normalisation"      # one suite
 swift test --filter relockFiresAgain          # one test
@@ -945,7 +946,11 @@ Three tiers, and the middle one is the part that was wrong for a long time.
   usage, credits, the account and profile routes) act on the device. **Credits and the country
   are the account's whichever profile asks**: the credit routes read the device's own user, so
   every profile spends from one ledger, and `PATCH /v1/devices/me`'s country goes through
-  `Accounts.setCountry` to every user on the account. See `docs/profiles.md`.
+  `Accounts.setCountry` to every user on the account. See `docs/profiles.md`. **`/v1/ai` is
+  device routes too, acting for the profile and spending from the account**: `GET /v1/ai` and
+  the pick sentences answer anybody registered; every paid action needs an account (403), runs
+  `AIAction.run`, and shares a per-device budget of its own (`RateLimits.ai`) on top of the
+  standard one. See `docs/ai.md`.
 - **`ADMIN_TOKEN`** — everything under `/admin`, including `/status`, `/admin/accounts` and
   the owner's unlimited-credits switch.
 
@@ -1025,6 +1030,12 @@ the local path in the `else`. Adding a new one means adding both halves:
 | credits: balance, this month's usage, the packs | `GET /v1/credits` (`signedIn: false` and nothing else without an account; no standalone equivalent, and the section is hidden) |
 | buying a pack | StoreKit, then `POST /v1/credits/purchases` with the signed transaction — finished only once the server took it (`CreditStore`). Refunds arrive from Apple at `POST /v1/app-store/notifications`; costs read back with `GET /admin/costs`, see `docs/credits.md` |
 | the Discover feed | `GET /v1/discover` (no standalone equivalent — the phone only holds brands somebody already followed, which is the opposite of the question) |
+| whether AI exists here, and what each action costs | `GET /v1/ai` (`available: false` with no provider; no standalone equivalent, and no AI affordance is drawn) |
+| a described search, and its follow-ups | `POST /v1/ai/search` — the thread travels with each turn, signed (`threadToken`); a follow-up inside it is free. Standalone has no model: `ShopSearch` over `ShopCatalogue`, as before |
+| "Show me more" on the open web | `POST /v1/ai/search/web` |
+| a daily pick's sentence | `POST /v1/ai/picks/reasons` (free; at most three; standalone keeps the phone's own reason) |
+| the clothes scan | `POST /v1/ai/scan` (one JPEG, never stored) |
+| judging a fit, and suggesting for one from the photographs | `POST /v1/ai/fits/judge`, `POST /v1/ai/fits/suggest` — the rule-based `Outfit` and `FitSuggestions` stay the free, standalone answer |
 
 **Discovery is a check, not a request.** A site that is not on Shopify takes longer to read than
 the app's thirty-second timeout, so the screen starts a check, asks after it, and can say *watch
@@ -1172,9 +1183,10 @@ scan has unlisted.
 
 ### Credits
 
-AI is paid for with credits (`ROADMAP.md`, *Decided*); no AI action exists yet, and the ledger
-and the meter are built so Phase 4 only calls `CreditLedger.spend` before a provider call,
-`CostMeter.record` after every one, and `CreditLedger.undo` when the action failed. **Read
+AI is paid for with credits (`ROADMAP.md`, *Decided*). Every paid action goes through
+`AIAction.run`, which calls `CreditLedger.spend` before the provider call, `CostMeter.record`
+after every one, and `CreditLedger.undo` when the action failed or produced nothing (`docs/ai.md`).
+**Read
 `docs/credits.md` before touching `CreditLedger`, `CostMeter`, `AppStorePurchases`,
 `PurchasePolicy`, `CreditPacks`, `CreditStore`, `CreditsSection` or `streetw.storekit`.** The
 short form: the ledger is the balance (a sum, serialised per account by a row lock that only a

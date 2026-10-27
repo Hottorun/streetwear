@@ -8,8 +8,8 @@ Part of the streetw guidance set; see `CLAUDE.md` for the index and the build ru
 
 The decision being implemented is in `ROADMAP.md`, *Decided*: AI is paid for with credits that
 never expire, a fixed number per action, a small free monthly allowance, usage shown in the app,
-and prices set from measured cost. No AI action exists yet (Phase 4); everything here is built so
-that one only has to call it.
+and prices set from measured cost. Phase 4's actions spend through `AIAction.run`
+(`docs/ai.md`), which is the sequence below written once.
 
 **The app does not show credits yet** (`CreditStore.isOffered`, false). Packs nothing in the app
 can spend are a consumable that does nothing — App Review refuses those under 3.1.1, and it would
@@ -18,6 +18,13 @@ switch in the same release as the first action that costs credits, and the packs
 Connect then, not before.
 
 ## What Phase 4 calls
+
+**`AIAction.run` is this, and every `/v1/ai` route goes through it** — so a route cannot forget
+a step. It adds two things to the sketch: a free follow-up turn (`charge: false`) spends nothing
+but still answers to the monthly cost cap, and an answer with nothing in it for the reader (no web
+page found, no garment in the photograph) is undone like a failure and returned with
+`charge.credits` zero. Owner-paid work — pick sentences, sale banners, product pages — never
+spends: it is metered with `account: nil, user: nil` under the daily cap in `AIBackground`.
 
 ```swift
 let accountID = try CreditLedger.accountID(of: user)          // 403 "Sign in to use credits"
@@ -74,8 +81,9 @@ do {
 
 - **`CreditPolicy.monthlyAllowance` = 50 is a placeholder** until the meter has a few weeks of
   real actions — the roadmap's "generous allowance while the server records what every action
-  really cost". So is every number in `CreditPolicy.credits(for:)` (scan is two because the
-  roadmap says two).
+  really cost". So is every number in `CreditPolicy.credits(for:)`: search 1 (a thread of up
+  to six turns), web search 3, scan 2 (the roadmap says two), fit judge 1, fit suggest 1.
+  `GET /v1/ai` sends the table, so changing one needs no app update.
 - **Granted lazily, on the first spend of a UTC month** (`CreditMonth`), not by a job on the
   first. An account that does not use credits in a month is granted nothing for it, so there is
   no sweep over every account and nothing accrues for somebody who has left.
