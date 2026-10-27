@@ -223,7 +223,7 @@ delivery that does not verify is 400.
   Whether one exists is the server's answer, so You asks every time it opens, keyed on the token.
 - **Unlimited shows "UNLIMITED" and no packs**; the server sends none for such an account anyway.
 - **Each AI action's price is a row of its own**, by the name its button uses ("Ask Dropwall ·
-  1 CREDIT · A SEARCH, WITH ITS REPLIES"), read from `GET /v1/ai`'s `credits` table through
+  1 CREDIT · REPLIES INCLUDED"), read from `GET /v1/ai`'s `credits` table through
   `AIStore` — so a price change needs no app update, and an action the server prices at nothing
   is not printed as free. Usage lines name the new actions through `CreditAction.label`.
 - **An AI answer carries its `AICharge`, and `CreditStore.apply` writes its balance into the

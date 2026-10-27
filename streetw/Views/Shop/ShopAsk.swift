@@ -200,6 +200,8 @@ struct AskOffer: View {
                 )
                 .fixedSize()
             }
+            // A `Button` centres a wrapped label; this page reads from the left edge.
+            .multilineTextAlignment(.leading)
             .padding(.horizontal, 14)
             .padding(.vertical, 12)
             .overlay(Rectangle().stroke(Color.hairline, lineWidth: 1))
@@ -462,6 +464,7 @@ struct ShowMoreSection: View {
                     }
                     .foregroundStyle(Color.ink)
                     DataLabel(text: scopeNote, size: 10)
+                        .multilineTextAlignment(.leading)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 Spacer(minLength: 8)

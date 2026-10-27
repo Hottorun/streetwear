@@ -310,7 +310,10 @@ enum PicksNotice {
     /// The background pass's half: chooses today's set for the profile on screen, if nobody has
     /// seen or been told about it yet, and schedules the alert about it.
     static func backgroundPass(until deadline: Date) async {
-        guard isEnabled, let session = BackgroundServices.profiles?.session else { return }
+        guard isEnabled, let session = BackgroundServices.profiles?.session else {
+            log.debug("picks alert off")
+            return
+        }
         let scope = session.scope
         let now = Date()
         let day = DailyPicks.day(of: now)
@@ -318,14 +321,20 @@ enum PicksNotice {
               Calendar.current.component(.hour, from: now) < lastHour,
               now < deadline,
               await UNUserNotificationCenter.current().notificationSettings().authorizationStatus != .denied
-        else { return }
+        else {
+            log.debug("picks alert not due: already said or seen today, too late, or alerts denied")
+            return
+        }
 
         guard let chosen = await TodaysPicks.choose(
             day: day,
             in: session.container.mainContext,
             profile: session.sizes.profile,
             statement: session.statement.statement
-        ), !chosen.picks.isEmpty else { return }
+        ), !chosen.picks.isEmpty else {
+            log.info("no picks to announce today")
+            return
+        }
         await announce(chosen.picks, day: day, scope: scope)
     }
 

@@ -76,7 +76,7 @@ struct CreditsSection: View {
     private var prices: [(title: String, detail: String)] {
         guard ai.isAvailable else { return [] }
         let named: [(CreditAction, String, String?)] = [
-            (.search, "Ask Dropwall", "A SEARCH, WITH ITS REPLIES"),
+            (.search, "Ask Dropwall", "REPLIES INCLUDED"),
             (.webSearch, "Show me more", "THE OPEN WEB"),
             (.scan, "Scan a garment", nil),
             (.fitJudge, "Judge a fit", nil),
