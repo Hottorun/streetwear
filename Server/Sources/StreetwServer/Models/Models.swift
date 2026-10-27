@@ -439,6 +439,10 @@ final class EventModel: Model, @unchecked Sendable {
     /// main shop. A `.sale` is the main shop's: both detectors read it alone. The feed and
     /// `Notifier` serve each person one shop per brand, and this is what they serve by.
     @OptionalField(key: "storefront_id") var storefrontID: UUID?
+    /// What the model read off a `.sale`'s banner, when AI was on: the sale's last day (the
+    /// end of it, UTC) and its fine print in one line. See `AddSaleReading`.
+    @OptionalField(key: "sale_ends_at") var saleEndsAt: Date?
+    @OptionalField(key: "sale_terms") var saleTerms: String?
 
     init() {}
 

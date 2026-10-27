@@ -32,14 +32,21 @@ enum CreditPolicy {
 
     /// Credits per action. Fixed per action, never the measured cost of the call — an exact
     /// cost is a different price every time (`ROADMAP.md`, *Decided*). **Placeholders**, like
-    /// the allowance: the scan is two because the roadmap says two; the rest are one until
-    /// `GET /admin/costs` says otherwise.
+    /// the allowance: the scan is two because the roadmap says two, a web search three
+    /// because it is a cent a search on top of the tokens; the rest are one until
+    /// `GET /admin/costs` says otherwise. A search pays once for a thread of up to
+    /// `AIThreadToken.maxTurns` turns.
     static func credits(for action: CreditAction) -> Int {
         switch action {
         case .scan: return 2
+        case .webSearch: return 3
         default: return 1
         }
     }
+
+    /// The actions a reader pays for, as `GET /v1/ai` lists them. The background readings
+    /// and the pick sentences are metered and never charged, so they are not here.
+    static let paidAIActions: [CreditAction] = [.search, .webSearch, .scan, .fitJudge, .fitSuggest]
 }
 
 /// The packs on sale, and what each adds. **The only table of them** — the App Store
