@@ -1,5 +1,6 @@
 import Crypto
 import Fluent
+import FluentPostgresDriver
 import Foundation
 import StreetwCore
 import Synchronization
@@ -732,5 +733,212 @@ struct AIRouteTests {
         ])
         #expect(AIText.verdict(AIFitVerdict(verdict: "great", summary: "s"), pieces: 2) == nil)
         #expect(AIText.verdict(AIFitVerdict(verdict: "Clashes", summary: "s", swap: 5), pieces: 2)?.swap == nil)
+    }
+}
+
+// MARK: - Background reading
+
+@Suite("AI: background reading")
+struct AIBackgroundReadingTests {
+    private let shipping = #"<html><body><div class="announcement-bar"><p>Free shipping over $100</p></div></body></html>"#
+    private let sale = #"<html><body><div class="announcement-bar"><p>30% off everything, ends Sunday</p></div></body></html>"#
+
+    /// A followed brand whose bar has had its baseline read, now due again with a sale up.
+    private func brandWithNewSale(_ app: Application) async throws -> SaleBanners {
+        let brand = BrandModel(name: "Shop", slug: "shop.example", website: "https://shop.example", instagramHandle: nil, usesGeneratedName: false)
+        try await brand.save(on: app.db)
+        let user = UserModel()
+        try await user.save(on: app.db)
+        try await FollowModel(userID: try user.requireID(), brandID: try brand.requireID(), mode: .everything).save(on: app.db)
+        let http = StubHTTP()
+        http.stub("/", body: shipping)
+        let banners = SaleBanners(app: app, http: http)
+        await banners.checkDue()
+        http.stub("/", body: sale)
+        brand.bannerCheckAt = Date().addingTimeInterval(-1)
+        try await brand.save(on: app.db)
+        return banners
+    }
+
+    private func saleEvent(_ app: Application) async throws -> EventModel? {
+        try await EventModel.query(on: app.db).filter(\.$kind == UpdateKind.sale.rawValue).first()
+    }
+
+    @Test("A new sale's banner is read once, onto its event, and metered as nobody's")
+    func saleRead() async throws {
+        let counting = CountingProvider()
+        try await withAI(counting) { app in
+            let banners = try await brandWithNewSale(app)
+            await banners.checkDue()
+            let event = try #require(try await saleEvent(app))
+            let ends = try #require(event.saleEndsAt)
+            #expect(ends > Date().addingTimeInterval(6 * 86_400))
+            #expect(event.saleTerms == "Fake reading: excludes gift cards.")
+            #expect(counting.count("sale") == 1)
+            let costs = try await CostRecordModel.query(on: app.db).all()
+            #expect(costs.map(\.action) == ["sale_reading"])
+            #expect(costs.first?.$account.id == nil && costs.first?.$user.id == nil)
+
+            // The same bar next time is the same sale: not announced, not read.
+            let brand = try #require(try await BrandModel.query(on: app.db).first())
+            brand.bannerCheckAt = Date().addingTimeInterval(-1)
+            try await brand.save(on: app.db)
+            await banners.checkDue()
+            #expect(counting.count("sale") == 1)
+        }
+    }
+
+    @Test("With AI off, or the day's cap spent, the sale is announced without a reading")
+    func saleUnread() async throws {
+        try await withServer { app in
+            let banners = try await brandWithNewSale(app)
+            await banners.checkDue()
+            let event = try #require(try await saleEvent(app))
+            #expect(event.saleEndsAt == nil && event.saleTerms == nil)
+        }
+        let counting = CountingProvider()
+        try await withAI(counting, cap: 0) { app in
+            let banners = try await brandWithNewSale(app)
+            await banners.checkDue()
+            #expect(try await saleEvent(app) != nil)
+            #expect(counting.count("sale") == 0)
+        }
+    }
+
+    @Test("A reading is held to a plausible window, and a code only of code characters")
+    func saleChecked() {
+        let now = Date(timeIntervalSince1970: 1_792_843_200)
+        #expect(AIBackgroundReading.checked(AISaleReading(endsAt: now.addingTimeInterval(400 * 86_400)), now: now) == nil)
+        let read = AIBackgroundReading.checked(
+            AISaleReading(endsAt: now.addingTimeInterval(86_400), code: " autumn25 ", terms: "  Excludes\n gift cards "), now: now
+        )
+        #expect(read == AISaleReading(endsAt: now.addingTimeInterval(86_400), code: "AUTUMN25", terms: "Excludes gift cards"))
+        #expect(AIBackgroundReading.checked(AISaleReading(code: "use code at checkout"), now: now) == nil)
+    }
+
+    private func sitemap(_ slugs: [String]) -> String {
+        let urls = slugs.map { "<url><loc>https://shop.example/products/\($0)</loc></url>" }.joined()
+        return "<urlset xmlns=\"http://www.sitemaps.org/schemas/sitemap/0.9\">\(urls)</urlset>"
+    }
+
+    /// A page drawn by script with no structured data, whose words still say what it sells.
+    private let plainPage = """
+        <html><head><title>Plain Tee</title><script>window.x = 1</script></head>
+        <body><h1>Plain Tee</h1><p>fake-product · Heavyweight cotton tee in white. $42. Sizes S M L. Add to bag.</p></body></html>
+        """
+
+    @Test("A new product's page with no structured data is read once, and announced with what it said")
+    func pageRead() async throws {
+        let counting = CountingProvider()
+        try await withAI(counting) { app in
+            let brand = BrandModel(name: "Shop", slug: "shop.example", website: "https://shop.example", instagramHandle: nil, usesGeneratedName: false)
+            try await brand.save(on: app.db)
+            try await SourceModel(brandID: try brand.requireID(), kind: .sitemap, url: "https://shop.example/sitemap.xml").save(on: app.db)
+            let http = StubHTTP()
+            http.stub("/sitemap.xml", body: sitemap(["hoodie"]))
+            http.stub("/products/hoodie", body: plainPage)
+            let poller = Poller(app: app, http: http)
+            await poller.tick()
+            // The baseline's rows are read for their pages, never by the model.
+            #expect(counting.count("page") == 0)
+
+            http.stub("/sitemap.xml", body: sitemap(["hoodie", "plain-tee"]))
+            http.stub("/products/plain-tee", body: plainPage)
+            let source = try #require(try await SourceModel.query(on: app.db).first())
+            source.nextCheckAt = Date().addingTimeInterval(-1)
+            try await source.save(on: app.db)
+            await poller.tick()
+
+            #expect(counting.count("page") == 1)
+            let events = try await EventModel.query(on: app.db).with(\.$product).all()
+            #expect(events.count == 1)
+            let product = try #require(events.first?.product)
+            #expect(product.title == "Fake Product")
+            #expect(product.priceAmount == 42)
+            let variants = try await VariantModel.query(on: app.db).filter(\.$product.$id == product.requireID()).all()
+            #expect(Set(variants.compactMap(\.size)) == ["S", "M"])
+            #expect(try await CostRecordModel.query(on: app.db).all().map(\.action) == ["page_reading"])
+        }
+    }
+
+    @Test("Visible text leaves out scripts, styles and markup")
+    func visibleText() {
+        let text = AIBackgroundReading.visibleText(of: "<style>p{}</style><p>Tee &amp; shorts</p><script>var a='<p>no</p>'</script>  <b>£40</b>")
+        #expect(text == "Tee & shorts £40")
+        #expect(AIBackgroundReading.visibleText(of: String(repeating: "word ", count: 10_000)).count == AIBackgroundReading.pageTextLimit)
+    }
+}
+
+// MARK: - On Postgres
+
+/// The sums and the cache on the database production runs: a `BIGINT` sum comes back as a
+/// `NUMERIC` there and must be cast, which SQLite never shows, and the search a thread runs is
+/// the full-text index. Runs only when `STREETW_TEST_POSTGRES_URL` names a scratch database.
+@Suite(
+    "AI on Postgres",
+    .enabled(if: ProcessInfo.processInfo.environment["STREETW_TEST_POSTGRES_URL"] != nil),
+    .serialized
+)
+struct AIPostgresTests {
+    private func withPostgres(_ body: (Application) async throws -> Void) async throws {
+        let url = try #require(ProcessInfo.processInfo.environment["STREETW_TEST_POSTGRES_URL"])
+        setenv("ADMIN_TOKEN", testAdminToken, 1)
+        let app = try await Application.make(.testing)
+        var config = try SQLPostgresConfiguration(url: url)
+        config.coreConfiguration.tls = .disable
+        app.databases.use(.postgres(configuration: config, maxConnectionsPerEventLoop: 4), as: .psql)
+        addMigrations(to: app)
+        do {
+            try await app.autoMigrate()
+            app.ai = AIService(provider: CountingProvider(), threadKey: SymmetricKey(size: .bits256), backgroundDailyCapMicros: 5_000)
+            try routes(app)
+            try await app.asyncBoot()
+            try await body(app)
+            try await app.autoRevert()
+        } catch {
+            try? await app.autoRevert()
+            try await app.asyncShutdown()
+            throw error
+        }
+        try await app.asyncShutdown()
+    }
+
+    @Test("A thread is paid once and searched by the index; owner spending is summed by day")
+    func threadAndCap() async throws {
+        try await withPostgres { app in
+            let brand = try await shopWithJacket(app)
+            let reader = try await member(app, follows: [brand])
+            let (status, first, text) = try await call(app, "v1/ai/search", headers: reader.headers,
+                                                       body: AISearchRequest(text: "black jacket"), as: AISearchResponse.self)
+            #expect(status == .ok, "\(text)")
+            #expect(first?.results.exact.map(\.card.title) == ["Black Chore Jacket"])
+            #expect(first?.charge == AICharge(credits: 1, balance: 49))
+            let (_, second, _) = try await call(app, "v1/ai/search", headers: reader.headers, body: AISearchRequest(
+                text: "chore", thread: [AISearchTurn(text: "black jacket", query: "black jacket")], threadToken: first?.threadToken
+            ), as: AISearchResponse.self)
+            #expect(second?.charge == AICharge(credits: 0, balance: 49))
+
+            let service = try #require(app.ai)
+            let cost = MeteredCost(action: .pageReading, model: "claude-haiku-4-5-20251001", inputTokens: 10, outputTokens: 1, costMicros: 4_000)
+            try await CostMeter.record(cost, account: nil, user: nil, on: app.db)
+            #expect(try await AIBackground.spentToday(on: app.db) == 4_000)
+            #expect(await AIBackground.allows(service, on: app.db))
+            try await CostMeter.record(cost, account: nil, user: nil, on: app.db)
+            #expect(!(await AIBackground.allows(service, on: app.db)))
+        }
+    }
+
+    @Test("A pick sentence is cached once under its unique key")
+    func pickCache() async throws {
+        try await withPostgres { app in
+            _ = try await shopWithJacket(app)
+            let headers = try await deviceAuth(app)
+            let ask = AIPickReasons(picks: [AIPickReasonRequest(productExternalID: "shopify:7001", anchor: "grey trousers", basis: "colour")])
+            for _ in 0..<2 {
+                let (_, answer, _) = try await call(app, "v1/ai/picks/reasons", headers: headers, body: ask, as: AIPickReasonsResponse.self)
+                #expect(answer?.reasons == ["shopify:7001": "Goes with your grey trousers"])
+            }
+            #expect(try await AIPickReasonModel.query(on: app.db).count() == 1)
+        }
     }
 }

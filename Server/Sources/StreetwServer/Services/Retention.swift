@@ -30,6 +30,7 @@ struct ReapResult: Sendable, Equatable {
     var products = 0
     var pollHints = 0
     var checks = 0
+    var pickReasons = 0
 }
 
 actor Reaper {
@@ -155,9 +156,21 @@ actor Reaper {
                 ).run()
             }
 
-            if result.events > 0 || result.products > 0 || result.pollHints > 0 || result.checks > 0 {
+            // A pick's cached sentence is believed for a month (`AILimits.pickReasonLifetime`)
+            // and never read after; past that it is a row nobody will ask for.
+            let reasonCutoff = Date().addingTimeInterval(-AILimits.pickReasonLifetime)
+            result.pickReasons = try await AIPickReasonModel.query(on: app.db)
+                .filter(\.$createdAt < reasonCutoff)
+                .count()
+            if result.pickReasons > 0 {
+                try await AIPickReasonModel.query(on: app.db)
+                    .filter(\.$createdAt < reasonCutoff)
+                    .delete()
+            }
+
+            if result.events > 0 || result.products > 0 || result.pollHints > 0 || result.checks > 0 || result.pickReasons > 0 {
                 app.logger.info(
-                    "retention: pruned \(result.events) events, \(result.products) products, \(result.pollHints) poll hints, \(result.checks) brand checks"
+                    "retention: pruned \(result.events) events, \(result.products) products, \(result.pollHints) poll hints, \(result.checks) brand checks, \(result.pickReasons) pick reasons"
                 )
             }
         } catch {
