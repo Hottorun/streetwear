@@ -11,11 +11,10 @@ never expire, a fixed number per action, a small free monthly allowance, usage s
 and prices set from measured cost. No AI action exists yet (Phase 4); everything here is built so
 that one only has to call it.
 
-**The app does not show credits yet** (`CreditStore.isOffered`, false). Packs nothing in the app
-can spend are a consumable that does nothing — App Review refuses those under 3.1.1, and it would
-be taking money for a promise. Everything server-side is deployed and tested; Phase 4 flips the
-switch in the same release as the first action that costs credits, and the packs go into App Store
-Connect then, not before.
+**The app shows credits since Phase 4** (`CreditStore.isOffered`, true), the release in which an
+action first costs them. It was false until then: packs nothing in the app can spend are a
+consumable that does nothing — App Review refuses those under 3.1.1, and it would be taking money
+for a promise. **The packs go into App Store Connect with this release, not before.**
 
 ## What Phase 4 calls
 
@@ -223,6 +222,17 @@ delivery that does not verify is 400.
   anonymous device sees no section, not an invitation: signing in is its own section's to offer.
   Whether one exists is the server's answer, so You asks every time it opens, keyed on the token.
 - **Unlimited shows "UNLIMITED" and no packs**; the server sends none for such an account anyway.
+- **Each AI action's price is a row of its own**, by the name its button uses ("Ask Dropwall ·
+  1 CREDIT · A SEARCH, WITH ITS REPLIES"), read from `GET /v1/ai`'s `credits` table through
+  `AIStore` — so a price change needs no app update, and an action the server prices at nothing
+  is not printed as free. Usage lines name the new actions through `CreditAction.label`.
+- **An AI answer carries its `AICharge`, and `CreditStore.apply` writes its balance into the
+  summary**, so the balance is right the moment the action answers. This month's usage is the
+  server's count and is read again the next time You opens. The action itself prints the charge
+  beside its result ("1 CREDIT · 48 LEFT", "NO CHARGE — PART OF THIS SEARCH").
+- **A refusal names its fix** (`AIRefusal`): 402 "Not enough credits" with *Get credits*, 403
+  "Sign in to use" with *Sign in* — both open You, where the packs and sign-in are — and 429 the
+  month's cost cap, which no button can pass. None is drawn as an empty result.
 - **`streetw.storekit`** holds three placeholder consumables (`…credits.50/150/500` at
   $0.99/$2.99/$8.99) and is referenced from the scheme's Run action. It sits beside the
   `.xcodeproj` rather than in `streetw/` for the reason `streetw-Info.plist` does — the

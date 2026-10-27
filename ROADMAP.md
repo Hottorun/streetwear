@@ -399,16 +399,31 @@ fit editor; the starter pack of six womenswear and six menswear shops. See
 
 - [ ] **The provider layer** — Claude behind a small server-side interface, recording the cost of
       every action.
-- [ ] **Search in Shop.** "Black suit under €400": followed shops first, ranked by taste, then
+- [x] **Search in Shop.** "Black suit under €400": followed shops first, ranked by taste, then
       similar brands. Narrowed with chips or short replies — "cheaper", "more formal", "no wool" —
       each search keeping a short thread. **Show me more** goes to the open web through Claude's
       web search, and a result from a shop we can watch offers to follow it.
-- [ ] **More like this**, on every product and saved item.
-- [ ] **Daily picks.** Free, because nobody asked for them. Ranked by similarity to the taste
+      *Done (app):* "Ask Dropwall" beside the free field, saying AI and its price; the model's
+      reading printed through the phone's own `ShopQuery` line and searched exactly as typed;
+      the reply line, suggestions as chips, a reply field that continues the signed thread for
+      free and says when the next reply starts a new, paid one; your shops re-ordered by taste on
+      the phone (`TasteOrder`), then every other shop we watch; Show me more in the reader's
+      country, each result opening the shop's page, its brand, or the site check. Each action
+      prints its charge; 402/403/429/503 are said in words. `AIStore` is the one client. See
+      `docs/discover.md` (*Asking Dropwall*).
+- [x] **More like this**, on every product and saved item.
+      *Done:* the product page's row (`GET /v1/products/:id/similar`, local fallback) on a saved
+      item's page too, wherever a catalogue product stands behind the save. Free, no model.
+- [x] **Daily picks.** Free, because nobody asked for them. Ranked by similarity to the taste
       summary with no model call per person; the model writes a short reason for the top few
       ("goes with your black chore jacket"), cached. They fill Shop when the field is empty, with
       an optional daily push, off by default. Only things in your size, in stock in your country,
       and never anything already seen, saved or dismissed.
+      *Done (app):* chosen exactly as before (`DailyPicks`, now gathered by `TodaysPicks`); the top
+      three worded by `POST /v1/ai/picks/reasons` once a day per pick, the partner sent as a short
+      description only, silently falling back to the phone's sentence; a local morning alert, off
+      by default (You › Alerts), scheduled only by a background pass that has just chosen the
+      day's set, withdrawn once Shop has shown it.
 - [ ] **Clothes scan.** One camera button, on Saved's "+" and in Shop's search field. On-device
       cutout, then Claude reads type, colour, material, pattern and style, and you choose: *add to
       my wardrobe* (a saved item with your own photograph — every save has a product behind it
