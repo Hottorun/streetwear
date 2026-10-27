@@ -325,6 +325,36 @@ struct StreetwAPI: Sendable {
         )
     }
 
+    // MARK: AI — see `docs/ai.md`
+
+    func aiStatus() async throws -> AIStatus {
+        try await send(path: "v1/ai", method: "GET", body: Optional<Never>.none)
+    }
+
+    func aiSearch(_ body: AISearchRequest) async throws -> AISearchResponse {
+        try await send(path: "v1/ai/search", method: "POST", body: body)
+    }
+
+    func aiWebSearch(_ body: AIWebSearchRequest) async throws -> AIWebSearchResponse {
+        try await send(path: "v1/ai/search/web", method: "POST", body: body)
+    }
+
+    func aiPickReasons(_ body: AIPickReasons) async throws -> AIPickReasonsResponse {
+        try await send(path: "v1/ai/picks/reasons", method: "POST", body: body)
+    }
+
+    func aiScan(_ body: AIScanRequest) async throws -> AIScanResponse {
+        try await send(path: "v1/ai/scan", method: "POST", body: body)
+    }
+
+    func aiJudgeFit(_ body: AIFitJudgeRequest) async throws -> AIFitJudgeResponse {
+        try await send(path: "v1/ai/fits/judge", method: "POST", body: body)
+    }
+
+    func aiSuggestForFit(_ body: AIFitSuggestRequest) async throws -> AIFitSuggestResponse {
+        try await send(path: "v1/ai/fits/suggest", method: "POST", body: body)
+    }
+
     func createWatch(_ body: CreateWatch) async throws -> WatchDTO {
         try await send(path: "v1/watches", method: "POST", body: body)
     }

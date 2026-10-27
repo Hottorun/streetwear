@@ -24,13 +24,18 @@ enum SaleEvents {
 
     /// Writes the event, unless the brand announced a sale within `quietPeriod`. Returns
     /// whether it wrote one.
+    ///
+    /// - Parameter reading: asked only once the event is certain to be written, so a banner
+    ///   the quiet period swallows is never sent to the model. Its end date and fine print go
+    ///   on the event, and its code into the title when the pattern found none.
     @discardableResult
     static func announce(
         on db: any Database,
         brandID: UUID,
         title: String,
         summary: String?,
-        now: Date = Date()
+        now: Date = Date(),
+        reading: (() async -> AISaleReading?)? = nil
     ) async throws -> Bool {
         let recent = try await EventModel.query(on: db)
             .filter(\.$brand.$id == brandID)
@@ -38,13 +43,21 @@ enum SaleEvents {
             .filter(\.$createdAt > now.addingTimeInterval(-quietPeriod))
             .count()
         guard recent == 0 else { return false }
-        try await EventModel(
+        let read = await reading?()
+        var title = title
+        if let code = read?.code, !title.uppercased().contains("CODE") {
+            title += " · CODE \(code)"
+        }
+        let event = EventModel(
             brandID: brandID,
             productID: nil,
             kind: .sale,
             title: title,
             summary: summary
-        ).save(on: db)
+        )
+        event.saleEndsAt = read?.endsAt
+        event.saleTerms = read?.terms
+        try await event.save(on: db)
         return true
     }
 }
@@ -137,12 +150,16 @@ struct SaleBanners {
                         now: now
                     )
                     if outcome.announce, let banner {
+                        let app = app
+                        let name = brand.name
                         try await SaleEvents.announce(
                             on: app.db,
                             brandID: brandID,
                             title: banner.title,
                             summary: banner.message,
-                            now: now
+                            now: now,
+                            // Once per sale: the ledger has just said this one is new.
+                            reading: { await AIBackgroundReading.readSale(banner, brand: name, app: app, now: now) }
                         )
                     }
                     brand.saleBanner = outcome.stored

@@ -47,10 +47,21 @@ public struct CreditAction: RawRepresentable, Codable, Hashable, Sendable {
     public static let scan = CreditAction("scan")
     /// A whole fit judged from its photographs.
     public static let fitJudge = CreditAction("fit_judge")
+    /// "Show me more": a search's reading asked of the open web.
+    public static let webSearch = CreditAction("web_search")
+    /// Candidates for a fit, ordered and vetted from their photographs.
+    public static let fitSuggest = CreditAction("fit_suggest")
+
+    /// Metered and never charged: work nobody asked for, paid for by the owner — a daily
+    /// pick's sentence, a sale banner's fine print, a product page with no structured data.
+    /// They have names so `GET /admin/costs` can say what each costs.
+    public static let pickReason = CreditAction("pick_reason")
+    public static let saleReading = CreditAction("sale_reading")
+    public static let pageReading = CreditAction("page_reading")
 
     /// The actions the roadmap's Phase 4 names. Not a whitelist — the server records what it
     /// is told — only the ones this build has words for.
-    public static let known: [CreditAction] = [.search, .moreLikeThis, .scan, .fitJudge]
+    public static let known: [CreditAction] = [.search, .moreLikeThis, .scan, .fitJudge, .webSearch, .fitSuggest]
 
     /// How "this month: N …" names it. An action this build does not know is still counted,
     /// as "actions", rather than dropped: a usage line that silently omits a row is a bill
@@ -62,6 +73,8 @@ public struct CreditAction: RawRepresentable, Codable, Hashable, Sendable {
         case .moreLikeThis: return "“more like this”"
         case .scan: return one ? "scan" : "scans"
         case .fitJudge: return one ? "fit judged" : "fits judged"
+        case .webSearch: return one ? "web search" : "web searches"
+        case .fitSuggest: return one ? "fit suggestion" : "fit suggestions"
         default: return one ? "action" : "actions"
         }
     }

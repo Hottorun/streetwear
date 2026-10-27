@@ -92,7 +92,11 @@ final class Fit {
     /// happened to be added in.
     var ordered: [SavedItem] {
         guard !isGone else { return [] }
-        return items.sorted { wornOver($0.update, $1.update, tieBreak: $0.id.uuidString < $1.id.uuidString) }
+        // Built once: a `Garment` runs two classifiers, and a sort reads its keys n·log n times.
+        let garments = Dictionary(items.map { ($0.id, $0.garment) }, uniquingKeysWith: { first, _ in first })
+        return items.sorted {
+            wornOver(garments[$0.id] ?? nil, garments[$1.id] ?? nil, tieBreak: $0.id.uuidString < $1.id.uuidString)
+        }
     }
 
     /// Whether this row has been deleted out from under whatever is still drawing it.
@@ -125,7 +129,7 @@ final class Fit {
     /// this is called from a derivation that runs on the same pass as a delete.
     var wardrobeKey: String? {
         guard !isGone else { return nil }
-        return FitSuggestions.key(ofProducts: items.compactMap { $0.update?.id })
+        return FitSuggestions.key(ofProducts: items.map(\.garmentKey))
     }
 
     /// The stored render, decoded — what a share sheet or a card actually hands over.
@@ -160,7 +164,8 @@ final class Fit {
     var derivedName: String {
         guard !isGone else { return "" }
         if let verdict, !verdict.isEmpty { return verdict }
-        let brands = ordered.compactMap { $0.update?.brand?.name }
+        // A garment of your own has no brand, and a fit made only of those is not empty.
+        let brands = ordered.compactMap { $0.update?.brand?.name ?? ($0.isOwnGarment ? "Your own" : nil) }
         var seen = Set<String>()
         let distinct = brands.filter { seen.insert($0).inserted }
         guard !distinct.isEmpty else { return "Empty fit" }
@@ -417,7 +422,8 @@ extension SavedItem {
     /// — the same trap `BrandUpdate.gender` needed a version number to escape, but without
     /// the cost, because nothing filters on this at feed scale.
     var slot: GarmentSlot {
-        guard let update else { return .unknown }
+        // A garment of your own was placed by the scan, off the photograph.
+        guard let update else { return garment?.slot ?? .unknown }
         return GarmentClassifier.classify(
             title: update.title,
             productType: update.productType,
@@ -437,24 +443,48 @@ extension SavedItem {
 /// A suggestion used to be `[SavedItem]` — strictly things already kept — and that made the
 /// row useless in the case it should have been best at: a wardrobe with four tops and no
 /// trousers got nothing at all, when "here is a bottom that would work with these" is the
-/// most useful sentence the app could say. So a piece is now a `BrandUpdate` plus an
-/// *optional* save, and `isOwned` is the difference.
+/// most useful sentence the app could say. So a piece is a `BrandUpdate` plus an *optional*
+/// save, and `isOwned` is the difference — or, for a garment you photographed, a save with no
+/// product at all.
 ///
 /// The save is what carries the personal side — the note, the board, the size you own — so
 /// keeping it rather than reaching through `update.saves` matters: a proposal built from a
 /// catalogue row must not silently adopt somebody's note by matching on the product.
 struct FitPiece: Identifiable, Hashable {
-    var update: BrandUpdate
+    /// The product. Nil for a garment of your own, which has a save and no product — one of
+    /// the two is always there, and `init` is the only way in so it stays that way.
+    let update: BrandUpdate?
     /// The save this stands for, when it is something already kept. Nil means the app is
     /// suggesting a garment you do not have.
-    var save: SavedItem?
+    let save: SavedItem?
+
+    /// Something already kept, with or without a product behind it.
+    init(save: SavedItem) {
+        self.update = save.update
+        self.save = save
+    }
+
+    /// A catalogue product nobody has kept.
+    init(product: BrandUpdate) {
+        self.update = product
+        self.save = nil
+    }
 
     var isOwned: Bool { save != nil }
-    var slot: GarmentSlot { save?.slot ?? update.garmentSlot }
+    var slot: GarmentSlot { save?.slot ?? update?.garmentSlot ?? .unknown }
+
+    /// The piece in `Pairing`'s terms. The save's where there is one, since a garment of your
+    /// own has nothing else to be read from.
+    var garment: Garment {
+        save?.garment ?? update?.garment ?? Garment(id: id, title: "")
+    }
+
+    /// What `FitSuggestions.key` is made of — see `SavedItem.garmentKey`.
+    var garmentKey: UUID { save?.garmentKey ?? update?.id ?? UUID() }
 
     /// Identity is the save where there is one and the product otherwise, so a proposal
     /// does not change id the moment the same garment is kept.
-    var id: String { save?.id.uuidString ?? update.id.uuidString }
+    var id: String { save?.id.uuidString ?? update?.id.uuidString ?? "" }
 
     static func == (lhs: FitPiece, rhs: FitPiece) -> Bool { lhs.id == rhs.id }
     func hash(into hasher: inout Hasher) { hasher.combine(id) }
@@ -484,10 +514,11 @@ struct SuggestedFit: Identifiable, Hashable {
     /// otherwise — so a proposal containing something borrowed from the catalogue changes id
     /// the moment it is kept, which is exactly the moment we want to recognise it by. The
     /// products behind it do not change, so they are what the comparison is made of.
-    var wardrobeKey: String { FitSuggestions.key(ofProducts: items.map(\.update.id)) }
+    var wardrobeKey: String { FitSuggestions.key(ofProducts: items.map(\.garmentKey)) }
 
     var ordered: [FitPiece] {
-        items.sorted { wornOver($0.update, $1.update, tieBreak: $0.id < $1.id) }
+        let garments = Dictionary(items.map { ($0.id, $0.garment) }, uniquingKeysWith: { first, _ in first })
+        return items.sorted { wornOver(garments[$0.id], garments[$1.id], tieBreak: $0.id < $1.id) }
     }
 }
 
@@ -501,15 +532,15 @@ struct SuggestedFit: Identifiable, Hashable {
 ///   position and layer. Passed in rather than read here because a `SuggestedFit` is keyed
 ///   on its pieces and a stored `Fit` on its saves, and the arrangement has to be stable
 ///   across relaunches either way.
-private func wornOver(_ first: BrandUpdate?, _ second: BrandUpdate?, tieBreak: @autoclosure () -> Bool) -> Bool {
-    let firstSlot = first?.garmentSlot ?? .unknown
-    let secondSlot = second?.garmentSlot ?? .unknown
+private func wornOver(_ first: Garment?, _ second: Garment?, tieBreak: @autoclosure () -> Bool) -> Bool {
+    let firstSlot = first?.slot ?? .unknown
+    let secondSlot = second?.slot ?? .unknown
     if firstSlot.stackOrder != secondSlot.stackOrder {
         return firstSlot.stackOrder < secondSlot.stackOrder
     }
     // Mid layers first, so they are drawn over the base layer they cover.
-    let firstIsMid = first?.garment.layer == .mid
-    let secondIsMid = second?.garment.layer == .mid
+    let firstIsMid = first?.layer == .mid
+    let secondIsMid = second?.layer == .mid
     if firstIsMid != secondIsMid { return firstIsMid }
     return tieBreak()
 }
@@ -573,16 +604,16 @@ enum FitSuggestions {
         // renders as a blank rectangle — so a proposal containing one looks broken however
         // good the pairing is. `ColorHarmony` can't speak for it either: the dominant
         // colour comes from the photograph.
-        for save in saves where save.update?.imageURLStrings.isEmpty == false {
+        // A garment of your own is in the pool like anything else kept: its photograph is the
+        // reader's own and its slot and colours are the scan's.
+        for save in saves where save.hasPhotograph {
             let slot = save.slot
-            guard slot != .unknown, GarmentSlot.essential.contains(slot),
-                  let update = save.update
-            else { continue }
-            let piece = FitPiece(update: update, save: save)
+            guard slot != .unknown, GarmentSlot.essential.contains(slot) else { continue }
+            let piece = FitPiece(save: save)
             // A set is held aside rather than filed under the half its title happens to
             // name. Left in the pool it would be combined with a second top or a second
             // bottom, which is precisely the proposal that made the row look broken.
-            if update.garment.isSet {
+            if piece.garment.isSet {
                 sets.append(piece)
             } else {
                 bySlot[slot, default: []].append(piece)
@@ -621,9 +652,9 @@ enum FitSuggestions {
         // reason the cross product had to be walked diagonally rather than properly.
         var garments: [String: Garment] = [:]
         for piece in allTops + bottoms + outerwear + footwear + sets {
-            garments[piece.id] = piece.update.garment
+            garments[piece.id] = piece.garment
         }
-        func garment(_ piece: FitPiece) -> Garment { garments[piece.id] ?? piece.update.garment }
+        func garment(_ piece: FitPiece) -> Garment { garments[piece.id] ?? piece.garment }
 
         var proposals: [(fit: SuggestedFit, score: Double)] = []
         var seen: Set<String> = []
@@ -847,14 +878,14 @@ enum FitSuggestions {
                   !candidate.imageURLStrings.isEmpty,
                   candidate.visionColor != nil
             else { continue }
-            filled[slot, default: []].append(FitPiece(update: candidate, save: nil))
+            filled[slot, default: []].append(FitPiece(product: candidate))
         }
         // Newest first, matching how the wardrobe's own pieces are ordered, and capped so a
         // brand that published two hundred products in one sweep cannot own the whole slot.
         for slot in filled.keys {
             filled[slot] = Array(
                 (filled[slot] ?? [])
-                    .sorted { $0.update.publishedAt > $1.update.publishedAt }
+                    .sorted { ($0.update?.publishedAt ?? .distantPast) > ($1.update?.publishedAt ?? .distantPast) }
                     .prefix(perSlotCandidates)
             )
         }

@@ -16,10 +16,11 @@ this section is still the deck's, unchanged.
   1,907 PRODUCTS" — the count the last answer gave, and never "on this phone". Standalone it
   searches the products from your shops **that are on this phone** (`ShopCatalogue`) — the
   newest few hundred per shop (`retentionPerBrand`) — and says "IN YOUR SHOPS · 398 PRODUCTS ON
-  THIS PHONE", exactly as before. It never says AI and never says the web, and it draws a
-  magnifying glass rather than a sparkle, because a sparkle is the platform's promise of a
-  model; Phase 4 puts one behind the same field. A narrow search presented as a broad one is a
-  quiet lie; the same search labelled with its scope is useful.
+  THIS PHONE", exactly as before. **The free field never says AI and never says the web**, and it
+  draws a magnifying glass rather than a sparkle, because a sparkle is the platform's promise of a
+  model and no model reads what is typed there. The model is a second, explicit act beside it —
+  *Asking Dropwall*, below — which says it is AI and what it costs. A narrow search presented as
+  a broad one is a quiet lie; the same search labelled with its scope is useful.
 - **The grammar is small and written down** (`ShopQuery`, in the core, tested). Words are
   matched as **whole tokens** against title, product type, tags, colourways, the measured colour
   and the shop's name — "shorts" must not find a short-sleeve shirt, the substring bug every
@@ -107,11 +108,67 @@ this section is still the deck's, unchanged.
   the id of the product on screen — what asking costs — and falls back to the phone's own answer
   when the request fails, because the row is a suggestion labelled the same either way. Its
   `.task` sits on a container that is always there: on the row's own conditional content it never
-  ran while there was nothing to show, which is always, at first.
+  ran while there was nothing to show, which is always, at first. **A saved item's page has the
+  same row** (Phase 4), under *Goes with*, wherever a shop's catalogue stands behind the save
+  (`update.brand != nil`) — a link from a blog, or a garment of your own, has nothing to be like.
+
+### Asking Dropwall (Phase 4)
+
+`ShopAsk` holds the thread, `AIStore` makes the calls; `docs/ai.md` has the server's half.
+
+- **The AI path says it is AI and what it costs; the free path still must not.** One row under
+  the field, drawn only in server mode and only where `GET /v1/ai` answered `available: true`:
+  a sparkle, "Ask Dropwall", "AI READS YOUR DESCRIPTION, THEN SEARCHES YOUR SHOPS", and the
+  price from the server's table ("1 CREDIT"). The field itself keeps its magnifying glass and its
+  scope line; nothing typed there reaches a model until the row is pressed.
+- **Signed out it still draws, as "SIGN IN TO USE", and opens You** — where sign-in leads the
+  page. A feature that silently does not exist for somebody reads as broken; a dead button is
+  worse. The same for every AI surface: `AIStore.isAvailable` decides whether to draw,
+  `isSignedIn` whether pressing spends or routes to sign-in.
+- **The model's reading is printed through the phone's own grammar.** The answer's
+  `reading.query` ("black suit under 400 no wool formal") becomes the page's search: the server
+  is asked for exactly that text with the chips as flags, and the reading line under the field is
+  `ShopQuery.parse` of it — the same line, struck words and all, a typed search prints. The first
+  page arrives inside the AI answer and is used as it is (`primed`) whenever the chips add nothing
+  the model's request did not carry. The `reply` is one serif line; `suggestions` are dashed
+  chips that send themselves as the next turn. The grammar's own chips stay free and need no
+  model call — toggling CHEAPER re-runs the free search over the reading.
+- **The thread is the phone's, and its price is said before a reply is sent.** A reply field
+  under the reading continues the thread with `thread` and `threadToken`; "4 MORE REPLIES IN THIS
+  SEARCH · FREE" while the token is good, and once it is spent — six turns, or thirty minutes
+  less a minute's margin — "THIS SEARCH IS USED UP — A REPLY STARTS A NEW ONE · 1 CREDIT". A new
+  thread opens on the last reading plus the reply, so "no wool" still means no wool suits.
+  Editing the field, clearing it, or BACK TO SEARCH ends the thread.
+- **Followed shops first, ordered by taste on the phone** (`TasteOrder`, core, tested): each hit
+  is scored by `Pairing` against `TasteScope.pairingPool`, read in tenths so the server's order
+  decides between near-equals, sold-out still last, nothing hidden, and with an empty wardrobe
+  the server's order exactly. Worked out in a `.task`, never per body, and **only appended to**
+  within one query, so a MORE page never moves a card already read. The free search keeps the
+  grammar's order — it is one answer on both ends. Then the existing "Also look in every shop we
+  watch" row, over the reading.
+- **Every action says what it took**, from its own `AICharge`: "1 CREDIT · 48 LEFT", "NO CHARGE —
+  PART OF THIS SEARCH · 48 LEFT", "NO CHARGE · UNLIMITED ACCOUNT". The charge goes to
+  `CreditStore.apply`, so You's balance is right without asking again.
+- **A refusal is said in words, never as an empty list** (`AIRefusal`, `AIRefusalNotice`): 402
+  "Not enough credits" with *Get credits* (opens You's Credits); 403 "Sign in to use" with
+  *Sign in*; 429 "This month's AI limit is reached" with no retry; 503 "Dropwall's AI isn't
+  available right now", which also re-reads the status so every affordance goes. The free
+  results stay under it.
+- **Show me more** is the open web, offered under everything the catalogue had, only when the
+  status says `webSearch`: a sparkle, "AI SEARCHES THE OPEN WEB FOR SHOPS THAT SELL IN GERMANY —
+  BEYOND THE SHOPS WE WATCH", and its own price. `POST /v1/ai/search/web` with the latest reading
+  and `LocationSetting.country`. Each result is a row that opens the shop's page in Safari; a
+  result with a `brandID` you follow opens its brand page, one you do not follow is followed in
+  place ("DROPWALL WATCHES THIS SHOP · FOLLOW IT", then a sync), and one with none offers
+  "FOLLOW THIS SHOP", which is `AddBrandView` prefilled with the host — the catalogue searched
+  first, then the ordinary site check. Nothing on the row claims what the page did not say.
+- **The field's trailing controls are one row** (`trailingControls`): clear, and the scan's
+  camera after it.
 
 ### Today's picks
 
-`DailyPicks` (core, tested) chooses five; `PickLedger` remembers the day's set.
+`DailyPicks` (core, tested) chooses five; `PickLedger` remembers the day's set; `TodaysPicks`
+gathers what both need, for Shop and for a background pass alike.
 
 - **What may be picked**: from a followed shop, shown by the gender filter, buyable, an
   essential garment, not saved, not turned down, not from a shop refused on Discover, and in
@@ -146,6 +203,22 @@ this section is still the deck's, unchanged.
 - **"Not for me" is about the garment**, not the shop — `BrandDismissal` refuses a whole brand
   and everything like it, the wrong verdict on a shop you chose to follow. Bounded at 500, never
   leaves the phone.
+- **The model words the top three; it never chooses them** (`PickReasons`, Phase 4). After the
+  set is chosen, `POST /v1/ai/picks/reasons` with each pick's product id, the rule that chose it
+  (`goes_with`, `missing`, `back_in_your_size`, `marked_down`, `new`, `followed_shop`) and the
+  partner **as a short description only** — its measured colour and its product type or slot
+  noun ("black chore jacket"), never its title, which can carry a brand, and never a photograph
+  or an id. Free and device-authenticated, so it needs a model on the server and no account.
+  Asked once per pick per day (answers and refusals kept beside the day; only a request that
+  never arrived is retried), and a pick with no answer keeps the phone's sentence, silently. A
+  worded reason replaces the headline and keeps the evidence — the partner's photograph and the
+  pairing's line — with a quiet "WORDED BY AI" under it.
+- **The morning alert is local, off by default, and always true** (`PicksNotice`; You › Alerts).
+  It is scheduled only by a background pass that has just chosen and kept today's set for the
+  profile on screen, so it names the picks Shop will show: at 09:00 when the pass runs before
+  then, at once when later and nobody has looked, never after 21:00. Shop showing the picks
+  withdraws it for the day. `picks-<home>` identifiers, `PushGrouping.threadID`, `tab: shop` in
+  its user info (`PushDestination.tab`), and the profile's label on its body.
 
 ### The deck is drawn in place, not as a cover
 

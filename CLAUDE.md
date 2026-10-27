@@ -77,6 +77,7 @@ cost.
 | `docs/profiles.md` | Profiles: one server user and one local store per person, the profile header, labelled alerts |
 | `docs/ucp.md` | Reading a storefront that has closed its catalogue |
 | `docs/credits.md` | Credits, the ledger, StoreKit purchases and refunds, and AI cost metering |
+| `docs/ai.md` | Phase 4: the provider layer, prices, the paid actions, search threads, picks, the scan, fits, background reading |
 
 ## Build environment
 
@@ -219,8 +220,8 @@ plutil -p /tmp/streetw-dd/Build/Products/Debug-iphonesimulator/streetw.app/Info.
 ### Tests
 
 ```bash
-swift test                                    # all 720
-cd Server && swift test                       # 362, of which 11 need STREETW_TEST_POSTGRES_URL
+swift test                                    # all 725
+cd Server && swift test                       # 397, of which 13 need STREETW_TEST_POSTGRES_URL (run those --no-parallel)
 cd Embeddings && pytest                       # 63; -m slow adds 3 against real weights
 swift test --filter "Size normalisation"      # one suite
 swift test --filter relockFiresAgain          # one test
@@ -763,15 +764,26 @@ project and every one names what it fixed. The ones most easily broken by accide
 
 Discover with a search field on top (`ShopView`): a field that takes a description, today's picks
 while it is empty, and the deck one row below. **Read `docs/discover.md` (*Shop*) before touching
-`ShopView`, `ShopCatalogue`, `PickLedger`, `ShopQuery`, `ShopSearch` or `DailyPicks`.** The rules
-most easily broken:
+`ShopView`, `ShopAsk`, `AIStore`, `ShopCatalogue`, `PickLedger`, `TodaysPicks`, `ShopQuery`,
+`ShopSearch`, `TasteOrder` or `DailyPicks`.** The rules most easily broken:
 
 - **It searches your shops, and says where** — in server mode every product the server holds for
   them (`GET /v1/products/search`, "IN YOUR SHOPS · N PRODUCTS"), standalone the ones on this
-  phone ("… ON THIS PHONE"); never AI or the web, a magnifying glass and not a sparkle. Phase 4
-  puts a model behind the same field; until then the copy must not promise one. Every other shop
-  the server watches is one quiet row under the answer, asked only when tapped, and shows only
-  what your shops did not. A request that failed says it failed, never "no results".
+  phone ("… ON THIS PHONE"). **The free field never says AI or the web** — a magnifying glass and
+  not a sparkle. Every other shop the server watches is one quiet row under the answer, asked only
+  when tapped, and shows only what your shops did not. A request that failed says it failed, never
+  "no results".
+- **Asking Dropwall is a second, explicit act, and it says it is AI and what it costs** (`ShopAsk`,
+  Phase 4): a sparkle row with the server's price, drawn only where `AIStore.isAvailable` (server
+  mode and `GET /v1/ai` available) — signed out it says "SIGN IN TO USE" and opens You, never a
+  dead button. The model's `reading.query` is printed through the phone's own `ShopQuery` line and
+  is what the page searches; replies continue the thread with its signed token, free, and the
+  reply field says when the next one starts a new, paid search. Your shops' answer is re-ordered
+  by taste on the phone (`TasteOrder`), never on the server. Every action prints its `AICharge`; a
+  refusal (402, 403, 429, 503) is said in words (`AIRefusal`), never as an empty list. **Show me
+  more** is the open web at its own price; a result's shop opens, follows, or goes to the ordinary
+  site check. `AIStore` is the account's, built in `streetwApp.init`, asked at the root keyed on
+  the token and the account, and is the one way any surface calls `/v1/ai/*`.
 - **One grammar on both ends**: the server parses the text with the same `ShopQuery` and runs the
   same `ShopSearch.run` over candidates its full-text index found (`ProductSearch`), told by the
   database which words exist at all (`knows:`). A query must not mean something different on the
@@ -784,7 +796,10 @@ most easily broken:
 - **Picks are a kept set with a true reason**: `Pairing` against `TasteScope.pairingPool`,
   leaning to what is missing, anchors spread, varied by a hash of the local date (no RNG), written
   down for the day so saving one cannot re-rank the page. Never saved, refused or unbuyable when
-  chosen; "not for me" refuses the garment, not the shop.
+  chosen; "not for me" refuses the garment, not the shop. The model only **words** the top three
+  (`PickReasons`, free, once a day, the partner sent as a short description and never a photograph,
+  brand or id), and the morning alert (`PicksNotice`, local, off by default) is scheduled only by a
+  background pass that has just chosen the day's set, so it is always true.
 - **The deck is drawn in place over the tab, not as a cover** — the save confirmations are hosted
   at the root, under any cover.
 
@@ -862,7 +877,10 @@ why the sold-out prompt is asked by the app rather than the extension.
   lenient `init(from:)` for the same reason — it lives in `UserDefaults` on real phones.
 - The schema is `Brand`, `BrandUpdate`, `SavedItem`, `Board`, `StockWatch`, `Fit`,
   `BrandDismissal`, `PlannedDrop`. A new `@Model` that isn't listed in `ProfileSession.schema`
-  simply doesn't exist at runtime.
+  simply doesn't exist at runtime. The scan added **no** model: a garment of your own is a
+  `SavedItem` with no `update` and optional `own…` columns, which a lightweight migration adds to
+  any earlier store (verified by installing over a store the previous build wrote). Prefer that
+  shape — new optional attributes on an existing model — over a new model or a migration plan.
 - **There is one store per profile, not a profile id on every model** (`ProfileSession`,
   `docs/profiles.md`). `default.store` and the unscoped `UserDefaults` keys are the phone's own —
   used signed out, and kept by the first account to sign in (`ProfileStores.owner`) — so data from
@@ -945,7 +963,11 @@ Three tiers, and the middle one is the part that was wrong for a long time.
   usage, credits, the account and profile routes) act on the device. **Credits and the country
   are the account's whichever profile asks**: the credit routes read the device's own user, so
   every profile spends from one ledger, and `PATCH /v1/devices/me`'s country goes through
-  `Accounts.setCountry` to every user on the account. See `docs/profiles.md`.
+  `Accounts.setCountry` to every user on the account. See `docs/profiles.md`. **`/v1/ai` is
+  device routes too, acting for the profile and spending from the account**: `GET /v1/ai` and
+  the pick sentences answer anybody registered; every paid action needs an account (403), runs
+  `AIAction.run`, and shares a per-device budget of its own (`RateLimits.ai`) on top of the
+  standard one. See `docs/ai.md`.
 - **`ADMIN_TOKEN`** — everything under `/admin`, including `/status`, `/admin/accounts` and
   the owner's unlimited-credits switch.
 
@@ -1025,6 +1047,12 @@ the local path in the `else`. Adding a new one means adding both halves:
 | credits: balance, this month's usage, the packs | `GET /v1/credits` (`signedIn: false` and nothing else without an account; no standalone equivalent, and the section is hidden) |
 | buying a pack | StoreKit, then `POST /v1/credits/purchases` with the signed transaction — finished only once the server took it (`CreditStore`). Refunds arrive from Apple at `POST /v1/app-store/notifications`; costs read back with `GET /admin/costs`, see `docs/credits.md` |
 | the Discover feed | `GET /v1/discover` (no standalone equivalent — the phone only holds brands somebody already followed, which is the opposite of the question) |
+| whether AI exists here, and what each action costs | `GET /v1/ai` (`available: false` with no provider; no standalone equivalent, and no AI affordance is drawn) |
+| a described search, and its follow-ups | `POST /v1/ai/search` — the thread travels with each turn, signed (`threadToken`); a follow-up inside it is free. Standalone has no model: `ShopSearch` over `ShopCatalogue`, as before |
+| "Show me more" on the open web | `POST /v1/ai/search/web` |
+| a daily pick's sentence | `POST /v1/ai/picks/reasons` (free; at most three; standalone keeps the phone's own reason) |
+| the clothes scan | `POST /v1/ai/scan` (one JPEG, never stored) |
+| judging a fit, and suggesting for one from the photographs | `POST /v1/ai/fits/judge`, `POST /v1/ai/fits/suggest` — the rule-based `Outfit` and `FitSuggestions` stay the free, standalone answer |
 
 **Discovery is a check, not a request.** A site that is not on Shopify takes longer to read than
 the app's thirty-second timeout, so the screen starts a check, asks after it, and can say *watch
@@ -1172,9 +1200,10 @@ scan has unlisted.
 
 ### Credits
 
-AI is paid for with credits (`ROADMAP.md`, *Decided*); no AI action exists yet, and the ledger
-and the meter are built so Phase 4 only calls `CreditLedger.spend` before a provider call,
-`CostMeter.record` after every one, and `CreditLedger.undo` when the action failed. **Read
+AI is paid for with credits (`ROADMAP.md`, *Decided*). Every paid action goes through
+`AIAction.run`, which calls `CreditLedger.spend` before the provider call, `CostMeter.record`
+after every one, and `CreditLedger.undo` when the action failed or produced nothing (`docs/ai.md`).
+**Read
 `docs/credits.md` before touching `CreditLedger`, `CostMeter`, `AppStorePurchases`,
 `PurchasePolicy`, `CreditPacks`, `CreditStore`, `CreditsSection` or `streetw.storekit`.** The
 short form: the ledger is the balance (a sum, serialised per account by a row lock that only a
@@ -1185,7 +1214,9 @@ metered; a StoreKit JWS is believed only on a chain to the compiled-in **Apple R
 transaction and renewal info are each verified; the unverified double needs a non-production server *and* `CREDITS_UNVERIFIED_TRANSACTIONS=true`;
 an `Xcode` transaction is never believed on production; a refund may take the balance negative;
 the phone finishes a transaction only once the server took it; and the StoreKit configuration
-applies only when Xcode itself launches the app.
+applies only when Xcode itself launches the app. The app shows credits since Phase 4
+(`CreditStore.isOffered`, true) — the balance, this month's usage, each AI action's price from
+`GET /v1/ai`, and the packs — and every AI answer's `AICharge` updates the balance in place.
 
 ### The collection
 
@@ -1199,9 +1230,15 @@ consumer goes through it, or Your taste and the recommendations disagree about t
 crops and does not invert: `Color.sweep` is the one fixed colour in the app, because photographs
 don't invert either.
 
+**Not every save has a product behind it any more.** A garment you scanned is a `SavedItem` with
+`update == nil` and the reading on the save (`ownPhotoFile` and the other `own…` columns), its
+photograph a file in `<store>-photos/` beside the store (`OwnPhotos`). Ask the save —
+`garment`, `hasPhotograph`, `displayTitle`, `coverURL`, `pairingID`, `garmentKey`, `hasSubject` —
+never reach through `update`, or the new surface silently leaves those garments out.
+
 **Read `docs/collection.md` before touching `SavedView`, `SaveDetailView`, `SaveConfirmation`,
 `ImageTagger`, `Cutout`, `Seamless`, `Silhouette`, `VisualReading`, `ProductShot`, `ColorNamer`,
-`FitsPage` or `YouView`.** The rules most easily broken: only saved items get image analysis and the pass
+`FitsPage`, `YouView`, `OwnGarment` or the scan.** The rules most easily broken: only saved items get image analysis and the pass
 **drains** its backlog; a photograph that did not answer is not one that never will (`.gone` vs
 `.unavailable`); the first photograph is not necessarily a photograph of the product; a lift is
 verified before it is believed; bumping `Cutout.version` means bumping `VisualReading.version` with

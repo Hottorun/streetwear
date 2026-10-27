@@ -48,6 +48,7 @@ struct FitCanvas: View {
     @Environment(\.modelContext) private var context
     @Environment(\.dismiss) private var dismiss
     @Environment(StyleStatementStore.self) private var statement: StyleStatementStore
+    @Environment(AIStore.self) private var ai: AIStore
 
     @Query(sort: \SavedItem.savedAt, order: .reverse) private var saves: [SavedItem]
     @Query(sort: [SortDescriptor(\Board.sortIndex), SortDescriptor(\Board.createdAt)])
@@ -101,7 +102,7 @@ struct FitCanvas: View {
         /// because a discovery card's measured colour lives on the card, not on the row.
         var garment: Garment? {
             switch self {
-            case .kept(let save): return save.update?.garment
+            case .kept(let save): return save.garment
             case .pending(let subject): return subject.garment
             }
         }
@@ -119,6 +120,9 @@ struct FitCanvas: View {
         /// The proposal's shortlist, every position's best first. Only there when the canvas
         /// was opened around a garment and the wardrobe has something to put with it.
         case proposal
+        /// The candidates the phone chose, as the model ordered them after looking at the
+        /// photographs — only there once somebody asked.
+        case asked
         case all
         case slot(GarmentSlot)
     }
@@ -145,6 +149,18 @@ struct FitCanvas: View {
     /// second pair of trousers beside the first. Pieces placed from the rest of the tray are not
     /// in here: the canvas is free, and a jacket somebody added by hand is theirs to keep.
     @State private var positions: [UUID: FitPosition] = [:]
+
+    // MARK: Asking about the photographs — see `FitAsk`
+
+    /// What the model said about the fit, and which placed pieces it was shown, in order.
+    @State private var judgement: FitAsk.Judgement?
+    /// The rule-based candidates, reordered and vetted by the model. Nil until asked.
+    @State private var asked: [FitAsk.Suggestion]?
+    @State private var askedCharge: AICharge?
+    @State private var asking: FitAsk.Kind?
+    @State private var askFailure: (kind: FitAsk.Kind, refusal: AIRefusal)?
+    /// Asked to suggest with nothing the rules would offer: nothing was sent.
+    @State private var hasNothingToAsk = false
 
     /// Only ever grows. Sparse z values mean bringing something to the front is one write
     /// rather than renumbering everything behind it.
@@ -179,7 +195,7 @@ struct FitCanvas: View {
         // in the tray as blank tiles that placed a blank rectangle you could move, scale and
         // rotate but never see. Kept out of the tray rather than drawn as a placeholder: a
         // collage is made of pictures, and offering one that isn't there is offering nothing.
-        let wearable = saves.filter { $0.update?.imageURLStrings.isEmpty == false }
+        let wearable = saves.filter(\.hasPhotograph)
 
         // Classified once, then used for both the chips and the filter.
         let classified = wearable.map { (item: $0, slot: $0.slot) }
@@ -189,7 +205,7 @@ struct FitCanvas: View {
 
         let items: [SavedItem]
         switch shelf {
-        case .proposal: items = []
+        case .proposal, .asked: items = []
         case .all: items = wearable
         case .slot(let filter): items = classified.filter { $0.slot == filter }.map(\.item)
         }
@@ -218,6 +234,29 @@ struct FitCanvas: View {
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button("Close", systemImage: "xmark") { dismiss() }
+                }
+                // **Asking costs credits and says so on the button**, so nothing is sent by a
+                // tap that did not name its price. Only where the server can read photographs.
+                if ai.isAvailable {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Menu {
+                            Button(askLabel("Judge this fit", .fitJudge), systemImage: "eye") {
+                                judge()
+                            }
+                            .disabled(placements.count < 2 || asking != nil)
+                            Button(askLabel("Suggest what goes with it", .fitSuggest), systemImage: "list.number") {
+                                suggest()
+                            }
+                            .disabled(placements.isEmpty || asking != nil)
+                        } label: {
+                            if asking != nil {
+                                ProgressView().controlSize(.small)
+                            } else {
+                                Text("Ask").font(.data(13))
+                            }
+                        }
+                        .accessibilityLabel("Ask about this fit")
+                    }
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     Menu("More", systemImage: "ellipsis") {
@@ -304,6 +343,8 @@ struct FitCanvas: View {
                         canvas: geometry.size,
                         space: Self.space,
                         isSelected: selected == entry.placement.itemID,
+                        isFlagged: judgement?.isCurrent(for: placements) == true
+                            && judgement?.swap == entry.placement.itemID,
                         onSelect: { bringToFront(entry.placement.itemID) },
                         onSendToBack: { sendToBack(entry.placement.itemID) },
                         onRemove: { remove(entry.placement.itemID) }
@@ -325,6 +366,23 @@ struct FitCanvas: View {
                     Rectangle()
                         .strokeBorder(Color.signal, lineWidth: 1)
                         .allowsHitTesting(false)
+                }
+            }
+            // What the model said, laid over the canvas the way the save confirmation lies over
+            // the feed: dismissible, and never in the way of the tray. At the foot unless the
+            // piece it marks is down there — usually the shoes — when it moves to the head, so
+            // the verdict never covers the one thing it is pointing at.
+            .overlay(alignment: judgementAtTop ? .top : .bottom) {
+                if let judgement {
+                    FitJudgementPanel(
+                        judgement: judgement,
+                        isCurrent: judgement.isCurrent(for: placements),
+                        onClose: { self.judgement = nil }
+                    )
+                    .padding(12)
+                } else if let askFailure, askFailure.kind == .judge {
+                    FitAskFailureLine(refusal: askFailure.refusal) { self.askFailure = nil }
+                        .padding(12)
                 }
             }
         }
@@ -366,6 +424,11 @@ struct FitCanvas: View {
                         if proposal?.isEmpty == false {
                             trayChip(label: "GOES WITH IT", isOn: shelf == .proposal) { shelf = .proposal }
                         }
+                        // After the free shelf, never in place of it: the rules draw first and
+                        // cost nothing, and this is what came back from asking.
+                        if asked != nil || askFailure?.kind == .suggest || hasNothingToAsk {
+                            trayChip(label: "LOOKED AT", isOn: shelf == .asked) { shelf = .asked }
+                        }
                         trayChip(label: "ALL", isOn: shelf == .all) { shelf = .all }
                         ForEach(tray.slots, id: \.self) { slot in
                             trayChip(label: slot.label.uppercased(), isOn: shelf == .slot(slot)) {
@@ -380,6 +443,8 @@ struct FitCanvas: View {
 
             if shelf == .proposal, let proposal {
                 proposalShelf(proposal)
+            } else if shelf == .asked {
+                askedShelf
             } else if tray.wearable.isEmpty {
                 Text("Save a few things first — a fit is made from your collection.")
                     .font(.editorial(14))
@@ -440,6 +505,54 @@ struct FitCanvas: View {
             .padding(.horizontal, 20)
         }
         .scrollIndicators(.hidden)
+    }
+
+    /// What came back from asking: the candidates the phone chose, in the order the model put
+    /// them after looking, each with its reason. A tap places or swaps exactly as the shelf it
+    /// came from would. "None of these go with it" and "it could not be asked" are different
+    /// lines, because they are different answers.
+    @ViewBuilder
+    private var askedShelf: some View {
+        if let asked, !asked.isEmpty {
+            ScrollView(.horizontal) {
+                LazyHStack(alignment: .top, spacing: 10) {
+                    ForEach(asked) { suggestion in
+                        Button { take(suggestion) } label: {
+                            FitAskedTile(suggestion: suggestion, isPlaced: chosen[suggestion.save.id] != nil)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(.horizontal, 20)
+            }
+            .scrollIndicators(.hidden)
+        } else if asked != nil {
+            Text("Looking at the photographs, none of these go with it.")
+                .font(.editorial(14))
+                .foregroundStyle(Color.muted)
+                .padding(.horizontal, 20)
+        } else if hasNothingToAsk {
+            Text("Nothing in your collection goes with this by the rules, so there was nothing to ask about.")
+                .font(.editorial(14))
+                .foregroundStyle(Color.muted)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.horizontal, 20)
+        } else if let askFailure, askFailure.kind == .suggest {
+            // The notice's two lines without its buttons: the tray has a fixed height, and
+            // sign-in and credits are one tap away on You.
+            VStack(alignment: .leading, spacing: 4) {
+                Text(askFailure.refusal.title)
+                    .font(.editorial(15))
+                    .foregroundStyle(Color.ink)
+                DataLabel(text: askFailure.refusal.detail, size: 9)
+                    .lineLimit(3)
+            }
+            .padding(.horizontal, 20)
+        }
+        if let askedCharge, asked != nil {
+            ChargeLine(charge: askedCharge)
+                .padding(.horizontal, 20)
+        }
     }
 
     private func trayChip(label: String, isOn: Bool, action: @escaping () -> Void) -> some View {
@@ -649,6 +762,107 @@ struct FitCanvas: View {
         selected = id
     }
 
+    // MARK: - Asking
+
+    /// The menu item's words, with the server's price on them whenever it named one.
+    private func askLabel(_ title: String, _ action: CreditAction) -> String {
+        ai.costLabel(for: action).map { "\(title) · \($0.lowercased())" } ?? title
+    }
+
+    private var judgementAtTop: Bool {
+        guard let swap = judgement?.swap,
+              let placement = placements.first(where: { $0.itemID == swap })
+        else { return false }
+        return placement.y > 0.5
+    }
+
+    /// The placed pieces, head down, as the model is shown them — paired with the placement
+    /// each stands for, so an answer that names a piece by index can be drawn on the canvas.
+    private func shown() -> [(itemID: UUID, piece: AIFitPiece)] {
+        placedPieces
+            .compactMap { entry in
+                FitAsk.piece(for: entry.piece).map { (itemID: entry.placement.itemID, piece: $0, order: entry.piece.garment?.slot.stackOrder ?? .max) }
+            }
+            .sorted { $0.order < $1.order }
+            .prefix(AIFits.maxPieces)
+            .map { (itemID: $0.itemID, piece: $0.piece) }
+    }
+
+    private func judge() {
+        let pieces = shown()
+        guard pieces.count >= 2 else { return }
+        asking = .judge
+        askFailure = nil
+        judgement = nil
+        Task {
+            defer { asking = nil }
+            switch await ai.judgeFit(AIFitJudgeRequest(pieces: pieces.map(\.piece))) {
+            case .success(let response):
+                judgement = FitAsk.Judgement(verdict: response.verdict, shown: pieces.map(\.itemID), charge: response.charge)
+            case .failure(let failure):
+                askFailure = (.judge, failure)
+            }
+        }
+    }
+
+    /// The rule-based candidates first — the proposal's shelves where the canvas has one, the
+    /// wardrobe's best against what is placed otherwise — and only those, so the model orders
+    /// and refuses what the phone chose and never introduces anything.
+    private func suggest() {
+        let fit = shown()
+        let placed = placedPieces.compactMap(\.piece.garment)
+        let candidates = FitAsk.candidates(
+            proposal: proposal,
+            saves: saves,
+            placed: Set(chosen.keys),
+            against: placed,
+            statement: statement.statement
+        )
+        let pieces = candidates.compactMap { candidate in FitAsk.piece(for: candidate.save).map { (candidate, $0) } }
+        guard !fit.isEmpty else { return }
+        // Nothing the rules would offer means nothing to ask about — said, and not sent, so
+        // no credit is spent on an empty question.
+        guard !pieces.isEmpty else {
+            asked = nil
+            askedCharge = nil
+            hasNothingToAsk = true
+            shelf = .asked
+            return
+        }
+        hasNothingToAsk = false
+        asking = .suggest
+        askFailure = nil
+        Task {
+            defer { asking = nil }
+            switch await ai.suggestForFit(AIFitSuggestRequest(
+                fit: fit.map(\.piece),
+                candidates: Array(pieces.map(\.1).prefix(AIFits.maxCandidates))
+            )) {
+            case .success(let response):
+                asked = response.suggestions.compactMap { suggestion in
+                    pieces.indices.contains(suggestion.candidate)
+                        ? FitAsk.Suggestion(candidate: pieces[suggestion.candidate].0, reason: suggestion.reason)
+                        : nil
+                }
+                askedCharge = response.charge
+            case .failure(let failure):
+                asked = nil
+                askFailure = (.suggest, failure)
+            }
+            shelf = .asked
+        }
+    }
+
+    /// A piece off the asked shelf: swapped into its position when the proposal placed it, put
+    /// down like any tray tile otherwise.
+    private func take(_ suggestion: FitAsk.Suggestion) {
+        if let option = suggestion.option {
+            choose(option)
+        } else {
+            toggle(suggestion.save)
+        }
+    }
+
     // MARK: - Persistence
 
     private func load() {
@@ -713,7 +927,7 @@ struct FitCanvas: View {
     /// trousers selected together — are stepped apart rather than stacked exactly, or the
     /// second is invisible under the first and the canvas looks as if it dropped one.
     private func arrange(_ items: [SavedItem]) {
-        let garments = items.compactMap { item in item.update.map { (item: item, garment: $0.garment) } }
+        let garments = items.compactMap { item in item.garment.map { (item: item, garment: $0) } }
         guard !garments.isEmpty else { return }
         let splitting = garments.count { $0.garment.slot == .top } > 1
         let arranged = garments.map {
@@ -740,17 +954,18 @@ struct FitCanvas: View {
         let ordered = suggestion.ordered
         // Split tops only when the proposal actually holds two, so a fit of one tee and one
         // pair of trousers is laid out exactly as it always was.
-        let splitting = ordered.filter { $0.update.garment.slot == .top }.count > 1
+        let splitting = ordered.filter { $0.garment.slot == .top }.count > 1
         var arranged: [(position: FitPosition, itemID: UUID)] = []
         for piece in ordered {
-            let subject = FitSubject.product(piece.update)
-            if let save = piece.save ?? subject.existingSave {
+            let garment = piece.garment
+            let subject = piece.update.map(FitSubject.product)
+            if let save = piece.save ?? subject?.existingSave {
                 chosen[save.id] = .kept(save)
-                arranged.append((FitArrangement.position(for: piece.update.garment, splittingTops: splitting), save.id))
-            } else {
+                arranged.append((FitArrangement.position(for: garment, splittingTops: splitting), save.id))
+            } else if let subject {
                 let key = UUID()
                 chosen[key] = .pending(subject)
-                arranged.append((FitArrangement.position(for: piece.update.garment, splittingTops: splitting), key))
+                arranged.append((FitArrangement.position(for: garment, splittingTops: splitting), key))
             }
         }
         placements = FitArrangement.placements(for: arranged)
@@ -877,6 +1092,9 @@ private struct PlacedPiece: View {
     let canvas: CGSize
     let space: String
     let isSelected: Bool
+    /// The piece the judge said to change. Marked, not removed: it is a suggestion about the
+    /// fit, and the fit is still the reader's to arrange.
+    var isFlagged = false
     let onSelect: () -> Void
     let onSendToBack: () -> Void
     let onRemove: () -> Void
@@ -913,6 +1131,18 @@ private struct PlacedPiece: View {
         ZStack {
             CanvasPieceImage(piece: piece)
                 .frame(width: drawn, height: drawn)
+            if isFlagged, !isSelected {
+                Rectangle()
+                    .stroke(Color.signal, style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
+                    .frame(width: drawn, height: drawn)
+                    .overlay(alignment: .topLeading) {
+                        DataLabel(text: "CHANGE THIS", size: 8, color: .paper)
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 3)
+                            .background(Color.signal)
+                    }
+                    .allowsHitTesting(false)
+            }
             if isSelected {
                 chrome.frame(width: drawn, height: drawn)
             }
@@ -1076,13 +1306,31 @@ struct FitPieceImage: View {
     /// `BrandUpdate` rather than off the save, so taking it directly is what lets a
     /// suggestion draw a garment nobody has kept — see `FitPiece`.
     let update: BrandUpdate?
+    /// A garment of your own: its sticker and its photograph, both local files. Nil for
+    /// anything with a product behind it.
+    private let ownCutout: URL?
+    private let ownPhoto: URL?
 
     init(update: BrandUpdate?) {
         self.update = update
+        self.ownCutout = nil
+        self.ownPhoto = nil
     }
 
     init(item: SavedItem) {
         self.update = item.update
+        self.ownCutout = item.update == nil ? item.ownCutoutURL : nil
+        self.ownPhoto = item.update == nil ? item.ownPhotoURL : nil
+    }
+
+    /// A proposal's piece: the save where there is one, since a garment of your own is drawn
+    /// from it, and the product otherwise.
+    init(piece: FitPiece) {
+        if let save = piece.save {
+            self.init(item: save)
+        } else {
+            self.init(update: piece.update)
+        }
     }
 
     /// How wide the photograph is asked for when there is no cutout. Also what
@@ -1093,7 +1341,7 @@ struct FitPieceImage: View {
     /// Cached, because this is read from a body that re-evaluates on every frame of a drag.
     /// See `LocalImage`.
     private var cutout: UIImage? {
-        LocalImage.load(update?.cutoutURL)
+        LocalImage.load(update?.cutoutURL ?? ownCutout)
     }
 
     /// The photograph to fall back to when there is no cutout — the **packshot**, not the
@@ -1108,7 +1356,7 @@ struct FitPieceImage: View {
     /// **`FitRender.warm` must ask for the same URL at the same width**, or the renderer
     /// finds an empty cache and writes a fit with a hole in it.
     static func source(for item: SavedItem) -> URL? {
-        source(for: item.update)
+        item.update == nil ? item.ownPhotoURL : source(for: item.update)
     }
 
     static func source(for update: BrandUpdate?) -> URL? {
@@ -1123,7 +1371,8 @@ struct FitPieceImage: View {
     /// saved fit produced. Reading the decoded cache directly gives the renderer a real
     /// image; `FitRender.warm` is what guarantees it is there.
     private var warmed: UIImage? {
-        Self.source(for: update)
+        if let ownPhoto { return LocalImage.load(ownPhoto) }
+        return Self.source(for: update)
             .map { ImageRendition.sized($0, width: Self.drawnWidth) }
             .flatMap { ImageLoader.shared.cached($0) }
     }
@@ -1137,7 +1386,7 @@ struct FitPieceImage: View {
             // Not yet decoded: on screen this fills in a moment later. A renderer never
             // reaches here, because it warms the cache first.
             UpdateImage(
-                url: Self.source(for: update),
+                url: ownPhoto ?? Self.source(for: update),
                 aspect: 1,
                 contentMode: .fit,
                 drawnWidth: Self.drawnWidth
@@ -1254,7 +1503,7 @@ private struct TrayTile: View {
                 }
                 .opacity(isPlaced ? 0.45 : 1)
 
-            Text(item.update?.title ?? "")
+            Text(item.displayTitle)
                 .font(.editorial(10))
                 .foregroundStyle(Color.muted)
                 .lineLimit(1)
@@ -1275,7 +1524,7 @@ private struct ShelfTile: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
-            FitPieceImage(update: option.update)
+            FitPieceImage(item: option.save)
                 .frame(width: 76, height: 76)
                 .background(Color.paper)
                 .overlay {
@@ -1332,6 +1581,11 @@ private struct FitSubjectImage: View {
         switch subject {
         case .product(let update):
             FitPieceImage(update: update)
+        case .kept(let save):
+            FitPieceImage(item: save)
+        case .scan(let scanned):
+            // In memory, not yet anywhere on disk: nothing is written until it is kept.
+            Image(uiImage: scanned.cutout ?? scanned.photo).resizable().scaledToFit()
         case .discovery(let card, let sticker, _, let packshot):
             if let sticker {
                 Image(uiImage: sticker).resizable().scaledToFit()

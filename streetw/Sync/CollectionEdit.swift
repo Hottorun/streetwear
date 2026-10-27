@@ -88,10 +88,14 @@ enum CollectionEdit {
 
     /// Un-saving several things at once. The same act as `removeSave`: the product stays in the
     /// catalogue, and the fits they were in are left alone — `Fit.items` cascades in neither
-    /// direction.
+    /// direction. A garment of your own takes its photograph with it — there is no catalogue for
+    /// it to stay in — while a fit it was in keeps the render it was drawn into.
     static func delete(_ saves: [SavedItem], in context: ModelContext) {
         guard !saves.isEmpty else { return }
-        for save in saves where !save.isGone { context.delete(save) }
+        for save in saves where !save.isGone {
+            OwnPhotos.remove(for: save)
+            context.delete(save)
+        }
         try? context.save()
     }
 

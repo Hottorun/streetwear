@@ -171,6 +171,78 @@
 				<string>NSPrivacyCollectedDataTypePurposeAppFunctionality</string>
 			</array>
 		</dict>
+		<dict>
+			<!--
+			  Credit packs bought and credits spent (`credit_ledger`): the App Store transaction
+			  id and pack, each spend's action and time, under the account so a balance survives
+			  a reinstall and a refund can be applied. Never a payment detail — Apple takes the
+			  payment.
+			-->
+			<key>NSPrivacyCollectedDataType</key>
+			<string>NSPrivacyCollectedDataTypePurchaseHistory</string>
+			<key>NSPrivacyCollectedDataTypeLinked</key>
+			<true/>
+			<key>NSPrivacyCollectedDataTypeTracking</key>
+			<false/>
+			<key>NSPrivacyCollectedDataTypePurposes</key>
+			<array>
+				<string>NSPrivacyCollectedDataTypePurposeAppFunctionality</string>
+			</array>
+		</dict>
+		<dict>
+			<!--
+			  A garment photographed for the scan, or a scanned garment's own photograph sent to
+			  be judged in a fit. Not stored on our server, but Anthropic, which answers it,
+			  keeps requests for a limited period, so it is declared as collected. It reaches
+			  Anthropic from our server with no device, account or IP address, so not linked.
+			-->
+			<key>NSPrivacyCollectedDataType</key>
+			<string>NSPrivacyCollectedDataTypePhotosorVideos</string>
+			<key>NSPrivacyCollectedDataTypeLinked</key>
+			<false/>
+			<key>NSPrivacyCollectedDataTypeTracking</key>
+			<false/>
+			<key>NSPrivacyCollectedDataTypePurposes</key>
+			<array>
+				<string>NSPrivacyCollectedDataTypePurposeAppFunctionality</string>
+			</array>
+		</dict>
+		<dict>
+			<!--
+			  The text of an "Ask Dropwall" search and its replies. Phase 3's plain search is
+			  discarded on our server and was not declared; this one is sent to Anthropic, which
+			  keeps requests for a limited period. Not linked, for the reason the photographs
+			  are not.
+			-->
+			<key>NSPrivacyCollectedDataType</key>
+			<string>NSPrivacyCollectedDataTypeSearchHistory</string>
+			<key>NSPrivacyCollectedDataTypeLinked</key>
+			<false/>
+			<key>NSPrivacyCollectedDataTypeTracking</key>
+			<false/>
+			<key>NSPrivacyCollectedDataTypePurposes</key>
+			<array>
+				<string>NSPrivacyCollectedDataTypePurposeAppFunctionality</string>
+			</array>
+		</dict>
+		<dict>
+			<!--
+			  What is sent about the reader's own clothes when they ask: a fit's piece titles and
+			  colours, and a daily pick's partner as a short description ("black chore jacket"),
+			  whose worded reason is cached on our server for thirty days with no device or
+			  account on the row.
+			-->
+			<key>NSPrivacyCollectedDataType</key>
+			<string>NSPrivacyCollectedDataTypeOtherUserContent</string>
+			<key>NSPrivacyCollectedDataTypeLinked</key>
+			<false/>
+			<key>NSPrivacyCollectedDataTypeTracking</key>
+			<false/>
+			<key>NSPrivacyCollectedDataTypePurposes</key>
+			<array>
+				<string>NSPrivacyCollectedDataTypePurposeAppFunctionality</string>
+			</array>
+		</dict>
 	</array>
 </dict>
 </plist>

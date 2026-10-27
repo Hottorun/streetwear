@@ -27,6 +27,9 @@ struct NotificationsSection: View {
     @State private var delivery: DeliveryState = .unknown
     /// The one alert decided on this phone rather than by the server — see `PriceAlerts`.
     @AppStorage(PriceAlerts.settingKey) private var savedPriceDrops = true
+    /// The morning's picks, scheduled on this phone too — and **off** unless asked for, because
+    /// nobody asked for picks in the first place. See `PicksNotice`.
+    @AppStorage(PicksNotice.settingKey) private var dailyPicks = false
 
     private enum DeliveryState: Equatable {
         case unknown
@@ -103,6 +106,32 @@ struct NotificationsSection: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
+
+            Toggle(isOn: $dailyPicks) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Today’s picks, in the morning")
+                        .font(.editorial(15))
+                        .foregroundStyle(Color.ink)
+                    Text("Once a day, naming the picks Shop has chosen — never on a day you've already seen them.")
+                        .font(.editorial(12))
+                        .foregroundStyle(Color.muted)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .onChange(of: dailyPicks) { _, on in
+                Task {
+                    if on {
+                        // Asked here because it was asked for: switching an alert on is the
+                        // one moment a permission prompt is the answer to something.
+                        if status == .notDetermined {
+                            await PushAuthorization.request()
+                            status = await PushAuthorization.current()
+                        }
+                    } else {
+                        await PicksNotice.withdrawAll()
+                    }
+                }
+            }
         }
         .task {
             status = await PushAuthorization.current()
@@ -165,6 +194,7 @@ struct NotificationsSection: View {
 /// anywhere", "Saved as a link, never scraped") without ever saying the whole of it.
 struct AboutSection: View {
     @Environment(\.openURL) private var openURL
+    @Environment(AIStore.self) private var ai: AIStore
 
     private static let privacy = URL(string: "https://www.hottorun.com/dropwall/privacy")!
     private static let support = URL(string: "https://www.hottorun.com/dropwall/support")!
@@ -193,6 +223,21 @@ struct AboutSection: View {
                 .lineSpacing(3)
                 .foregroundStyle(Color.muted)
                 .fixedSize(horizontal: false, vertical: true)
+
+            // The promise above stays true only if the exception is said beside it: what you
+            // choose to ask the AI goes out to be answered. Only where there is an AI to ask.
+            if ai.isAvailable {
+                Text("""
+                    What you ask Dropwall's AI — a description, a reply, a photograph you choose \
+                    to send — goes through the server to Anthropic, which answers it. The server \
+                    keeps none of it. Today's picks send a short description of your piece, never \
+                    a photograph.
+                    """)
+                    .font(.editorial(15))
+                    .lineSpacing(3)
+                    .foregroundStyle(Color.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
 
             Button { openURL(Self.privacy) } label: {
                 NotificationsSection.SettingsAction(title: "Privacy policy")

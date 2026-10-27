@@ -26,7 +26,17 @@ struct GoesWith: View {
     /// Only the boards with a taste setting — see `Board.shapingTaste`. Usually none.
     @Query(filter: Board.shapingTaste) private var tasteBoards: [Board]
 
-    let subject: BrandUpdate
+    /// What the row is about: a product, or a garment of your own on its save's page.
+    let subject: FitSubject
+
+    init(subject: BrandUpdate) {
+        self.subject = .product(subject)
+    }
+
+    /// A garment of your own, which has no product to be the subject.
+    init(save: SavedItem) {
+        self.subject = .kept(save)
+    }
 
     /// Four. A row of suggestions is a prompt, not a lookbook, and past four the tail is
     /// made of the pairings the ranking liked least.
@@ -49,19 +59,20 @@ struct GoesWith: View {
     /// somebody said is not theirs — it is standing in for "you", and that is the one save
     /// known not to be.
     private var wardrobe: [SavedItem] {
-        let kept = saves.filter { $0.update?.imageURLStrings.isEmpty == false }
+        let kept = saves.filter(\.hasPhotograph)
         return TasteScope(boards: tasteBoards, saves: saves).pairingPool(kept)
     }
 
-    private var pairs: [(update: BrandUpdate, reason: String?)] {
-        let updates = wardrobe.compactMap(\.update)
+    /// Saves rather than products, so a garment of your own is offered beside the catalogue's.
+    private var pairs: [(save: SavedItem, reason: String?)] {
+        let scored = wardrobe.compactMap { save in save.garment.map { (save: save, garment: $0) } }
         let byID = Dictionary(
-            updates.map { ($0.pairingID, $0) },
+            scored.map { ($0.garment.id, $0.save) },
             uniquingKeysWith: { first, _ in first }
         )
         let ranked = Pairing.best(
             for: subject.garment,
-            from: updates.map(\.garment),
+            from: scored.map(\.garment),
             limit: Self.limit,
             // What somebody has said outranks what the colour wheel worked out — see
             // `StyleStatement`. Empty for anybody who has written nothing, which scores
@@ -110,8 +121,8 @@ struct GoesWith: View {
 
                 ScrollView(.horizontal) {
                     LazyHStack(alignment: .top, spacing: 14) {
-                        ForEach(found, id: \.update.id) { pair in
-                            PairingTile(update: pair.update, reason: pair.reason)
+                        ForEach(found, id: \.save.id) { pair in
+                            PairingTile(save: pair.save, reason: pair.reason)
                         }
                     }
                     .padding(.horizontal, 20)
@@ -120,7 +131,7 @@ struct GoesWith: View {
             }
             .padding(.top, 6)
             .padding(.bottom, 28)
-            .sheet(isPresented: $isBuilding) { FitCanvas(fit: nil, starting: .around(.product(subject), anchor: nil)) }
+            .sheet(isPresented: $isBuilding) { FitCanvas(fit: nil, starting: .around(subject, anchor: nil)) }
         }
     }
 }
@@ -134,25 +145,30 @@ struct GoesWith: View {
 /// rather than filler: on a wardrobe `ImageTagger` has not reached yet — or in the
 /// Simulator, where Vision does not run at all — there is genuinely nothing to say.
 private struct PairingTile: View {
-    let update: BrandUpdate
+    let save: SavedItem
     let reason: String?
 
     var body: some View {
+        tile.productLink(ifAny: save.update)
+    }
+
+    private var tile: some View {
         VStack(alignment: .leading, spacing: 7) {
             UpdateImage(
-                url: update.primaryImageURL,
-                kind: update.kind,
+                // A garment of your own is drawn from your photograph; it has no lead shot.
+                url: save.update?.primaryImageURL ?? save.coverURL,
+                kind: save.update?.kind ?? .product,
                 aspect: 1,
                 drawnWidth: 200,
                 // The fixed sweep, as everywhere the collection is drawn: these are the
                 // photographs you kept, and a transparent PNG must not vanish into a dark
                 // backdrop here any more than it does on the wall.
                 backdrop: .sweep,
-                mark: update.brand?.name
+                mark: save.update?.brand?.name
             )
             .frame(width: 132)
 
-            Text(update.title)
+            Text(save.displayTitle)
                 .font(.editorial(13))
                 .foregroundStyle(Color.ink)
                 .lineLimit(2)
@@ -166,7 +182,15 @@ private struct PairingTile: View {
             }
         }
         .contentShape(.rect)
-        .productLink(update)
+    }
+}
+
+extension View {
+    /// The product page where there is a product, and nothing where there is none — a garment
+    /// of your own has no page in any shop to open.
+    @ViewBuilder
+    func productLink(ifAny update: BrandUpdate?) -> some View {
+        if let update { productLink(update) } else { self }
     }
 }
 

@@ -18,6 +18,7 @@ import SwiftUI
 
 struct CreditsSection: View {
     @Environment(CreditStore.self) private var credits: CreditStore
+    @Environment(AIStore.self) private var ai: AIStore
 
     /// Asked for by `YouView`, not here: a section that draws nothing when signed out is an
     /// `EmptyView`, and an `EmptyView` never appears, so a `.task` on it would never run.
@@ -39,6 +40,12 @@ struct CreditsSection: View {
                     detailColor: (summary.balance ?? 0) < 0 && !unlimited ? .signal : .ink
                 )
                 YouRow(title: "This month", detail: usage(summary.thisMonth ?? []), detailColor: .ink)
+
+                // The price of each action, from the server's own table — the numbers the
+                // affordances print beside themselves, gathered where the balance is.
+                ForEach(prices, id: \.title) { price in
+                    YouRow(title: price.title, detail: price.detail)
+                }
 
                 if !unlimited {
                     ForEach(summary.packs ?? []) { pack in
@@ -62,6 +69,24 @@ struct CreditsSection: View {
         }
         let allowance = summary.monthlyAllowance.map { " \($0) are free each month you use them." } ?? ""
         return "Credits never expire. Each AI action costs a fixed number of them, set from what it measurably costs to run.\(allowance)"
+    }
+
+    /// Each paid action this build offers, by the name its button uses, and what it costs.
+    /// Only those the server prices: an action with no price is never printed as free.
+    private var prices: [(title: String, detail: String)] {
+        guard ai.isAvailable else { return [] }
+        let named: [(CreditAction, String, String?)] = [
+            (.search, "Ask Dropwall", "REPLIES INCLUDED"),
+            (.webSearch, "Show me more", "THE OPEN WEB"),
+            (.scan, "Scan a garment", nil),
+            (.fitJudge, "Judge a fit", nil),
+            (.fitSuggest, "Suggest for a fit", nil)
+        ]
+        return named.compactMap { action, title, note in
+            guard let cost = ai.credits(for: action), cost > 0 else { return nil }
+            let price = AIStore.creditsLabel(cost)
+            return (title, note.map { "\(price) · \($0)" } ?? price)
+        }
     }
 
     private func balance(_ value: Int) -> String {

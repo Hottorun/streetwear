@@ -182,4 +182,17 @@ struct PairingTests {
         #expect(!first.map(\.garment.id).contains("subject"), "never itself")
         #expect(first.first?.garment.id == "c", "black on black outranks black on a colour")
     }
+
+    /// A scanned garment arrives with a slot the model read off the photograph and a few words
+    /// of its own. The words alone can disagree — "overshirt" reads as a top to the classifier
+    /// and a shacket is worn as a jacket — and the photograph is the better witness.
+    @Test("A slot read off the photograph beats the classifier, and unknown falls back to it")
+    func knownSlotOverridesTheClassifier() {
+        let read = Garment(id: "scan", title: "overshirt", slot: .outerwear)
+        #expect(read.slot == .outerwear)
+        #expect(Pairing.score(read, with: garment("Boxy Tee")).isRefused == false)
+
+        let unread = Garment(id: "scan", title: "Cargo Pant", slot: .unknown)
+        #expect(unread.slot == .bottom, "unknown is no answer, so the words still decide")
+    }
 }

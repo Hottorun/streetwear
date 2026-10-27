@@ -98,7 +98,7 @@ enum FitCandidates {
     /// that has two pairs of trousers does not need the app shopping for a third.
     static func gaps(in saves: [SavedItem]) -> Set<GarmentSlot> {
         var owned: Set<GarmentSlot> = []
-        for save in saves where save.update?.imageURLStrings.isEmpty == false {
+        for save in saves where save.hasPhotograph {
             owned.insert(save.slot)
         }
         return Set(GarmentSlot.essential).subtracting(owned)

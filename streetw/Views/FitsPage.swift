@@ -445,7 +445,7 @@ struct SuggestedFitCard: View {
         VStack(alignment: .leading, spacing: 8) {
             ZStack {
                 ForEach(Array(items.prefix(4).enumerated()), id: \.offset) { index, item in
-                    FitPieceImage(update: item.update)
+                    FitPieceImage(piece: item)
                         .frame(width: width * 0.55, height: width * 0.55)
                         .offset(
                             x: CGFloat(index % 2 == 0 ? -1 : 1) * width * 0.14,

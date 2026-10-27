@@ -51,11 +51,11 @@ final class CreditStore {
         Self.isOffered && settings.isConfigured && summary?.signedIn == true
     }
 
-    /// **Off until an action costs credits** — Phase 4's AI. Selling packs nothing in the app
-    /// can spend is a consumable that does nothing, which App Review refuses (3.1.1) and which
-    /// would take somebody's money for a promise. The ledger, the routes and the purchase path
-    /// all ship and are tested; this is the one switch that shows them.
-    static let isOffered = false
+    /// **On since Phase 4**, the release in which an action first costs credits (`AIStore`).
+    /// It was off until then: selling packs nothing in the app can spend is a consumable that
+    /// does nothing, which App Review refuses (3.1.1) and which would take somebody's money for
+    /// a promise. The packs go into App Store Connect with this release, not before.
+    static let isOffered = true
 
     private var api: StreetwAPI? {
         guard let baseURL = settings.baseURL, settings.token != nil else { return nil }
@@ -112,6 +112,16 @@ final class CreditStore {
         } catch {
             products = [:]
         }
+    }
+
+    /// What an AI action just cost, from its own answer — so the balance on You is right
+    /// without asking the server again. The balance only: this month's usage line is the
+    /// server's count and is read the next time You opens, which asks anyway.
+    func apply(_ charge: AICharge) {
+        guard var summary else { return }
+        // Nil is an unlimited account, whose balance is never printed.
+        if let balance = charge.balance { summary.balance = balance }
+        self.summary = summary
     }
 
     // MARK: Buying

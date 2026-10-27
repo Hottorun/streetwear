@@ -1,6 +1,7 @@
 // SavedItem.swift
 // Model for content the user has saved (wardrobe/inspiration)
 import Foundation
+import StreetwCore
 import SwiftData
 
 @Model
@@ -82,6 +83,40 @@ final class SavedItem {
     /// leaves the fits it was in rather than silently rewriting them.
     var fits: [Fit] = []
 
+    // MARK: - A garment of your own
+
+    // **A save with no product behind it** — something you photographed and the scan read
+    // (`docs/ai.md`, *The scan*). Until Phase 4 every save had a `BrandUpdate`, and the
+    // smallest safe change was to let `update` be nil here and carry what the scan said on the
+    // save itself: optional columns and two defaulted arrays, which a lightweight migration
+    // adds to a store written by any earlier build with no migration plan. A new model, or a
+    // `BrandUpdate` minted for a garment nobody sells, would have put a product into the
+    // catalogue's tables — the feed, Shop's search on the phone and "more like this" all read
+    // those, and none of them should ever offer somebody their own jacket.
+    //
+    // `ownPhotoFile` is the marker: nil on every save from before, and on every catalogue save.
+
+    /// The reader's own photograph, a JPEG in this store's `OwnPhotos` directory. A file name,
+    /// never a path: the app's container moves between installs and updates.
+    var ownPhotoFile: String?
+    /// The garment lifted off it, a PNG beside the photograph, when `Cutout` found one.
+    var ownCutoutFile: String?
+    /// Width ÷ height of the photograph, so the wall lays the tile out at its shape.
+    var ownAspect: Double?
+    /// The scan's one line about it — "Black canvas chore jacket". What the wall prints.
+    var ownTitle: String?
+    /// What it is, in a shop's words — "chore jacket".
+    var ownType: String?
+    /// `GarmentSlot` raw value, as the scan read it off the photograph.
+    var ownSlot: String?
+    /// Colour names, main first, in `ColorHarmony`'s vocabulary where one fit.
+    var ownColours: [String] = []
+    var ownMaterial: String?
+    var ownPattern: String?
+    var ownStyle: [String] = []
+    /// What "find this" searches for — the scan's `searchText`.
+    var ownSearchText: String?
+
     init(update: BrandUpdate?, savedAt: Date = Date(), type: SaveType = .inspiration, note: String? = nil) {
         self.id = UUID()
         self.update = update
@@ -98,7 +133,10 @@ final class SavedItem {
     func matches(_ query: String) -> Bool {
         let needle = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard !needle.isEmpty else { return true }
-        guard let update else { return false }
+        guard let update else {
+            let own = (ownWords + [note ?? ""]).joined(separator: " ").lowercased()
+            return isOwnGarment && needle.split(separator: " ").allSatisfy { own.contains($0) }
+        }
 
         let haystack = [
             update.title,
@@ -152,13 +190,14 @@ final class SavedItem {
     /// been analysed yet, or the packshot is not in the gallery any more — it is the lead
     /// shot, which is exactly what the wall showed before.
     var coverURLString: String? {
-        guard let update else { return nil }
+        guard let update else { return ownPhotoURL?.absoluteString }
         if let chosen = coverImageURLString, update.imageURLStrings.contains(chosen) { return chosen }
         return Self.automaticCover(of: update)
     }
 
     var coverURL: URL? {
-        coverURLString.flatMap(URL.init(string:)) ?? update?.primaryImageURL
+        guard update != nil else { return ownPhotoURL }
+        return coverURLString.flatMap(URL.init(string:)) ?? update?.primaryImageURL
     }
 
     /// The cover's measured shape, or nil when nothing has measured it yet.
@@ -167,6 +206,7 @@ final class SavedItem {
     /// packshot — the automatic cover — so it is the right shape whenever no cover has been
     /// chosen by hand. A chosen one carries its own.
     var coverAspectMeasured: Double? {
+        guard update != nil else { return ownAspect }
         if let chosen = coverImageURLString, chosen == coverURLString { return coverAspect }
         return update?.imageAspect
     }
@@ -199,11 +239,82 @@ final class SavedItem {
     /// first, then everything else in the brand's own order. Only ever reordered, never
     /// filtered — every photograph is still there to swipe to, which is `ProductShot`'s rule.
     var galleryURLs: [URL] {
-        guard let update else { return [] }
+        guard let update else { return ownPhotoURL.map { [$0] } ?? [] }
         var strings = update.imageURLStrings
         if let cover = coverURLString, let index = strings.firstIndex(of: cover), index > 0 {
             strings.insert(strings.remove(at: index), at: 0)
         }
         return strings.compactMap(URL.init(string:))
+    }
+}
+
+// MARK: - Whatever is behind it
+
+/// What every surface that draws a save asks, so none of them has to know whether a product
+/// is behind it. A surface that reaches for `update` directly is one that will quietly leave
+/// a garment of your own out — the wall did exactly that, filtering on `update != nil`.
+extension SavedItem {
+    /// A garment of your own: a photograph and the scan's reading, with no product behind it.
+    var isOwnGarment: Bool { update == nil && ownPhotoFile != nil }
+
+    /// Whether there is anything behind this save at all — a product, or a photograph of your
+    /// own. The wall leaves out a save that has neither, which is a row whose product went.
+    var hasSubject: Bool { update != nil || isOwnGarment }
+
+    /// The photograph, resolved against the store this save lives in. Nil for a row with no
+    /// context, which is a row on its way out.
+    var ownPhotoURL: URL? {
+        guard let ownPhotoFile, let directory = OwnPhotos.directory(of: self) else { return nil }
+        return directory.appending(path: ownPhotoFile)
+    }
+
+    var ownCutoutURL: URL? {
+        guard let ownCutoutFile, let directory = OwnPhotos.directory(of: self) else { return nil }
+        return directory.appending(path: ownCutoutFile)
+    }
+
+    /// Whether there is anything to draw — what every surface made of photographs (the fit
+    /// tray, the suggestions, "wear it with") asks before offering a save at all.
+    var hasPhotograph: Bool {
+        if let update { return update.hasPhotograph }
+        return ownPhotoFile != nil
+    }
+
+    /// What the wall and the tray print under the photograph.
+    var displayTitle: String {
+        update?.title ?? ownTitle ?? ownType?.capitalized ?? "Saved item"
+    }
+
+    /// The key `Pairing` matches a scored garment back on: the product's where there is one,
+    /// the save's own where there is not.
+    var pairingID: String { update?.pairingID ?? "own:\(id.uuidString)" }
+
+    /// One id per garment for `FitSuggestions.key`: the product for a catalogue save — a
+    /// proposal is keyed on its products, so a borrowed piece keeps its key once kept — and
+    /// the save itself for a garment of your own, which has no product to be keyed on.
+    var garmentKey: UUID { update?.id ?? id }
+
+    /// This save in the terms `Pairing` reasons about, or nil when there is nothing to reason
+    /// about. A garment of your own is read off the scan: the slot the photograph showed, the
+    /// colours the model named — a reading of the photograph, which is what `ImageTagger`
+    /// measures on a catalogue shot, so it is scored the same way.
+    var garment: Garment? {
+        if let update { return update.garment }
+        guard isOwnGarment else { return nil }
+        return OwnGarment.garment(
+            id: pairingID,
+            title: ownTitle,
+            type: ownType,
+            slot: ownSlot,
+            colours: ownColours,
+            material: ownMaterial,
+            pattern: ownPattern,
+            style: ownStyle
+        )
+    }
+
+    /// Every word the scan said about it, for search and the taste reading's text fallback.
+    var ownWords: [String] {
+        [ownTitle, ownType, ownMaterial, ownPattern].compactMap { $0 } + ownColours + ownStyle
     }
 }

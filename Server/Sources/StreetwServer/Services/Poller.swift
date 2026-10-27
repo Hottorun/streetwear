@@ -212,6 +212,10 @@ actor Poller {
     /// read and announced within a pass or two; never enough to turn the poller into a crawler.
     static let enrichmentBudget = 6
 
+    /// Pages with no structured data read by the model per pass, at most. Each one is a few
+    /// seconds of a pass and owner-paid; new products arrive a few at a time.
+    static let pageReadingBudget = 2
+
     /// How long a watched product's page is believed before it is read again.
     ///
     /// The one product a sitemap brand has that anybody is waiting on. Re-reading it is what
@@ -270,10 +274,24 @@ actor Poller {
         }
 
         var read = 0
+        var modelReadings = 0
         for product in queue {
-            let outcome: ProductPage.Outcome
+            var outcome: ProductPage.Outcome
             if let link = product.linkURL.flatMap(URL.init(string:)) {
-                outcome = await ProductPage.read(link, http: http)
+                let (page, html) = await ProductPage.reading(link, http: http)
+                outcome = page
+                // A new product whose page loaded and published nothing the rules can read:
+                // asked of the model once, here, because this is the only read it gets
+                // before it is announced. See `AIBackgroundReading`.
+                if case .notAProduct = page, let html, app.ai != nil, modelReadings < Self.pageReadingBudget,
+                   let owed = product.pendingAnnouncement.flatMap(PendingAnnouncement.init(rawValue:)) {
+                    modelReadings += 1
+                    if let reading = await AIBackgroundReading.readPage(html: html, url: link, app: app),
+                       // Only the page could confirm a guess, so a guess needs a price too.
+                       owed == .announce || reading.price != nil {
+                        outcome = .product(reading)
+                    }
+                }
             } else {
                 outcome = .unreachable(retryable: false)
             }

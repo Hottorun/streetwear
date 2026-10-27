@@ -43,7 +43,14 @@ swift test
 
 In-memory SQLite, no network — `StubHTTP` serves canned catalogs. The poller tests cover
 the rules that matter: a first poll is a baseline, a restock names the size that returned,
-an unchanged catalog produces nothing, and a failing source backs off.
+an unchanged catalog produces nothing, and a failing source backs off. The AI tests replay
+recorded Messages API bodies through `ReplayTransport` and run the routes on the fake
+provider; no key is ever needed.
+
+The Postgres suites run when `STREETW_TEST_POSTGRES_URL` names a scratch database. They migrate
+and revert the whole schema in it, so run them with `--no-parallel`: two suites migrating one
+database at once collide, and a run that fails half-migrated leaves the database to be dropped
+and created again.
 
 ## Environment
 
@@ -66,6 +73,12 @@ an unchanged catalog produces nothing, and a failing source backs off.
 | `APNS_TOPIC` | — | **Required** with the other `APNS_*`. The app's bundle ID (`com.kern.functional.streetw`); no default, because a stale one means every push is rejected by Apple rather than failing at boot |
 | `EMBEDDING_URL` | — | The embedding sidecar (`Embeddings/`), e.g. `http://embeddings.railway.internal:8080`. With `EMBEDDING_TOKEN`, switches semantic search on where pgvector is installed. Either unset: full-text only, said at boot — see `docs/server.md` (*Embeddings*) |
 | `EMBEDDING_TOKEN` | — | The sidecar's shared secret; the same value as on the `embeddings` service |
+| `ANTHROPIC_API_KEY` | — | Switches AI on (`/v1/ai/…`, sale-banner and product-page reading). Unset: off, said at boot, and `GET /v1/ai` answers `available: false`. See `docs/ai.md` |
+| `AI_MODEL` | `claude-sonnet-5-5` | The model for what a reader waits on and pays for: search, the web, scans, fits. Needs a row in `AIPricing` or it is metered at the dearest one |
+| `AI_MODEL_FAST` | `claude-haiku-4-5-20251001` | The model for owner-paid work: daily-pick sentences, sale banners, product pages |
+| `AI_THREAD_SECRET` | random per boot | Signs search-thread tokens. Set it (any long random string) so a paid thread keeps its free follow-ups across a deploy and between instances |
+| `AI_BACKGROUND_DAILY_CAP_MICROS` | `1000000` | What owner-paid AI work may cost per UTC day, in millionths of a dollar ($1). Reaching it stops background reading and pick sentences until midnight UTC; never a reader's paid action |
+| `AI_FAKE` | off | `true` answers every AI action from `FakeAIProvider`, deterministically and at no cost, for running the app against a local server with no key. **Ignored on `--env production`** |
 | `EVENT_RETENTION_DAYS` | `30` | Events older than this, already notified, are pruned |
 | `PRODUCT_RETENTION_DAYS` | `180` | Products gone this long *and* with no events left are pruned — unlisted by the daily scan, or unseen where no scan reads them |
 

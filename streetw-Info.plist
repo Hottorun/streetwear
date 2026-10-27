@@ -25,5 +25,12 @@
 		<string>fetch</string>
 		<string>remote-notification</string>
 	</array>
+	<!--
+	  The clothes scan's camera. Here rather than as an INFOPLIST_KEY_ build setting for the
+	  reason the two keys above are: a key Xcode quietly drops is a crash the first time the
+	  camera opens, and this file is merged whatever the build settings say.
+	-->
+	<key>NSCameraUsageDescription</key>
+	<string>Dropwall uses the camera to photograph one garment for the scan. Only that photograph is sent, to be read once, and it is never stored on Dropwall's server.</string>
 </dict>
 </plist>

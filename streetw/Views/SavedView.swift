@@ -34,6 +34,7 @@ enum CollectionFilter: Hashable {
 struct SavedView: View {
     @Environment(\.modelContext) private var context
     @Environment(CollectionRoute.self) private var collection: CollectionRoute
+    @Environment(AIStore.self) private var ai: AIStore
     @Query(sort: \SavedItem.savedAt, order: .reverse) private var saves: [SavedItem]
     @Query(sort: [SortDescriptor(\Board.sortIndex), SortDescriptor(\Board.createdAt)])
     private var boards: [Board]
@@ -55,6 +56,7 @@ struct SavedView: View {
     @State private var deleting: Board?
     @State private var opened: SavedItem?
     @State private var openedFit: Fit?
+    @State private var isScanning = false
 
     // MARK: Selecting
 
@@ -77,14 +79,14 @@ struct SavedView: View {
         let inMode: [SavedItem]
         switch filter {
         case .type(let type):
-            inMode = saves.filter { $0.update != nil && $0.type == type }
+            inMode = saves.filter { $0.hasSubject && $0.type == type }
         case .fits:
             inMode = []
         case .board:
             // Read off the board, which is proportional to the answer, rather than asking
             // every save in the collection whether it is on it — a relationship walk per save
             // per render. See `docs/performance.md`.
-            inMode = currentBoard?.recentItems.filter { $0.update != nil } ?? []
+            inMode = currentBoard?.recentItems.filter(\.hasSubject) ?? []
         }
         // The facet narrows whatever is already showing rather than replacing it, so
         // arriving from your taste on You lands you inside the collection you know rather
@@ -217,6 +219,7 @@ struct SavedView: View {
             .youButton()
             .toolbar { toolbar(wall) }
             .sheet(item: $opened) { SaveDetailView(save: $0) }
+            .scanSheet(isPresented: $isScanning)
             .sheet(item: $openedFit) { FitCanvas(fit: $0) }
             .sheet(isPresented: $isFilingSelection) {
                 BulkBoardSheet(saves: wall.selected(selection))
@@ -314,13 +317,24 @@ struct SavedView: View {
                     .disabled(wall.isEmpty)
                 }
             }
+            // **"+" adds to the collection**: a garment you photograph, or a board. The scan is
+            // drawn only where the server can read a photograph (`AIStore.isAvailable`); without
+            // it the "+" is the one thing it held before, and a menu of one is a lid on a button.
             ToolbarItem(placement: .topBarTrailing) {
-                Menu {
-                    Button("New board", systemImage: "plus") {
-                        newBoardName = ""
-                        isNamingBoard = true
+                if ai.isAvailable {
+                    Menu {
+                        Button("Scan a garment", systemImage: "camera") { isScanning = true }
+                        Button("New board", systemImage: "square.grid.2x2") { startNewBoard() }
+                    } label: {
+                        Label("Add", systemImage: "plus")
                     }
-                    if let board = currentBoard {
+                } else {
+                    Button("New board", systemImage: "plus") { startNewBoard() }
+                }
+            }
+            if let board = currentBoard {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Menu {
                         Button("Rename board", systemImage: "pencil") {
                             newBoardName = board.name
                             renaming = board
@@ -331,12 +345,17 @@ struct SavedView: View {
                         Button("Delete board", systemImage: "trash", role: .destructive) {
                             deleting = board
                         }
+                    } label: {
+                        Label("Board", systemImage: "ellipsis")
                     }
-                } label: {
-                    Label("Boards", systemImage: "ellipsis")
                 }
             }
         }
+    }
+
+    private func startNewBoard() {
+        newBoardName = ""
+        isNamingBoard = true
     }
 
     private func selectionTitle(_ wall: Wall) -> String {
@@ -660,7 +679,7 @@ struct SavedView: View {
         let board = currentBoard
         // A fit is made of photographs — see `FitCanvas.buildTray` — so a selection with none
         // has nothing to start one from.
-        let wearable = chosen.filter { $0.update?.imageURLStrings.isEmpty == false }
+        let wearable = chosen.filter(\.hasPhotograph)
         let allLeftOut = !chosen.isEmpty && chosen.allSatisfy(\.isExcludedFromTaste)
 
         return VStack(spacing: 0) {

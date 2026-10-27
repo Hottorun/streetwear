@@ -147,7 +147,10 @@ extension FeedItem {
             // — it never polls in server mode — and without this every collection page falls
             // back to matching a word from the title, which is what printed five board
             // shorts under ISLAND PUFF PRINT TRUCKER HAT.
-            memberExternalIDs: product?.memberExternalIDs
+            memberExternalIDs: product?.memberExternalIDs,
+            // What the model read off a sale's banner, when it was asked.
+            saleEndsAt: event.saleEndsAt,
+            saleTerms: event.saleTerms
         )
     }
 }

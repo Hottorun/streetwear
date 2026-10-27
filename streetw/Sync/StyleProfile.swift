@@ -11,6 +11,7 @@
 // The fallback stays because it works from save #1, before any image has been fetched.
 
 import Foundation
+import StreetwCore
 
 struct StyleFacet: Identifiable, Hashable {
     var id: String { label }
@@ -44,7 +45,10 @@ struct CollectionFacet: Hashable, Identifiable {
     ///   question of the same saves — otherwise "Black · 12" opens onto fourteen, two of them
     ///   things somebody said were not their taste, and the count reads as broken.
     func matches(_ save: SavedItem, in scope: TasteScope) -> Bool {
-        guard scope.counts(save), let update = save.update else { return false }
+        guard scope.counts(save) else { return false }
+        guard let update = save.update else {
+            return save.isOwnGarment && matchesOwn(save)
+        }
 
         switch axis {
         case .brand:
@@ -85,6 +89,25 @@ struct CollectionFacet: Hashable, Identifiable {
             return StyleReading.tones(of: update).contains {
                 $0.caseInsensitiveCompare(value) == .orderedSame
             }
+        }
+    }
+
+    /// A garment of your own, asked the way `StyleProfile.build` counted it: the scan's colours
+    /// as the measured ones, its words as the text. It has no brand, and nothing measured the
+    /// pattern or the tone, so those axes never match it.
+    private func matchesOwn(_ save: SavedItem) -> Bool {
+        switch axis {
+        case .colour:
+            return StyleProfile.ownColours(of: save).contains { $0.caseInsensitiveCompare(value) == .orderedSame }
+        case .category:
+            let text = StyleProfile.ownHaystack(of: save)
+            return Vocabulary.categories.contains { term, label in
+                label.caseInsensitiveCompare(value) == .orderedSame && text.contains(term)
+            }
+        case .silhouette:
+            return StyleProfile.ownHaystack(of: save).contains(value.lowercased())
+        case .brand, .pattern, .tone:
+            return false
         }
     }
 
@@ -172,7 +195,22 @@ struct StyleProfile {
         var tones: [String: Int] = [:]
 
         for save in saves {
-            guard let update = save.update else { continue }
+            guard let update = save.update else {
+                // A garment you photographed says as much about you as one you bought, and
+                // more than one you bookmarked. Its colours are the scan's reading of the
+                // photograph, counted like a measured colour; its words are the scan's.
+                guard save.isOwnGarment else { continue }
+                let colours = ownColours(of: save)
+                for colour in colours { colors[colour, default: 0] += 1 }
+                let text = ownHaystack(of: save)
+                for (term, label) in Vocabulary.categories where text.contains(term) {
+                    categories[label, default: 0] += 1
+                }
+                for term in Vocabulary.silhouettes where text.contains(term) {
+                    silhouettes[term.capitalized, default: 0] += 1
+                }
+                continue
+            }
             let haystack = ([update.title, update.productType ?? ""] + update.tags)
                 .joined(separator: " ")
                 .lowercased()
@@ -232,6 +270,17 @@ struct StyleProfile {
         profile.patterns = facets(from: patterns)
         profile.tones = facets(from: tones)
         return profile
+    }
+
+    /// A garment of your own's main colour and its accent, in the names a measured colour
+    /// carries — so "Black" from the scan and "Black" from `ImageTagger` are one facet.
+    static func ownColours(of save: SavedItem) -> [String] {
+        let named = save.ownColours.prefix(2).map { ColorHarmony.canonicalName(of: $0) ?? $0.capitalized }
+        return named.count == 2 && named[0] == named[1] ? [named[0]] : Array(named)
+    }
+
+    static func ownHaystack(of save: SavedItem) -> String {
+        save.ownWords.joined(separator: " ").lowercased()
     }
 
     /// The part of an axis that is actually a *reading*, rather than a list of its options.

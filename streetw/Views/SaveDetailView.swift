@@ -65,6 +65,7 @@ struct SaveDetailView: View {
     @State private var isRemoved = false
     @State private var isNamingBoard = false
     @State private var newBoardName = ""
+    @State private var isFinding = false
 
     private var update: BrandUpdate? { save.update }
 
@@ -107,7 +108,18 @@ struct SaveDetailView: View {
         return NavigationStack(path: $path) {
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
-                    if let update, !gallery.isEmpty {
+                    if save.isOwnGarment, !gallery.isEmpty {
+                        // Your own photograph, on the same sweep. One frame, so no cover to
+                        // choose and nothing to page.
+                        ImageGallery(
+                            urls: gallery,
+                            kind: .product,
+                            isZoomable: true,
+                            backdrop: .sweep,
+                            mark: nil,
+                            selection: $imageIndex
+                        )
+                    } else if let update, !gallery.isEmpty {
                         // The whole set, paged, not just the first frame. You kept this
                         // particular thing; the other seven photographs of it are already
                         // on the phone.
@@ -130,6 +142,7 @@ struct SaveDetailView: View {
 
                     VStack(alignment: .leading, spacing: 26) {
                         heading(isSoldOut: stock.isSoldOut)
+                        if save.isOwnGarment { ownReading }
                         if !stock.entries.isEmpty { sizeSection(stock.entries) }
                         if !colorways.isEmpty {
                             ColorwaySection(colorways: colorways, selected: $selectedColorway)
@@ -191,11 +204,22 @@ struct SaveDetailView: View {
                 // is the *next* thing to do rather than the subject — the reverse of where
                 // it sits on a product page, which is arguing for the save in the first
                 // place.
-                if let update { GoesWith(subject: update) }
+                if let update {
+                    GoesWith(subject: update)
+                } else if save.isOwnGarment {
+                    GoesWith(save: save)
+                }
+                // Then alternatives to it, the product page's row — only where a shop's
+                // catalogue stands behind the save. A link from a blog, or a garment of your
+                // own, has no catalogue to be like.
+                if let update, update.brand != nil { SimilarItems(to: update) }
             }
             .scrollIndicators(.hidden)
             .background(Color.paper)
-            .navigationTitle(update?.brandLabel ?? "Saved")
+            .navigationTitle(update?.brandLabel ?? (save.isOwnGarment ? "Your photo" : "Saved"))
+            .sheet(isPresented: $isFinding) {
+                if let text = save.ownSearchText { ScanFindSheet(searchText: text, similar: nil) }
+            }
             .toolbarTitleDisplayMode(.inline)
             // This sheet has a stack of its own, so it needs its own destination table —
             // a route pushed onto a stack that hasn't registered it does nothing at all,
@@ -289,7 +313,7 @@ struct SaveDetailView: View {
 
             brandLine
 
-            Text(update?.title ?? "Saved item")
+            Text(save.displayTitle)
                 .font(.editorial(25))
                 .foregroundStyle(Color.ink)
                 .fixedSize(horizontal: false, vertical: true)
@@ -356,6 +380,35 @@ struct SaveDetailView: View {
             .buttonStyle(.borderless)
             .disabled(isResolvingBrand)
             .accessibilityLabel("Open \(label)")
+        }
+    }
+
+    /// What the scan read off your photograph, said where a product's size run would be — the
+    /// garment's facts, above the rule, the same as any other. And the way to look for it in
+    /// shops, which is a search over the catalogue the server holds and costs nothing: the
+    /// reading was paid for when the photograph was read.
+    private var ownReading: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            DataLabel(text: "YOUR PHOTO · READ BY THE SCAN")
+            let facts = [save.ownType] + save.ownColours.map(Optional.some) + [save.ownMaterial, save.ownPattern]
+            let line = facts.compactMap { $0?.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+            if !line.isEmpty {
+                Text(line.joined(separator: " · ").uppercased())
+                    .font(.data(12))
+                    .foregroundStyle(Color.ink)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if !save.ownStyle.isEmpty {
+                DataLabel(text: save.ownStyle.joined(separator: " · ").uppercased(), size: 10)
+            }
+            if settings.isConfigured, save.ownSearchText?.isEmpty == false {
+                Button { isFinding = true } label: {
+                    Label("Find it or something like it", systemImage: "magnifyingglass")
+                        .font(.data(12, .medium))
+                        .foregroundStyle(Color.ink)
+                }
+                .buttonStyle(.borderless)
+            }
         }
     }
 
@@ -700,6 +753,7 @@ struct SaveDetailView: View {
     /// be a harmless no-op.
     private func remove() {
         isRemoved = true
+        OwnPhotos.remove(for: save)
         context.delete(save)
         try? context.save()
         dismiss()

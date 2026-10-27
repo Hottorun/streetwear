@@ -51,11 +51,19 @@ enum FitSubject: Identifiable {
         reading: VisualReading.Reading?,
         packshot: URL?
     )
+    /// A garment of your own already in the collection — a save with no product behind it,
+    /// which `product` cannot carry.
+    case kept(SavedItem)
+    /// A garment just photographed and read, and not kept: "does it go with my wardrobe" is
+    /// asked in a shop about something not bought. It becomes a save only if the fit does.
+    case scan(ScannedGarment)
 
     var id: String {
         switch self {
         case .product(let update): return update.externalID
         case .discovery(let card, _, _, _): return card.productExternalID
+        case .kept(let save): return save.pairingID
+        case .scan(let scanned): return scanned.pairingID
         }
     }
 
@@ -64,7 +72,8 @@ enum FitSubject: Identifiable {
     var existingSave: SavedItem? {
         switch self {
         case .product(let update): return update.saves.first
-        case .discovery: return nil
+        case .discovery, .scan: return nil
+        case .kept(let save): return save
         }
     }
 
@@ -89,6 +98,10 @@ enum FitSubject: Identifiable {
                 busyness: reading?.busyness ?? 0,
                 textCoverage: reading?.textCoverage ?? 0
             )
+        case .kept(let save):
+            return save.garment ?? Garment(id: save.pairingID, title: save.displayTitle)
+        case .scan(let scanned):
+            return scanned.garment
         }
     }
 
@@ -119,6 +132,12 @@ enum FitSubject: Identifiable {
                 update.packshotURLString = packshot.absoluteString
             }
             return update.saves.first
+        case .kept(let save):
+            return save.isGone ? nil : save
+        case .scan(let scanned):
+            // Inspiration, for the reason above: a fit kept around something seen in a shop
+            // says it is wanted, not that it was bought.
+            return scanned.save(as: .inspiration, in: context)
         }
     }
 }
@@ -129,7 +148,9 @@ struct FitProposal {
     /// One candidate for one position on the body.
     struct Option: Identifiable {
         var save: SavedItem
-        var update: BrandUpdate
+        /// The save in `Pairing`'s terms, built once — and read off the save rather than its
+        /// product, because a garment of your own has none.
+        var garment: Garment
         var position: FitPosition
         /// The line `Pairing` gave for this against the subject. Nil is a real state — the
         /// verdict has nothing to say until a photograph has been measured — and prints
@@ -186,7 +207,7 @@ struct FitProposal {
 
         // A save with no photograph is excluded outright: there is nothing to draw and nothing
         // to lift a cutout from — the rule the tray and `FitSuggestions` already apply.
-        let kept = saves.filter { $0.update?.imageURLStrings.isEmpty == false }
+        let kept = saves.filter(\.hasPhotograph)
         let wardrobe = TasteScope(boards: boards, saves: saves).pairingPool(kept)
 
         var byPosition: [FitPosition: [Option]] = [:]
@@ -194,9 +215,9 @@ struct FitProposal {
         // vocabulary set, and the opening arrangement asks about each candidate repeatedly.
         var garments: [UUID: Garment] = [:]
         for save in wardrobe {
-            guard let update = save.update else { continue }
-            let garment = update.garment
-            guard garment.slot != .unknown, garment.id != centre.id else { continue }
+            guard let garment = save.garment,
+                  garment.slot != .unknown, garment.id != centre.id
+            else { continue }
 
             // **Excluded by position, not by slot.** Excluding the whole `.top` slot meant a fit
             // built around a hoodie could never be given a tee to wear under it — the one thing
@@ -214,7 +235,7 @@ struct FitProposal {
 
             garments[save.id] = garment
             byPosition[position, default: []].append(
-                Option(save: save, update: update, position: position, reason: verdict.reason, score: verdict.score)
+                Option(save: save, garment: garment, position: position, reason: verdict.reason, score: verdict.score)
             )
         }
 
@@ -243,6 +264,41 @@ struct FitProposal {
         )
     }
 
+    /// A few whole outfits around the subject rather than one — what the scan's "does it go
+    /// with my wardrobe" shows, where the question is asked in a shop and two or three answers
+    /// say more than one.
+    ///
+    /// Each is the opening arrangement **pinned to a different piece** for the position that
+    /// decides an outfit most — the bottom, or the top when the subject is the bottom — taken
+    /// best first, so every answer is one `open` would give and the canvas opened on it with the
+    /// same anchor lays out exactly the fit that was shown. Judged whole by `Outfit`, which
+    /// refuses what it would refuse anywhere; deterministic, like everything that proposes.
+    func outfits(limit: Int = 3, statement: StyleStatement) -> [(anchor: String, pieces: [Option], reason: String?)] {
+        let centre = subject.garment
+        let deciding: [GarmentSlot] = subjectPosition.slot == .bottom ? [.top] : [.bottom, .top]
+        let anchors = shelves
+            .filter { deciding.contains($0.position.slot) }
+            .flatMap(\.options)
+            .sorted { $0.score == $1.score ? $0.id.uuidString < $1.id.uuidString : $0.score > $1.score }
+
+        var seen: Set<Set<UUID>> = []
+        var found: [(anchor: String, pieces: [Option], reason: String?)] = []
+        for anchor in anchors where found.count < limit {
+            let pieces = Self.open(
+                around: centre,
+                anchor: anchor.save.pairingID,
+                shelves: shelves,
+                garments: [:],
+                statement: statement
+            )
+            guard seen.insert(Set(pieces.map(\.id))).inserted else { continue }
+            let verdict = Outfit.score([centre] + pieces.map(\.garment), statement: statement)
+            guard !verdict.isRefused else { continue }
+            found.append((anchor.save.pairingID, pieces, verdict.reason))
+        }
+        return found
+    }
+
     /// The opening proposal: the best thing the wardrobe has for each essential position,
     /// chosen against everything already in the fit rather than against the subject alone.
     ///
@@ -260,7 +316,7 @@ struct FitProposal {
         garments: [UUID: Garment],
         statement: StyleStatement
     ) -> [Option] {
-        func garment(_ option: Option) -> Garment { garments[option.id] ?? option.update.garment }
+        func garment(_ option: Option) -> Garment { garments[option.id] ?? option.garment }
 
         var chosen: [Garment] = [centre]
         var result: [FitPosition: Option] = [:]
@@ -270,7 +326,7 @@ struct FitProposal {
         // named garment that no longer qualifies quietly falls back to the ordinary arrangement.
         // Matched on `pairingID`, which is what the card was naming.
         if let anchor,
-           let pinned = shelves.lazy.flatMap(\.options).first(where: { $0.update.pairingID == anchor }) {
+           let pinned = shelves.lazy.flatMap(\.options).first(where: { $0.save.pairingID == anchor }) {
             result[pinned.position] = pinned
             chosen.append(garment(pinned))
         }

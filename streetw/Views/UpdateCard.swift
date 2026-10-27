@@ -138,11 +138,16 @@ struct CollectionTile: View {
                 // weight — on a collection that is mostly one label, six tiles shouting
                 // the same name over six different products. What you kept is the title;
                 // who made it is the caption.
-                Text(update?.title ?? "Saved item")
+                Text(save.displayTitle)
                     .font(.editorial(12))
                     .foregroundStyle(Color.ink)
                     .lineLimit(2)
                     .fixedSize(horizontal: false, vertical: true)
+                // A garment you photographed has no maker to caption it with, and a blank
+                // where the wordmark goes reads as attribution that failed to load.
+                if save.isOwnGarment {
+                    DataLabel(text: "YOUR PHOTO", size: 9)
+                }
                 // `brandLabel`, not `brand?.name`. A brand is only attached when the link
                 // matched something followed, so anything shared from a label nobody has
                 // added sat on the wall with no attribution at all — which is most of what
@@ -162,10 +167,12 @@ struct CollectionTile: View {
         .contentShape(.rect)
         .onTapGesture { onOpen() }
         .contextMenu {
-            if isSelected == nil, let update {
-                UpdateMenu(update: update)
+            if isSelected == nil {
+                // The product's menu only where there is a product; a garment of your own has
+                // no shop, stock or brand for it to act on.
+                if let update { UpdateMenu(update: update) }
                 if let onSelect {
-                    Divider()
+                    if update != nil { Divider() }
                     Button("Select", systemImage: "checkmark.circle", action: onSelect)
                 }
             }

@@ -49,6 +49,7 @@
   h3 { font-size: 1.0625rem; margin: 2rem 0 .5rem; }
   h3 { font-size: 1.0625rem; margin: 2rem 0 .5rem; }
   h3 { font-size: 1.0625rem; margin: 2rem 0 .5rem; }
+  h3 { font-size: 1.0625rem; margin: 2rem 0 .5rem; }
   ul { padding-left: 1.1rem; }
   li { margin: .5rem 0; }
   a { color: inherit; text-underline-offset: .15em; }
@@ -70,7 +71,7 @@
 
 <h1>Dropwall — Privacy Policy</h1>
 
-<p class="updated">Last updated 26 October 2026</p>
+<p class="updated">Last updated 27 October 2026</p>
 
 <p>Dropwall is made by KERN AG, Germany. Questions about this
 policy go to <a href="mailto:hottorun@pm.me">hottorun@pm.me</a>.</p>
@@ -85,7 +86,11 @@ ask Apple for either.</p>
 
 <p>Almost everything the app knows about you stays on your phone. The exception is the small amount
 of information our server needs in order to tell you that something you are waiting for has been
-released, has come back in stock or has been marked down, and the searches you ask it to run.</p>
+released, has come back in stock or has been marked down, and the searches you ask it to run.
+When you use one of the features that ask AI — asking Dropwall in Shop, scanning a garment,
+asking about a fit — what you asked about goes through our server to Anthropic, the company
+that makes the Claude model, to be answered; see <em>AI features</em> below. Nothing is sent to it
+unless you ask.</p>
 
 <p>We do not sell data, we show no advertising, we use no third-party analytics or attribution
 services, and we do not track you across other companies' apps or websites. The one thing we
@@ -95,9 +100,9 @@ server — see <em>Anonymous usage counts</em> below.</p>
 <h2>What stays on your device and is never sent to us</h2>
 
 <ul>
-  <li>Everything you save, and the notes, sizes and photographs attached to it</li>
+  <li>Everything you save, and the notes, sizes and photographs attached to it — including the photographs you take of your own clothes, which are kept on the phone. One is sent only when you ask for it to be read or judged (see <em>AI features</em>)</li>
   <li>Your boards and the outfits you compose</li>
-  <li>Your daily picks, and anything you mark "not for me"</li>
+  <li>Your daily picks, and anything you mark "not for me" — apart from the short description described under <em>AI features</em></li>
   <li>Anything you write in the style statement field</li>
   <li>The taste profile used to recommend brands and pick products, and any brand you have dismissed</li>
   <li>Any release date you enter yourself in the drop calendar, along with its title and note</li>
@@ -121,6 +126,7 @@ what you save does not have to leave the device.</p>
   <li><strong>Which brands you follow</strong>, and for each whether you want everything, only sales and price drops, or nothing at all, so we know which storefronts to watch and what to tell you.</li>
   <li><strong>Which products you have asked to be alerted about</strong>, including the size or colour you asked for.</li>
   <li><strong>What you type into Shop's search box</strong>, so our server can search everything the shops you follow sell. It is used to answer that one search and then discarded: it is not stored, not written to our logs, and not linked to you or your device. Finding products that look alike runs on our own server too — no search, and no product, is sent to another company to do it.</li>
+  <li><strong>Your credit balance and purchases</strong>, if you are signed in: each credit pack you buy (the App Store's transaction, which names the pack and when it was bought, never a payment detail — Apple handles the payment), each credit spent, with the kind of action it paid for and when, and what each AI action cost us. These are held so your balance survives a reinstall and a refund can be applied. They are linked to your account.</li>
   <li><strong>Your size preferences and your gender filter.</strong> These are held so that a restock alert in a size you do not wear is never sent to you. That targeting is the only reason we have them.</li>
   <li><strong>The country you shop in</strong> — your phone's region, unless you choose another under You › Location. It is held so that, where a brand runs a separate shop for your country, your feed and alerts come from that shop and its prices. It is a country and nothing finer: never your location, your address or your phone's position.</li>
   <li><strong>A brand and a time, when you enter a release date yourself and are following that brand</strong>, so our server can check that storefront more often around that moment. Only the brand and the instant are sent — never the title or the note you wrote, and never any date for a brand you do not follow. Nobody else can read it, and no notification or public record is produced from it.</li>
@@ -145,6 +151,26 @@ what you save does not have to leave the device.</p>
 whether its alerts are switched on. The name is printed at the start of that profile's alerts
 ("For Anna: …"), so it passes through Apple's notification service like the rest of the alert.
 Use any name you like; it does not have to be a real one.</p>
+
+<h2>AI features</h2>
+
+<p>Some features are answered by Claude, a model made by <strong>Anthropic</strong>. Each one runs only when you
+ask for it, costs credits (or is free and says so), and sends only what that answer needs.
+Anthropic receives it from our server, not from your phone, so it never sees your device, your
+account or your IP address. Anthropic processes it on our behalf to answer the request, does not
+use it to train its models, and deletes it after the limited period its commercial terms allow.
+On our own server none of it is stored or written to our logs; we keep only the numbers needed
+for billing — which kind of action, which model, how much text it took and what it cost.</p>
+
+<ul>
+  <li><strong>Asking Dropwall in Shop</strong>: the description you typed and your short replies in that search. "Show me more" also sends your country, so the shops it finds sell where you live.</li>
+  <li><strong>Scanning a garment</strong>: the one photograph you chose, after the phone has cut the garment out where it can. Deciding whether it goes with your wardrobe happens on the phone; your wardrobe is not sent.</li>
+  <li><strong>Asking about a fit</strong>: the pieces in it — their titles, colours and photographs (a shop's photograph by its address, or your own photograph if the piece is one you scanned) — and, when you ask for suggestions, the candidates the phone chose.</li>
+  <li><strong>Daily picks</strong>: so a pick's reason can be written in one line, the pick and a short description of the piece of yours it goes with — "black chore jacket" — are sent: never its photograph, its brand or anything else about it. The sentence is kept on our server for up to thirty days with no device or account attached, so anyone with a similar pick gets the same sentence.</li>
+</ul>
+
+<p>Our server also asks Claude to read shops' own pages — the small print of a sale banner, or a
+product page that publishes nothing machines can read. That is about the shop, never about you.</p>
 
 <h2>Anonymous usage counts</h2>
 
@@ -193,6 +219,7 @@ a link into the app: your phone asks that website directly.</p>
 
 <ul>
   <li><strong>Apple</strong>, which delivers push notifications and, if you use it, provides Sign in with Apple. Apple's own privacy policy applies to both.</li>
+  <li><strong>Anthropic</strong>, which answers the AI features you ask for, as described under <em>AI features</em>, and processes what it receives only to answer it.</li>
   <li><strong>Our hosting provider</strong>, which runs the server and its database on our behalf and does not use the data for anything else.</li>
 </ul>
 
@@ -211,7 +238,8 @@ is why you are never shown the tracking permission prompt.</p>
   <li>Release history older than thirty days is deleted from our server, along with products that no storefront has listed for six months.</li>
   <li>A release date you sent as a polling hint is deleted shortly after that date has passed.</li>
   <li>Your device record, your follows, your alerts, your size preferences and your country are kept for as long as you use the app.</li>
-  <li>If you signed in, your account and its profiles are kept until you delete the account.</li>
+  <li>If you signed in, your account and its profiles are kept until you delete the account, and with them your credit balance and its history.</li>
+  <li>What each AI action cost us is kept as numbers only — no text, no photograph — to set the price of credits. Deleting your account removes the account from those numbers; what is left describes nobody.</li>
   <li>The usage totals are kept indefinitely, because they describe nobody. The date your device last sent counts is replaced each day.</li>
 </ul>
 
@@ -221,7 +249,8 @@ is why you are never shown the tracking permission prompt.</p>
 
 <p><strong>If you signed in</strong>, you can delete your account in the app, under You › Account. That deletes,
 on our server, the account, every profile on it, every device record signed in to it, and their
-follows, alerts, sizes, countries and release dates, and cancels Dropwall's sign-in with Apple.
+follows, alerts, sizes, countries and release dates, and its credit balance and history, and
+cancels Dropwall's sign-in with Apple. Unspent credits are lost with the account.
 Deleting a single profile deletes that profile's data the same way. Your phone keeps its own
 saves and carries on without an account.</p>
 

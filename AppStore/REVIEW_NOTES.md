@@ -9,7 +9,9 @@ Center** — but answer the specific guideline they cite rather than re-sending 
 
 **Demo account:** leave the "Sign-in required" box unchecked. Signing in is optional (Sign in
 with Apple, which needs no demo credentials), there is no paywall, and every screen is reachable
-on a fresh install.
+on a fresh install. The AI features need sign-in, because credits live on the account; a new
+account gets the free monthly credits, so the reviewer's own Apple ID is enough to try them
+without buying anything.
 
 **Keep this file in step with the app.** It makes factual claims — which endpoints are read,
 that the app has no checkout of its own, that Instagram is never fetched — and each one is enforced in
@@ -24,7 +26,8 @@ Dropwall watches clothing brands and shops — menswear and womenswear, any kind
 for new releases, restocks, sales and price drops, and lets you keep the pieces you care about
 in a private local archive.
 
-Nothing requires an account and nothing is sold. On first launch you are offered a short list
+Nothing requires an account, and the only thing sold is optional credits for the AI features
+(see AI FEATURES AND CREDITS). On first launch you are offered a short list
 of suggested brands — tapping two or three of them is enough to populate the feed, and the
 Feed, Shop and Saved tabs, and the You page behind the person icon at the top right, are all
 reachable immediately. If the feed looks empty, it is
@@ -32,9 +35,33 @@ because no brand has published anything in the last few minutes; the brand's own
 its full catalogue right away.
 
 Shop's search box searches the catalogue our server holds of the shops the user follows (and,
-when asked, of every shop it watches), and says which under the field. It is not a web search
-and no generative model is involved. The text of a search is used to answer it and is not stored
-or logged.
+when asked, of every shop it watches), and says which under the field. That plain search is not
+a web search and no generative model is involved. The text of a search is used to answer it and
+is not stored or logged.
+
+AI FEATURES AND CREDITS
+
+A few features are answered by Claude (Anthropic), each only when the user taps it, and each
+labelled as AI with its price in credits beside the button:
+
+- Shop › "Ask Dropwall": reads a description ("black suit for a wedding, no wool") into a search
+  of the user's shops, with short follow-up replies in the same search at no extra charge.
+  "Show me more" looks on the open web for product pages from other shops; each result opens the
+  shop's own page in Safari, and the app never buys anything.
+- The camera on Saved's "+" (Scan a garment) and in Shop's search field: reads one photograph of
+  a garment, then offers to add it to the wardrobe with the user's own photograph, to check what
+  it goes with (worked out on the phone), or to find it or something like it.
+- The fit editor's "Ask" menu: judges an outfit from its photographs, or suggests what to add.
+- Daily picks in Shop get a one-line reason written by the model, free.
+
+Signed out, each AI button says that sign-in is needed and opens it. The model's answers are
+never presented as a shop's own data: products always come from the shops' own catalogues,
+found by our search.
+
+Credits are consumable in-app purchases (three packs). They are held on the user's account on
+our server, so they survive a reinstall and appear on every phone signed in to the account;
+that is why there is no "Restore" for them, and why buying needs sign-in. Every signed-in
+account gets a free monthly allowance. Deleting the account says that unused credits are lost.
 
 SIGN IN WITH APPLE, PROFILES AND ACCOUNT DELETION
 
@@ -112,12 +139,19 @@ device row, the list of brands a user follows, the products they have asked to b
 about, their size and gender preferences — the last of these only so that a restock alert in a
 size they do not wear is never sent — and the country they shop in. A user who signs in adds
 Apple's per-app identifier for them, and the names they give any profiles; those are declared as
-User ID and Name.
+User ID and Name. A signed-in user's credit purchases and spends are held under the account and
+declared as Purchase History.
 
 Saved items, boards, outfits, notes, the written style statement and the taste profile used for
 recommendations all stay on the device, for every profile. Recommendations are computed locally: the server
 sends candidate brands and the comparison happens on the phone precisely so that what a user
 saves never has to leave it.
+
+When the user asks one of the AI features, what that answer needs goes from our server to
+Anthropic: the text of an Ask Dropwall search, the one photograph of a scan, or the pieces of a
+fit. Nothing identifying the user or the device is sent with it, and none of it is stored or
+logged on our server. Those are declared as Photos, Search History and Other User Content, not
+linked to the user.
 
 Nothing is shared with data brokers, nothing is joined with data from other companies' apps
 or websites, and no advertising or analytics SDK is present. The app does not use App

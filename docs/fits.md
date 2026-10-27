@@ -439,3 +439,40 @@ snapping**, because a grid turns a collage back into a form.
   and no hint that filing was possible; a menu that hides the thing you would open it for is worse
   than no menu. Filing a fit is also on the card's context menu in Saved › Fits, since that is
   where fits are looked at — the editor is where they are made.
+
+## Asking about the photographs (Phase 4)
+
+Every rule above reads words and one measured colour, so a pair can pass all of them and be
+plainly wrong to anybody looking. The canvas's **Ask** menu puts the two questions the rules
+cannot answer to the model (`FitAsk`, `docs/ai.md`, *Fits*). Drawn only where the server can
+answer (`AIStore.isAvailable`), never standalone.
+
+- **The price is on the button.** "Judge this fit · 1 credit", "Suggest what goes with it ·
+  1 credit", from the server's table. Nothing is sent by a tap that did not name its price.
+- **Judge** sends the placed pieces head down — a catalogue photograph as a URL at an 800px
+  rendition, a garment of your own as the JPEG already on the phone, a scan not yet kept as its
+  photograph — and draws the verdict over the foot of the canvas: works / risky / clashes, the
+  line, up to four notes, and a dashed vermilion mark on the piece to change. The mark and the
+  panel are tied to the placements that were judged (`Judgement.isCurrent`); move a garment in
+  or out and the panel says the fit has changed since rather than pointing at the wrong piece.
+- **Suggest only reorders what the phone chose.** The candidates are the proposal's shelves when
+  the canvas was opened around a garment, and otherwise the wardrobe scored the way
+  `FitSuggestions.accompaniment` scores — the worst verdict against everything placed, a clash
+  refused unless stated — twelve at most (`FitAsk.candidates`). The answer is a second shelf,
+  **LOOKED AT**, after GOES WITH IT and never in place of it: the rules still draw first and
+  free. Each tile carries the model's reason; a tap swaps or places exactly as the shelf it came
+  from would.
+- **Empty and failed are different lines.** "Looking at the photographs, none of these go with
+  it" is an answer; an `AIRefusal` (`AIRefusalNotice`: sign in, credits, the cost cap, unavailable, a failure
+  the server undid) is not one.
+- **A fit around something that is not in the store yet** has two new subjects:
+  `FitSubject.kept(SavedItem)` for a garment of your own (which `.product` cannot carry), and
+  `FitSubject.scan(ScannedGarment)` for one just scanned and not kept. The second is
+  materialised as an Inspiration save **only when the fit is saved**, the discovery card's rule.
+- **"Does it go with my wardrobe" is `FitProposal.outfits`**: the opening arrangement pinned in
+  turn to the best few pieces for the deciding position (the bottom, or the top when the subject
+  is the bottom), deduplicated and judged whole by `Outfit`. Every card is an answer `open` would
+  give, so the canvas opened with the same anchor lays out exactly the fit the card showed.
+- **`FitPiece` and `FitProposal.Option` carry a `Garment`, not a `BrandUpdate`.** A garment of
+  your own has no product, so the engine reasons about `SavedItem.garment` and keys proposals on
+  `SavedItem.garmentKey` (the product for a catalogue save, the save for your own).

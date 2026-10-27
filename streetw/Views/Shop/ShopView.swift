@@ -3,14 +3,17 @@
 //
 // Three things on one page, in the order somebody arrives wanting them:
 //
-// - **A field that takes a description** — "a black suit under $400". Until Phase 3 stores
-//   whole catalogues and Phase 4 puts a model behind it, it is read by a small grammar
-//   (`ShopQuery`) over the products from your shops already on this phone (`ShopCatalogue`),
-//   and the page says exactly that: "IN YOUR SHOPS", with the count. It never says AI, never
-//   says the web, and draws a magnifying glass rather than a sparkle, because a sparkle is the
-//   platform's way of promising a model. Under the box it prints what it understood, as the
-//   style statement does, and when a search comes back empty it says which constraint emptied
-//   it (`ShopSearch.Outcome`).
+// - **A field that takes a description** — "a black suit under $400". It is read by a small
+//   grammar (`ShopQuery`) over your shops — the server's catalogue of them, or standalone the
+//   products on this phone (`ShopCatalogue`) — and the page says exactly that: "IN YOUR SHOPS",
+//   with the count. The field itself never says AI, never says the web, and draws a magnifying
+//   glass rather than a sparkle, because a sparkle is the platform's way of promising a model.
+//   Under the box it prints what it understood, as the style statement does, and when a search
+//   comes back empty it says which constraint emptied it (`ShopSearch.Outcome`).
+// - **Asking Dropwall**, beside it and never instead of it (`ShopAsk`): a row that says AI and
+//   its price, which sends the description to the model, prints the model's reading through
+//   the same `ShopQuery` line, and continues as a short thread of replies. Drawn only where the
+//   server has a model (`AIStore`); standalone, never.
 // - **Today's picks** while the field is empty — a few things from your shops, each with the
 //   one sentence an archive can say about it and a photograph of your own piece beside it
 //   (`DailyPicks`). This is the Style tab's "what's missing", moved to where it can be acted on.
@@ -29,6 +32,7 @@ struct ShopView: View {
     @Environment(SyncEngine.self) private var engine: SyncEngine
     @Environment(ServerSettings.self) private var settings: ServerSettings
     @Environment(SaveConfirmation.self) private var confirmation: SaveConfirmation
+    @Environment(AIStore.self) private var ai: AIStore
 
     /// The collection, for what you own and what is already kept. Unpredicated for the reason
     /// `GoesWith`'s is — the question is genuinely about everything saved — and harmless here
@@ -56,6 +60,8 @@ struct ShopView: View {
     @State private var hasWardrobe = false
     /// Bumped by "not for me", which changes nothing else the picks are keyed on.
     @State private var refusals = 0
+    /// The model's wording of the top few picks' reasons, by pick id — see `PickReasons`.
+    @State private var worded: [String: String] = [:]
 
     @State private var fitting: ShopPick?
     @State private var isBrowsing = false
@@ -100,6 +106,27 @@ struct ShopView: View {
     @State private var viewing: DiscoverCard?
     @State private var isLoadingMore = false
 
+    // MARK: - Asking Dropwall
+
+    /// The paid thread, when one is open. While it has a reading, that reading — not the
+    /// field's text — is what the page searches and prints.
+    @State private var ask = ShopAsk()
+    /// The query the last answer from the model already holds results for, so the search the
+    /// new reading sets off does not ask the server a second time for the same page.
+    @State private var primed: ShopQuery?
+    /// Where each of the thread's results sits once taste has ordered it, by product key —
+    /// worked out once per change in a `.task`, never per body, and only ever appended to
+    /// within one query, so a MORE page never moves what is already on screen.
+    @State private var tasteRank: [String: Int] = [:]
+    @State private var tasteRankQuery = ""
+    /// A shop from the open web somebody wants to follow, by host — the ordinary site check.
+    @State private var addingShop: AddingShop?
+
+    private struct AddingShop: Identifiable {
+        var host: String
+        var id: String { host }
+    }
+
     /// In server mode the field searches the catalogue the server holds; standalone, the
     /// products on this phone, exactly as before.
     private var isServer: Bool { settings.isConfigured }
@@ -125,6 +152,23 @@ struct ShopView: View {
         var server: Bool
         var token: String?
         var elsewhere: Bool
+        /// The model's reading, while a thread has one.
+        var asked: String?
+    }
+
+    private struct WordingKey: Equatable {
+        var picks: [String]
+        var day: String
+        var isAvailable: Bool
+    }
+
+    /// What the thread's taste order is worked out again on.
+    private struct TasteKey: Equatable {
+        var query: String
+        var hits: [String]
+        var saves: Int
+        var newestSave: Date?
+        var statement: String
     }
 
     /// Everything the picks read, as scalars — nothing here classifies or faults a
@@ -182,7 +226,13 @@ struct ShopView: View {
                         field
                         if isSearching {
                             if isServer {
+                                asking
                                 serverResults(profile: profile)
+                                if ask.reading != nil, ai.offersWebSearch {
+                                    ShowMoreSection(ask: ask) { item in
+                                        if let host = item.url.host() { addingShop = AddingShop(host: host) }
+                                    }
+                                }
                             } else {
                                 results(profile: profile)
                             }
@@ -231,12 +281,20 @@ struct ShopView: View {
             server: isServer,
             // An authenticated route on first launch keys on the token — see `DiscoverFeedView`.
             token: settings.token,
-            elsewhere: looksElsewhere
+            elsewhere: looksElsewhere,
+            asked: ask.reading?.query
         )) {
             await search()
         }
+        .task(id: tasteKey) {
+            orderByTaste()
+        }
         .task(id: picksKey(day: day)) {
             await choosePicks(day: day)
+        }
+        // After the set is chosen, and again once the server says whether it has a model.
+        .task(id: WordingKey(picks: picks.map(\.id), day: day, isAvailable: ai.isAvailable)) {
+            await wordPicks(day: day)
         }
         #if DEBUG
         // Screenshot affordance: `-shopQuery "<text>"` types a description into the field at
@@ -251,6 +309,11 @@ struct ShopView: View {
         // return a newline — so a newline is taken as "done", the way the keyboard's own
         // Search key reads.
         .onChange(of: text) { _, typed in
+            // A thread is about the description that opened it: rewriting the description is
+            // a new question, and the free search answers it until somebody asks again.
+            if let opening = ask.opening, typed.trimmingCharacters(in: .whitespacesAndNewlines) != opening {
+                ask.end()
+            }
             guard typed.contains("\n") else { return }
             text = typed.replacingOccurrences(of: "\n", with: " ").trimmingCharacters(in: .whitespaces)
             isWriting = false
@@ -258,7 +321,12 @@ struct ShopView: View {
         // Clearing the field clears what refined it: chips left on from a search about
         // trousers would silently narrow the next one about shoes.
         .onChange(of: isSearching) { _, searching in
-            if !searching { cheaper = false; formal = false; inMySize = false; looksElsewhere = false }
+            if !searching { cheaper = false; formal = false; inMySize = false; looksElsewhere = false; ask.end() }
+        }
+        // "Follow this shop" on a page from the open web: the ordinary add flow, which searches
+        // the catalogue first and only then checks the site.
+        .sheet(item: $addingShop) { shop in
+            AddBrandView(prefill: shop.host)
         }
         .sheet(item: $fitting) { pick in
             FitCanvas(fit: nil, starting: .around(.product(pick.update), anchor: pick.partner?.pairingID))
@@ -308,16 +376,7 @@ struct ShopView: View {
                 // Shop names and model numbers are the words most worth typing and the ones
                 // autocorrect is surest are mistakes.
                 .autocorrectionDisabled()
-                if !text.isEmpty {
-                    Button {
-                        text = ""
-                    } label: {
-                        Image(systemName: "xmark.circle.fill")
-                            .foregroundStyle(Color.muted)
-                    }
-                    .buttonStyle(.borderless)
-                    .accessibilityLabel("Clear")
-                }
+                trailingControls
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 13)
@@ -328,6 +387,29 @@ struct ShopView: View {
         .padding(.horizontal, 20)
         .padding(.top, 4)
         .padding(.bottom, 24)
+    }
+
+    /// The controls at the field's trailing edge, in one row of their own. Anything else that
+    /// belongs to the field — the scan's camera — goes in this row, after the clear button.
+    private var trailingControls: some View {
+        HStack(spacing: 12) {
+            if !text.isEmpty {
+                Button {
+                    text = ""
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundStyle(Color.muted)
+                }
+                .buttonStyle(.borderless)
+                .accessibilityLabel("Clear")
+            }
+            // The scan, with "find this" landing here — the reading's words become the
+            // description, searched like anything typed. Draws nothing where AI is off.
+            ScanButton(side: 28) { found in
+                text = found
+                isWriting = false
+            }
+        }
     }
 
     /// What is being searched, in so many words, always under the box.
@@ -624,15 +706,23 @@ struct ShopView: View {
             served = Served()
             return
         }
+        // While a thread has a reading, the reading is the search: what the model understood,
+        // in the grammar, which the server searches and the page prints exactly as if typed.
+        let source = isServer ? (ask.reading?.query ?? trimmed) : trimmed
         // A pause before reading a sentence still being typed. A chip, or the index landing,
         // changes no text and answers at once.
         let answered = isServer ? served.query.text : found.query.text
-        if answered != trimmed {
+        if answered != source {
             try? await Task.sleep(for: .milliseconds(isServer ? 400 : 250))
             guard !Task.isCancelled else { return }
         }
-        let query = ShopQuery.parse(trimmed).refined(cheaper: cheaper, formal: formal, inMySize: inMySize)
+        let query = ShopQuery.parse(source).refined(cheaper: cheaper, formal: formal, inMySize: inMySize)
         if isServer {
+            // The model's answer carried this page already.
+            if let primed, primed == query, !looksElsewhere {
+                self.primed = nil
+                return
+            }
             await searchServer(query)
             return
         }
@@ -734,7 +824,8 @@ struct ShopView: View {
                 action: "COULDN'T REACH DROPWALL — \(message.uppercased())"
             )
             Button {
-                Task { await searchServer(ShopQuery.parse(text).refined(cheaper: cheaper, formal: formal, inMySize: inMySize)) }
+                let source = ask.reading?.query ?? text
+                Task { await searchServer(ShopQuery.parse(source).refined(cheaper: cheaper, formal: formal, inMySize: inMySize)) }
             } label: {
                 DataLabel(text: "TRY AGAIN", size: 10, color: .ink)
                     .padding(.horizontal, 20)
@@ -753,8 +844,8 @@ struct ShopView: View {
     @ViewBuilder
     private func answered(_ response: ProductSearchResponse, place: Place, profile: SizeProfile, hiding: Set<UUID>) -> some View {
         let saved = savedKeys
-        let exact = response.exact.filter { !hiding.contains($0.card.brand.id ?? UUID()) }
-        let partial = response.partial.filter { !hiding.contains($0.card.brand.id ?? UUID()) }
+        let exact = byTaste(response.exact.filter { !hiding.contains($0.card.brand.id ?? UUID()) }, place: place)
+        let partial = byTaste(response.partial.filter { !hiding.contains($0.card.brand.id ?? UUID()) }, place: place)
         switch response.outcome {
         case .found, .closest:
             if exact.isEmpty, partial.isEmpty {
@@ -864,6 +955,106 @@ struct ShopView: View {
         .padding(.top, 36)
     }
 
+    // MARK: - Asking Dropwall
+
+    /// The offer to ask, or the thread once one is open. Server mode only, and only where the
+    /// server has a model.
+    @ViewBuilder
+    private var asking: some View {
+        if ask.isOpen {
+            AskThreadHeader(
+                ask: ask,
+                reply: { reply in runAsk { await ask.reply(reply, inMySize: inMySize, via: ai) } },
+                retry: { runAsk { await ask.retry(inMySize: inMySize, via: ai) } },
+                end: { ask.end() }
+            )
+            .padding(.horizontal, 20)
+            .padding(.bottom, 24)
+        } else if ai.isAvailable {
+            AskOffer {
+                let opening = text.trimmingCharacters(in: .whitespacesAndNewlines)
+                isWriting = false
+                runAsk { await ask.ask(opening, inMySize: inMySize, via: ai) }
+            }
+            .padding(.horizontal, 20)
+            .padding(.bottom, 22)
+        }
+    }
+
+    /// Runs one turn, then hands its results to the page as the answer for its own reading —
+    /// when the chips on screen add nothing the model's request did not carry, which is the
+    /// only case in which they are the same page.
+    private func runAsk(_ turn: @escaping @MainActor () async -> Void) {
+        Task {
+            await turn()
+            guard let reading = ask.reading, let results = ask.results else { return }
+            let asked = ShopQuery.parse(reading.query)
+            let query = asked.refined(cheaper: cheaper, formal: formal, inMySize: inMySize)
+            guard query == asked.refined(cheaper: false, formal: false, inMySize: inMySize) else { return }
+            served = Served(query: query, shops: .answered(results), elsewhere: .idle)
+            searchedCount = results.searched
+            primed = query
+        }
+    }
+
+    /// Your shops' answer to a thread, ordered by what you own (`TasteOrder`) — the phone's
+    /// half of "followed shops first, ranked by taste", because the wardrobe never leaves it.
+    /// The free search keeps the grammar's own order: it is the same answer on both ends.
+    private func byTaste(_ hits: [ProductSearchHit], place: Place) -> [ProductSearchHit] {
+        guard place == .yourShops, ask.reading != nil, !tasteRank.isEmpty else { return hits }
+        return hits.enumerated()
+            .sorted { a, b in
+                let one = tasteRank[a.element.id] ?? Int.max
+                let other = tasteRank[b.element.id] ?? Int.max
+                return one == other ? a.offset < b.offset : one < other
+            }
+            .map(\.element)
+    }
+
+    private var tasteKey: TasteKey {
+        let response = ask.reading == nil ? nil : served.shops.response
+        return TasteKey(
+            query: served.query.text,
+            hits: response.map { ($0.exact + $0.partial).map(\.id) } ?? [],
+            saves: saves.count,
+            newestSave: saves.first?.savedAt,
+            statement: statement.statement.text
+        )
+    }
+
+    /// Ranks what has arrived and is not ranked yet, after everything that is — so a MORE page
+    /// takes its place below the cards already read and never reshuffles them.
+    private func orderByTaste() {
+        let key = tasteKey
+        if key.query != tasteRankQuery {
+            tasteRank = [:]
+            tasteRankQuery = key.query
+        }
+        guard let response = served.shops.response, !key.hits.isEmpty else { return }
+        let fresh = (response.exact + response.partial).filter { tasteRank[$0.id] == nil }
+        guard !fresh.isEmpty else { return }
+        // The same pool the picks pair against: the wardrobe whatever its taste setting, or
+        // every save that counts for somebody who never filed anything as owned.
+        let wardrobe = TasteScope(boards: tasteBoards, saves: saves).pairingPool(saves).compactMap(\.update).map(\.garment)
+        let ordered = TasteOrder.order(
+            fresh,
+            wardrobe: wardrobe,
+            statement: statement.statement,
+            garment: \.card.garment,
+            isAvailable: { hit in
+                let variants = hit.card.variants ?? []
+                return variants.isEmpty ? (hit.card.isAvailable ?? true) : variants.contains(where: \.available)
+            }
+        )
+        var next = tasteRank
+        var position = (next.values.max() ?? -1) + 1
+        for hit in ordered {
+            next[hit.id] = position
+            position += 1
+        }
+        tasteRank = next
+    }
+
     /// Product keys already in the collection, for the bookmark on a card with no row.
     private var savedKeys: Set<String> {
         var keys: Set<String> = []
@@ -920,6 +1111,7 @@ struct ShopView: View {
                     if !pick.update.isDeleted, pick.update.modelContext != nil {
                         ShopPickCard(
                             pick: pick,
+                            worded: worded[pick.id],
                             onOpenFit: { fitting = pick },
                             onRefuse: { refuse(pick, day: day) }
                         )
@@ -944,112 +1136,34 @@ struct ShopView: View {
         refusals += 1
     }
 
-    /// Today's set: what was already chosen today, topped up from the catalogue.
-    ///
-    /// The candidates are narrowed here to what may be offered at all — from a followed shop,
-    /// shown by the gender filter, buyable, an essential garment, not already saved, not turned
-    /// down, not from a shop refused on Discover, and in the reader's size wherever the
-    /// product's run says what that is — and today's own set is exempt from all but the
-    /// filter, because a pick saved an hour ago stays on the page with its bookmark filled.
+    /// Today's set, chosen by `TodaysPicks` from this view's own queries — the same choice a
+    /// background pass makes for the morning alert, which is why it lives there.
     private func choosePicks(day: String) async {
-        guard catalogue.phase == .ready else { return }
-        let profile = sizes.profile
-        let kept = PickLedger.kept(on: day)
-        let keeping = Set(kept)
-        let refused = PickLedger.refused
-        let dismissed = Set(dismissals.map(\.remoteID))
-
-        var saved: Set<String> = []
-        for update in saves.compactMap(\.update) {
-            saved.insert(update.externalID)
-            if let product = update.productExternalID { saved.insert(product) }
-        }
-
-        let eligible = catalogue.index.listings.filter { listing in
-            guard listing.isShown else { return false }
-            if keeping.contains(listing.id) { return true }
-            return listing.isAvailable
-                && GarmentSlot.essential.contains(listing.slot)
-                && !saved.contains(listing.id)
-                && !refused.contains(listing.id)
-        }
-
-        var candidates: [DailyPicks.Candidate] = []
-        for listing in DailyPicks.pool(eligible, day: day, keeping: keeping) {
-            guard let row = catalogue.row(listing.id) else { continue }
-            if !keeping.contains(listing.id) {
-                if let brand = row.brand?.remoteID, dismissed.contains(brand) { continue }
-                guard Self.wears(row, profile) else { continue }
-            }
-            candidates.append(DailyPicks.Candidate(
-                listing: listing,
-                garment: row.garment,
-                fact: Self.fact(about: row, profile: profile),
-                isInYourSize: catalogue.fits(listing, profile: profile)
-            ))
-        }
-
-        // What you own, through the one rule: the wardrobe whatever its taste setting, or every
-        // save that counts for somebody who never filed anything as owned. A photograph is
-        // required, as everywhere a save is drawn — the reason shows it.
-        let photographed = saves.filter { $0.update?.hasPhotograph == true }
-        let wardrobe = TasteScope(boards: tasteBoards, saves: saves).pairingPool(photographed).compactMap(\.update)
-        let garments = wardrobe.map(\.garment)
-        var owned: [GarmentSlot: Int] = [:]
-        for item in wardrobe { owned[item.garmentSlot, default: 0] += 1 }
-
-        let words = statement.statement
-        let offered = candidates
-        let chosen = await Task.detached(priority: .userInitiated) {
-            DailyPicks.choose(
-                from: offered,
-                wardrobe: garments,
-                owned: owned,
-                statement: words,
-                day: day,
-                keeping: kept
-            )
-        }.value
-        guard !Task.isCancelled else { return }
-
-        PickLedger.keep(chosen.map(\.id), on: day)
-        let byID = Dictionary(wardrobe.map { ($0.pairingID, $0) }, uniquingKeysWith: { first, _ in first })
-        picks = chosen.compactMap { pick in
-            catalogue.row(pick.id).map { ShopPick(update: $0, partner: pick.partnerID.flatMap { byID[$0] }, pick: pick) }
-        }
-        hasWardrobe = !garments.isEmpty
+        guard let chosen = await TodaysPicks.choose(
+            day: day,
+            catalogue: catalogue,
+            saves: saves,
+            tasteBoards: tasteBoards,
+            dismissals: dismissals,
+            profile: sizes.profile,
+            statement: statement.statement
+        ) else { return }
+        picks = chosen.picks
+        hasWardrobe = chosen.hasWardrobe
         picksSettled = true
+        // On screen, so the morning alert has nothing left to say today.
+        if !chosen.picks.isEmpty { PicksNotice.seen(on: day, scope: ProfileScope.active) }
     }
 
-    /// Buyable in the reader's size where the product's run says what that is; buyable at all
-    /// where it does not.
-    ///
-    /// `matches`, the filter, and not `claims`: this decides whether a pick may be *offered*,
-    /// and the filter's rule is the right one for that — a run it cannot read, a one-size
-    /// beanie, a profile with no shoe sizes, none of those is a reason to withhold the pick.
-    /// The card's size run is where the claim is made, in vermilion, by `claims`.
-    private static func wears(_ update: BrandUpdate, _ profile: SizeProfile) -> Bool {
-        let variants = update.variants
-        guard !variants.isEmpty else { return true }
-        let context = update.sizeContext
-        return variants.contains { $0.available && profile.matches($0, in: context) }
-    }
-
-    /// What the store knows happened to a product, for a pick that has nothing to pair with.
-    private static func fact(about update: BrandUpdate, profile: SizeProfile) -> DailyPicks.Fact? {
-        if update.kind == .restock {
-            let mine = update.restockedSizes(matching: profile)
-            if !mine.isEmpty { return .backInYourSize(mine) }
-        }
-        // The same 5% the feed calls an event (`PriceChange`), so a pick never calls a price
-        // "marked down" that the feed did not.
-        if let share = update.discountShare, share >= 0.05 {
-            return .markedDown(Int((share * 100).rounded()))
-        }
-        if Date().timeIntervalSince(update.publishedAt) < 7 * 86_400 {
-            return .new
-        }
-        return nil
+    /// The model's sentence for the top few, where the server has a model — kept for the day,
+    /// so this asks once (`PickReasons`). Anything unanswered keeps the phone's own reason.
+    private func wordPicks(day: String) async {
+        let known = PickReasons.cached(on: day)
+        if known != worded { worded = known }
+        guard ai.isAvailable, !picks.isEmpty else { return }
+        let answered = await PickReasons.load(for: picks, day: day, via: ai)
+        guard !Task.isCancelled else { return }
+        if answered != worded { worded = answered }
     }
 
     // MARK: - Discover
