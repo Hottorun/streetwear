@@ -44,6 +44,7 @@ struct ContentView: View {
     @Environment(SizeProfileStore.self) private var sizes: SizeProfileStore
     @Environment(PushRoute.self) private var route: PushRoute
     @Environment(SaveConfirmation.self) private var confirmation: SaveConfirmation
+    @Environment(ShareQuestions.self) private var questions: ShareQuestions
     @Environment(CollectionRoute.self) private var collection: CollectionRoute
     @Environment(YouRoute.self) private var you: YouRoute
     @Environment(AIStore.self) private var ai: AIStore
@@ -219,7 +220,7 @@ struct ContentView: View {
         // returned. Draining twice is harmless; the inbox empties itself.
         .task {
             await SharedSaveImporter.drain(
-                into: context, scope: remote.scope, route: route, confirm: confirmation
+                into: context, scope: remote.scope, questions: questions, remote: remote, confirm: confirmation
             )
         }
         // Only when there is genuinely nothing to show. A returning user who has removed
@@ -311,19 +312,12 @@ struct ContentView: View {
             WatchEditor(update: update)
                 .presentationDetents([.medium, .large])
         }
-        // The answer to sharing in something that's gone. Kept as a sheet, and
-        // deliberately not folded into the toast: a share is acted on when the app comes
-        // back to the foreground, which can be long after the fact and while looking at
-        // something else entirely. A dismissible confirmation is right for a save you just
-        // made and watched happen; it is the wrong shape for an offer you might simply not
-        // be there for.
-        .sheet(item: Bindable(route).watchOffer) { update in
-            WatchEditor(
-                update: update,
-                headline: "This one's sold out. Want to know when it's back?"
-            )
-            .presentationDetents([.medium, .large])
-        }
+        // The questions a share raised — sold out, or which size to watch. A sheet rather than
+        // the toast, because a share is acted on when the app comes back to the foreground,
+        // which can be long after the fact and while looking at something else entirely; and
+        // kept until seen, because that is exactly when a sheet fails to appear. See
+        // `ShareQuestions`.
+        .shareQuestions()
     }
 
     /// Resolves a notification's destination against the store, now that the sync it

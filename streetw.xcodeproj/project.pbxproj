@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		9695A4B23028BA32002C4F03 /* StreetwCore in Frameworks */ = {isa = PBXBuildFile; productRef = 9695A4B13028BA32002C4F02 /* StreetwCore */; };
+		DE00000000000000000000B1 /* StreetwCore in Frameworks */ = {isa = PBXBuildFile; productRef = DE00000000000000000000B0 /* StreetwCore */; };
 		DE00000000000000000000AC /* ShareExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = DE00000000000000000000A2 /* ShareExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 /* End PBXBuildFile section */
 
@@ -71,6 +72,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				DE00000000000000000000B1 /* StreetwCore in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -143,6 +145,7 @@
 			);
 			name = ShareExtension;
 			packageProductDependencies = (
+				DE00000000000000000000B0 /* StreetwCore */,
 			);
 			productName = ShareExtension;
 			productReference = DE00000000000000000000A2 /* ShareExtension.appex */;
@@ -522,6 +525,10 @@
 
 /* Begin XCSwiftPackageProductDependency section */
 		9695A4B13028BA32002C4F02 /* StreetwCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = StreetwCore;
+		};
+		DE00000000000000000000B0 /* StreetwCore */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = StreetwCore;
 		};

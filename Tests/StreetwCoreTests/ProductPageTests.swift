@@ -167,6 +167,42 @@ struct ProductPageTests {
         #expect(page.imageURLs == ["https://brand.example/img/beanie.jpg"])
     }
 
+    /// What the share sheet hands over: the JSON-LD blocks' raw text and the page's tags, read
+    /// out of the page Safari loaded. Intimissimi's group carries the photographs, while each
+    /// variant says `"image": "not_available"` — which is a word, not an address.
+    @Test("A page read in the browser is the same product as a page fetched")
+    func readsBlocksAndTagsFromTheShareSheet() throws {
+        let base = URL(string: "https://www.intimissimi.com/de/product/kurzarm-t-shirt_aus_stretch-merinowolle-CMU17A.html?dwvar_CMU17A_Z_COL_INTU=279K")!
+        let metadata = PageMetadataParser.parse(
+            tags: ["og:image": "https://www.intimissimi.com/on/demandware.static/-/Sites-INT_EC_COM/default/dwb8a5b8df/images/CMU17A279K-F.jpeg", "og:type": "website"],
+            title: "Kurzarm-T-Shirt aus Stretch-Merinowolle - T-Shirts - Herren | IUMAN Intimissimi Uomo",
+            canonical: "https://www.intimissimi.com/de/product/kurzarm-t-shirt_aus_stretch-merinowolle-CMU17A.html",
+            base: base
+        )
+        #expect(metadata.type == "website")
+        #expect(metadata.canonicalURL?.query == nil)
+
+        let page = try #require(ProductPage.parse(
+            jsonLD: ["  ", Fixtures.string("intimissimi_product.jsonld")],
+            metadata: metadata,
+            base: base
+        ))
+        #expect(page.name == "Kurzarm-T-Shirt aus Stretch-Merinowolle")
+        #expect(page.price == 42.9)
+        #expect(page.currency == "EUR")
+        #expect(page.isAvailable == true)
+        #expect(page.imageURLs.count == 2)
+        #expect(page.imageURLs.allSatisfy { $0.hasSuffix(".jpeg") })
+        #expect(ProductPage.images("not_available", base: base).isEmpty)
+    }
+
+    @Test("Tags with no product data and no price are not a product")
+    func tagsAloneAreNotAProduct() {
+        let base = URL(string: "https://kith.com/")!
+        let metadata = PageMetadataParser.parse(tags: ["og:type": "product", "og:title": "Kith"], title: "Kith", canonical: nil, base: base)
+        #expect(ProductPage.parse(jsonLD: [], metadata: metadata, base: base) == nil)
+    }
+
     @Test("Prices are read in either decimal convention")
     func readsPrices() {
         #expect(ProductPage.number("28.99") == 28.99)

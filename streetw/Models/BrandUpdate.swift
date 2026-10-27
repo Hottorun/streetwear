@@ -350,6 +350,20 @@ final class BrandUpdate {
     /// whenever enrichment learns something new.
     var enrichmentVersion: Int = 0
 
+    /// When a share that landed with **no photograph** is next asked for one, and how many
+    /// times it has been. `.distantFuture` is "not due": every row but a bare share, and a share
+    /// whose page has answered that it has none.
+    ///
+    /// A version stamp alone gives a thin share one more look per bump, and one look is what a
+    /// slow storefront, a phone that was offline for a minute or a bot wall that lets the next
+    /// request through all cost a save its picture — permanently, since nothing else revisits
+    /// it. So a failure that could be temporary is retried, further apart each time and only a
+    /// few times (`SharedSaveImporter.photoRetryDelays`); a page that answered and has no
+    /// picture, or that is gone, is let go at once. Non-optional so `repair` can narrow on it
+    /// in SQL; a lightweight migration gives every older row the default.
+    var photoRetryAt: Date = Date.distantFuture
+    var photoAttempts: Int = 0
+
     /// When a sitemap product's own page was read for its price, stock and sizes — the
     /// standalone half of the server's `Poller.enrich`, see `ProductPage`. Nil is "not yet",
     /// and it is stamped whatever the page said, so a page that cannot be read is not asked

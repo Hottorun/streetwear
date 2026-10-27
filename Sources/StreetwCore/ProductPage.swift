@@ -111,7 +111,19 @@ public struct ProductPage: Sendable, Hashable {
         if let node = primary(of: nodes) {
             return reading(node, base: base)
         }
-        return openGraph(html, base: base)
+        return openGraph(PageMetadataParser.parse(html, base: base))
+    }
+
+    /// The same reading over a page somebody else already took apart: the raw text of each
+    /// JSON-LD block and the page's tags, as the share sheet reads them out of the page Safari
+    /// loaded. One parser for both, so a share read in the browser and a page the app fetched
+    /// itself cannot come to different answers about the same product.
+    public static func parse(jsonLD: [String], metadata: PageMetadata, base: URL) -> ProductPage? {
+        let nodes = jsonLD.compactMap(decodedBlock).flatMap(productNodes(in:))
+        if let node = primary(of: nodes) {
+            return reading(node, base: base)
+        }
+        return openGraph(metadata)
     }
 
     /// This page's facts laid over what the sitemap knew, under the same identity.
@@ -152,15 +164,21 @@ public struct ProductPage: Sendable, Hashable {
         let range = NSRange(html.startIndex..<html.endIndex, in: html)
         for match in pattern.matches(in: html, range: range) {
             guard let bodyRange = Range(match.range(at: 1), in: html) else { continue }
-            var body = String(html[bodyRange]).trimmingCharacters(in: .whitespacesAndNewlines)
-            for wrapper in ["<!--", "-->", "<![CDATA[", "]]>", "//<![CDATA[", "//]]>"] {
-                body = body.replacingOccurrences(of: wrapper, with: "")
-            }
-            if let value = json(body) ?? json(body.components(separatedBy: .newlines).joined(separator: " ")) {
+            if let value = decodedBlock(String(html[bodyRange])) {
                 decoded.append(value)
             }
         }
         return decoded
+    }
+
+    /// One block's text, decoded — with the comment and CDATA wrappers templates put around
+    /// it removed first.
+    static func decodedBlock(_ text: String) -> Any? {
+        var body = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        for wrapper in ["<!--", "-->", "<![CDATA[", "]]>", "//<![CDATA[", "//]]>"] {
+            body = body.replacingOccurrences(of: wrapper, with: "")
+        }
+        return json(body) ?? json(body.components(separatedBy: .newlines).joined(separator: " "))
     }
 
     private static func json(_ text: String) -> Any? {
@@ -386,8 +404,7 @@ public struct ProductPage: Sendable, Hashable {
     /// so a page that says so and sells nothing at a price is not taken for one — which
     /// matters most for a URL only the page could confirm. And Subdued prints
     /// `product:price:amount` as `0` on a product it is not selling, so a zero is no price.
-    private static func openGraph(_ html: String, base: URL) -> ProductPage? {
-        let metadata = PageMetadataParser.parse(html, base: base)
+    private static func openGraph(_ metadata: PageMetadata) -> ProductPage? {
         let amount = metadata.price
             .flatMap { $0.split(separator: " ").first.map(String.init) }
             .flatMap { number($0) }
@@ -459,6 +476,10 @@ public struct ProductPage: Sendable, Hashable {
         default: raw = []
         }
         return raw.compactMap { location -> String? in
+            // A word is not an address. Intimissimi writes `"image": "not_available"` on every
+            // variant, which resolved against the page became a photograph at
+            // `/de/product/not_available`.
+            guard location.contains("/") || location.contains(".") else { return nil }
             let fixed = location.hasPrefix("//") ? "https:\(location)" : location
             guard let url = URL(string: fixed, relativeTo: base)?.absoluteURL,
                   url.scheme == "https" || url.scheme == "http"

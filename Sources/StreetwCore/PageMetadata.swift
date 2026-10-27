@@ -25,6 +25,9 @@ public struct PageMetadata: Sendable, Hashable {
     /// — a shared link with no availability must not be presented as buyable, and must not
     /// be presented as sold out either. Only an explicit declaration is acted on.
     public var isAvailable: Bool?
+    /// `og:type`, lowered. **Not evidence of a product on its own** — Hollister's homepage
+    /// declares `product` — so it is only ever one signal among several (see `ProductPage`).
+    public var type: String?
 
     public init(
         title: String? = nil,
@@ -57,7 +60,20 @@ public enum PageMetadataParser {
     }
 
     public static func parse(_ html: String, base: URL) -> PageMetadata {
-        let tags = metaTags(in: html)
+        parse(
+            tags: metaTags(in: html),
+            title: titleTag(in: html),
+            canonical: linkHref(rel: "canonical", in: html),
+            base: base
+        )
+    }
+
+    /// The same reading over tags somebody else already took out of the page — the share
+    /// sheet's, read from the page Safari had loaded rather than from a fetch of our own.
+    /// Keys are `property`/`name` lowered, values as the page wrote them.
+    public static func parse(tags raw: [String: String], title: String?, canonical: String?, base: URL) -> PageMetadata {
+        var tags: [String: String] = [:]
+        for (key, value) in raw where tags[key.lowercased()] == nil { tags[key.lowercased()] = value }
 
         /// Open Graph first, then Twitter's equivalents, then the plain HTML name.
         /// Storefronts fill in whichever their theme happens to ship.
@@ -69,7 +85,8 @@ public enum PageMetadataParser {
         }
 
         var metadata = PageMetadata()
-        metadata.title = value(["og:title", "twitter:title"]) ?? titleTag(in: html)
+        metadata.title = value(["og:title", "twitter:title"])
+            ?? title.map(decoded).flatMap { $0.isEmpty ? nil : $0 }
         metadata.siteName = value(["og:site_name", "twitter:site"])
         metadata.price = value([
             "og:price:amount", "product:price:amount", "twitter:data1"
@@ -85,7 +102,7 @@ public enum PageMetadataParser {
         }
         // A share sheet often hands over a URL carrying tracking parameters; the
         // canonical one is what dedupes a second save of the same product.
-        if let canonical = linkHref(rel: "canonical", in: html),
+        if let canonical, !canonical.isEmpty,
            let url = URL(string: canonical, relativeTo: base)?.absoluteURL {
             metadata.canonicalURL = url
         }
@@ -97,6 +114,7 @@ public enum PageMetadataParser {
         if let raw = value(["product:availability", "og:availability", "availability"]) {
             metadata.isAvailable = Self.availability(from: raw)
         }
+        metadata.type = value(["og:type"])?.lowercased()
         return metadata
     }
 
@@ -163,7 +181,8 @@ public enum PageMetadataParser {
         guard let match = pattern.firstMatch(in: html, range: range),
               let titleRange = Range(match.range(at: 1), in: html)
         else { return nil }
-        let title = decoded(String(html[titleRange]).trimmingCharacters(in: .whitespacesAndNewlines))
+        // Decoded by the caller, once, the same as a title the share sheet read.
+        let title = String(html[titleRange]).trimmingCharacters(in: .whitespacesAndNewlines)
         return title.isEmpty ? nil : title
     }
 

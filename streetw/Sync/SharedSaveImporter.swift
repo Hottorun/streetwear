@@ -10,6 +10,14 @@
 // and whatever title the share sheet gave us — because losing someone's save to a flaky
 // network would be far worse than an ugly card.
 //
+// **What Safari already loaded comes first, after the catalogue** (contract 2, see
+// `SharedPage`). The share sheet hands over the page as the person's own browser drew it —
+// its JSON-LD, its tags and its largest pictures — and this reads it with the same
+// `ProductPage` the app's own fetch uses. That is the fix for shops whose pages answer the
+// browser and not us, and for the colourway on screen, which is in the address Safari had and
+// not in the canonical one it shares. The phone's own fetch is the fallback for a link shared
+// from an app that hands over no page.
+//
 // **It fetches from the phone in both modes, and that is a deliberate exception to "go over
 // the server when one is configured".** Written down here because it was not written down
 // anywhere, which is the actual fault: `StockRefresh` names the same exception in its own
@@ -17,12 +25,13 @@
 // is no route to call. A share is an arbitrary URL from any storefront, any blog, any resale
 // listing — the server's catalogue is brands somebody added, so it has nothing to look this
 // up in, and a route that made the server fetch a URL a client chose is the shape of request
-// `RequireDevice` was added to stop being anonymous. The two calls are bounded rather than
-// open-ended: `ShopifySource.product(at:)` is one request per newly shared link, and
+// `RequireDevice` was added to stop being anonymous. The calls are bounded rather than
+// open-ended: `ShopifySource.product(at:)` and the page itself are one request each per newly
+// shared link, a repair is at most `repairBatch` links a pass on a widening schedule, and
 // `identifySites` is one homepage per *host* per `siteIdentityVersion`, stamped whatever the
-// answer was, capped at `identifyBatch` hosts a pass. Both go through the same adapters and
-// the same politeness as everything else the phone fetches. A route would be the better
-// answer the day this needs to happen in bulk — the same conclusion `StockRefresh` reaches.
+// answer was, capped at `identifyBatch` hosts a pass. All go through the same adapters as
+// everything else the phone fetches. A route would be the better answer the day this needs to
+// happen in bulk — the same conclusion `StockRefresh` reaches.
 
 import Foundation
 import OSLog
@@ -44,40 +53,31 @@ enum SharedSaveImporter {
 
     /// Files everything waiting in the inbox into the store. Returns how many landed.
     ///
-    /// Everything the extension could not ask is asked here, because here is the first
-    /// moment anyone knows the answer.
-    ///
-    /// The extension does no networking, so at share time nobody knows what the thing is
-    /// called, what sizes it comes in or whether any of them are left — and by the time we
-    /// do, the share sheet is long gone. So a share lands silently and the questions are
-    /// put on the next foreground, which in the usual share-from-Safari-and-switch-back
-    /// flow is seconds later.
-    ///
-    /// Two questions, and which one is asked depends on the answer to the third:
-    ///
-    /// - **Sold out** → `route`, which raises a sheet. Deliberately the heavier control:
-    ///   this is the one case where the offer is genuinely urgent and where you may not be
-    ///   looking at the screen when it arrives.
-    /// - **Anything else** → `confirm`, the same amendable confirmation an in-app save
-    ///   gets, so a shared link can be filed on a board or watched without hunting for the
-    ///   item afterwards. Until this, a share simply appeared in the collection with no
-    ///   acknowledgement at all and no way to act on it in the moment.
-    @discardableResult
+    /// The sheet asked what it could — boards, a watch, a follow — and wrote the answers into
+    /// the share's file; they are carried out here. What it could not ask is asked here,
+    /// because here is the first moment anyone knows the answer: whether the thing is sold
+    /// out, and which sizes it comes in. Those questions go into `questions`, which keeps
+    /// them until they are answered (`ShareQuestions`); they are written **before** the inbox
+    /// file is removed, so no kill in between can lose one.
     ///
     /// - Parameter scope: whose store `context` is. Only that profile's shares are filed; the
     ///   rest wait in the inbox until their profile is current — except a share for a profile
     ///   this phone no longer has, which the holder takes rather than leaving it forever.
+    @discardableResult
     static func drain(
         into context: ModelContext,
         scope: ProfileScope? = nil,
-        route: PushRoute? = nil,
+        questions: ShareQuestions,
+        remote: RemoteSync?,
         confirm: SaveConfirmation? = nil
     ) async -> Int {
         let scope = scope ?? ProfileScope.active
         let known = ProfileScope.known
         // By store, never by "whoever is current": a share filed while another Apple ID was
-        // signed in waits for that account rather than landing in this one's wall.
+        // signed in waits for that account rather than landing in this one's wall. And not
+        // while its sheet is still open — the file is rewritten with every choice until Done.
         let pending = SharedInbox.pending().filter { item in
+            guard SharedInbox.isSettled(item.save) else { return false }
             guard let owner = item.save.profileID else { return scope.home == nil }
             guard known.contains(owner) else { return scope.isHolder }
             return owner == scope.home
@@ -86,31 +86,61 @@ enum SharedSaveImporter {
         guard !pending.isEmpty else { return 0 }
 
         var imported = 0
-        var landedUpdates: [BrandUpdate] = []
+        var landed: [BrandUpdate] = []
+        var quiet: [BrandUpdate] = []
         for item in pending {
+            let save = item.save
+
+            // A shop's page somebody chose to follow: nothing is saved, the follow is kept for
+            // `ShareFollows`, which needs the network and possibly several foregrounds.
+            guard save.savesPage else {
+                if save.follow == true {
+                    let page = save.page?.url ?? save.url
+                    questions.follow(page, named: save.page?.metadata(base: page).siteName, sharedAt: save.sharedAt, for: scope)
+                }
+                SharedInbox.remove(item.id)
+                continue
+            }
+
             // One at a time on purpose: sharing happens a link at a time, and a burst of
             // parallel requests to one storefront is exactly what `PoliteFetcher`
             // exists to prevent elsewhere.
-            let product = await catalogProduct(for: item.save.url)
-            let metadata = product == nil ? await metadata(for: item.save.url) : PageMetadata()
-            let landed = importOne(item.save, metadata: metadata, product: product, into: context)
-            if landed != nil { imported += 1 }
+            let reading = await read(save)
+            let result = importOne(save, reading: reading, into: context)
+            let update = result.update
+            if result.isNew { imported += 1 }
+            file(update, as: save, in: context)
+            let watched = setWatches(on: update, from: save, in: context)
             do {
                 // Only once it is genuinely committed is the file dropped. A failed save
                 // leaves the item in the inbox to be retried, which is the whole reason
                 // reading and deleting are separate steps.
                 try context.save()
+                let asked = ask(about: update, from: save, questions: questions, scope: scope)
                 SharedInbox.remove(item.id)
-                log.info("imported \(item.save.url.absoluteString, privacy: .public) (new: \(landed != nil))")
-                if let landed, let update = row(for: landed, in: context) {
-                    landedUpdates.append(update)
-                }
+                log.info("imported \(save.url.absoluteString, privacy: .public) (new: \(result.isNew), page: \(save.page != nil), photos: \(update.imageURLStrings.count))")
+                // A share that asked something, or set a watch, has had its answer; the
+                // confirmation is for one that landed quietly.
+                if result.isNew { landed.append(update) }
+                if result.isNew, !asked, watched.isEmpty { quiet.append(update) }
             } catch {
-                log.error("could not store \(item.save.url.absoluteString, privacy: .public): \(error)")
+                log.error("could not store \(save.url.absoluteString, privacy: .public): \(error)")
+                continue
+            }
+            // Mirrored to the server after the store has them, the way `WatchEditor` does it.
+            if let remote {
+                for watch in watched { await remote.createWatch(watch) }
             }
         }
 
-        announce(landedUpdates, route: route, confirm: confirm)
+        // Once for the whole drain, and only for a lone share. Sharing five things should not
+        // flash five confirmations that each replace the last unread — and a confirmation whose
+        // buttons act on *one* product has no honest subject when several arrived, which is the
+        // same reason a counted push carries no `eventID`. Not a question: the sheet already
+        // offered its board and its watch, so nothing is lost when it goes.
+        if landed.count == 1, quiet.count == 1, let only = quiet.first {
+            confirm?.confirm(only, destination: only.save?.destinationLabel ?? "Inspiration")
+        }
         return imported
     }
 
@@ -121,7 +151,11 @@ enum SharedSaveImporter {
     /// Open Graph frame a share arrives with, so every link filed under revision 1 is owed
     /// another look — and the images it gains are what put it back in front of
     /// `ImageTagger`.
-    static let enrichmentVersion = 2
+    ///
+    /// 3: the page's own JSON-LD is read as well as its Open Graph, which is where a shop
+    /// that is not on Shopify keeps its price, stock, photographs and sizes — so every share
+    /// that found no catalogue is owed one more look.
+    static let enrichmentVersion = 3
 
     /// How many thin saves to re-fetch per pass.
     ///
@@ -130,6 +164,13 @@ enum SharedSaveImporter {
     /// bookmark for a month can be a bare bookmark for another minute. Several passes
     /// drain a backlog.
     private static let repairBatch = 4
+
+    /// How long a share with no photograph waits before each further try, after the first.
+    /// Widening, and short: a phone that was offline heals within the hour, a bot wall that
+    /// let one request through lets another, and past the last a page that has never given
+    /// a picture in four days is not going to — the save stays, without one.
+    static let photoRetryDelays: [TimeInterval] = [3_600, 6 * 3_600, 86_400, 3 * 86_400]
+    private static let firstPhotoRetry: TimeInterval = 300
 
     /// Files saved items under a brand they were never attributed to.
     ///
@@ -233,89 +274,227 @@ enum SharedSaveImporter {
         return named
     }
 
-    /// Gives shares that landed as bare bookmarks another chance at the catalogue.
+
+    /// Gives shares that landed thin another chance: at the catalogue, and at a photograph.
     ///
-    /// This is the repair path the importer never had. A share is enriched exactly once,
-    /// at import, and the inbox file is deleted immediately afterwards — so a link that
-    /// failed to match a catalogue record kept a title and a single Open Graph photograph
-    /// permanently, with no size run, no colourways, no stock and therefore no way to
-    /// watch it. Which is most of what a saved product page is *for*.
+    /// Two kinds of row, and the second is what this was missing. A share is enriched once,
+    /// at import, and the inbox file is deleted immediately afterwards — so a link that found
+    /// no catalogue record kept a title and a single Open Graph frame permanently; that is the
+    /// version stamp's job, one more look per bump. But a share that landed with **no
+    /// photograph at all** was stamped on that one look whatever went wrong, so one slow page
+    /// or one turned-away request cost the save its picture for good. Those are retried on a
+    /// widening schedule (`photoRetryAt`), and let go only when the page says it has none.
     ///
-    /// Only `shared:` rows with no variants are candidates: a `shopify:` key means the
-    /// catalogue already answered, and a row with variants has everything this could add.
+    /// Only `shared:` rows are candidates: a `shopify:` key means the catalogue already
+    /// answered.
     @discardableResult
-    static func repair(in context: ModelContext) async -> Int {
+    static func repair(in context: ModelContext, now: Date = Date()) async -> Int {
         let version = enrichmentVersion
-        var descriptor = FetchDescriptor<BrandUpdate>(
+        var stale = FetchDescriptor<BrandUpdate>(
             predicate: #Predicate { $0.enrichmentVersion != version && !$0.saves.isEmpty }
         )
-        descriptor.fetchLimit = repairBatch * 4
+        stale.fetchLimit = repairBatch * 4
+        var due = FetchDescriptor<BrandUpdate>(
+            predicate: #Predicate { $0.photoRetryAt <= now && !$0.saves.isEmpty }
+        )
+        due.fetchLimit = repairBatch
 
-        let thin = ((try? context.fetch(descriptor)) ?? [])
-            .filter { $0.externalID.hasPrefix("shared:") && $0.variants.isEmpty }
+        var seen = Set<String>()
+        let candidates = (((try? context.fetch(due)) ?? []) + ((try? context.fetch(stale)) ?? []))
+            .filter { $0.externalID.hasPrefix("shared:") && seen.insert($0.externalID).inserted }
+            .filter { $0.variants.isEmpty || $0.imageURLStrings.isEmpty }
             .prefix(repairBatch)
-        guard !thin.isEmpty else { return 0 }
+        guard !candidates.isEmpty else { return 0 }
 
         var upgraded = 0
-        for update in thin {
+        for update in candidates {
             // Stamped whatever happens. A link whose storefront publishes no catalogue —
             // a regional subdomain, a blog, a resale listing — must not be re-fetched on
-            // every foreground for the rest of its life.
+            // every foreground for the rest of its life; a missing photograph is retried by
+            // its own schedule below, not by this.
             update.enrichmentVersion = version
+            guard let link = update.linkURL else {
+                update.photoRetryAt = .distantFuture
+                continue
+            }
 
-            guard let link = update.linkURL,
-                  let product = await catalogProduct(for: link)
-            else { continue }
-
-            apply(product, to: update)
-            // The rest of what a catalogue record knows and Open Graph doesn't. Only ever
-            // filling gaps: a title someone has been looking at for a month should not
-            // change under them, but an empty summary or a missing product type is
-            // strictly better filled in.
-            if update.summary == nil { update.summary = product.summary }
-            if update.productType == nil { update.productType = product.productType }
-            if update.tags.isEmpty { update.tags = product.tags }
-            update.refreshGender()
-            upgraded += 1
-
-            log.info("repaired \(link.absoluteString, privacy: .public) with \(product.variants.count) variants")
+            var outcome: PageOutcome = .read
+            var found = await catalogProduct(for: link)
+            if found == nil {
+                let fetched = await ownReading(of: link, title: update.title)
+                found = fetched.item
+                outcome = fetched.outcome
+            }
+            if let found {
+                apply(found, to: update)
+                // The rest of what a catalogue record knows and Open Graph doesn't. Only ever
+                // filling gaps: a title someone has been looking at for a month should not
+                // change under them, but an empty summary or a missing product type is
+                // strictly better filled in.
+                if update.summary == nil { update.summary = found.summary }
+                if update.productType == nil { update.productType = found.productType }
+                if update.tags.isEmpty { update.tags = found.tags }
+                update.refreshGender()
+                upgraded += 1
+                log.info("repaired \(link.absoluteString, privacy: .public): \(found.variants.count) variants, \(update.imageURLStrings.count) photos")
+            }
+            schedulePhotoRetry(for: update, after: outcome, now: now)
         }
 
         try? context.save()
         return upgraded
     }
 
-    /// Says what happened, once for the whole drain.
-    ///
-    /// Deliberately not once per item. Sharing five things should not stack five sheets or
-    /// flash five confirmations that each replace the last unread — and a confirmation
-    /// whose buttons act on *one* product has no honest subject when several arrived, which
-    /// is the same reason a counted push carries no `eventID`. So a batch is left to speak
-    /// for itself in the collection, and only a lone share is offered anything.
-    private static func announce(
-        _ updates: [BrandUpdate],
-        route: PushRoute?,
-        confirm: SaveConfirmation?
-    ) {
-        let soldOut = updates.filter { $0.isAvailable == false && $0.activeWatches.isEmpty }
-        // The urgent case first, and it wins outright: something gone is worth a sheet, and
-        // raising a toast underneath it as well would be two answers to one share.
-        if let first = soldOut.first, let route {
-            route.offerWatch(first)
+    /// What the next look for a photograph is, given how this one went.
+    private static func schedulePhotoRetry(for update: BrandUpdate, after outcome: PageOutcome, now: Date) {
+        guard update.imageURLStrings.isEmpty else {
+            update.photoRetryAt = .distantFuture
             return
         }
-        guard updates.count == 1, let only = updates.first else { return }
-        confirm?.confirm(only, destination: only.save?.destinationLabel ?? "Inspiration")
+        switch outcome {
+        case .read, .gone:
+            // The page answered and has no picture, or the page is not there. Asking again
+            // gets the same answer — the `.gone` half of `ImageTagger.load`'s rule.
+            update.photoRetryAt = .distantFuture
+            log.info("no photograph to be had for \(update.externalID, privacy: .public)")
+        case .unavailable:
+            let delays = photoRetryDelays
+            if update.photoAttempts < delays.count {
+                update.photoRetryAt = now.addingTimeInterval(delays[update.photoAttempts])
+                update.photoAttempts += 1
+            } else {
+                update.photoRetryAt = .distantFuture
+                log.info("gave up on a photograph for \(update.externalID, privacy: .public) after \(update.photoAttempts) tries")
+            }
+        }
     }
 
-    private static func row(for externalID: String, in context: ModelContext) -> BrandUpdate? {
-        var descriptor = FetchDescriptor<BrandUpdate>(
-            predicate: #Predicate { $0.externalID == externalID }
+    // MARK: - Reading a share
+
+    /// How asking the page went, in the two kinds that matter for asking again.
+    enum PageOutcome {
+        /// It answered — whether or not it had a photograph.
+        case read
+        /// A 4xx that is not a rate limit. The same answer next time.
+        case gone
+        /// Offline, a timeout, a 429, a 5xx. Temporary by definition.
+        case unavailable
+    }
+
+    struct Reading {
+        /// The catalogue's record (`shopify:` key), or the page's own (`shared:` key).
+        var item: FetchedItem?
+        var metadata: PageMetadata
+        var outcome: PageOutcome
+    }
+
+    /// The best answer to "what is this", in order of how much it knows: the Shopify catalogue
+    /// (sizes and live stock, and a key that lands on a row the app already holds), the page
+    /// Safari had loaded, and the phone's own fetch of it.
+    static func read(_ save: SharedSave) async -> Reading {
+        let base = save.page?.url ?? save.url
+        let metadata = save.page?.metadata(base: base) ?? PageMetadata()
+
+        if let product = await catalogProduct(for: save.url) {
+            return Reading(item: product, metadata: metadata, outcome: .read)
+        }
+        if let page = save.page {
+            let item = pageItem(
+                metadata: metadata,
+                product: page.product(base: base),
+                pictures: page.imageURLs,
+                link: metadata.canonicalURL ?? save.url,
+                title: save.title
+            )
+            // A page Safari drew with no picture anywhere on it is still worth one look of our
+            // own; anything else it said is the better answer, because it is what was seen.
+            if !item.imageURLStrings.isEmpty {
+                return Reading(item: item, metadata: metadata, outcome: .read)
+            }
+        }
+        let own = await ownReading(of: save.url, title: save.title)
+        return Reading(item: own.item, metadata: own.metadata, outcome: own.outcome)
+    }
+
+    /// The phone's own fetch of a page: JSON-LD and Open Graph from one request.
+    private static func ownReading(of url: URL, title: String?) async -> Reading {
+        let fetched = await fetchPage(url)
+        guard case .page(let html, let base) = fetched else {
+            return Reading(item: nil, metadata: PageMetadata(), outcome: fetched.outcome)
+        }
+        let metadata = PageMetadataParser.parse(html, base: base)
+        let item = pageItem(
+            metadata: metadata,
+            product: ProductPage.parse(html, base: base),
+            pictures: [],
+            link: metadata.canonicalURL ?? url,
+            title: title
         )
-        descriptor.fetchLimit = 1
-        return try? context.fetch(descriptor).first
+        return Reading(item: item, metadata: metadata, outcome: .read)
     }
 
+    /// A page's own description of itself, as the row it would become. Keyed `shared:` — only
+    /// the catalogue's record is a product the poller would know.
+    private static func pageItem(
+        metadata: PageMetadata,
+        product: ProductPage?,
+        pictures: [String],
+        link: URL,
+        title: String?
+    ) -> FetchedItem {
+        var item = FetchedItem(
+            externalID: "shared:\(link.absoluteString)",
+            title: Self.title(candidates: [metadata.title, title], siteName: metadata.siteName, link: link),
+            linkURL: link,
+            imageURLStrings: metadata.imageURL.map { [$0.absoluteString] } ?? [],
+            publishedAt: Date(),
+            kind: .product,
+            priceText: metadata.price,
+            isAvailable: metadata.isAvailable
+        )
+        if let product { item = product.applied(to: item) }
+        // The pictures the page drew, which a shop that builds its gallery with a script has
+        // and its markup does not. Last, because they are the least certain to be the product.
+        if item.imageURLStrings.isEmpty { item.imageURLStrings = Array(pictures.prefix(10)) }
+        return item
+    }
+
+    private enum Fetched {
+        case page(html: String, base: URL)
+        case failed(PageOutcome)
+
+        var outcome: PageOutcome {
+            switch self {
+            case .page: .read
+            case .failed(let outcome): outcome
+            }
+        }
+    }
+
+    private static func fetchPage(_ url: URL) async -> Fetched {
+        await withTaskGroup(of: Fetched?.self) { group in
+            group.addTask {
+                do {
+                    let response = try await Net.live.get(url)
+                    if response.status == 429 || response.status >= 500 { return .failed(.unavailable) }
+                    guard response.status == 200,
+                          let html = String(data: response.data, encoding: .utf8)
+                            ?? String(data: response.data, encoding: .isoLatin1)
+                    else { return .failed(.gone) }
+                    return .page(html: html, base: response.finalURL ?? url)
+                } catch {
+                    return .failed(.unavailable)
+                }
+            }
+            group.addTask {
+                try? await Task.sleep(for: metadataTimeout)
+                return nil
+            }
+            let first = await group.next() ?? nil
+            group.cancelAll()
+            return first ?? .failed(.unavailable)
+        }
+    }
 
     /// The storefront's own record of the product, when the link is a Shopify product
     /// page. Worth trying first and by a distance: Open Graph gives a title, a picture and
@@ -334,81 +513,77 @@ enum SharedSaveImporter {
         }
     }
 
-    private static func metadata(for url: URL) async -> PageMetadata {
-        await withTaskGroup(of: PageMetadata?.self) { group in
-            group.addTask { await PageMetadataParser.fetch(url) }
-            group.addTask {
-                try? await Task.sleep(for: metadataTimeout)
-                return nil
-            }
-            let first = await group.next() ?? nil
-            group.cancelAll()
-            return first ?? PageMetadata()
-        }
-    }
+    // MARK: - Filing
 
-    /// Separated from the fetch so it is synchronous, testable and easy to reason about.
+    /// Keeps the share. Separated from the fetch so it is synchronous, testable and easy to
+    /// reason about.
     ///
-    /// Returns the external id of anything newly kept, and nil when the share was a
-    /// duplicate of something already in the collection — so the caller can look the row
-    /// back up without re-deriving a key that is decided in three different ways here.
+    /// Returns the row and whether it is newly kept — false when the share was a duplicate
+    /// of something already in the collection.
     @discardableResult
     static func importOne(
         _ save: SharedSave,
-        metadata: PageMetadata,
-        product: FetchedItem? = nil,
+        reading: Reading,
         into context: ModelContext
-    ) -> String? {
+    ) -> (update: BrandUpdate, isNew: Bool) {
+        let item = reading.item
+        let metadata = reading.metadata
+        let isCatalogue = item.map { !$0.externalID.hasPrefix("shared:") } ?? false
         // The canonical URL is what dedupes: a share sheet hands over links carrying
         // whatever tracking parameters the referring app added, so the same product
         // shared twice arrives as two different URLs.
-        let link = product?.linkURL ?? metadata.canonicalURL ?? save.url
+        let link = item?.linkURL ?? metadata.canonicalURL ?? save.url
         // A catalogue hit is keyed the way the poller keys it, so sharing something from a
         // brand the app already follows lands on the row that already exists instead of
         // minting a second card for the same product.
-        let externalID = product?.externalID ?? "shared:\(link.absoluteString)"
+        let externalID = item?.externalID ?? "shared:\(link.absoluteString)"
 
-        let existing = existingRow(for: externalID, in: context)
-
-        if let existing {
+        if let existing = existingRow(for: externalID, in: context) {
             // Already here. Re-sharing something is a request to keep it, not a
             // request for a duplicate card.
-            if let product { apply(product, to: existing) }
+            if let item { apply(item, to: existing, isCatalogue: isCatalogue) }
             if existing.save == nil {
                 context.insert(SavedItem(update: existing, type: .inspiration))
                 UsageCounts.record(.saveAdded)
-                return externalID
+                return (existing, true)
             }
-            return nil
+            return (existing, false)
         }
 
         let update = BrandUpdate(
             externalID: externalID,
             brand: matchingBrand(for: link, in: context),
-            title: product?.title ?? title(for: save, metadata: metadata, link: link),
-            summary: product?.summary,
+            title: item?.title ?? title(candidates: [metadata.title, save.title], siteName: metadata.siteName, link: link),
+            summary: item?.summary,
             linkURL: link,
-            imageURLStrings: product?.imageURLStrings
-                ?? metadata.imageURL.map { [$0.absoluteString] } ?? [],
+            imageURLStrings: item?.imageURLStrings ?? metadata.imageURL.map { [$0.absoluteString] } ?? [],
             publishedAt: save.sharedAt,
             kind: .product,
-            priceText: product?.priceText ?? metadata.price,
-            priceAmount: product?.priceAmount,
-            isAvailable: product?.isAvailable ?? metadata.isAvailable,
-            tags: product?.tags ?? [],
-            productType: product?.productType
+            priceText: item?.priceText ?? metadata.price,
+            priceAmount: item?.priceAmount,
+            isAvailable: item?.isAvailable ?? metadata.isAvailable,
+            tags: item?.tags ?? [],
+            productType: item?.productType
         )
-        update.variants = product?.variants ?? []
-        update.productExternalID = product?.externalID
-        // Only the catalogue's says which currency its price is in; Open Graph's price text
-        // is printed as the page wrote it.
-        update.currencyCode = product?.currency
-        // Free: the Open Graph pass has already read the page, and `og:site_name` is the
-        // brand's own name for itself. `identifySites` improves on it later where it can
-        // (and is the only source at all on the catalogue path, which fetches no HTML), but
-        // a card should not be anonymous for the minutes in between.
+        update.variants = item?.variants ?? []
+        update.productExternalID = isCatalogue ? item?.externalID : nil
+        // Only a structured price says which currency it is in; Open Graph's price text is
+        // printed as the page wrote it.
+        update.currencyCode = item?.priceAmount != nil ? item?.currency : nil
+        // Free: the page has already been read, and `og:site_name` is the brand's own name
+        // for itself. `identifySites` improves on it later where it can (and is the only
+        // source at all on the catalogue path, which reads no HTML), but a card should not be
+        // anonymous for the minutes in between.
         if let declared = metadata.siteName, let tidied = BrandNaming.tidy(declared) {
             update.siteName = tidied
+        }
+        // This read is the enrichment; a repair is owed only by a later revision. With no
+        // photograph because the page did not answer, the first retry is a few minutes off —
+        // the commonest reason is a request that did not get through this once, and the
+        // repair pass right behind this drain would only ask the same page again at once.
+        update.enrichmentVersion = enrichmentVersion
+        if update.imageURLStrings.isEmpty, reading.outcome == .unavailable {
+            update.photoRetryAt = Date().addingTimeInterval(firstPhotoRetry)
         }
         // Saved deliberately, so it is never "news" — it must not turn up in the feed
         // as an unread item the user has to dismiss.
@@ -418,7 +593,84 @@ enum SharedSaveImporter {
         context.insert(update)
         context.insert(SavedItem(update: update, type: .inspiration, note: nil))
         UsageCounts.record(.saveAdded)
-        return externalID
+        return (update, true)
+    }
+
+    /// Files the save on the boards chosen in the sheet, creating any named there.
+    ///
+    /// A board deleted since the sheet was drawn is ignored — boards are filters, and a filter
+    /// that no longer exists has nothing to file onto. A new board whose name matches one that
+    /// exists (two shares typed "Tokyo" before the app ran) is that board rather than a second
+    /// one; otherwise it is made the way every other screen makes one (`CollectionEdit.newBoard`).
+    private static func file(_ update: BrandUpdate, as save: SharedSave, in context: ModelContext) {
+        guard let item = update.save,
+              !(save.boardIDs ?? []).isEmpty || !(save.newBoards ?? []).isEmpty
+        else { return }
+        var boards = (try? context.fetch(FetchDescriptor<Board>())) ?? []
+
+        var targets = boards.filter { (save.boardIDs ?? []).contains($0.id) }
+        for name in save.newBoards ?? [] {
+            if let existing = boards.first(where: { $0.name.caseInsensitiveCompare(name) == .orderedSame }) {
+                targets.append(existing)
+            } else if let created = CollectionEdit.newBoard(named: name, after: boards, in: context) {
+                boards.append(created)
+                targets.append(created)
+            }
+        }
+        for board in targets where !item.isFiled(on: board) {
+            item.boards.append(board)
+        }
+    }
+
+    /// The watches "Notify me" asked for — one per size chosen, or one for any size — set the
+    /// way `WatchEditor` sets one. A watch already pinned the same way is not set twice, so
+    /// re-draining a share is harmless. Nothing is set when the sheet asked for a size the
+    /// page could not list: that is a question for `ask`.
+    private static func setWatches(on update: BrandUpdate, from save: SharedSave, in context: ModelContext) -> [StockWatch] {
+        guard let notify = save.notify, !notify.askSize else { return [] }
+        let sizes: [String?] = notify.sizes.isEmpty ? [nil] : notify.sizes
+        var made: [StockWatch] = []
+        for size in sizes {
+            let target = WatchTarget(size: size, color: notify.color)
+            guard !update.activeWatches.contains(where: { $0.target == target }) else { continue }
+            let watch = StockWatch(update: update, size: size, color: notify.color)
+            context.insert(watch)
+            made.append(watch)
+        }
+        return made
+    }
+
+    /// The one question a share may still raise, and whether it raised it. **One question,
+    /// answered once**: a share that chose "Notify me" is never also asked whether to be told
+    /// when it's back.
+    @discardableResult
+    private static func ask(
+        about update: BrandUpdate,
+        from save: SharedSave,
+        questions: ShareQuestions,
+        scope: ProfileScope
+    ) -> Bool {
+        if let notify = save.notify {
+            guard notify.askSize, update.activeWatches.isEmpty else { return false }
+            questions.ask(.pickSize, about: update.externalID, color: notify.color, for: scope)
+            return true
+        }
+        // Only on an explicit "sold out": a page that declared nothing about stock must not be
+        // guessed at, or the reward for saving something you could have bought is an
+        // unprompted sheet.
+        guard update.isAvailable == false, update.activeWatches.isEmpty else { return false }
+        questions.ask(.soldOut, about: update.externalID, for: scope)
+        return true
+    }
+
+    // MARK: - Rows
+
+    private static func row(for externalID: String, in context: ModelContext) -> BrandUpdate? {
+        var descriptor = FetchDescriptor<BrandUpdate>(
+            predicate: #Predicate { $0.externalID == externalID }
+        )
+        descriptor.fetchLimit = 1
+        return try? context.fetch(descriptor).first
     }
 
     /// The row this share is about, if the collection already holds one.
@@ -437,7 +689,7 @@ enum SharedSaveImporter {
     /// so a product match can be ambiguous. A row that is already saved wins, because that
     /// is the one carrying somebody's note and board and the one they would expect to find
     /// again; otherwise the most recent, which is what the feed is currently showing.
-    private static func existingRow(for externalID: String, in context: ModelContext) -> BrandUpdate? {
+    static func existingRow(for externalID: String, in context: ModelContext) -> BrandUpdate? {
         if let exact = row(for: externalID, in: context) { return exact }
 
         let descriptor = FetchDescriptor<BrandUpdate>(
@@ -451,12 +703,15 @@ enum SharedSaveImporter {
     /// Refreshes a row we already hold with what the storefront says now. Sizes sell out
     /// between one share and the next, and a stale variant list is what a watch would be
     /// evaluated against.
-    private static func apply(_ product: FetchedItem, to update: BrandUpdate) {
+    private static func apply(_ product: FetchedItem, to update: BrandUpdate, isCatalogue: Bool = true) {
         if !product.variants.isEmpty { update.variants = product.variants }
         // A row that reached the catalogue now knows which garment it is, so the next
         // share of it — or of the same product under a different link — finds it. This is
-        // also how a `shared:` row repaired long after the fact becomes matchable.
-        if update.productExternalID == nil { update.productExternalID = product.externalID }
+        // also how a `shared:` row repaired long after the fact becomes matchable. A page's
+        // own reading is keyed `shared:` and names no catalogue product.
+        if isCatalogue, !product.externalID.hasPrefix("shared:"), update.productExternalID == nil {
+            update.productExternalID = product.externalID
+        }
         // Upgraded, not merely filled. A share arrives with at most one photograph — the one
         // Open Graph publishes for link previews — while the catalogue record carries the
         // whole set: the back, the detail, the on-body shot. Keeping the single frame
@@ -466,7 +721,7 @@ enum SharedSaveImporter {
         if product.imageURLStrings.count > update.imageURLStrings.count {
             update.imageURLStrings = product.imageURLStrings
         }
-        update.isAvailable = product.isAvailable
+        update.isAvailable = product.isAvailable ?? update.isAvailable
         update.priceText = product.priceText ?? update.priceText
         update.priceAmount = product.priceAmount ?? update.priceAmount
         if product.priceAmount != nil, let currency = product.currency { update.currencyCode = currency }
@@ -486,7 +741,8 @@ enum SharedSaveImporter {
     ///
     /// Deliberately does *not* create a brand for an unknown host: adding a link from
     /// some blog should not start watching that blog, and it would quietly fill the
-    /// Brands tab with things the user never chose to follow.
+    /// Brands tab with things the user never chose to follow. Following is a choice the
+    /// share sheet offers on a shop's page (`ShareFollows`), never a side effect of saving.
     private static func matchingBrand(for link: URL, in context: ModelContext) -> Brand? {
         let brands = (try? context.fetch(FetchDescriptor<Brand>())) ?? []
         return brands.first { BrandDiscovery.isSameBrandHost(link, $0.websiteURL) }
@@ -494,22 +750,23 @@ enum SharedSaveImporter {
 
     /// Best available name, in descending order of how much it was written *for* this
     /// page. Falls back to the host so a card is never blank.
-    private static func title(for save: SharedSave, metadata: PageMetadata, link: URL) -> String {
-        for candidate in [metadata.title, save.title] {
+    private static func title(candidates: [String?], siteName: String?, link: URL) -> String {
+        for candidate in candidates {
             if let candidate, !candidate.trimmingCharacters(in: .whitespaces).isEmpty {
-                return cleaned(candidate, siteName: metadata.siteName)
+                return cleaned(candidate, siteName: siteName)
             }
         }
         return link.host() ?? link.absoluteString
     }
 
     /// Storefront titles are usually "Product Name | Kith" or "Product Name – Kith".
-    /// The brand is already on the card, so the suffix is noise.
+    /// The brand is already on the card, so the suffix is noise. Compared without case:
+    /// Intimissimi calls itself "intimissimi" and signs its titles "Intimissimi".
     private static func cleaned(_ title: String, siteName: String?) -> String {
         guard let siteName, !siteName.isEmpty else { return title }
         for separator in [" | ", " – ", " — ", " - "] {
             let suffix = "\(separator)\(siteName)"
-            if title.hasSuffix(suffix) {
+            if title.lowercased().hasSuffix(suffix.lowercased()) {
                 return String(title.dropLast(suffix.count))
             }
         }

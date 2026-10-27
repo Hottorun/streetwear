@@ -46,6 +46,10 @@ struct streetwApp: App {
     /// call them, which hands every charge to `credits`. The account's, for `credits`' reason.
     /// See `AIStore`.
     @State private var ai: AIStore
+    /// The questions shares raised and the follows they asked for, kept per profile until
+    /// answered (`ShareQuestions`). App-level like `route`: the drain that fills it runs here,
+    /// and each entry is filed under the store it belongs to.
+    @State private var questions: ShareQuestions
 
     init() {
         Net.configureSharedCache()
@@ -81,6 +85,7 @@ struct streetwApp: App {
         _profiles = State(initialValue: profiles)
         _analysis = State(initialValue: MainActor.assumeIsolated { DiscoveryAnalysis() })
         _route = State(initialValue: route)
+        _questions = State(initialValue: MainActor.assumeIsolated { ShareQuestions() })
         _you = State(initialValue: MainActor.assumeIsolated { YouRoute() })
     }
 
@@ -105,6 +110,7 @@ struct streetwApp: App {
                 .environment(session.deck)
                 .environment(analysis)
                 .environment(route)
+                .environment(questions)
                 .environment(session.confirmation)
                 .environment(session.collection)
                 .environment(you)
@@ -138,6 +144,9 @@ struct streetwApp: App {
             // `.inactive` as well as `.background`: that is the phase a swipe-up to the app
             // switcher reaches, and the one before a kill.
             if phase != .active { session.deck.persistSeen() }
+            // What the share sheet offers — this profile's boards, sizes and follows. On the way
+            // out, because on iPhone that is the only way anybody reaches a share sheet.
+            if phase != .active { ShareContextWriter.publish(session) }
 
             // Anything shared while the app was closed is filed on the way back in.
             // On becoming active rather than on launch, because the usual path is
@@ -149,7 +158,8 @@ struct streetwApp: App {
             // without a route imports the save and then removes it from the inbox, so the
             // sold-out prompt had nothing left to be asked about: the offer to watch
             // something you just shared was unreachable except on a cold launch, and even
-            // then only if that `.task` won the race against this.
+            // then only if that `.task` won the race against this. The questions are now kept
+            // in `ShareQuestions` rather than handed to a route, so that can no longer happen.
             if phase == .active {
                 let context = session.container.mainContext
                 // Permission can be granted in iOS Settings, which tells the app nothing.
@@ -178,8 +188,23 @@ struct streetwApp: App {
                     await SharedSaveImporter.drain(
                         into: context,
                         scope: session.scope,
-                        route: route,
+                        questions: questions,
+                        remote: session.remote,
                         confirm: session.confirmation
+                    )
+                    // A board named in the sheet now exists, so the next sheet offers it.
+                    ShareContextWriter.publish(session)
+                    // "Follow this shop" from the sheet: the catalogue first, else a site check
+                    // watched until it is ready; then the follow-filter question, through its seam.
+                    await ShareFollows.process(
+                        scope: session.scope,
+                        context: context,
+                        remote: session.remote,
+                        engine: session.engine,
+                        settings: settings,
+                        sizes: session.sizes,
+                        questions: questions,
+                        announce: { NewFollows.announce($0, scope: session.scope) }
                     )
                     // After the inbox, never before it: a share that just arrived is what
                     // somebody is waiting on, and the repair queue is a backlog nobody
