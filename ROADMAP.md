@@ -424,14 +424,27 @@ fit editor; the starter pack of six womenswear and six menswear shops. See
       description only, silently falling back to the phone's sentence; a local morning alert, off
       by default (You › Alerts), scheduled only by a background pass that has just chosen the
       day's set, withdrawn once Shop has shown it.
-- [ ] **Clothes scan.** One camera button, on Saved's "+" and in Shop's search field. On-device
+- [x] **Clothes scan.** One camera button, on Saved's "+" and in Shop's search field. On-device
       cutout, then Claude reads type, colour, material, pattern and style, and you choose: *add to
       my wardrobe* (a saved item with your own photograph — every save has a product behind it
       today, so a small model change), *does it go with my wardrobe* (a verdict and two or three
       fits — the in-store use), or *find this or something like it*. Two credits; only that one
       photograph is sent.
-- [ ] **Fit judging and suggestions that look at the photographs.** Nothing does today, so a
+      *Done:* `ScanButton` (Saved's "+" › Scan a garment, and Shop's `trailingControls`), camera
+      or photo library, `ScanPhoto` cuts out where `Cutout` can and says when it cannot, the price
+      on the send button. The model change is optional `own…` columns on `SavedItem` with
+      `update == nil` — no new model, lightweight migration verified over a store the previous
+      build wrote — and the photograph beside the store (`OwnPhotos`); every surface that draws a
+      save asks the save (`docs/collection.md`, *A garment of your own*). *Does it go* is
+      `ScanVerdict` + `FitProposal.outfits`, on the phone; *Find this* is `similar` or a product
+      search, or Shop's own field. Verified against a local server with `AI_FAKE`. Not reached:
+      Shop's picks and Discover's pairing still skip garments of your own.
+- [x] **Fit judging and suggestions that look at the photographs.** Nothing does today, so a
       suggestion can pair two things that clash.
+      *Done:* the fit canvas's **Ask** menu (`FitAsk`): *Judge this fit* draws the verdict, notes
+      and a mark on the piece to change; *Suggest what goes with it* sends the rule-based
+      candidates and draws the model's order as a second shelf, LOOKED AT, after the free one.
+      Prices on the items, refusals in words (`docs/fits.md`, *Asking about the photographs*).
 - [ ] **AI reading where rules can't**: sale banners (end date, fine print), and product pages with
       no structured data — new products only, never every poll.
 
