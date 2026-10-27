@@ -842,3 +842,24 @@ set on this service.
   *and* a provider — so nothing runs half on. The backfill loop starts only behind it and only where
   the poller runs; `POST /admin/embed?batches=` runs batches by hand (and is how a server with
   `DISABLE_POLLER=true` embeds anything), and says which half is missing when it cannot.
+
+## AI
+
+The rules are `docs/ai.md`; what the server's other parts need to know about it:
+
+- **Switched like the embedding provider**: `AIService.make` in `configure` reads
+  `ANTHROPIC_API_KEY` (or `AI_FAKE=true` off production) once, says on or off at boot, and
+  stores the result as `Application.ai`. Nil is off, and every path asks that one value — a test
+  sets it after `configure`, as it sets `embeddingProvider`.
+- **Two tables' worth of schema.** `ai_pick_reasons` (`CreateAIPickReasons`): a pick's sentence
+  under a unique `sha256` key, with no user or device column, pruned by the `Reaper` after thirty
+  days. `events.sale_ends_at` and `events.sale_terms` (`AddSaleReading`), nullable with no
+  backfill, one column per `update()` for SQLite.
+- **Background reading runs inside the poll pass** — a page in `Poller.enrich`, a banner in
+  `SaleBanners.check` through `SaleEvents.announce(reading:)` — so it shares the pass's
+  politeness and adds no request to a storefront: the page and the homepage were already being
+  read. It adds seconds to a pass where it runs, which is why it is two pages a pass and one
+  banner per new sale, and why the owner's daily cap stops it outright.
+- **Owner spending is `ai_costs` rows with neither key**, summed since midnight UTC
+  (`AIBackground.spentToday`, `CAST(… AS BIGINT)` like every other sum here). Pick sentences
+  count against the same cap.

@@ -397,8 +397,14 @@ fit editor; the starter pack of six womenswear and six menswear shops. See
 
 ### Phase 4 — AI
 
-- [ ] **The provider layer** — Claude behind a small server-side interface, recording the cost of
+- [x] **The provider layer** — Claude behind a small server-side interface, recording the cost of
       every action.
+      *Done:* `AIProvider`, one method per action; `AnthropicProvider` over Vapor's client (strict
+      tool under `tool_choice: auto` where the model refuses a forced one, forced on Haiku), priced
+      per call from the reported usage by `AIPricing` — **check its rows against
+      anthropic.com/pricing before launch**; `FakeAIProvider` behind `AI_FAKE=true`, refused on
+      production; `AIAction.run` spends, calls, records every call and undoes. Off until
+      `ANTHROPIC_API_KEY` is set on the server. See `docs/ai.md`.
 - [x] **Search in Shop.** "Black suit under €400": followed shops first, ranked by taste, then
       similar brands. Narrowed with chips or short replies — "cheaper", "more formal", "no wool" —
       each search keeping a short thread. **Show me more** goes to the open web through Claude's
@@ -411,6 +417,10 @@ fit editor; the starter pack of six womenswear and six menswear shops. See
       country, each result opening the shop's page, its brand, or the site check. Each action
       prints its charge; 402/403/429/503 are said in words. `AIStore` is the one client. See
       `docs/discover.md` (*Asking Dropwall*).
+      *Server:* `POST /v1/ai/search` (one credit a thread of six turns in thirty minutes,
+      held by the phone as a signed token; the reading runs the server's own `ProductSearch`) and
+      `POST /v1/ai/search/web` (three credits, only URLs the search returned, watched shops
+      resolved to their brand).
 - [x] **More like this**, on every product and saved item.
       *Done:* the product page's row (`GET /v1/products/:id/similar`, local fallback) on a saved
       item's page too, wherever a catalogue product stands behind the save. Free, no model.
@@ -424,6 +434,9 @@ fit editor; the starter pack of six womenswear and six menswear shops. See
       description only, silently falling back to the phone's sentence; a local morning alert, off
       by default (You › Alerts), scheduled only by a background pass that has just chosen the
       day's set, withdrawn once Shop has shown it.
+      *Server:* `POST /v1/ai/picks/reasons` — free, at most three, cached by a hash of the
+      pick, its partner's description and its rule with no user on the row, a dozen model calls a
+      device a day, under the owner's daily cap.
 - [x] **Clothes scan.** One camera button, on Saved's "+" and in Shop's search field. On-device
       cutout, then Claude reads type, colour, material, pattern and style, and you choose: *add to
       my wardrobe* (a saved item with your own photograph — every save has a product behind it
@@ -439,14 +452,25 @@ fit editor; the starter pack of six womenswear and six menswear shops. See
       `ScanVerdict` + `FitProposal.outfits`, on the phone; *Find this* is `similar` or a product
       search, or Shop's own field. Verified against a local server with `AI_FAKE`. Not reached:
       Shop's picks and Discover's pairing still skip garments of your own.
+      *Server:* `POST /v1/ai/scan` — a JPEG under 1.5 MB, never stored or logged, not charged
+      when it shows no garment; `similar` by the reading's text vector where semantic search is
+      on (the sidecar cannot embed bytes).
 - [x] **Fit judging and suggestions that look at the photographs.** Nothing does today, so a
       suggestion can pair two things that clash.
       *Done:* the fit canvas's **Ask** menu (`FitAsk`): *Judge this fit* draws the verdict, notes
       and a mark on the piece to change; *Suggest what goes with it* sends the rule-based
       candidates and draws the model's order as a second shelf, LOOKED AT, after the free one.
       Prices on the items, refusals in words (`docs/fits.md`, *Asking about the photographs*).
-- [ ] **AI reading where rules can't**: sale banners (end date, fine print), and product pages with
+      *Server:* `POST /v1/ai/fits/judge` (the worst-case verdict, notes, the piece to swap)
+      and `POST /v1/ai/fits/suggest` (the phone's candidates ordered and vetted, every index
+      validated), one credit each.
+- [x] **AI reading where rules can't**: sale banners (end date, fine print), and product pages with
       no structured data — new products only, never every poll.
+      *Done:* a new sale's banner is read once, on the pass that announces it, onto the event
+      (`sale_ends_at`, `sale_terms`, optional `FeedItem.saleEndsAt`/`saleTerms`; a missed code
+      joins the title); a new product's page with no structured data is read once from its
+      visible text, two a pass. Owner-paid, metered as nobody's, stopped for the UTC day at
+      `AI_BACKGROUND_DAILY_CAP_MICROS` ($1 by default). The app does not print the sale's end yet.
 
 ### Later
 

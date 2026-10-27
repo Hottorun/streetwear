@@ -849,6 +849,12 @@ public struct FeedItem: Codable, Sendable, Hashable, Identifiable {
     /// go on decoding — the client falls back to matching a distinctive word from the
     /// title, which is what every release page did before this existed and got wrong.
     public var memberExternalIDs: [String]?
+    /// For a `.sale`, what the model read off the announcement bar beyond the pattern's
+    /// percentage and code (Phase 4, `docs/ai.md`): the end of the sale's last day, and its
+    /// fine print in one line — "Excludes new arrivals". Nil on every other kind, on a sale
+    /// read while AI was off, and from a server that predates them; ignored by older apps.
+    public var saleEndsAt: Date?
+    public var saleTerms: String?
 
     public var id: UUID { eventID }
 
@@ -895,7 +901,9 @@ public struct FeedItem: Codable, Sendable, Hashable, Identifiable {
         tags: [String]? = nil,
         genderVersion: Int? = nil,
         productExternalID: String? = nil,
-        memberExternalIDs: [String]? = nil
+        memberExternalIDs: [String]? = nil,
+        saleEndsAt: Date? = nil,
+        saleTerms: String? = nil
     ) {
         self.eventID = eventID
         self.kind = kind
@@ -923,6 +931,8 @@ public struct FeedItem: Codable, Sendable, Hashable, Identifiable {
         self.genderVersion = genderVersion
         self.productExternalID = productExternalID
         self.memberExternalIDs = memberExternalIDs
+        self.saleEndsAt = saleEndsAt
+        self.saleTerms = saleTerms
     }
 }
 

@@ -78,20 +78,27 @@ public struct ProductPage: Sendable, Hashable {
     }
 
     public static func read(_ url: URL, http: any HTTPFetching = Net.live) async -> Outcome {
+        await reading(url, http: http).outcome
+    }
+
+    /// The same, with the page itself whenever it loaded — so a page with no structured data
+    /// can still be read some other way (the server's model reading, once, for a new product)
+    /// without being fetched a second time.
+    public static func reading(_ url: URL, http: any HTTPFetching = Net.live) async -> (outcome: Outcome, html: String?) {
         let response: HTTPResponse
         do {
             response = try await http.get(url)
         } catch SourceError.hostBusy {
-            return .unreachable(retryable: true)
+            return (.unreachable(retryable: true), nil)
         } catch {
-            return .unreachable(retryable: false)
+            return (.unreachable(retryable: false), nil)
         }
         guard response.status == 200,
               let html = String(data: response.data, encoding: .utf8)
                 ?? String(data: response.data, encoding: .isoLatin1)
-        else { return .unreachable(retryable: false) }
+        else { return (.unreachable(retryable: false), nil) }
 
-        return parse(html, base: response.finalURL ?? url).map(Outcome.product) ?? .notAProduct
+        return (parse(html, base: response.finalURL ?? url).map(Outcome.product) ?? .notAProduct, html)
     }
 
     /// The product a page describes, or nil when it describes none.
