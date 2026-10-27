@@ -34,7 +34,7 @@ enum CollectionFilter: Hashable {
 struct SavedView: View {
     @Environment(\.modelContext) private var context
     @Environment(CollectionRoute.self) private var collection: CollectionRoute
-    @Environment(AIAvailability.self) private var ai: AIAvailability
+    @Environment(AIStore.self) private var ai: AIStore
     @Query(sort: \SavedItem.savedAt, order: .reverse) private var saves: [SavedItem]
     @Query(sort: [SortDescriptor(\Board.sortIndex), SortDescriptor(\Board.createdAt)])
     private var boards: [Board]
@@ -318,10 +318,10 @@ struct SavedView: View {
                 }
             }
             // **"+" adds to the collection**: a garment you photograph, or a board. The scan is
-            // drawn only where the server can read a photograph (`AIAvailability`); without
+            // drawn only where the server can read a photograph (`AIStore.isAvailable`); without
             // it the "+" is the one thing it held before, and a menu of one is a lid on a button.
             ToolbarItem(placement: .topBarTrailing) {
-                if ai.isOffered {
+                if ai.isAvailable {
                     Menu {
                         Button("Scan a garment", systemImage: "camera") { isScanning = true }
                         Button("New board", systemImage: "square.grid.2x2") { startNewBoard() }

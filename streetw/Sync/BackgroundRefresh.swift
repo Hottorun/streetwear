@@ -228,7 +228,13 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         // Every profile, the current one first, stopping between profiles once the budget is
         // spent — and at once if iOS expires the task first. See `syncProfiles`.
         let deadline = Date().addingTimeInterval(BackgroundServices.passBudget)
-        let work = Task { await BackgroundServices.syncProfiles(until: deadline) }
+        let work = Task {
+            let pass = await BackgroundServices.syncProfiles(until: deadline)
+            // After the sync, so the picks are chosen from what just arrived — and only when
+            // somebody asked for the morning alert. See `PicksNotice`.
+            await PicksNotice.backgroundPass(until: deadline)
+            return pass
+        }
         task.expirationHandler = { work.cancel() }
 
         let pass = await work.value
@@ -262,7 +268,10 @@ extension AppDelegate {
     static func debugPassIfRequested() {
         guard UserDefaults.standard.bool(forKey: "debugBackgroundPass") else { return }
         let deadline = Date().addingTimeInterval(BackgroundServices.passBudget)
-        let work = Task { await BackgroundServices.syncProfiles(until: deadline) }
+        let work = Task {
+            _ = await BackgroundServices.syncProfiles(until: deadline)
+            await PicksNotice.backgroundPass(until: deadline)
+        }
         let assertion = UIApplication.shared.beginBackgroundTask { work.cancel() }
         Task {
             _ = await work.value
@@ -329,6 +338,8 @@ enum PushDestination: Equatable {
     /// A brand's page. What a counted summary ("3 restocks") gets, because no single
     /// product is the subject.
     case brand(remoteID: UUID)
+    /// A tab, by `Tabs` name — a local alert about a set rather than one thing (`PicksNotice`).
+    case tab(String)
     /// A push with nothing usable in it — a probe, or a build newer than this one.
     case none
 
@@ -341,6 +352,10 @@ enum PushDestination: Equatable {
         // keyed by its product, not by a server event.
         if let row = userInfo["externalID"] as? String, !row.isEmpty {
             self = .update(externalID: row)
+            return
+        }
+        if let tab = userInfo["tab"] as? String, !tab.isEmpty {
+            self = .tab(tab)
             return
         }
         if let brand = userInfo["brandID"] as? String,

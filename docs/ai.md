@@ -103,9 +103,11 @@ scan 2, fit judge 1, fit suggest 1. Set from `GET /admin/costs` p90 after a few 
   (`similar`, else `GET /v1/products/search` over your shops and then every shop), or the
   host's own field when it passed `onFind`. A reading that is not a garment offers none of the
   three.
-- **Availability is one small seam**, `AIAvailability` (`GET /v1/ai`, keyed on the token and the
-  account): `isOffered`, `isSignedIn`, `credits(for:)`. `AIFailure` turns every refusal into the
-  sentence the reader is owed — 402, 403, 429, offline, and a failure the server undid.
+- **The scan and the fit canvas call through `AIStore`**, the same store Shop's search does —
+  `isAvailable` draws the camera and the Ask menu at all, `costLabel(for:)` puts the price on the
+  button (and nothing is printed as free when the server named none), and every refusal is an
+  `AIRefusal` drawn by `AIRefusalNotice`. Shop's field carries the camera in `trailingControls`,
+  with *Find this* landing in the field (`ScanButton(side:onFind:)`).
 
 ## Fits
 

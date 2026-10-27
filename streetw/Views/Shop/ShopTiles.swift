@@ -79,6 +79,10 @@ struct ShopPickCard: View {
     @Environment(SizeProfileStore.self) private var sizes: SizeProfileStore
 
     let pick: ShopPick
+    /// The model's wording of the reason, for the top few picks where the server has one
+    /// (`PickReasons`). It words the reason the phone found; it never replaces the evidence,
+    /// so the partner's photograph and the pairing's own line stay beside it.
+    var worded: String?
     let onOpenFit: () -> Void
     let onRefuse: () -> Void
 
@@ -170,13 +174,17 @@ struct ShopPickCard: View {
                 .frame(width: 48)
             }
             VStack(alignment: .leading, spacing: 4) {
-                Text(pick.headline)
+                Text(worded ?? pick.headline)
                     .font(.editorial(16))
                     .foregroundStyle(Color.ink)
                     .multilineTextAlignment(.leading)
                     .fixedSize(horizontal: false, vertical: true)
                 if let detail = pick.detail {
                     DataLabel(text: detail, size: 9.5, color: pick.isTimely ? .signal : .muted)
+                }
+                // Said, quietly: the sentence is the model's, even though the choice is not.
+                if worded != nil {
+                    DataLabel(text: "WORDED BY AI", size: 8.5)
                 }
             }
             Spacer(minLength: 0)

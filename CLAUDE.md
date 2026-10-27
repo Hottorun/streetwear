@@ -219,7 +219,7 @@ plutil -p /tmp/streetw-dd/Build/Products/Debug-iphonesimulator/streetw.app/Info.
 ### Tests
 
 ```bash
-swift test                                    # all 720
+swift test                                    # all 724
 cd Server && swift test                       # 362, of which 11 need STREETW_TEST_POSTGRES_URL
 cd Embeddings && pytest                       # 63; -m slow adds 3 against real weights
 swift test --filter "Size normalisation"      # one suite
@@ -763,15 +763,26 @@ project and every one names what it fixed. The ones most easily broken by accide
 
 Discover with a search field on top (`ShopView`): a field that takes a description, today's picks
 while it is empty, and the deck one row below. **Read `docs/discover.md` (*Shop*) before touching
-`ShopView`, `ShopCatalogue`, `PickLedger`, `ShopQuery`, `ShopSearch` or `DailyPicks`.** The rules
-most easily broken:
+`ShopView`, `ShopAsk`, `AIStore`, `ShopCatalogue`, `PickLedger`, `TodaysPicks`, `ShopQuery`,
+`ShopSearch`, `TasteOrder` or `DailyPicks`.** The rules most easily broken:
 
 - **It searches your shops, and says where** — in server mode every product the server holds for
   them (`GET /v1/products/search`, "IN YOUR SHOPS · N PRODUCTS"), standalone the ones on this
-  phone ("… ON THIS PHONE"); never AI or the web, a magnifying glass and not a sparkle. Phase 4
-  puts a model behind the same field; until then the copy must not promise one. Every other shop
-  the server watches is one quiet row under the answer, asked only when tapped, and shows only
-  what your shops did not. A request that failed says it failed, never "no results".
+  phone ("… ON THIS PHONE"). **The free field never says AI or the web** — a magnifying glass and
+  not a sparkle. Every other shop the server watches is one quiet row under the answer, asked only
+  when tapped, and shows only what your shops did not. A request that failed says it failed, never
+  "no results".
+- **Asking Dropwall is a second, explicit act, and it says it is AI and what it costs** (`ShopAsk`,
+  Phase 4): a sparkle row with the server's price, drawn only where `AIStore.isAvailable` (server
+  mode and `GET /v1/ai` available) — signed out it says "SIGN IN TO USE" and opens You, never a
+  dead button. The model's `reading.query` is printed through the phone's own `ShopQuery` line and
+  is what the page searches; replies continue the thread with its signed token, free, and the
+  reply field says when the next one starts a new, paid search. Your shops' answer is re-ordered
+  by taste on the phone (`TasteOrder`), never on the server. Every action prints its `AICharge`; a
+  refusal (402, 403, 429, 503) is said in words (`AIRefusal`), never as an empty list. **Show me
+  more** is the open web at its own price; a result's shop opens, follows, or goes to the ordinary
+  site check. `AIStore` is the account's, built in `streetwApp.init`, asked at the root keyed on
+  the token and the account, and is the one way any surface calls `/v1/ai/*`.
 - **One grammar on both ends**: the server parses the text with the same `ShopQuery` and runs the
   same `ShopSearch.run` over candidates its full-text index found (`ProductSearch`), told by the
   database which words exist at all (`knows:`). A query must not mean something different on the
@@ -784,7 +795,10 @@ most easily broken:
 - **Picks are a kept set with a true reason**: `Pairing` against `TasteScope.pairingPool`,
   leaning to what is missing, anchors spread, varied by a hash of the local date (no RNG), written
   down for the day so saving one cannot re-rank the page. Never saved, refused or unbuyable when
-  chosen; "not for me" refuses the garment, not the shop.
+  chosen; "not for me" refuses the garment, not the shop. The model only **words** the top three
+  (`PickReasons`, free, once a day, the partner sent as a short description and never a photograph,
+  brand or id), and the morning alert (`PicksNotice`, local, off by default) is scheduled only by a
+  background pass that has just chosen the day's set, so it is always true.
 - **The deck is drawn in place over the tab, not as a cover** — the save confirmations are hosted
   at the root, under any cover.
 
@@ -1188,7 +1202,9 @@ metered; a StoreKit JWS is believed only on a chain to the compiled-in **Apple R
 transaction and renewal info are each verified; the unverified double needs a non-production server *and* `CREDITS_UNVERIFIED_TRANSACTIONS=true`;
 an `Xcode` transaction is never believed on production; a refund may take the balance negative;
 the phone finishes a transaction only once the server took it; and the StoreKit configuration
-applies only when Xcode itself launches the app.
+applies only when Xcode itself launches the app. The app shows credits since Phase 4
+(`CreditStore.isOffered`, true) — the balance, this month's usage, each AI action's price from
+`GET /v1/ai`, and the packs — and every AI answer's `AICharge` updates the balance in place.
 
 ### The collection
 

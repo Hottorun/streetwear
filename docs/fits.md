@@ -445,7 +445,7 @@ snapping**, because a grid turns a collage back into a form.
 Every rule above reads words and one measured colour, so a pair can pass all of them and be
 plainly wrong to anybody looking. The canvas's **Ask** menu puts the two questions the rules
 cannot answer to the model (`FitAsk`, `docs/ai.md`, *Fits*). Drawn only where the server can
-answer (`AIAvailability.isOffered`), never standalone.
+answer (`AIStore.isAvailable`), never standalone.
 
 - **The price is on the button.** "Judge this fit · 1 credit", "Suggest what goes with it ·
   1 credit", from the server's table. Nothing is sent by a tap that did not name its price.
@@ -463,7 +463,7 @@ answer (`AIAvailability.isOffered`), never standalone.
   free. Each tile carries the model's reason; a tap swaps or places exactly as the shelf it came
   from would.
 - **Empty and failed are different lines.** "Looking at the photographs, none of these go with
-  it" is an answer; `AIFailure.message` (402 credits, 403 sign in, 429 limit, offline, a failure
+  it" is an answer; an `AIRefusal` (`AIRefusalNotice`: sign in, credits, the cost cap, unavailable, a failure
   the server undid) is not one.
 - **A fit around something that is not in the store yet** has two new subjects:
   `FitSubject.kept(SavedItem)` for a garment of your own (which `.product` cannot carry), and

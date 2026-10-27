@@ -224,9 +224,7 @@ struct FitJudgementPanel: View {
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }
-                if let line = judgement.charge.line {
-                    DataLabel(text: line, size: 9)
-                }
+                ChargeLine(charge: judgement.charge)
             }
             if judgement.swap != nil, isCurrent {
                 DataLabel(text: "THE MARKED PIECE IS THE ONE TO CHANGE", size: 9, color: .signal)
@@ -248,17 +246,15 @@ struct FitJudgementPanel: View {
     }
 }
 
-/// A question that could not be asked, said as such.
+/// A question that could not be asked, said as such — `AIRefusalNotice`, with its remedy, on a
+/// card that can be put away.
 struct FitAskFailureLine: View {
-    let failure: AIFailure
+    let refusal: AIRefusal
     let onClose: () -> Void
 
     var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 10) {
-            Text(failure.message)
-                .font(.editorial(14))
-                .foregroundStyle(Color.ink)
-                .fixedSize(horizontal: false, vertical: true)
+        HStack(alignment: .top, spacing: 10) {
+            AIRefusalNotice(refusal: refusal)
             Spacer(minLength: 0)
             Button(action: onClose) {
                 Image(systemName: "xmark")

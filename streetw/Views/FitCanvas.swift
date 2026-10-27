@@ -48,9 +48,7 @@ struct FitCanvas: View {
     @Environment(\.modelContext) private var context
     @Environment(\.dismiss) private var dismiss
     @Environment(StyleStatementStore.self) private var statement: StyleStatementStore
-    @Environment(AIAvailability.self) private var ai: AIAvailability
-    @Environment(ServerSettings.self) private var settings: ServerSettings
-    @Environment(ProfileStore.self) private var profiles: ProfileStore
+    @Environment(AIStore.self) private var ai: AIStore
 
     @Query(sort: \SavedItem.savedAt, order: .reverse) private var saves: [SavedItem]
     @Query(sort: [SortDescriptor(\Board.sortIndex), SortDescriptor(\Board.createdAt)])
@@ -160,7 +158,9 @@ struct FitCanvas: View {
     @State private var asked: [FitAsk.Suggestion]?
     @State private var askedCharge: AICharge?
     @State private var asking: FitAsk.Kind?
-    @State private var askFailure: (kind: FitAsk.Kind, failure: AIFailure)?
+    @State private var askFailure: (kind: FitAsk.Kind, refusal: AIRefusal)?
+    /// Asked to suggest with nothing the rules would offer: nothing was sent.
+    @State private var hasNothingToAsk = false
 
     /// Only ever grows. Sparse z values mean bringing something to the front is one write
     /// rather than renumbering everything behind it.
@@ -237,14 +237,14 @@ struct FitCanvas: View {
                 }
                 // **Asking costs credits and says so on the button**, so nothing is sent by a
                 // tap that did not name its price. Only where the server can read photographs.
-                if ai.isOffered {
+                if ai.isAvailable {
                     ToolbarItem(placement: .topBarTrailing) {
                         Menu {
-                            Button("Judge this fit · \(CreditAction.price(ai.credits(for: .fitJudge)).lowercased())", systemImage: "eye") {
+                            Button(askLabel("Judge this fit", .fitJudge), systemImage: "eye") {
                                 judge()
                             }
                             .disabled(placements.count < 2 || asking != nil)
-                            Button("Suggest what goes with it · \(CreditAction.price(ai.credits(for: .fitSuggest)).lowercased())", systemImage: "list.number") {
+                            Button(askLabel("Suggest what goes with it", .fitSuggest), systemImage: "list.number") {
                                 suggest()
                             }
                             .disabled(placements.isEmpty || asking != nil)
@@ -381,7 +381,7 @@ struct FitCanvas: View {
                     )
                     .padding(12)
                 } else if let askFailure, askFailure.kind == .judge {
-                    FitAskFailureLine(failure: askFailure.failure) { self.askFailure = nil }
+                    FitAskFailureLine(refusal: askFailure.refusal) { self.askFailure = nil }
                         .padding(12)
                 }
             }
@@ -426,7 +426,7 @@ struct FitCanvas: View {
                         }
                         // After the free shelf, never in place of it: the rules draw first and
                         // cost nothing, and this is what came back from asking.
-                        if asked != nil || askFailure?.kind == .suggest {
+                        if asked != nil || askFailure?.kind == .suggest || hasNothingToAsk {
                             trayChip(label: "LOOKED AT", isOn: shelf == .asked) { shelf = .asked }
                         }
                         trayChip(label: "ALL", isOn: shelf == .all) { shelf = .all }
@@ -531,15 +531,26 @@ struct FitCanvas: View {
                 .font(.editorial(14))
                 .foregroundStyle(Color.muted)
                 .padding(.horizontal, 20)
-        } else if let askFailure, askFailure.kind == .suggest {
-            Text(askFailure.failure.message)
+        } else if hasNothingToAsk {
+            Text("Nothing in your collection goes with this by the rules, so there was nothing to ask about.")
                 .font(.editorial(14))
-                .foregroundStyle(Color.ink)
+                .foregroundStyle(Color.muted)
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.horizontal, 20)
+        } else if let askFailure, askFailure.kind == .suggest {
+            // The notice's two lines without its buttons: the tray has a fixed height, and
+            // sign-in and credits are one tap away on You.
+            VStack(alignment: .leading, spacing: 4) {
+                Text(askFailure.refusal.title)
+                    .font(.editorial(15))
+                    .foregroundStyle(Color.ink)
+                DataLabel(text: askFailure.refusal.detail, size: 9)
+                    .lineLimit(3)
+            }
+            .padding(.horizontal, 20)
         }
-        if let line = askedCharge?.line, asked != nil {
-            DataLabel(text: line, size: 9)
+        if let askedCharge, asked != nil {
+            ChargeLine(charge: askedCharge)
                 .padding(.horizontal, 20)
         }
     }
@@ -753,6 +764,11 @@ struct FitCanvas: View {
 
     // MARK: - Asking
 
+    /// The menu item's words, with the server's price on them whenever it named one.
+    private func askLabel(_ title: String, _ action: CreditAction) -> String {
+        ai.costLabel(for: action).map { "\(title) · \($0.lowercased())" } ?? title
+    }
+
     private var judgementAtTop: Bool {
         guard let swap = judgement?.swap,
               let placement = placements.first(where: { $0.itemID == swap })
@@ -773,7 +789,6 @@ struct FitCanvas: View {
     }
 
     private func judge() {
-        guard let client = AIClient(settings: settings, profile: profiles.session.scope.id) else { return }
         let pieces = shown()
         guard pieces.count >= 2 else { return }
         asking = .judge
@@ -781,7 +796,7 @@ struct FitCanvas: View {
         judgement = nil
         Task {
             defer { asking = nil }
-            switch await client.judge(pieces.map(\.piece)) {
+            switch await ai.judgeFit(AIFitJudgeRequest(pieces: pieces.map(\.piece))) {
             case .success(let response):
                 judgement = FitAsk.Judgement(verdict: response.verdict, shown: pieces.map(\.itemID), charge: response.charge)
             case .failure(let failure):
@@ -794,7 +809,6 @@ struct FitCanvas: View {
     /// wardrobe's best against what is placed otherwise — and only those, so the model orders
     /// and refuses what the phone chose and never introduces anything.
     private func suggest() {
-        guard let client = AIClient(settings: settings, profile: profiles.session.scope.id) else { return }
         let fit = shown()
         let placed = placedPieces.compactMap(\.piece.garment)
         let candidates = FitAsk.candidates(
@@ -806,17 +820,24 @@ struct FitCanvas: View {
         )
         let pieces = candidates.compactMap { candidate in FitAsk.piece(for: candidate.save).map { (candidate, $0) } }
         guard !fit.isEmpty else { return }
+        // Nothing the rules would offer means nothing to ask about — said, and not sent, so
+        // no credit is spent on an empty question.
         guard !pieces.isEmpty else {
-            asked = []
+            asked = nil
             askedCharge = nil
+            hasNothingToAsk = true
             shelf = .asked
             return
         }
+        hasNothingToAsk = false
         asking = .suggest
         askFailure = nil
         Task {
             defer { asking = nil }
-            switch await client.suggest(fit: fit.map(\.piece), candidates: pieces.map(\.1)) {
+            switch await ai.suggestForFit(AIFitSuggestRequest(
+                fit: fit.map(\.piece),
+                candidates: Array(pieces.map(\.1).prefix(AIFits.maxCandidates))
+            )) {
             case .success(let response):
                 asked = response.suggestions.compactMap { suggestion in
                     pieces.indices.contains(suggestion.candidate)

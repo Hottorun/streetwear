@@ -82,6 +82,7 @@ struct ProfileScope: Hashable, Sendable {
     static let scopedKeys = [
         "sizeProfile", "styleStatement", "feedCursor", "feedPendingReads", "pendingUnfollows",
         "pendingWatchDeletes", "discoverSeen", "shopPicksToday", "shopPicksRefused",
+        "shopPickReasons", "shopPicksAnnounced",
         "feedLastOnScreenAt", "feedVisitBoundary", "pollHintsFingerprint", "pollHintState",
         "didOfferStarterPack"
     ]

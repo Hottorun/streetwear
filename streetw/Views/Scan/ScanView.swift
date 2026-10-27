@@ -14,7 +14,7 @@
 //   reading (`Pairing`, `Outfit`, `FitProposal`), so the wardrobe never leaves it;
 //   *Find this or something like it* — the products the server says look like it, or a search
 //   for the reading's own words.
-// - **A failure says which one it was** (`AIFailure`), and is never drawn as an empty answer.
+// - **A failure says which one it was** (`AIRefusal`, `AIRefusalNotice`), and is never drawn as an empty answer.
 
 import PhotosUI
 import StreetwCore
@@ -24,9 +24,7 @@ import SwiftUI
 struct ScanView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var context
-    @Environment(ServerSettings.self) private var settings: ServerSettings
-    @Environment(ProfileStore.self) private var profiles: ProfileStore
-    @Environment(AIAvailability.self) private var ai: AIAvailability
+    @Environment(AIStore.self) private var ai: AIStore
     @Environment(StyleStatementStore.self) private var statement: StyleStatementStore
     @Query(sort: \SavedItem.savedAt, order: .reverse) private var saves: [SavedItem]
     @Query(filter: Board.shapingTaste) private var tasteBoards: [Board]
@@ -40,7 +38,7 @@ struct ScanView: View {
         case ready(ScanPhoto.Prepared)
         case reading(ScanPhoto.Prepared)
         case read(ScannedGarment, AIScanResponse)
-        case failed(ScanPhoto.Prepared, AIFailure)
+        case failed(ScanPhoto.Prepared, AIRefusal)
     }
 
     private enum Choice: Equatable {
@@ -64,7 +62,13 @@ struct ScanView: View {
     @State private var addFailed = false
     @State private var opening: Opening?
 
-    private var price: Int { ai.credits(for: .scan) }
+    /// "2 CREDITS", from the server's table. Nil when it named no price — never printed as free.
+    private var price: String? { ai.costLabel(for: .scan) }
+
+    /// The send button's words, with the price on it whenever there is one to state.
+    private func sendLabel(_ verb: String) -> String {
+        price.map { "\(verb) · \($0)" } ?? verb
+    }
 
     var body: some View {
         NavigationStack {
@@ -164,7 +168,7 @@ struct ScanView: View {
         VStack(alignment: .leading, spacing: 6) {
             Rule()
                 .padding(.bottom, 6)
-            DataLabel(text: "READING IT COSTS \(CreditAction.price(price))", size: 10, color: .ink)
+            DataLabel(text: price.map { "READING IT COSTS \($0)" } ?? "READING IT USES CREDITS", size: 10, color: .ink)
             DataLabel(text: "ONLY THIS PHOTOGRAPH IS SENT, TO BE READ ONCE. DROPWALL NEVER STORES IT.", size: 10)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -196,15 +200,13 @@ struct ScanView: View {
             }
             if ai.isSignedIn {
                 Button { send(prepared) } label: {
-                    actionLabel("READ IT · \(CreditAction.price(price))", systemImage: "text.viewfinder", isPrimary: true)
+                    actionLabel(sendLabel("READ IT"), systemImage: "text.viewfinder", isPrimary: true)
                 }
                 .buttonStyle(.borderless)
             } else {
                 // Not a disabled button: a control that cannot be pressed for a reason it does
                 // not state is indistinguishable from a broken one.
-                Text(AIFailure.signIn.message)
-                    .font(.editorial(16))
-                    .foregroundStyle(Color.ink)
+                AIRefusalNotice(refusal: .signedOut)
             }
             Button { stage = .choosing } label: {
                 actionLabel("CHOOSE ANOTHER", systemImage: "arrow.uturn.backward", isPrimary: false)
@@ -217,13 +219,9 @@ struct ScanView: View {
     }
 
     private func send(_ prepared: ScanPhoto.Prepared) {
-        guard let client = AIClient(settings: settings, profile: profiles.session.scope.id) else {
-            stage = .failed(prepared, .offline)
-            return
-        }
         stage = .reading(prepared)
         Task {
-            switch await client.scan(prepared.upload) {
+            switch await ai.scan(AIScanRequest(image: prepared.upload)) {
             case .success(let response):
                 let scanned = ScannedGarment(photo: prepared.photo, cutout: prepared.cutout, reading: response.reading)
                 stage = .read(scanned, response)
@@ -233,18 +231,11 @@ struct ScanView: View {
         }
     }
 
-    private func failed(_ prepared: ScanPhoto.Prepared, _ failure: AIFailure) -> some View {
+    /// Which refusal it was, and its one remedy — sign in, credits — or "try again" for a
+    /// failure the same press might get past. Never the empty answer.
+    private func failed(_ prepared: ScanPhoto.Prepared, _ refusal: AIRefusal) -> some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text(failure.message)
-                .font(.editorial(17))
-                .foregroundStyle(Color.ink)
-                .fixedSize(horizontal: false, vertical: true)
-            if failure.isRetryable {
-                Button { send(prepared) } label: {
-                    actionLabel("TRY AGAIN · \(CreditAction.price(price))", systemImage: "arrow.clockwise", isPrimary: true)
-                }
-                .buttonStyle(.borderless)
-            }
+            AIRefusalNotice(refusal: refusal, retry: { send(prepared) })
             Button { stage = .choosing } label: {
                 actionLabel("CHOOSE ANOTHER", systemImage: "arrow.uturn.backward", isPrimary: false)
             }
@@ -277,9 +268,7 @@ struct ScanView: View {
                 if reading.isGarment, !reading.style.isEmpty {
                     DataLabel(text: reading.style.joined(separator: " · ").uppercased(), size: 10)
                 }
-                if let line = response.charge.line {
-                    DataLabel(text: line, size: 9)
-                }
+                ChargeLine(charge: response.charge)
             }
             .padding(.horizontal, 20)
             .padding(.top, 20)

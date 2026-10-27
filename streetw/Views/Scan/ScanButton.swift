@@ -2,29 +2,33 @@
 // The one way into the clothes scan, wherever it is placed: Saved's "+", and Shop's field.
 //
 // **Drawn only where it can work** — on a deployment whose server holds a provider key, and
-// never standalone (`AIAvailability.isOffered`). A camera that can only fail is a placeholder.
+// never standalone (`AIStore.isAvailable`). A camera that can only fail is a placeholder.
 
 import SwiftUI
 
 /// A camera glyph that opens the scan.
 ///
-/// - Parameter onFind: where "find this or something like it" goes. Nil — Saved's case — and
-///   the scan answers it itself, from the catalogue the server holds; Shop passes its own field,
-///   so the reading's search text lands where somebody was already searching.
+/// - Parameters:
+///   - side: the tap target. 44 on its own; Shop's field passes less, so the glyph sits in the
+///     field's row without making the field taller.
+///   - onFind: where "find this or something like it" goes. Nil — Saved's case — and the scan
+///     answers it itself, from the catalogue the server holds; Shop passes its own field, so
+///     the reading's search text lands where somebody was already searching.
 struct ScanButton: View {
-    @Environment(AIAvailability.self) private var ai: AIAvailability
+    @Environment(AIStore.self) private var ai: AIStore
 
+    var side: CGFloat = 44
     var onFind: ((String) -> Void)?
 
     @State private var isScanning = false
 
     var body: some View {
-        if ai.isOffered {
+        if ai.isAvailable {
             Button { isScanning = true } label: {
                 Image(systemName: "camera")
                     .font(.system(size: 15, weight: .regular))
                     .foregroundStyle(Color.ink)
-                    .frame(width: 44, height: 44)
+                    .frame(width: side, height: side)
                     .contentShape(.rect)
             }
             .buttonStyle(.borderless)
