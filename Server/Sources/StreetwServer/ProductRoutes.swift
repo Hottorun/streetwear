@@ -59,19 +59,23 @@ func productRoutes(authed: any RoutesBuilder) {
         guard !wanted.isEmpty else { return ProductReadingsResponse(readings: []) }
         let products = try await ProductModel.query(on: req.db)
             .filter(\.$externalID ~~ Array(Set(ask.items.map(\.externalID))))
-            .filter(\.$brand.$id ~~ Array(Set(ask.items.map(\.brandID))))
             .filter(\.$styleWords != nil)
             .all()
         var out: [ProductReadingsRequest.Item: ProductReadingsResponse.Reading] = [:]
         for product in products {
-            let item = ProductReadingsRequest.Item(brandID: product.$brand.id, externalID: product.externalID)
-            guard wanted.contains(item), out[item] == nil, let words = product.styleWords else { continue }
-            out[item] = ProductReadingsResponse.Reading(
-                brandID: item.brandID,
-                externalID: item.externalID,
-                productShotURL: ProductShotIndex.url(in: product.imageURLs, at: product.shotIndex),
-                styleWords: words
-            )
+            guard let words = product.styleWords else { continue }
+            // Asked by brand and key, or by the key alone for a save with no brand row.
+            for item in [
+                ProductReadingsRequest.Item(brandID: product.$brand.id, externalID: product.externalID),
+                ProductReadingsRequest.Item(brandID: nil, externalID: product.externalID),
+            ] where wanted.contains(item) && out[item] == nil {
+                out[item] = ProductReadingsResponse.Reading(
+                    brandID: item.brandID,
+                    externalID: item.externalID,
+                    productShotURL: ProductShotIndex.url(in: product.imageURLs, at: product.shotIndex),
+                    styleWords: words
+                )
+            }
         }
         return ProductReadingsResponse(readings: out.values.sorted { $0.externalID < $1.externalID })
     }

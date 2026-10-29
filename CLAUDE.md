@@ -220,8 +220,8 @@ plutil -p /tmp/streetw-dd/Build/Products/Debug-iphonesimulator/streetw.app/Info.
 ### Tests
 
 ```bash
-swift test                                    # all 731
-cd Server && swift test                       # 402, of which 15 need STREETW_TEST_POSTGRES_URL (run those --no-parallel)
+swift test                                    # all 735
+cd Server && swift test                       # 416, of which 18 need STREETW_TEST_POSTGRES_URL (run those --no-parallel) and 2 STREETW_READING_EVAL
 cd Embeddings && pytest                       # 67; -m slow adds 3 against real weights
 cd Server/SearchEval && python3 searcheval.py run before after   # the search eval, local only — docs/server.md
 swift test --filter "Size normalisation"      # one suite
@@ -1058,6 +1058,7 @@ the local path in the `else`. Adding a new one means adding both halves:
 | "more like this" on a product page | `GET /v1/products/:id/similar?brand=` (the external id, one escaped segment) — falls back to the phone's own `SimilarItems` answer when it fails, and is that answer standalone |
 | credits: balance, this month's usage, the packs | `GET /v1/credits` (`signedIn: false` and nothing else without an account; no standalone equivalent, and the section is hidden) |
 | buying a pack | StoreKit, then `POST /v1/credits/purchases` with the signed transaction — finished only once the server took it (`CreditStore`). Refunds arrive from Apple at `POST /v1/app-store/notifications`; costs read back with `GET /admin/costs`, see `docs/credits.md` |
+| the server's product shot and style words for saves | `POST /v1/products/readings` (an hour apart at most; no standalone equivalent — Vision's `ProductShot` is the cover there) |
 | the Discover feed | `GET /v1/discover` (no standalone equivalent — the phone only holds brands somebody already followed, which is the opposite of the question) |
 | whether AI exists here, and what each action costs | `GET /v1/ai` (`available: false` with no provider; no standalone equivalent, and no AI affordance is drawn) |
 | a described search, and its follow-ups | `POST /v1/ai/search` — the thread travels with each turn, signed (`threadToken`); a follow-up inside it is free. Standalone has no model: `ShopSearch` over `ShopCatalogue`, as before |
@@ -1208,7 +1209,20 @@ request in flight does not hear cancellation) and falls back to full-text. A pho
 cannot read costs its product only the image vector — `.gone` is written off for that URL,
 `.unavailable` is asked again further apart and written off on the fifth answer — so the backfill
 never re-asks one on every pass. Search, "more like this" and the backfill all leave out what the
-scan has unlisted.
+scan has unlisted. The sidecar is sent 400 px renditions (`SemanticIndex.rendition`), never
+storefront originals — 4.8× the throughput, measured.
+
+**The product photograph and style words are read once per product on the server**
+(`ProductReading.swift`, Phase 5; read `docs/server.md`, *The product photograph and style words*,
+before touching `ZeroShot`, `ProductReadingBackfill`, `StyleWords` or `product_readings`).
+FashionSigLIP zero-shot by default — the lead's stored vector against prompts, the rest of the
+gallery embedded only when the lead looks like a person — and the fast model only behind
+`PRODUCT_READING=haiku`, owner-paid under the daily cap. `products.shot_index` and
+`products.style_words` (nil = not read) go out as `FeedItem`/`DiscoverCard.productShotIndex` and
+`.styleWords`, and `POST /v1/products/readings` for saves whose feed rows came first. Style words
+are matched by search like tags, on both ends. Photo search compares the shot's vector where the
+reading found one past the lead. `Server/ReadingEval` is the comparison with Haiku; re-run it on
+any change to the prompts or bars.
 
 ### Credits
 
@@ -1254,7 +1268,9 @@ never reach through `update`, or the new surface silently leaves those garments 
 **drains** its backlog; a photograph that did not answer is not one that never will (`.gone` vs
 `.unavailable`); the first photograph is not necessarily a photograph of the product; a lift is
 verified before it is believed; bumping `Cutout.version` means bumping `VisualReading.version` with
-it; and a facet is a query whose `matches` must mirror how `StyleProfile.build` counted.
+it; a facet is a query whose `matches` must mirror how `StyleProfile.build` counted; and the cover is
+a hand-picked photograph, then the **server's** product shot (`serverShotURLString`), then Vision's,
+then the lead — the feed and Discover keep the brand's own first photograph.
 
 ### Fits
 

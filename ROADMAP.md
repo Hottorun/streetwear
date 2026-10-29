@@ -512,11 +512,17 @@ Agreed with the owner on 2026-10-27. 1.4:
       page, "Follow this shop", saying the app will ask what to see when it next opens. Still no
       networking and no SwiftData in the extension. Every question a share raises is kept until
       answered. The app's own fallback reads JSON-LD and retries saves with no photograph.
-- [ ] **The product photograph and style words, read once per product.** FashionSigLIP zero-shot
+- [x] **The product photograph and style words, read once per product.** FashionSigLIP zero-shot
       on the server: which photograph is the clean product shot (the others embedded only when
       the first shows a person) and a few style words, stored once and sent on the wire; the
       phone's Vision check becomes the fallback. Evaluated against Claude Haiku on ~200 products
       first; switched to Claude only if it clearly wins.
+      *Done:* `ProductReading.swift` (`ZeroShot`, `ProductReadingBackfill`), `AddProductReading`,
+      `FeedItem`/`DiscoverCard.productShotIndex` and `.styleWords`, `POST /v1/products/readings`;
+      cover order hand-picked → server → Vision → lead (`SavedItem`). `Server/ReadingEval`: 203
+      products labelled by hand, SigLIP 0.966 on the shot (0.848 where the lead is not one), style
+      words 0.65 precision; the Haiku half is one command for the owner with a key, and
+      `PRODUCT_READING=haiku` switches to it. Photo search compares the shot. `docs/server.md`.
 - [ ] **A blocked shop says why** — "blocks automated readers, saving from Safari still works",
       "doesn't sell clothes online".
 

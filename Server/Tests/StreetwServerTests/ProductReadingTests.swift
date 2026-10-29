@@ -264,6 +264,8 @@ struct ProductReadingWireTests {
                 .init(brandID: shop.brand, externalID: "shopify:3"),
                 // Another brand's key: not this product, whatever its id says.
                 .init(brandID: shop.brand, externalID: "shopify:4"),
+                // A save from a brand the phone does not follow: the key alone.
+                .init(brandID: nil, externalID: "shopify:4"),
             ])
             try await app.testing().test(.POST, "v1/products/readings", headers: auth, beforeRequest: { req in
                 try req.content.encode(ask)
@@ -273,6 +275,7 @@ struct ProductReadingWireTests {
                 #expect(answer.readings == [
                     .init(brandID: shop.brand, externalID: "shopify:1", productShotURL: "https://cdn.example.com/packshot.jpg", styleWords: ["workwear"]),
                     .init(brandID: shop.brand, externalID: "shopify:2", productShotURL: nil, styleWords: []),
+                    .init(brandID: nil, externalID: "shopify:4", productShotURL: "https://cdn.example.com/packshot.jpg", styleWords: ["minimal"]),
                 ])
             }
             let tooMany = ProductReadingsRequest(items: (0...ProductReadingsRequest.limit).map {

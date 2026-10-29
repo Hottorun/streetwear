@@ -56,11 +56,13 @@ public enum ProductShotIndex {
 /// had been saved from Discover or a search. The phone asks for its saves, a few dozen at a time.
 public struct ProductReadingsRequest: Codable, Sendable, Equatable {
     public struct Item: Codable, Sendable, Hashable {
-        public var brandID: UUID
+        /// Nil for a save from a brand the phone does not follow, which it holds with no brand
+        /// row: the external id alone is then the key, and a catalogue key is the shop's own.
+        public var brandID: UUID?
         /// The product's key as the phone holds it — `shopify:<id>`.
         public var externalID: String
 
-        public init(brandID: UUID, externalID: String) {
+        public init(brandID: UUID?, externalID: String) {
             self.brandID = brandID
             self.externalID = externalID
         }
@@ -78,14 +80,15 @@ public struct ProductReadingsRequest: Codable, Sendable, Equatable {
 
 public struct ProductReadingsResponse: Codable, Sendable, Equatable {
     public struct Reading: Codable, Sendable, Hashable {
-        public var brandID: UUID
+        /// As asked.
+        public var brandID: UUID?
         public var externalID: String
         /// The clean product shot as its URL — not an index, because the phone's row may hold an
         /// older gallery than the server's, and a URL that is not in it is simply not used.
         public var productShotURL: String?
         public var styleWords: [String]
 
-        public init(brandID: UUID, externalID: String, productShotURL: String?, styleWords: [String]) {
+        public init(brandID: UUID?, externalID: String, productShotURL: String?, styleWords: [String]) {
             self.brandID = brandID
             self.externalID = externalID
             self.productShotURL = productShotURL
