@@ -33,6 +33,7 @@
 import Fluent
 import Foundation
 import SQLKit
+import StreetwCore
 import Synchronization
 import Vapor
 
@@ -459,6 +460,9 @@ enum SemanticIndex {
                 "image_failure TEXT",
                 "image_attempts INTEGER NOT NULL DEFAULT 0",
                 "image_retry_at TIMESTAMPTZ",
+                // The clean product shot's vector, where it is not the lead photograph
+                // (`ProductReadingBackfill`) — what photo search compares instead.
+                "shot_embedding vector",
             ] {
                 try await sql.raw("ALTER TABLE product_embeddings ADD COLUMN IF NOT EXISTS \(unsafeRaw: column)").run()
             }
@@ -481,6 +485,18 @@ enum SemanticIndex {
     enum Column: String, Sendable {
         case text = "text_embedding"
         case image = "image_embedding"
+
+        /// What is compared, on the table aliased `alias` (or bare, for the index). A photograph
+        /// is compared with the product's **clean product shot** where the reading found one past
+        /// the lead (`shot_embedding`), and with the lead otherwise: a reader's photograph of a
+        /// jacket is a garment on its own, and a lookbook lead put somebody's jeans first.
+        func expression(_ alias: String? = nil) -> SQLQueryString {
+            let prefix = alias.map { "\($0)." } ?? ""
+            switch self {
+            case .text: return "\(unsafeRaw: prefix)text_embedding"
+            case .image: return "COALESCE(\(unsafeRaw: prefix)shot_embedding, \(unsafeRaw: prefix)image_embedding)"
+            }
+        }
     }
 
     /// The approximate nearest-neighbour indexes for one model, built the first time the model
@@ -491,7 +507,7 @@ enum SemanticIndex {
         for column in [Column.text, .image] {
             try await sql.raw("""
                 CREATE INDEX IF NOT EXISTS \(ident: indexName(for: space, column: column)) ON product_embeddings \
-                USING hnsw ((\(ident: column.rawValue)::vector(\(literal: space.dimension))) vector_cosine_ops) \
+                USING hnsw (((\(column.expression()))::vector(\(literal: space.dimension))) vector_cosine_ops) \
                 WHERE model = \(literal: space.model)
                 """).run()
         }
@@ -501,7 +517,9 @@ enum SemanticIndex {
     /// `Hasher` is seeded per process. The text index keeps the name it was first built under.
     static func indexName(for space: EmbeddingSpace, column: Column = .text) -> String {
         var hash: UInt64 = 0xcbf2_9ce4_8422_2325
-        let key = column == .text ? "\(space.model)#\(space.dimension)" : "\(space.model)#\(space.dimension)#image"
+        // The photograph index is over the shot-or-lead expression, and named for it, so an index
+        // built on the lead alone before the reading existed is never mistaken for it.
+        let key = column == .text ? "\(space.model)#\(space.dimension)" : "\(space.model)#\(space.dimension)#shot"
         for byte in key.utf8 {
             hash ^= UInt64(byte)
             hash = hash &* 0x0000_0100_0000_01b3
@@ -528,7 +546,7 @@ enum SemanticIndex {
         on sql: any SQLDatabase
     ) async throws -> [(id: UUID, similarity: Double)] {
         let cast = SQLQueryString("::vector(\(literal: space.dimension))")
-        let stored = SQLQueryString("e.\(ident: column.rawValue)")
+        let stored = SQLQueryString("(\(column.expression("e")))")
         let exclusion: SQLQueryString = product.map { "AND p.id <> \(bind: $0)" } ?? ""
         let rows = try await sql.raw("""
             SELECT p.id AS id, 1 - ((\(stored)\(cast)) <=> (\(bind: literal(vector))\(cast))) AS similarity
@@ -547,6 +565,14 @@ enum SemanticIndex {
             WHERE product_id = \(bind: product) AND model = \(bind: space.model)
             """).first() else { return nil }
         return parse(try row.decode(column: "v", as: String.self))
+    }
+
+    /// What the sidecar is sent for a product photograph: `ImageRendition` at 400 px where the CDN
+    /// takes a width (Shopify's), the address untouched where it does not.
+    static let renditionPixels = 400
+
+    static func rendition(_ url: URL) -> URL {
+        ImageRendition.sized(url, width: renditionPixels, scale: 1)
     }
 
     static func parse(_ text: String) -> [Float]? {
@@ -793,7 +819,11 @@ actor EmbeddingBackfill {
             }
         }
         if !asked.isEmpty {
-            let answered = try await provider.embed(imageURLs: asked.map(\.url))
+            // A small rendition, not the storefront's 2000–3000 px original: the model reads
+            // 224 px, and fetching originals is most of a batch's time (Billionaire Boys Club's
+            // timed out). `image_url` still records the stored address, which is what the due
+            // query compares.
+            let answered = try await provider.embed(imageURLs: asked.map { SemanticIndex.rendition($0.url) })
             guard answered.count == asked.count else {
                 throw EmbeddingError.wrongCount(expected: asked.count, got: answered.count)
             }

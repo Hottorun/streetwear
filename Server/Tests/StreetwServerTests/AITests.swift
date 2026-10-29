@@ -72,6 +72,9 @@ final class CountingProvider: AIProvider {
     func readProductPage(text: String, url: URL) async throws -> AIAnswer<AIPageReading?> {
         tick("page"); return try await inner.readProductPage(text: text, url: url)
     }
+    func readProductPhotos(imageURLs: [URL], title: String) async throws -> AIAnswer<AIPhotoReading> {
+        tick("photos"); return try await inner.readProductPhotos(imageURLs: imageURLs, title: title)
+    }
 }
 
 /// Fails every action after being billed for it, as a reply whose tool input would not decode is.
@@ -87,6 +90,7 @@ struct BilledFailureProvider: AIProvider {
     func suggestForFit(fit: [AIFitPiece], candidates: [AIFitPiece]) async throws -> AIAnswer<[AIFitSuggestion]> { try fail() }
     func readSaleBanner(message: String, brand: String, today: Date) async throws -> AIAnswer<AISaleReading> { try fail() }
     func readProductPage(text: String, url: URL) async throws -> AIAnswer<AIPageReading?> { try fail() }
+    func readProductPhotos(imageURLs: [URL], title: String) async throws -> AIAnswer<AIPhotoReading> { try fail() }
 }
 
 // MARK: - Recorded answers

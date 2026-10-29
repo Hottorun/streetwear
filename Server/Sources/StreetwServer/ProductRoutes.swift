@@ -8,6 +8,8 @@ import Vapor
 
 extension ProductSearchResponse: @retroactive Content {}
 extension SimilarProductsResponse: @retroactive Content {}
+extension ProductReadingsRequest: @retroactive Content {}
+extension ProductReadingsResponse: @retroactive Content {}
 
 func productRoutes(authed: any RoutesBuilder) {
     /// `?q=` as typed into Shop's field; `?scope=followed|all` (the caller's shops by
@@ -40,6 +42,38 @@ func productRoutes(authed: any RoutesBuilder) {
         // condition per word.
         guard ask.text.count <= 200 else { throw Abort(.badRequest, reason: "A search is at most 200 characters.") }
         return try await ProductSearch.run(ask, for: user, app: req.application, on: req.db)
+    }
+
+    /// The photograph reading (`ProductReading`) for products the phone already holds — its
+    /// saves, whose feed rows were sent before the server had read them. Only products that
+    /// have been read are answered; the rest are left out and asked about again later.
+    ///
+    /// Keyed as the phone keys them, by brand and external id. A product a country shop also
+    /// lists is the same garment with the same photographs, so whichever row was read answers.
+    authed.post("products", "readings") { req async throws -> ProductReadingsResponse in
+        let ask = try req.content.decode(ProductReadingsRequest.self)
+        guard ask.items.count <= ProductReadingsRequest.limit else {
+            throw Abort(.payloadTooLarge, reason: "At most \(ProductReadingsRequest.limit) products a request.")
+        }
+        let wanted = Set(ask.items)
+        guard !wanted.isEmpty else { return ProductReadingsResponse(readings: []) }
+        let products = try await ProductModel.query(on: req.db)
+            .filter(\.$externalID ~~ Array(Set(ask.items.map(\.externalID))))
+            .filter(\.$brand.$id ~~ Array(Set(ask.items.map(\.brandID))))
+            .filter(\.$styleWords != nil)
+            .all()
+        var out: [ProductReadingsRequest.Item: ProductReadingsResponse.Reading] = [:]
+        for product in products {
+            let item = ProductReadingsRequest.Item(brandID: product.$brand.id, externalID: product.externalID)
+            guard wanted.contains(item), out[item] == nil, let words = product.styleWords else { continue }
+            out[item] = ProductReadingsResponse.Reading(
+                brandID: item.brandID,
+                externalID: item.externalID,
+                productShotURL: ProductShotIndex.url(in: product.imageURLs, at: product.shotIndex),
+                styleWords: words
+            )
+        }
+        return ProductReadingsResponse(readings: out.values.sorted { $0.externalID < $1.externalID })
     }
 
     /// Products like one product, from the caller's shops (`?scope=all` for every shop).

@@ -150,7 +150,11 @@ extension FeedItem {
             memberExternalIDs: product?.memberExternalIDs,
             // What the model read off a sale's banner, when it was asked.
             saleEndsAt: event.saleEndsAt,
-            saleTerms: event.saleTerms
+            saleTerms: event.saleTerms,
+            // The product's photographs as read once (`ProductReading`). The card still leads
+            // with the brand's first photograph; the phone keeps the shot for the wall's cover.
+            productShotIndex: product?.readShotIndex,
+            styleWords: product?.styleWords
         )
     }
 }
@@ -210,8 +214,19 @@ extension DiscoverCard {
             variants: variants.map(\.asVariantInfo),
             publishedAt: product.publishedAt,
             spread: spread,
-            vector: vector
+            vector: vector,
+            productShotIndex: product.readShotIndex,
+            styleWords: product.styleWords
         )
+    }
+}
+
+extension ProductModel {
+    /// `shotIndex`, but only while it still points at a photograph — the gallery can shrink
+    /// after the reading, and an index past its end is no answer at all.
+    var readShotIndex: Int? {
+        guard let shotIndex, imageURLs.indices.contains(shotIndex) else { return nil }
+        return shotIndex
     }
 }
 

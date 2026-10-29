@@ -2014,5 +2014,20 @@ func routes(_ app: Application) throws {
         return lines.joined(separator: "\n")
     }
 
+    /// One batch of the photograph reading (`ProductReadingBackfill`), now — or `?batches=` of
+    /// them, stopping early when nothing is read. Says why when it cannot read.
+    admin.post("readings") { req async throws -> String in
+        let app = req.application
+        let batches = min(max((try? req.query.get(Int.self, at: "batches")) ?? 1, 1), 100)
+        let readings = app.productReading ?? ProductReadingBackfill(app: app, method: app.productReadingMethod)
+        var lines: [String] = []
+        for _ in 0..<batches {
+            let pass = try await readings.runOnce()
+            lines.append(pass.description)
+            if pass.read == 0 { break }
+        }
+        return lines.joined(separator: "\n")
+    }
+
     try creditRoutes(app, v1: v1, authed: authed, admin: admin)
 }
