@@ -390,8 +390,8 @@ public enum ShopSearch {
             } else {
                 guard required.isEmpty || !matched.isEmpty || isNear else { continue }
             }
-            if isNear { score += Double(max(required.count - matched.count, 1)) * meaningWeight }
-            candidates.append(Entry(index: position, matched: matched, score: score, byMeaning: isNear))
+            let credit = isNear ? Double(max(required.count - matched.count, 1)) * meaningWeight : 0
+            candidates.append(Entry(index: position, matched: matched, score: score + credit, byMeaning: isNear, credit: credit))
         }
 
         // The constraints, in a fixed order, and the first to empty the list is the answer.
@@ -439,9 +439,22 @@ public enum ShopSearch {
             }
         }
 
-        // A meaning match is in the main list: it is a result, not a near miss.
-        var exact = sized.filter { $0.byMeaning || $0.matched.count == required.count }
-        var partial = required.count >= 2 ? sized.filter { !$0.byMeaning && $0.matched.count < required.count } : []
+        // A meaning match is in the main list — a result, not a near miss — but **only where the
+        // words found little**, the rule the partial matches follow and for the same reason. The
+        // search eval measured it (`docs/server.md`, *The search eval*): of what meaning adds to a
+        // search the words already answer, fewer than one in five is right at any bar, while
+        // under a search the words found little for, nearly all of it was. Past that, a meaning
+        // match goes back to being what its words make it: a partial match, or nothing.
+        let worded = sized.filter { !$0.byMeaning && $0.matched.count == required.count }.count
+        let admitsMeaning = worded < partialBelow
+        let settled = sized.map { entry -> Entry in
+            guard entry.byMeaning, !admitsMeaning else { return entry }
+            return Entry(index: entry.index, matched: entry.matched, score: entry.score - entry.credit)
+        }
+        var exact = settled.filter { $0.byMeaning || $0.matched.count == required.count }
+        var partial = required.count >= 2
+            ? settled.filter { !$0.byMeaning && !$0.matched.isEmpty && $0.matched.count < required.count }
+            : []
 
         // "Cheaper" is the cheaper half of what matched, said as a number. A bare re-sort
         // would leave the page looking unchanged above the fold; a bound the reading prints
@@ -482,6 +495,8 @@ public enum ShopSearch {
         var matched: [String]
         var score: Double
         var byMeaning = false
+        /// What being close by meaning added to `score`, taken back if it is not admitted.
+        var credit = 0.0
     }
 
     /// What a meaning match is credited for each word it does not carry: a tag's weight, the

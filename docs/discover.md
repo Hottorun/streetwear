@@ -106,7 +106,10 @@ this section is still the deck's, unchanged.
 - **Meaning counts** (`meaning=true`). Below the words, a product whose text vector is close
   enough to the query's (`ProductSearch.measuredThresholds`, per model) is a result even when it
   carries none of the words — "smart summer jacket" can find a linen blazer — and the tile says
-  MATCHED BY MEANING in place of the words it carried (`ProductSearchHit.byMeaning`). It is
+  MATCHED BY MEANING in place of the words it carried (`ProductSearchHit.byMeaning`). **Only
+  under a search the words found little for** (fewer than twelve word matches, the partial
+  matches' rule): the eval measured that what meaning adds to a search the words already answer
+  is mostly wrong. It is
   ranked as if each missing word were found in a tag, the weakest field, so a product naming the
   words in its title still comes first. **The grammar still decides everything it read**: price
   bounds, "no …", in my size and the gender filter apply to a meaning match exactly as to a word

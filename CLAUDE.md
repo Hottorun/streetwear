@@ -776,8 +776,9 @@ while it is empty, and the deck one row below. **Read `docs/discover.md` (*Shop*
   send `scope` alone and get exactly what they got. **The free field never says AI or the web** —
   a magnifying glass and not a sparkle. A request that failed says it failed, never "no results".
 - **Meaning counts, labelled, and never past the grammar** — with `meaning=true` a product whose
-  text vector clears the model's measured threshold (`ProductSearch.measuredThresholds`) is a
-  result without the words, MATCHED BY MEANING on its tile; price bounds, "no …", in my size and
+  text vector clears the model's measured threshold (`ProductSearch.measuredThresholds`, 0.66) is
+  a result without the words — only when the words found fewer than twelve — MATCHED BY MEANING
+  on its tile; price bounds, "no …", in my size and
   gender still apply to it. A model with no measured threshold makes no meaning matches. The
   search eval (`Server/SearchEval`, `docs/server.md`) is run before and after every ranking
   change. **How we sort** (`HowWeSortNote`) is beside the count: match, followed shops, taste,

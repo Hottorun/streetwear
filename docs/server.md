@@ -726,7 +726,8 @@ Part of the streetw guidance set; see `CLAUDE.md` for the index and the build ru
   vector (price-narrowed, as the full-text candidates are) are still candidates and still add
   their similarity to `relevance`; those at or above the model's threshold
   (`ProductSearch.measuredThresholds[model]`, `Application.meaningThresholds`) are also handed to
-  `ShopSearch.run(meaning:)`, which lets them into the main list without the words, credits each
+  `ShopSearch.run(meaning:)`, which lets them into the main list without the words — only while
+  fewer than `ShopSearch.partialBelow` products carry every word, measured below — credits each
   missing word at a tag's weight (`ShopSearch.meaningWeight`), and runs every constraint over
   them — so "no wool" still rules out the wool blazer the embedding liked. The query is embedded
   as its words plus "formal" when it leans that way (`embeddingText`), never a ruled-out word.
@@ -887,7 +888,7 @@ deployment. **Run it before and after every ranking change**, and paste both int
    `EMBEDDING_URL`/`EMBEDDING_TOKEN` set. Add the shops with `POST /v1/brands/discover` and follow
    them with one device so the poller reads them; the poller is polite by construction. The
    judged catalogue is Drake's, Stüssy, Noah, Aimé Leon Dore, STAUD, Billionaire Boys Club and
-   Colorful Standard — 9,947 products read on 2026-10-27. Wait for the backfill
+   Colorful Standard — 10,041 products, read 2026-10-27 to 29. Wait for the backfill
    (`product_embeddings` as many rows as listed products).
 2. `python3 searcheval.py dump` and, only when the catalogue has moved, `judge --date …` — then
    read the pooled top tens (`run … --out`) and correct the judges, never the JSON.
@@ -901,9 +902,34 @@ deployment. **Run it before and after every ranking change**, and paste both int
    and, for each bar, counts the products among its hundred nearest that the words did **not**
    find and how many of those are judged right — the precision of what meaning adds.
 
-**Measured on 2026-10-27** (FashionSigLIP v1, the catalogue above):
+**Measured on 2026-10-29** (FashionSigLIP v1, the catalogue above, 10,041 products, 14,378
+judged answers; debug build):
 
-MEASUREMENTS
+| variant | P@10 | R@100 | nDCG@10 | MRR | empty | by meaning |
+|---|---|---|---|---|---|---|
+| `before` (`scope=all`, what 1.2/1.3 ask) | 0.834 | 0.697 | 0.849 | 0.895 | 2 | 0 |
+| `after-words` (lift, no meaning) | 0.832 | 0.696 | 0.856 | 0.926 | 2 | 0 |
+| `after` (lift + meaning — what the app sends) | **0.836** | 0.693 | **0.861** | **0.945** | **1** | 27 |
+| `after-more` ("More from my brands") | 0.826 | 0.678 | 0.853 | 0.945 | 1 | 27 |
+| ungated, every one of the hundred nearest admitted | 0.809 | 0.692 | 0.836 | 0.931 | 0 | 987 |
+
+The base build's `before` gave the same top ten as the new build's on all 53 queries. By kind,
+`after` moved style from 0.58 to 0.61 and German phrasing from 0.72 to 0.68; "smart summer
+jacket" went from 0.6 to 0.8 and "something for a wedding" from nothing to one. The lift costs
+"pullover" and "a jacket for rain" a place or two to the followed shops, which is the price of
+the lift and why it is one point, not three. Small gains, measured — not a transformation:
+FashionSigLIP's *text* vectors are a weak signal for what the words missed.
+
+**The threshold is 0.66, and only under a search the words found little for** (fewer than
+`ShopSearch.partialBelow`, twelve, word matches). From `thresholds`: of what meaning would add
+to a search the words already answered, at most 16 % is right at *any* bar (0.159 at 0.64, 0.160
+at 0.66, falling to 3 % at 0.74 — the nearest texts above 0.7 are mostly products whose *shop's
+name* is in the query, "billionaire boys club hoodie" finding everything Billionaire Boys Club
+makes); under the five searches the words found little for, 0.64 admits 29 at 28 % and **0.66
+admits 9, of which 8 are right (89 %)**, with nothing above 0.68. So 0.66 is the lowest bar that
+is mostly right, and the gate is what keeps the other 84 % off the page; the ungated row above
+is what happens without it. Nine is a small sample — re-run `thresholds` on a bigger catalogue,
+and on any new model, before moving it.
 
 ## AI
 

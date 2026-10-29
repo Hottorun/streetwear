@@ -488,12 +488,12 @@ Agreed with the owner on 2026-10-27. 1.4:
       without the typed words, with its reason printed; the grammar still decides price bounds,
       "no …", size and gender. Web search stays an explicit, paid step at the end of the results,
       offered on its own when the catalogue finds little.
-      *Done:* `meaning=true`, `ShopSearch.run(meaning:)`, MATCHED BY MEANING; threshold measured
-      per model (`ProductSearch.measuredThresholds`, `docs/server.md`). Show me more also under a
-      free search with fewer than six results.
+      *Done:* `meaning=true`, `ShopSearch.run(meaning:)`, MATCHED BY MEANING — only where the
+      words found fewer than twelve, at 0.66, measured per model (`ProductSearch.measuredThresholds`,
+      `docs/server.md`). Show me more also under a free search with fewer than six results.
 - [x] **A search eval.** About fifty real searches with judged answers, run before and after
       every ranking change.
-      *Done:* `Server/SearchEval` — 53 searches over 9,947 products from seven shops;
+      *Done:* `Server/SearchEval` — 53 searches over 10,041 products from seven shops;
       `docs/server.md` (*The search eval*) has the numbers and how to run it.
 - [x] **Search by photo.** The sidecar takes image bytes; the scan's "find this" matches the
       picture. The scan's reading gains a short name, used as the save's title, the description

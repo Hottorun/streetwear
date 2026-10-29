@@ -290,6 +290,21 @@ struct ShopSearchTests {
         #expect(near.outcome == .found)
     }
 
+    @Test("Meaning only joins a search the words found little for")
+    func meaningOnlyWhereWordsFoundLittle() {
+        // A dozen jackets by their words, and a blazer only the embedding found.
+        let jackets = (0..<ShopSearch.partialBelow).map { listing("j\($0)", "Chore Jacket \($0)", type: "Outerwear") }
+        let index = ShopIndex(jackets + [listing("blazer", "Linen Blazer", type: "Tailoring")])
+        let full = ShopSearch.run(ShopQuery.parse("jacket"), in: index, hasSizes: false, fits: { _ in true }, meaning: ["blazer"])
+        #expect(!full.exact.contains { $0.id == "blazer" })
+        #expect(full.exact.allSatisfy { !$0.byMeaning })
+        // One jacket fewer and the words found little: the blazer is a result again.
+        let thin = ShopIndex(Array(jackets.dropFirst()) + [listing("blazer", "Linen Blazer", type: "Tailoring")])
+        let few = ShopSearch.run(ShopQuery.parse("jacket"), in: thin, hasSizes: false, fits: { _ in true }, meaning: ["blazer"])
+        #expect(few.exact.last?.id == "blazer")
+        #expect(few.exact.last?.byMeaning == true)
+    }
+
     @Test("A meaning match still meets every constraint the words set")
     func meaningMeetsTheConstraints() {
         let index = ShopIndex([

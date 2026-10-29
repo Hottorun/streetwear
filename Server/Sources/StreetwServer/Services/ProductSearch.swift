@@ -61,7 +61,7 @@ enum ProductSearch {
     /// still widen and order the candidates, and a model switched to without being measured
     /// cannot start putting unmeasured guesses on the page.
     static let measuredThresholds: [String: Double] = [
-        "Marqo/marqo-fashionSigLIP@c56244cc94f9": 0.0,
+        "Marqo/marqo-fashionSigLIP@c56244cc94f9": 0.66,
     ]
 
     /// The followed shops' lift, in the grammar's own score: a tag's weight for every search
