@@ -185,10 +185,12 @@ final class SavedItem {
     /// the styling is part of it — so the feed and Discover keep the photograph the brand put
     /// first. A wall of things somebody kept is the opposite case: it is a collection of
     /// garments, and Stüssy's model-first galleries put a person in boots on the wall to stand
-    /// for a shirt. `ProductShot` already finds the frame with nobody in it, so that is the
-    /// cover; a photograph chosen by hand beats it; and where neither is known — nothing has
-    /// been analysed yet, or the packshot is not in the gallery any more — it is the lead
-    /// shot, which is exactly what the wall showed before.
+    /// for a shirt. So the order is: a photograph chosen by hand; then the **server's** product
+    /// shot (`BrandUpdate.serverShotURLString`, read once per product off the embeddings, and
+    /// there before anything on this phone has looked); then `ProductShot`'s, Vision's frame
+    /// with nobody in it, which is the fallback where the server has not read the product or
+    /// found none; and where none is known — or the shot is not in the gallery any more — the
+    /// lead shot, which is exactly what the wall showed before.
     var coverURLString: String? {
         guard let update else { return ownPhotoURL?.absoluteString }
         if let chosen = coverImageURLString, update.imageURLStrings.contains(chosen) { return chosen }
@@ -206,13 +208,20 @@ final class SavedItem {
     /// packshot — the automatic cover — so it is the right shape whenever no cover has been
     /// chosen by hand. A chosen one carries its own.
     var coverAspectMeasured: Double? {
-        guard update != nil else { return ownAspect }
+        guard let update else { return ownAspect }
         if let chosen = coverImageURLString, chosen == coverURLString { return coverAspect }
-        return update?.imageAspect
+        // The server's shot, arrived after this phone measured another frame: unmeasured until
+        // `ImageTagger` reads it (which `adoptReading` makes due), rather than drawn to the
+        // shape of a different photograph.
+        if let shot = update.serverShotURLString, shot == coverURLString, update.packshotURLString != shot { return nil }
+        return update.imageAspect
     }
 
     /// What the cover is when nobody has chosen one.
     private static func automaticCover(of update: BrandUpdate) -> String? {
+        if let shot = update.serverShotURLString, update.imageURLStrings.contains(shot) {
+            return shot
+        }
         if let packshot = update.packshotURLString, update.imageURLStrings.contains(packshot) {
             return packshot
         }
