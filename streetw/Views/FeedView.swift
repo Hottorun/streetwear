@@ -23,7 +23,55 @@ import StreetwCore
 import SwiftData
 import SwiftUI
 
+/// Owns how much of the store the feed reads (`FeedWindow`), so the page under it can be
+/// rebuilt with a deeper query without losing its own state — the visit, the filter, the
+/// scroll position.
 struct FeedView: View {
+    @Environment(\.modelContext) private var context
+
+    /// Opened when a visit begins and only ever deepened during it. Nil until the first.
+    @State private var window: FeedWindow?
+
+    var body: some View {
+        // One fetch of one row, made until the window is stored on appearance.
+        let window = self.window ?? opening()
+        FeedPage(
+            window: window,
+            readFurther: { loaded in
+                self.window = window.extended(to: Self.arrival(at: FeedWindow.extendingOffset(loaded: loaded), in: context))
+            },
+            // **A new visit reads a page again.** Within a visit the window only deepens, so
+            // nothing leaves the screen; across visits a read somebody once scrolled deep would
+            // otherwise be paid for on every body for the rest of the session, and grow with
+            // every sync. The end of the page reads further back again when it is reached.
+            reopen: { self.window = opening() }
+        )
+        .onAppear { if self.window == nil { self.window = window } }
+    }
+
+    private func opening() -> FeedWindow {
+        FeedWindow.opening(edge: Self.arrival(at: FeedWindow.openingOffset, in: context))
+    }
+
+    /// When the row `offset` places from the newest arrival arrived, or nil when the store
+    /// holds no row that deep.
+    static func arrival(at offset: Int, in context: ModelContext) -> Date? {
+        var edge = FetchDescriptor<BrandUpdate>(
+            predicate: #Predicate { $0.arrivedAt != nil },
+            sortBy: [SortDescriptor(\.arrivedAt, order: .reverse)]
+        )
+        edge.fetchOffset = offset
+        edge.fetchLimit = 1
+        return (try? context.fetch(edge))?.first?.arrivedAt
+    }
+
+    /// Every arrival the store holds, read or not — what the window could still reach.
+    static func arrivals(in context: ModelContext) -> Int {
+        (try? context.fetchCount(FetchDescriptor<BrandUpdate>(predicate: #Predicate { $0.arrivedAt != nil }))) ?? 0
+    }
+}
+
+struct FeedPage: View {
     @Environment(\.modelContext) private var context
     @Environment(\.scenePhase) private var scenePhase
     @Environment(SyncEngine.self) private var engine: SyncEngine
@@ -36,15 +84,23 @@ struct FeedView: View {
     @Query(filter: #Predicate<Brand> { $0.followed }, sort: \Brand.name)
     private var brands: [Brand]
 
-    /// **The timeline: news, narrowed and capped by the store.**
+    /// **The timeline: news, narrowed and bounded by the store.**
     ///
     /// Read rows as well as unread, because the feed is everything that happened and the line
     /// says where you left off — but only rows that arrived *as news*: a baseline, a catch-up
     /// and whatever a follow mode keeps out are history and have no arrival (`arrivedAt`).
-    /// Capped, because in server mode every event is its own row and a few weeks of twenty
-    /// brands is tens of thousands of them; the newest arrivals are what a feed is for, and a
-    /// `@Query` with no bound subscribes the view to all of it — see `docs/performance.md`.
+    /// Bounded, because in server mode every event is its own row and a few weeks of twenty
+    /// brands is tens of thousands of them, and a `@Query` with no bound subscribes the view
+    /// to all of it — see `docs/performance.md`. **Bounded by an arrival date, never a count**
+    /// (`FeedWindow`): a count let each scan's markdowns push the morning's drops out of the
+    /// read, and the feed lost what somebody had already scrolled.
     @Query private var news: [BrandUpdate]
+
+    private let window: FeedWindow
+    /// Reads one page further back, given how many rows are read now.
+    private let readFurther: (Int) -> Void
+    /// Opens the read afresh, a page deep: a new visit has begun.
+    private let reopen: () -> Void
 
     /// Dates somebody wrote down. A small table, so unpredicated.
     @Query(sort: \PlannedDrop.releaseAt) private var planned: [PlannedDrop]
@@ -53,16 +109,15 @@ struct FeedView: View {
     /// release time. Narrowed by the store; `UpcomingDrops.build` checks the date.
     @Query private var scheduled: [BrandUpdate]
 
-    /// How many of the newest arrivals the feed reads. Five hundred is weeks of a busy
-    /// follow list, and bursts fold much of it into far fewer cards.
-    static let depth = 500
-
-    init() {
-        var timeline = FetchDescriptor<BrandUpdate>(
-            predicate: #Predicate { $0.arrivedAt != nil },
+    init(window: FeedWindow, readFurther: @escaping (Int) -> Void, reopen: @escaping () -> Void) {
+        self.window = window
+        self.readFurther = readFurther
+        self.reopen = reopen
+        let floor = window.floor ?? .distantPast
+        let timeline = FetchDescriptor<BrandUpdate>(
+            predicate: #Predicate { $0.arrivedAt.flatMap { $0 >= floor } == true },
             sortBy: [SortDescriptor(\.arrivedAt, order: .reverse)]
         )
-        timeline.fetchLimit = Self.depth
         _news = Query(timeline)
         _scheduled = Query(filter: UpcomingDrops.scheduledFilter(now: Date()))
     }
@@ -165,6 +220,7 @@ struct FeedView: View {
             if phase == .active { visit.appeared() } else { leave() }
         }
         .onChange(of: brands.count, initial: true) { _, _ in resolveLaunchBrand() }
+        .onChange(of: visit.started) { _, _ in reopen() }
     }
 
     /// The feed went out of sight: what it had shown is seen. See `FeedHistory.markShown`.
@@ -197,6 +253,9 @@ struct FeedView: View {
         if brands.isEmpty {
             nothingFollowed
         } else if shown.isEmpty {
+            // On screen at once: a filter with nothing in the newest page reads further back
+            // before it says there is nothing.
+            furtherBack
             nothingHere(isHidingSome: pass.isHidingSome)
         } else {
             if filter == .all || filter == .restocks { sizePrompt }
@@ -215,12 +274,31 @@ struct FeedView: View {
             }
             .padding(.horizontal, 16)
 
+            furtherBack
+
             // The tail of the feed, not only its empty state. Reaching the end of what your
             // brands did is the moment there is attention to spare.
             if filter == .all, brandKey == nil {
                 BrandRecommendations()
                     .padding(.top, 44)
             }
+        }
+    }
+
+    /// **The end of what is read is not the end of the feed.** Reached — by scrolling to the
+    /// foot of the grid, or at once when a filter leaves the page short — it reads one page
+    /// of older arrivals (`FeedWindow.extended`), and again while it stays in sight and the
+    /// store holds more. Keyed on the window, so each deeper read is asked about once.
+    @ViewBuilder
+    private var furtherBack: some View {
+        if window.floor != nil {
+            Color.clear
+                .frame(height: 1)
+                .task(id: window) {
+                    if window.hasMore(loaded: news.count, total: FeedView.arrivals(in: context)) {
+                        readFurther(news.count)
+                    }
+                }
         }
     }
 
