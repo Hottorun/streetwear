@@ -195,8 +195,6 @@ struct streetwApp: App {
                     )
                     // A board named in the sheet now exists, so the next sheet offers it.
                     ShareContextWriter.publish(session)
-                    // A shop saved from that the catalogue may lack: its domain, and nothing else.
-                    await CatalogueSuggestions.send(via: session.remote)
                     // "Follow this shop" from the sheet: the catalogue first, else a site check
                     // watched until it is ready; then the follow-filter question (`FollowFilterPrompt`).
                     await ShareFollows.process(

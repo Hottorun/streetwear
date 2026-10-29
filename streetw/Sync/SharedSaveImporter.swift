@@ -91,7 +91,11 @@ enum SharedSaveImporter {
             return owner == scope.home
         }
         log.info("inbox: container \(SharedInbox.isAvailable ? "ok" : "MISSING"), \(pending.count) pending")
-        guard !pending.isEmpty else { return 0 }
+        guard !pending.isEmpty else {
+            // A shop noted on an earlier foreground that could not reach the server then.
+            if let remote { await CatalogueSuggestions.send(via: remote) }
+            return 0
+        }
 
         var imported = 0
         var landed: [BrandUpdate] = []
@@ -154,6 +158,9 @@ enum SharedSaveImporter {
         if landed.count == 1, quiet.count == 1, let only = quiet.first {
             confirm?.confirm(only, destination: only.save?.destinationLabel ?? "Inspiration")
         }
+        // Here rather than beside the caller's other passes: two drains can start on one
+        // foreground, and only the one that ran knows what it noted.
+        if let remote { await CatalogueSuggestions.send(via: remote) }
         return imported
     }
 

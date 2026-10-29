@@ -94,17 +94,29 @@ Part of the streetw guidance set; see `CLAUDE.md` for the index and the build ru
   settled check passes `asks: false` — asking again there would put the dialog up a second time
   after it had been answered. Standalone nothing else asks, so `ShareFollows` calls
   `followPrompt.ask(brandID:)` with the new brand's local id.
-- **Every question a share raises is kept until it has been seen** (`ShareQuestions`,
+- **Every question a share raises is kept until it is answered** (`ShareQuestions`,
   `ShareQuestionHost`). "I share, and a while later the dialog to get notified is gone": it was
   a sheet bound to an in-memory `PushRoute.watchOffer`, and anything that stopped it appearing —
   another sheet already up (SwiftUI then quietly presents nothing), the app suspended or killed
   before anyone looked, a profile switch rebuilding the root — lost it for good, because the
   inbox file was already deleted. Questions are now a queue in the profile's scoped
   `UserDefaults` (`shareQuestions`, `shareFollows`), written **before** the inbox file is removed,
-  deduplicated by row so a re-drain cannot ask twice, and a question leaves only when its sheet
-  appeared and then went away — answered, cancelled or swiped down. One that never appeared is
-  offered again on the next foreground. A row un-saved meanwhile drops its question. The in-stock
-  toast for a lone quiet share stays a toast: its two questions were already offered in the sheet.
+  deduplicated by row so a re-drain cannot ask twice, and a question leaves only when it is
+  **answered** — Start watching or Cancel (`WatchEditor.onAnswer`). Having appeared is not enough,
+  and that was measured: on a fresh server-mode install the sold-out question went up, the
+  onboarding cover arrived a moment later, SwiftUI took the sheet down to show it, and a host
+  that counted "appeared, then went away" as seen dropped the question unanswered. So these
+  sheets cannot be swiped away (`interactiveDismissDisabled`), a sheet taken down unanswered is
+  offered again two seconds later and on every foreground after, and one that never appeared is
+  offered again the same way. Verified: the question survived the cover and a kill, and appeared
+  the moment onboarding closed. A row un-saved meanwhile drops its question. The in-stock toast
+  for a lone quiet share stays a toast: its two questions were already offered in the sheet.
+- **A save from a shop the catalogue lacks tells the catalogue — the domain, nothing more**
+  (`CatalogueSuggestions`, server mode only). The drain notes the registrable domain of a new
+  save that is not a brand on the phone; once per shop per install (a phone key, not a profile
+  one), sent at the end of the drain as a catalogue-only check that follows nobody and records no
+  requester. Sent from the drain itself because two drains can start on one foreground and only
+  the one that ran knows what it noted. Kept until the server has taken it. See `docs/server.md`.
 - **Only one drain runs at a time.** A cold launch starts two (`ContentView`'s `.task` and the
   scene-phase drain) and both read the same file before either removed it, so every share was
   fetched twice and filed once.
