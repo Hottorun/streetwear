@@ -106,9 +106,25 @@ Changing these silently will break intended behavior:
   `isSeen` at every place that decides news (`SyncEngine.insert`/`refresh`, `RemoteSync.merge`,
   `WatchNotifier`). The 1.0 unread queue is adopted as news once, at launch, arriving when it was
   written (`FeedHistory.adoptLegacy`) — which is also the repair for any path that writes a row
-  unread without stamping it: unread is news, whatever wrote it. The timeline reads the newest 500
-  arrivals (`FeedView.depth`), because in server mode every event is a row and a `@Query` with no
+  unread without stamping it: unread is news, whatever wrote it. The timeline reads what arrived
+  since a moment (`FeedWindow`), because in server mode every event is a row and a `@Query` with no
   bound subscribes the view to all of them.
+- **The feed's read is bounded by an arrival date, never a count, and reaching its end reads
+  further back** (`FeedWindow`, `FeedView`) — *changed on purpose*. It read the newest 500
+  arrivals, and the daily scan made that a few hours: a scan of four shops is ~680 markdowns and
+  restocks arriving at once, drawn as one "UP TO −31%" card per shop, and each pushed an older row
+  out of the read. The owner scrolled the morning's drops, synced in the afternoon and the evening,
+  and found the morning gone — reproduced against a local server, the morning's rows sat at
+  1,361–1,373 of 1,373 arrivals, the Drops filter said "No drops yet" over eight stored drops, and
+  one brand's feed was its two scan cards. Now the window opens a page (500) deep, at the 500th
+  newest arrival's date; a sync only adds above it; the foot of the grid — or a filter leaving the
+  page short — reads 500 more; and a new visit (`FeedVisit.started`) opens it a page deep again, so
+  a deep read is not carried for the rest of a session. Everything the phone holds is reachable by
+  scrolling, and a sync can no longer take anything away.
+- **One garment is still one card, and that is the other way a morning card leaves.** A product
+  that dropped in the morning and was marked down by the afternoon's scan is the markdown, and with
+  a scan's other cuts that is a piece inside one "UP TO −31%" group. Kept, deliberately: see
+  `oncePerProduct` below. It moves the garment to its newest news rather than losing it.
 - **"Since you were last here" is one line, instead of per-brand unread state** (`FeedVisit`).
   *Changed on purpose*: no checkmarks, no dots, no "40 new from 6 brands", no swipe to mark a card
   read — somebody had to keep 1.0's feed empty for it to be useful. **A visit is the feed on screen,
@@ -232,7 +248,7 @@ Changing these silently will break intended behavior:
   brand's `updates` four more times, each walk calling `passes`, which re-runs the gender classifier
   whenever the stored revision differs — thousands of classifications before a frame. And walking
   `brand.updates` faults the whole catalogue in, where the question is only ever about the few rows
-  being drawn. So the store narrows (`arrivedAt != nil`, newest 500 arrivals), the pass reads each
+  being drawn. So the store narrows (arrivals inside `FeedWindow`, a page deep), the pass reads each
   row's scalars **once** into values, and cards read photographs and prices from their own rows live,
   so a photograph that lands later redraws its card rather than the screen. **Each product is
   tokenised once per pass** however many releases ask about it: a baseline's collections arrive in
