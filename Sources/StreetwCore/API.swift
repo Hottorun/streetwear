@@ -683,9 +683,15 @@ public struct BrandProbe: Codable, Sendable, Hashable {
 /// Ask the server to look at a site, without waiting for the answer.
 public struct StartBrandCheck: Codable, Sendable {
     public var url: String
+    /// Add the shop to the catalogue if it is a real one, and follow nobody: the app sends this
+    /// when something was saved from a shop the catalogue did not have, so search can recommend
+    /// from it. Only the shop's domain is sent this way, never the product. Absent on every
+    /// older client, which is a check made to follow the shop.
+    public var catalogueOnly: Bool?
 
-    public init(url: String) {
+    public init(url: String, catalogueOnly: Bool? = nil) {
         self.url = url
+        self.catalogueOnly = catalogueOnly
     }
 }
 

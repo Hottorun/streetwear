@@ -221,7 +221,7 @@ plutil -p /tmp/streetw-dd/Build/Products/Debug-iphonesimulator/streetw.app/Info.
 
 ```bash
 swift test                                    # all 762
-cd Server && swift test                       # 413, of which 14 need STREETW_TEST_POSTGRES_URL (run those --no-parallel)
+cd Server && swift test                       # 421, of which 14 need STREETW_TEST_POSTGRES_URL (run those --no-parallel)
 cd Embeddings && pytest                       # 63; -m slow adds 3 against real weights
 swift test --filter "Size normalisation"      # one suite
 swift test --filter relockFiresAgain          # one test
@@ -1038,6 +1038,7 @@ the local path in the `else`. Adding a new one means adding both halves:
 | price drops on saved items | none — saves never leave the phone; `PriceAlerts` reads the synced markdowns in both modes |
 | brand-wide sales, sale banners | poller only (`CatalogueSale`, `SaleBanners`); standalone detects neither |
 | find a brand | `GET /v1/brands?q=` (name **or** pasted URL) |
+| a save from a shop the catalogue lacks (search, no follow) | `POST /v1/brands/checks` with `catalogueOnly` — the domain only, once per shop per install, no requester kept (`CatalogueSuggestions`; standalone sends nothing) |
 | "Follow this shop" from the share sheet | `GET /v1/brands?q=<host>`, else `POST /v1/brands/checks` + `…/:id/watch`, asked after on later foregrounds (`ShareFollows`); standalone, `BrandDiscovery` |
 | "check site" preview | `POST /v1/brands/checks`, then `GET /v1/brands/checks/:id` until it settles (creates nothing) |
 | add a brand nobody has | `POST /v1/brands/checks/:id/watch` — the server follows it, now or when the check finishes |

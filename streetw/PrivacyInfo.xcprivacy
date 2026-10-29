@@ -137,6 +137,31 @@
 		</dict>
 		<dict>
 			<!--
+			  The domain of a shop something was saved from, when the catalogue does not have
+			  it yet, so the shop can be added to search (`CatalogueSuggestions`). Only the
+			  domain — never the product, the page or the fact of the save — and the server
+			  keeps no record of which device sent it, so it is not linked.
+
+			  Browsing History rather than Other Data Types, and rather than nothing: Apple
+			  defines it as content the user viewed outside the app, "such as websites", and a
+			  shop's address taken from a page somebody was looking at is exactly that, however
+			  much it is reduced. Declaring nothing would be wrong — it is derived from what a
+			  person did — and Other Data Types would hide a plain category behind a vague one
+			  (and is already declared, linked, for the size profile).
+			-->
+			<key>NSPrivacyCollectedDataType</key>
+			<string>NSPrivacyCollectedDataTypeBrowsingHistory</string>
+			<key>NSPrivacyCollectedDataTypeLinked</key>
+			<false/>
+			<key>NSPrivacyCollectedDataTypeTracking</key>
+			<false/>
+			<key>NSPrivacyCollectedDataTypePurposes</key>
+			<array>
+				<string>NSPrivacyCollectedDataTypePurposeAppFunctionality</string>
+			</array>
+		</dict>
+		<dict>
+			<!--
 			  Sign in with Apple's stable identifier (`accounts.apple_subject`), optional, and
 			  what an account is recognised by on a new phone. Apple mints a different one per
 			  team, so it identifies nobody outside this app — but it is an account identifier,

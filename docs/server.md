@@ -246,6 +246,27 @@ Part of the streetw guidance set; see `CLAUDE.md` for the index and the build ru
   at every `await` and two settles could otherwise create the same brand twice. And **a refused
   check creates nothing**, the same rule the discover route holds. The two 1.0 routes stay, using
   the same `BrandCatalog` helpers, because the build in the App Store calls them and waits.
+- **A save from a shop the catalogue lacks adds the shop, for search, and follows nobody**
+  (`StartBrandCheck.catalogueOnly`, `brand_checks.catalogue_only`, `AddCatalogueOnlyCheck`; the
+  app's half is `CatalogueSuggestions`). Search can only recommend from shops the server reads,
+  and the shops people save from without following are the ones it is missing. Rules, each one
+  held by `CatalogueOnlyCheckTests`:
+  **Only the domain arrives**, once per shop per install, server mode only. **Nothing about the
+  requester is kept**: the device token authenticates the request as on every `/v1` route, and
+  that is all it does — no watcher row is written, `brand_checks` has no column a requester could
+  go in, and the route logs nothing about the caller — so the domain cannot become a record that
+  this person saved from that shop. **Only a real shop is added** (`BrandChecks.addsToCatalogue`):
+  a ready check with a source that reads products — Shopify, a sitemap, UCP. A page watch is
+  enough to *follow* a shop and nothing to search; a refusal of any kind (`ShopRefusal`: readers
+  blocked, no clothes sold, nothing answered) adds nothing; a shop the catalogue already has is
+  left alone by `BrandCatalog.existing` before anything is fetched. A catalogue-only request that
+  joins somebody's recent preview sets the flag on that check, and is added from its finished
+  answer. The add goes through `materialize` inside the check's settle chain, so it and a follow
+  of the same shop make one brand. **Its own budget**, per device, on top of the outbound one:
+  ten in a burst, thirty a day (`RateLimits.catalogueOnly`), because every success is a brand the
+  poller then reads for everybody. Such a brand is an ordinary unfollowed catalogue brand: the
+  poll claim takes every main shop (`storefront_id IS NULL`) whether or not anybody follows it,
+  and only country storefronts wait for a follower.
 - **Usage counts are totals, and the only per-device fact is one overwritten day**
   (`POST /v1/usage`, `UsageLedger`, `UsagePolicy`). 1.0 promised no analytics; the roadmap
   needs to know which features are used before paying for AI ones, so this is the smallest

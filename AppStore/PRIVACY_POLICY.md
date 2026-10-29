@@ -110,6 +110,9 @@ Deleting the app deletes all of it. We hold no copy and cannot recover it.
   instant are sent — never the title or the note you wrote, and never any date for a brand you
   do not follow. Nobody else can read it, and no notification or public record is produced
   from it.
+- **The web address of a shop you save from.** When you save something from a shop Dropwall
+  doesn't watch yet, the shop's web address — only the shop, never the product or the fact that
+  you saved it — is sent so it can be added to search. It isn't linked to you or your device.
 - **Anonymous usage counts** — see the next section.
 - **Ordinary server logs**, including IP addresses, kept briefly for security and debugging.
 

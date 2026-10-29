@@ -129,7 +129,12 @@ actor BrandChecks {
 
     /// Starts a check of `raw`, or joins the one already running or just finished for the
     /// same shop.
-    func start(url raw: String) async throws -> BrandCheckModel {
+    ///
+    /// - Parameter catalogueOnly: somebody saved from this shop and the catalogue did not have
+    ///   it. The shop is added to the catalogue if the check finds a real one
+    ///   (`addsToCatalogue`), so search can recommend from it, and nobody follows it. Nothing
+    ///   about the caller is kept: the flag is the whole record.
+    func start(url raw: String, catalogueOnly: Bool = false) async throws -> BrandCheckModel {
         guard let base = BrandDiscovery.normalizedURL(raw) else {
             throw Abort(.badRequest, reason: "Not a usable URL")
         }
@@ -142,10 +147,20 @@ actor BrandChecks {
             .sort(\.$createdAt, .descending)
             .first()
         if let recent, isReusable(recent) {
+            if catalogueOnly, recent.catalogueOnly != true {
+                recent.catalogueOnly = true
+                try await recent.save(on: db)
+                // A look that has already finished is settled now; one still running is
+                // settled by `run` when it does.
+                if status(of: recent) != .checking, let id = recent.id {
+                    try await addToCatalogueIfReal(id)
+                }
+            }
             return recent
         }
 
-        // A shop somebody already added needs no fetching at all.
+        // A shop somebody already added needs no fetching at all — and, catalogue-only, adds
+        // nothing: it is already there.
         if let brand = try await BrandCatalog.existing(domain: domain, on: db) {
             let check = BrandCheckModel(domain: domain, url: base.absoluteString, status: .ready)
             check.$brand.id = try brand.requireID()
@@ -168,6 +183,7 @@ actor BrandChecks {
         }
 
         let check = BrandCheckModel(domain: domain, url: base.absoluteString, status: .checking)
+        if catalogueOnly { check.catalogueOnly = true }
         try await check.save(on: db)
         let id = try check.requireID()
         launch(checkID: id, base: base)
@@ -323,6 +339,7 @@ actor BrandChecks {
             check.logoURL = found.logoURL?.absoluteString
             check.finishedAt = Date()
             try await check.save(on: app.db)
+            if check.catalogueOnly == true { try await addToCatalogueIfReal(checkID) }
             try await settle(checkID, announce: true)
         } catch {
             // Left `checking`, which `orphanAfter` turns into interrupted: the phone offers a
@@ -409,6 +426,44 @@ actor BrandChecks {
                 )
             }
         }
+    }
+
+    // MARK: Catalogue-only
+
+    /// Whether a finished check found a shop worth adding to the catalogue with nobody
+    /// following it: ready, and readable for its *products* — a Shopify catalogue, a sitemap or
+    /// UCP. A page watch counts for a follow, where "something changed" is worth a push (see
+    /// CLAUDE.md, *Who may call what*), and is refused here: search recommends products, and a
+    /// page watch has none to give. A refused check — readers blocked, no clothes sold, nothing
+    /// answered (`ShopRefusal`) — adds nothing.
+    static func addsToCatalogue(_ check: BrandCheckModel, isRunning: Bool = false) -> Bool {
+        guard status(of: check, isRunning: isRunning) == .ready,
+              let probe = check.probe.flatMap(decode)
+        else { return false }
+        let productKinds: Set<String> = [
+            BrandSource.Kind.shopify.rawValue, BrandSource.Kind.sitemap.rawValue, BrandSource.Kind.ucp.rawValue
+        ]
+        return probe.sources.contains { $0.isAutomatic && productKinds.contains($0.kind) }
+    }
+
+    /// Adds a catalogue-only check's shop to the catalogue, once, and follows nobody. Through
+    /// the same `materialize` a follow uses, inside the same per-check serialisation, so a
+    /// catalogue-only request and somebody's follow of the same shop make one brand. The
+    /// brand is then an unfollowed catalogue brand like any other, which the poller reads.
+    private func addToCatalogueIfReal(_ checkID: UUID) async throws {
+        let previous = settling[checkID]
+        let task = Task {
+            _ = await previous?.result
+            guard let check = try await BrandCheckModel.find(checkID, on: self.app.db),
+                  check.$brand.id == nil,
+                  Self.addsToCatalogue(check)
+            else { return }
+            let brand = try await self.materialize(check, instagram: nil)
+            self.app.logger.info("checks: added \(brand.slug) to the catalogue from a save")
+        }
+        settling[checkID] = task
+        defer { if settling[checkID] == task { settling[checkID] = nil } }
+        try await task.value
     }
 
     /// The catalogue brand for a ready check, created if nobody has added the shop yet.

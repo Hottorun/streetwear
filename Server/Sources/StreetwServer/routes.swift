@@ -510,7 +510,20 @@ func routes(_ app: Application) throws {
         let userID = try await req.actingUserID()
         let body = try req.content.decode(StartBrandCheck.self)
         guard let checks = req.application.brandChecks else { throw Abort(.serviceUnavailable) }
-        let check = try await checks.start(url: body.url)
+        // **Catalogue-only: a save from a shop the catalogue lacks.** The device token is the
+        // auth it always is, and nothing more: no watcher is added, the check row has no
+        // column for a requester, and nothing here logs one — a shop's domain arriving this
+        // way must not become a record that this person saved something from it. Its own
+        // budget, because every success is a brand the poller then reads for everybody.
+        if body.catalogueOnly == true {
+            let key = RateLimit.key(for: .device, request: req)
+            if let wait = await req.application.rateLimits.catalogueOnly.take(key) {
+                var headers = HTTPHeaders()
+                headers.replaceOrAdd(name: .retryAfter, value: String(Int(wait)))
+                throw Abort(.tooManyRequests, headers: headers, reason: "Too many requests. Try again in \(Int(wait))s.")
+            }
+        }
+        let check = try await checks.start(url: body.url, catalogueOnly: body.catalogueOnly == true)
         return try await checks.response(for: check, userID: userID)
     }
 

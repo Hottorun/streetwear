@@ -131,6 +131,11 @@ enum SharedSaveImporter {
                 // confirmation is for one that landed quietly.
                 if result.isNew { landed.append(update) }
                 if result.isNew, !asked, watched.isEmpty { quiet.append(update) }
+                // A shop that is not a brand here may be one search is missing. Only its domain
+                // is ever sent, and only in server mode (`CatalogueSuggestions`).
+                if result.isNew, update.brand == nil, remote?.isServerBacked == true {
+                    CatalogueSuggestions.note(update.linkURL)
+                }
             } catch {
                 log.error("could not store \(save.url.absoluteString, privacy: .public): \(error)")
                 continue

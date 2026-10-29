@@ -379,6 +379,19 @@ final class RemoteSync {
         return check
     }
 
+    /// Whether there is a server to send anything to. Standalone, nothing a share learns about
+    /// a shop leaves the phone (`CatalogueSuggestions`).
+    var isServerBacked: Bool { settings.isConfigured }
+
+    /// Tells the catalogue about a shop something was saved from, so search can recommend from
+    /// it — a catalogue-only check, which follows nothing and keeps nothing about the caller.
+    /// The origin (`https://<host>`) is the whole of what is sent. See `CatalogueSuggestions`.
+    func suggestShop(origin: String) async throws {
+        try await ensureRegistered()
+        guard let api else { throw APIError.notConfigured }
+        _ = try await api.startCheck(url: origin, catalogueOnly: true)
+    }
+
     func check(id: UUID) async throws -> BrandCheck {
         guard let api else { throw APIError.notConfigured }
         return try await api.check(id: id)

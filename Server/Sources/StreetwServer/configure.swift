@@ -311,4 +311,5 @@ func addMigrations(to app: Application) {
     app.migrations.add(AddSaleReading())
     app.migrations.add(AddFollowFilter())
     app.migrations.add(AddBrandCheckRefusal())
+    app.migrations.add(AddCatalogueOnlyCheck())
 }

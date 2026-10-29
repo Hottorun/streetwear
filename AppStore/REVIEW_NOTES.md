@@ -153,6 +153,17 @@ fit. Nothing identifying the user or the device is sent with it, and none of it 
 logged on our server. Those are declared as Photos, Search History and Other User Content, not
 linked to the user.
 
+When the user saves something from a shop our catalogue does not have yet, the app sends that
+shop's web address — the domain only, never the product, the page or the fact that something was
+saved — so the shop can be added to search. The server records nothing about which device sent
+it, and adds the shop only if its products can be read. This is declared as Browsing History,
+not linked to the user, for App Functionality.
+
+The share sheet reads the page Safari has already loaded (a JavaScript preprocessing file) for
+its title, photographs, price and the product's own structured data, so a saved item has its
+picture even where the shop turns away other readers. That happens on the device; the
+extension sends nothing anywhere, and what it read is filed by the app as part of the save.
+
 Nothing is shared with data brokers, nothing is joined with data from other companies' apps
 or websites, and no advertising or analytics SDK is present. The app does not use App
 Tracking Transparency because it does not track.

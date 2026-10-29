@@ -775,6 +775,10 @@ final class BrandCheckModel: Model, @unchecked Sendable {
     @OptionalField(key: "finished_at") var finishedAt: Date?
     /// A `BrandCheck.Refusal` raw value, on a refused check only — see `AddBrandCheckRefusal`.
     @OptionalField(key: "refusal") var refusal: String?
+    /// Somebody saved from this shop and the catalogue did not have it: add it to the catalogue
+    /// once the check finds a real shop, and follow nobody — see `AddCatalogueOnlyCheck`.
+    /// **The row records nothing about who asked**, and the route adds no watcher for it.
+    @OptionalField(key: "catalogue_only") var catalogueOnly: Bool?
 
     @Children(for: \.$check) var watchers: [BrandCheckWatcherModel]
 

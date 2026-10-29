@@ -217,8 +217,12 @@ struct StreetwAPI: Sendable {
         try await send(path: "v1/brands/discover", method: "POST", body: body)
     }
 
-    func startCheck(url: String) async throws -> BrandCheck {
-        try await send(path: "v1/brands/checks", method: "POST", body: StartBrandCheck(url: url))
+    func startCheck(url: String, catalogueOnly: Bool = false) async throws -> BrandCheck {
+        try await send(
+            path: "v1/brands/checks",
+            method: "POST",
+            body: StartBrandCheck(url: url, catalogueOnly: catalogueOnly ? true : nil)
+        )
     }
 
     func check(id: UUID) async throws -> BrandCheck {

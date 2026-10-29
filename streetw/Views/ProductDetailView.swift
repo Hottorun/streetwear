@@ -561,6 +561,9 @@ struct WatchEditor: View {
     /// Set when the sheet appears unasked-for — after sharing in something sold out —
     /// where it has to say why it is here before it asks anything.
     var headline: String?
+    /// Called when somebody answers — Start watching or Cancel — as opposed to the sheet being
+    /// taken down by something else. A share's question is kept until this (`ShareQuestionHost`).
+    var onAnswer: (() -> Void)?
 
     @State private var size: String?
     @State private var color: String?
@@ -636,7 +639,10 @@ struct WatchEditor: View {
             }
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button("Cancel") { dismiss() }
+                    Button("Cancel") {
+                        onAnswer?()
+                        dismiss()
+                    }
                 }
             }
         }
@@ -688,6 +694,7 @@ struct WatchEditor: View {
         if settings.isConfigured {
             Task { await remote.createWatch(watch) }
         }
+        onAnswer?()
         dismiss()
     }
 }
