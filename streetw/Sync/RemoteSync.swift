@@ -452,11 +452,14 @@ final class RemoteSync {
         cheaper: Bool,
         formal: Bool,
         inMySize: Bool,
+        boost: FollowedBoost? = nil,
+        meaning: Bool = false,
         cursor: String? = nil
     ) async throws -> ProductSearchResponse {
         guard let api else { throw APIError.notConfigured }
         return try await api.searchProducts(
-            text, scope: scope, cheaper: cheaper, formal: formal, inMySize: inMySize, cursor: cursor
+            text, scope: scope, cheaper: cheaper, formal: formal, inMySize: inMySize,
+            boost: boost, meaning: meaning, cursor: cursor
         )
     }
 

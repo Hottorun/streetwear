@@ -274,6 +274,11 @@ kept with **your** photograph and no product at all.
   Shop's search on the phone and "more like this" all read — none of them should ever offer
   somebody their own jacket — and a new `@Model` would have been a second kind of save for every
   query to union.
+- **Titled by the scan's short name, noted by its sentence** (Phase 5). `ownTitle` is
+  `AIScanReading.name` ("Black chore jacket") and the reading's one-line `description` becomes the
+  save's `note`, where a note somebody writes would go — so the wall reads like a shop's titles
+  and the sentence is still there to edit. A reading from a server that predates the name has
+  none, and the description is the title as before.
 - **The photograph is a file beside the store, named after the store** —
   `default.store-photos/<save id>.jpg`, `-cutout.png` beside it (`OwnPhotos`). Resolved from the
   save's own container, never from the current profile, and stored as a name, never a path,

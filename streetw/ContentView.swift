@@ -21,8 +21,13 @@ enum Tabs {
     /// - `style` held the fits, kept and proposed, which are Saved › Fits now (`opensOnFits`).
     ///   Its taste reading is on You, which is not a tab.
     /// - `brands`, and anything else, is the feed.
+    ///
+    /// **No name at all is Shop** (Phase 5): the app opens on the search, because that is what
+    /// most launches come for. Only the launch default moved — the tab order is unchanged, a
+    /// push still opens its own item, and every name above still lands where it did.
     static func resolve(_ name: String?) -> String {
         switch name {
+        case nil: "shop"
         case let name? where all.contains(name): name
         case "discover": "shop"
         case "style": "saved"

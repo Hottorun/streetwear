@@ -765,6 +765,31 @@ Part of the streetw guidance set; see `CLAUDE.md` for the index and the build ru
 - **Paging is an offset into one query's ranking** (`cursor`, opaque). Total, with no randomness, so
   the same query pages the same way; a catalogue that changes between two pages can repeat or skip a
   product at the seam, which is the price of not holding a cursor's state.
+- **One list over every shop is `scope=all` plus `boost=`** (Phase 5). The scope reads every
+  follow whatever the scope (`CatalogueScope.followed`), and `ProductSearch.load` adds
+  `ProductSearch.lift` to the score of every listing from a followed brand (`ShopListing.boost`):
+  1 for `standard`, 3 for `more`. In `ShopSearch`'s ranking it sits beside the field-weighted
+  score, after availability and the leanings, so it settles near-equals and nothing else; on the
+  phone every listing is followed and the boost is zero, which orders nothing. `boost` on
+  `scope=followed` is ignored and not reported. The answer's `boost` says what was applied.
+- **Meaning matches** (`meaning=true`, Phase 5). The query's hundred nearest products by text
+  vector (price-narrowed, as the full-text candidates are) are still candidates and still add
+  their similarity to `relevance`; those at or above the model's threshold
+  (`ProductSearch.measuredThresholds[model]`, `Application.meaningThresholds`) are also handed to
+  `ShopSearch.run(meaning:)`, which lets them into the main list without the words — only while
+  fewer than `ShopSearch.partialBelow` products carry every word, measured below — credits each
+  missing word at a tag's weight (`ShopSearch.meaningWeight`), and runs every constraint over
+  them — so "no wool" still rules out the wool blazer the embedding liked. The query is embedded
+  as its words plus "formal" when it leans that way (`embeddingText`), never a ruled-out word.
+  `meaningSearched` is true only when vectors answered and the model has a threshold; **a model
+  with none makes no meaning matches**, so switching models cannot put unmeasured guesses on the
+  page. Without `meaning=true` none of this happens and the candidates are read exactly as
+  before, which is what 1.2 and 1.3 ask for.
+- **Parity is defined for the word path.** The phone has no vectors, so `parity` (and
+  `parityWithTheLift`, the same over a followed and an unfollowed shop with the lift on) holds
+  the route and `ShopSearch` to the same page for the same products when no vector speaks:
+  SQLite has none, and that is the configuration the parity tests run in. A meaning match is
+  the one thing the server may add, and it is labelled.
 - **"More like this"** takes the product's id, or the external id the phone holds with `?brand=` —
   percent-encoded as one segment, because a sitemap product's key is its whole URL. By vector where
   this product has one under the current model, otherwise by its own words read as a query and
@@ -856,10 +881,15 @@ set on this service.
   catalogue's whole footprint is roughly 16 MB per 1,000 products before events. A re-embed
   rewrites every row, so until autovacuum reuses the space the table is briefly twice that, and the
   old model's index stays until dropped.
-- **What is compared is text with text.** A search embeds its own words and is matched against
-  each product's *text* vector (title, type, brand, colourways, tags — the fields the grammar
-  reads), and "more like this" compares two products' text vectors. The image vector is stored
-  for the photo matching to come and read by no query yet.
+- **What is compared is text with text, and a photograph with photographs.** A search embeds its
+  own words and is matched against each product's *text* vector (title, type, brand, colourways,
+  tags — the fields the grammar reads), and "more like this" compares two products' text vectors.
+  The scan's "find this" (Phase 5, `AIScanSimilar`) sends the reader's photograph to the
+  sidecar's `POST /embed/photo` (`EmbeddingProvider.embed(photo:)`) and compares it with every
+  product's *image* vector (`SemanticIndex.nearest(column: .image)`), falling back to its words
+  against text vectors. Each column has its own HNSW index per model (`ensureIndex`); the image
+  one is new in Phase 5 and is built by the first backfill batch after the deploy — a one-off
+  `CREATE INDEX` that reads are not blocked by.
 - **A photograph that cannot be read costs its product only the image vector.** The sidecar
   answers `null` for it with a reason and a `transient` flag, which the provider turns into
   `.gone` (a 4xx, a 200 that will not decode, a refused address) or `.unavailable` (a timeout,
@@ -874,8 +904,8 @@ set on this service.
   leaves them out.
 - **Query time needs the provider up.** A search embeds its words under a 1.5 s deadline
   (`ProductSearch.embeddingTimeout`, `withTimeout`); slow or down, the answer is the full-text one,
-  which is complete on its own. Vectors widen the candidates and add to their rank; they never make
-  a match the grammar would not. **`withTimeout` returns at the deadline whether or not the work
+  which is complete on its own. Vectors widen the candidates and add to their rank; they make a
+  match the grammar would not only when `meaning=true` asks (above), and then labelled. **`withTimeout` returns at the deadline whether or not the work
   listens**: a task group cancels its children and then *waits* for them, and an HTTP request on
   an event loop does not hear cancellation, so a group-based timeout over the sidecar returned
   when the request's own timeout fired. The abandoned request ends by its own timeout
@@ -892,6 +922,64 @@ set on this service.
   *and* a provider — so nothing runs half on. The backfill loop starts only behind it and only where
   the poller runs; `POST /admin/embed?batches=` runs batches by hand (and is how a server with
   `DISABLE_POLLER=true` embeds anything), and says which half is missing when it cannot.
+
+## The search eval
+
+`Server/SearchEval/` (Phase 5) — fifty-three searches a person would type (`queries.json`:
+colours, garments, price bounds, "no …", shop names, German shoppers' English — "pullover",
+"trainers", "shoes for the office", "bermuda" — and vague style words), each with a written
+judge in `searcheval.py` (`JUDGES`) of what a person would accept, applied to the whole
+catalogue and frozen in `judgements.json` with the day it was judged. Standard library only;
+Postgres through `psql`; every address must be `127.0.0.1`, so it cannot be pointed at a
+deployment. **Run it before and after every ranking change**, and paste both into the change.
+
+1. A scratch Postgres with pgvector, the sidecar (`Embeddings/README.md`, natively or Docker),
+   and a local server with the poller on, `DATABASE_URL` on the scratch database and
+   `EMBEDDING_URL`/`EMBEDDING_TOKEN` set. Add the shops with `POST /v1/brands/discover` and follow
+   them with one device so the poller reads them; the poller is polite by construction. The
+   judged catalogue is Drake's, Stüssy, Noah, Aimé Leon Dore, STAUD, Billionaire Boys Club and
+   Colorful Standard — 10,041 products, read 2026-10-27 to 29. Wait for the backfill
+   (`product_embeddings` as many rows as listed products).
+2. `python3 searcheval.py dump` and, only when the catalogue has moved, `judge --date …` — then
+   read the pooled top tens (`run … --out`) and correct the judges, never the JSON.
+3. `python3 searcheval.py run before after` prints P@10, recall in the first 100 (out of at most
+   100, so a vague search with nine hundred right answers is not penalised for showing a
+   hundred), nDCG@10, MRR, how many came back empty and how many results were by meaning, then
+   P@10 by kind. The eval's reader follows Drake's and Colorful Standard, so the lift has
+   something to lift. `before` is `scope=all` alone — what 1.2 and 1.3 send, and still answered
+   that way.
+4. `EMBEDDING_TOKEN=… python3 searcheval.py thresholds` embeds each query as the server does
+   and, for each bar, counts the products among its hundred nearest that the words did **not**
+   find and how many of those are judged right — the precision of what meaning adds.
+
+**Measured on 2026-10-29** (FashionSigLIP v1, the catalogue above, 10,041 products, 14,378
+judged answers; debug build):
+
+| variant | P@10 | R@100 | nDCG@10 | MRR | empty | by meaning |
+|---|---|---|---|---|---|---|
+| `before` (`scope=all`, what 1.2/1.3 ask) | 0.834 | 0.697 | 0.849 | 0.895 | 2 | 0 |
+| `after-words` (lift, no meaning) | 0.832 | 0.696 | 0.856 | 0.926 | 2 | 0 |
+| `after` (lift + meaning — what the app sends) | **0.836** | 0.693 | **0.861** | **0.945** | **1** | 27 |
+| `after-more` ("More from my brands") | 0.826 | 0.678 | 0.853 | 0.945 | 1 | 27 |
+| ungated, every one of the hundred nearest admitted | 0.809 | 0.692 | 0.836 | 0.931 | 0 | 987 |
+
+The base build's `before` gave the same top ten as the new build's on all 53 queries. By kind,
+`after` moved style from 0.58 to 0.61 and German phrasing from 0.72 to 0.68; "smart summer
+jacket" went from 0.6 to 0.8 and "something for a wedding" from nothing to one. The lift costs
+"pullover" and "a jacket for rain" a place or two to the followed shops, which is the price of
+the lift and why it is one point, not three. Small gains, measured — not a transformation:
+FashionSigLIP's *text* vectors are a weak signal for what the words missed.
+
+**The threshold is 0.66, and only under a search the words found little for** (fewer than
+`ShopSearch.partialBelow`, twelve, word matches). From `thresholds`: of what meaning would add
+to a search the words already answered, at most 16 % is right at *any* bar (0.159 at 0.64, 0.160
+at 0.66, falling to 3 % at 0.74 — the nearest texts above 0.7 are mostly products whose *shop's
+name* is in the query, "billionaire boys club hoodie" finding everything Billionaire Boys Club
+makes); under the five searches the words found little for, 0.64 admits 29 at 28 % and **0.66
+admits 9, of which 8 are right (89 %)**, with nothing above 0.68. So 0.66 is the lowest bar that
+is mostly right, and the gate is what keeps the other 84 % off the page; the ungated row above
+is what happens without it. Nine is a small sample — re-run `thresholds` on a bigger catalogue,
+and on any new model, before moving it.
 
 ## AI
 

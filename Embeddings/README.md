@@ -24,12 +24,19 @@ do without `ADMIN_TOKEN`.
 | `POST /embed/text` | `{"texts": ["olive canvas chore coat", …]}` | `{"model", "dimension", "vectors": [[…]]}` |
 | `POST /embed/image` | `{"urls": ["https://cdn.shopify.com/…", …]}` | same, with `null` and an `errors` entry for each photo that could not be read |
 | `POST /embed/image` | one image as `Content-Type: image/*` | same, one vector |
+| `POST /embed/photo` | one photograph somebody took, as `Content-Type: image/jpeg` | same, one vector. The scan's "find this" (`docs/ai.md`) |
 
 - Vectors are L2-normalised, so cosine similarity is a dot product. `model` names the
   repository and revision (`Marqo/marqo-fashionSigLIP@c56244cc94f9`). Store it beside every
   vector: two revisions do not share a space.
 - Limits: 64 items per request (`EMBEDDING_MAX_ITEMS`), 1,000 characters per text, 10 MB
-  per image.
+  per image, 2 MB per photograph on `/embed/photo` (`EMBEDDING_MAX_PHOTO_BYTES`).
+- **`/embed/photo` is narrower than the bytes branch of `/embed/image` on purpose.** It takes a
+  JPEG and nothing else — the declared type *and* the start-of-image marker, 415 otherwise; an
+  empty body is 400 and one that will not decode 422 — at the scan's own size: the phone sends a
+  photograph already scaled to 1,024 px and under 1.5 MB, so anything near a storefront photo's
+  10 MB is not one. It is embedded and dropped; nothing writes it anywhere, and the access log
+  line is the method and the path.
 - One unreadable photo does not fail the batch. Its vector is `null`, and
   `errors: [{"index": 1, "error": "HTTP 404", "transient": false}]` says why. `transient` says
   whether asking again later could help: true for a timeout, a connection failure, a host that
@@ -96,6 +103,7 @@ EMBEDDING_MODEL_DIR=/tmp/embedding-model pytest -m slow        # the real model,
 | `EMBEDDING_BATCH_SIZE` | 16 | Items per forward pass |
 | `EMBEDDING_MAX_ITEMS` | 64 | Items per request |
 | `EMBEDDING_MAX_IMAGE_BYTES` | 10485760 | Per image |
+| `EMBEDDING_MAX_PHOTO_BYTES` | 2097152 | Per photograph on `/embed/photo` |
 | `EMBEDDING_FETCH_TIMEOUT` | 10 | Seconds per image |
 | `EMBEDDING_MODEL_DIR` | `/models/embedding` | Set by the image |
 | `EMBEDDING_MODEL_REPO` | `Marqo/marqo-fashionSigLIP` | Build argument **and** variable: which model the image holds. See *Choosing the model* |

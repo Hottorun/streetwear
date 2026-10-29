@@ -269,6 +269,7 @@ struct AnthropicProvider: AIProvider {
             var material: String?
             var pattern: String?
             var style: [String]?
+            var name: String?
             var description: String
             var search_text: String
             var is_garment: Bool
@@ -280,7 +281,7 @@ struct AnthropicProvider: AIProvider {
         )
         return AIAnswer(value: AIScanReading(
             slot: answer.slot, type: answer.type, colours: answer.colours, material: answer.material,
-            pattern: answer.pattern, style: answer.style ?? [], description: answer.description,
+            pattern: answer.pattern, style: answer.style ?? [], name: answer.name, description: answer.description,
             searchText: answer.search_text, isGarment: answer.is_garment
         ), costs: costs)
     }
@@ -662,8 +663,9 @@ enum Prompts {
         You read one photograph of one garment for a wardrobe app. Say where it is worn (slot), what it is in a \
         shop's words ("chore jacket", "loafers"), its colours main first using plain names (Black, White, Grey, \
         Charcoal, Cream, Beige, Tan, Navy, Brown, Red, Orange, Yellow, Olive, Green, Forest, Teal, Blue, Purple, \
-        Pink, Burgundy where one fits), material and pattern when visible, a few style words, one line of \
-        description, and a short search text ("black canvas chore jacket"). If the photograph does not show one \
+        Pink, Burgundy where one fits), material and pattern when visible, a few style words, a short name of two \
+        to four words that starts with the main colour, as a shop would title it ("Black chore jacket"), one line \
+        of description, and a short search text ("black canvas chore jacket"). If the photograph does not show one \
         garment, set is_garment false and slot unknown. \(answerRule)
         """
 
@@ -677,10 +679,11 @@ enum Prompts {
             "material": ["type": "string"],
             "pattern": ["type": "string"],
             "style": ["type": "array", "items": ["type": "string"]],
+            "name": ["type": "string"],
             "description": ["type": "string"],
             "search_text": ["type": "string"],
             "is_garment": ["type": "boolean"],
-        ], required: ["slot", "type", "colours", "description", "search_text", "is_garment"])
+        ], required: ["slot", "type", "colours", "name", "description", "search_text", "is_garment"])
     )
 
     static let judge = """

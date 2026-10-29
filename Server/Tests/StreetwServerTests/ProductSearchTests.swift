@@ -390,6 +390,73 @@ struct ProductSearchTests {
         }
     }
 
+    // MARK: One list over every shop (Phase 5)
+
+    @Test("Every shop, your own lifted — only when asked, so an older client gets what it got")
+    func oneListLiftsYourShops() async throws {
+        try await withServer { app in
+            let kith = try await shop(app, "Kith", slug: "kith.com")
+            let noah = try await shop(app, "Noah", slug: "noahny.com")
+            try await product(app, kith, "Williams Hoodie", type: "Hoodies", daysAgo: 5)
+            try await product(app, noah, "Core Logo Hoodie", type: "Hoodies", daysAgo: 1)
+            let auth = try await reader(app, follows: [kith.brand])
+
+            // 1.2 and 1.3: `all` is every shop, unlifted, newest first among equals.
+            let plain = try await search(app, auth, "hoodie", scope: .all)
+            #expect(plain.exactTitles == ["Core Logo Hoodie", "Williams Hoodie"])
+            #expect(plain.boost == nil)
+            #expect(plain.meaningSearched == nil)
+            #expect(plain.exact.allSatisfy { $0.byMeaning == nil })
+
+            let lifted = try await search(app, auth, "hoodie", scope: .all, extra: "&boost=standard")
+            #expect(lifted.exactTitles == ["Williams Hoodie", "Core Logo Hoodie"])
+            #expect(lifted.boost == .standard)
+            #expect(lifted.scope == .all)
+            #expect(try await search(app, auth, "hoodie", scope: .all, extra: "&boost=more").boost == .more)
+
+            // "Only my brands" is the followed scope exactly as it was; a lift there is not said.
+            let mine = try await search(app, auth, "hoodie", scope: .followed, extra: "&boost=more")
+            #expect(mine.exactTitles == ["Williams Hoodie"])
+            #expect(mine.boost == nil)
+
+            // Without vectors there is nothing to compare by meaning, and the answer says so.
+            #expect(try await search(app, auth, "hoodie", scope: .all, extra: "&boost=standard&meaning=true").meaningSearched == nil)
+        }
+    }
+
+    /// Parity for the one list: the phone has no vectors, so it is defined for the word path —
+    /// the same products, lifted the same way, give the same page through the route as through
+    /// `ShopSearch` on the phone.
+    @Test("The lifted list means the same on the server as on the phone", arguments: [
+        "black", "black suit under €400", "shorts", "black cheaper", "black formal", "suit for a wedding"
+    ])
+    func parityWithTheLift(text: String) async throws {
+        try await withServer { app in
+            let velmar = try await shop(app, "Velmar Studio", slug: "velmar.com")
+            let other = try await shop(app, "Ordo", slug: "ordo.com")
+            var listings: [ShopListing] = []
+            for (position, row) in tailoring.enumerated() {
+                let owner = position.isMultiple(of: 2) ? velmar : other
+                let model = try await product(app, owner, row.title, type: row.type, price: row.price, daysAgo: row.daysAgo)
+                let isMine = owner.brand == velmar.brand
+                listings.append(ShopListing(
+                    id: row.title, brandKey: isMine ? "velmar" : "ordo", brandName: isMine ? "Velmar Studio" : "Ordo",
+                    title: row.title, productType: row.type, price: row.price, publishedAt: model.publishedAt,
+                    boost: isMine ? ProductSearch.lift(.standard) : 0
+                ))
+            }
+            let auth = try await reader(app, follows: [velmar.brand])
+
+            let served = try await search(app, auth, text, scope: .all, extra: "&boost=standard&meaning=true")
+            let phone = ShopSearch.run(ShopQuery.parse(text), in: ShopIndex(listings), hasSizes: false, fits: { _ in true })
+            #expect(served.exactTitles == phone.exact.map(\.id))
+            #expect(served.partialTitles == phone.partial.map(\.id))
+            #expect(served.unknown == phone.unknown)
+            #expect(served.outcome == phone.outcome)
+            #expect(served.cheaperThan == phone.cheaperThan)
+        }
+    }
+
     @Test("Search is behind the device token")
     func needsADevice() async throws {
         try await withServer { app in
@@ -471,6 +538,13 @@ struct FakeEmbeddingProvider: EmbeddingProvider {
             if url.path.contains("unavailable") { return .unavailable("timed out") }
             return .vector(vector(url.lastPathComponent))
         }
+    }
+
+    /// A photograph's bytes are read as text: the tests send the words of the product whose
+    /// photograph it is meant to resemble, so its vector lands beside that product's image.
+    func embed(photo: Data) async throws -> [Float] {
+        if fails { throw Abort(.serviceUnavailable) }
+        return vector(String(decoding: photo, as: UTF8.self))
     }
 
     func vector(_ text: String) -> [Float] {
@@ -698,6 +772,77 @@ struct ProductSearchPostgresTests {
             #expect(try await embedded(backfill, now: clock) == 1)
             let replaced = try await row("gone")
             #expect(replaced.hasImage && replaced.failure == nil && replaced.url == "https://cdn.example.com/new.jpg")
+        }
+    }
+
+    @Test("Close by meaning is a result without the words — when asked, and never past a \"no …\"")
+    func meaningMatches() async throws {
+        try await withPostgres { app in
+            guard try await hasPgvector(app) else { return }
+            let kith = try await shop(app, "Kith", slug: "kith.com")
+            try await product(app, kith, "Linen Blazer", id: "blazer", type: "Tailoring", price: 400)
+            try await product(app, kith, "Cotton Chore Jacket", id: "jacket", type: "Outerwear", price: 300)
+            try await product(app, kith, "Wool Blazer", id: "wool", type: "Tailoring", tags: ["wool"], price: 500)
+            let auth = try await reader(app, follows: [kith.brand])
+            app.embeddingProvider = FakeEmbeddingProvider()
+            #expect(try await embedded(EmbeddingBackfill(app: app, batch: 10)) == 3)
+
+            // Nothing carries both words: the words alone give partial matches only.
+            let words = try await search(app, auth, "linen jacket no wool", scope: .all, extra: "&boost=standard")
+            #expect(words.exact.isEmpty)
+            #expect(words.outcome == .closest)
+            #expect(words.meaningSearched == nil)
+
+            // An unmeasured model makes no meaning matches, asked or not.
+            let unmeasured = try await search(app, auth, "linen jacket no wool", scope: .all, extra: "&boost=standard&meaning=true")
+            #expect(unmeasured.exact.isEmpty)
+            #expect(unmeasured.meaningSearched == nil)
+
+            // Measured — here, everything the fake puts anywhere near counts — the two become
+            // results, each labelled, and the wool blazer stays ruled out.
+            app.meaningThresholds = ["fake-1": 0.0]
+            let near = try await search(app, auth, "linen jacket no wool", scope: .all, extra: "&boost=standard&meaning=true")
+            #expect(near.meaningSearched == true)
+            #expect(Set(near.exact.map(\.card.productExternalID)) == ["blazer", "jacket"])
+            #expect(near.exact.allSatisfy { $0.byMeaning == true })
+            #expect(near.outcome == .found)
+            // Still within the price the words set.
+            let cheap = try await search(app, auth, "linen jacket under 350", scope: .all, extra: "&boost=standard&meaning=true")
+            #expect(cheap.exact.map(\.card.productExternalID) == ["jacket"])
+
+            // A bar nothing reaches is no meaning match at all.
+            app.meaningThresholds = ["fake-1": 1.01]
+            #expect(try await search(app, auth, "linen jacket no wool", scope: .all, extra: "&meaning=true").exact.isEmpty)
+        }
+    }
+
+    @Test("The scan's photograph is matched against the products' photographs, else its words")
+    func scanByPhotograph() async throws {
+        try await withPostgres { app in
+            guard try await hasPgvector(app) else { return }
+            let kith = try await shop(app, "Kith", slug: "kith.com")
+            // The fake embeds a photograph by its file name, so "near.jpg" is the near one.
+            try await product(app, kith, "Canvas Chore Coat", id: "near", type: "Outerwear")
+            try await product(app, kith, "Black Chore Jacket Canvas", id: "worded", type: "Outerwear")
+            _ = try await reader(app, follows: [kith.brand])
+            let user = try #require(try await UserModel.query(on: app.db).first())
+            app.embeddingProvider = FakeEmbeddingProvider()
+            #expect(try await embedded(EmbeddingBackfill(app: app, batch: 10)) == 2)
+
+            let reading = AIScanReading(
+                slot: "outerwear", type: "chore jacket", colours: ["Black"],
+                description: "Black canvas chore jacket", searchText: "black chore jacket canvas"
+            )
+            let photo = Data([0xFF, 0xD8, 0xFF]) + Data("near.jpg".utf8)
+            let byPhoto = await AIScanSimilar.cards(for: reading, photo: photo, user: user, app: app, on: app.db)
+            #expect(byPhoto?.basis == .photograph)
+            #expect(byPhoto?.cards.first?.productExternalID == "near")
+
+            // A provider that cannot read photographs answers by the reading's words.
+            app.embeddingProvider = FakeEmbeddingProvider(embedsImages: false)
+            let byWords = await AIScanSimilar.cards(for: reading, photo: photo, user: user, app: app, on: app.db)
+            #expect(byWords?.basis == .description)
+            #expect(byWords?.cards.first?.productExternalID == "worded")
         }
     }
 

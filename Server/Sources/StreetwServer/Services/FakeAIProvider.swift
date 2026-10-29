@@ -81,6 +81,7 @@ struct FakeAIProvider: AIProvider {
             material: "canvas",
             pattern: nil,
             style: ["workwear"],
+            name: "Black chore jacket",
             description: "Black canvas chore jacket with patch pockets",
             searchText: "black chore jacket canvas",
             isGarment: true

@@ -52,6 +52,9 @@ final class ShopAsk {
     /// What the last answered action took.
     private(set) var charge: AICharge?
     private(set) var web: Web = .idle
+    /// The grammar text `web` answers — the thread's reading, or the field's own text when the
+    /// open web was offered under a free search that found little.
+    private(set) var webQuery: String?
 
     private var token: String?
     private var tokenIssuedAt: Date?
@@ -71,8 +74,15 @@ final class ShopAsk {
         return Date().timeIntervalSince(issued) < Self.tokenLifetime
     }
 
+    /// Where a turn searches: the field's one list, or only your own shops — whatever the chips
+    /// say when the turn is sent, so a thread answers with the list the free search would.
+    struct Reach: Equatable {
+        var scope: ProductSearchScope = .all
+        var boost: FollowedBoost? = .standard
+    }
+
     /// Opens a thread on the field's text.
-    func ask(_ text: String, inMySize: Bool, via ai: AIStore) async {
+    func ask(_ text: String, inMySize: Bool, reach: Reach, via ai: AIStore) async {
         opening = text
         turns = []
         reading = nil
@@ -82,19 +92,20 @@ final class ShopAsk {
         turnsLeft = 0
         charge = nil
         web = .idle
-        await send(text, inMySize: inMySize, via: ai)
+        webQuery = nil
+        await send(text, inMySize: inMySize, reach: reach, via: ai)
     }
 
     /// A short reply, or a suggestion tapped.
-    func reply(_ text: String, inMySize: Bool, via ai: AIStore) async {
+    func reply(_ text: String, inMySize: Bool, reach: Reach, via ai: AIStore) async {
         guard isOpen, !isAsking else { return }
-        await send(text, inMySize: inMySize, via: ai)
+        await send(text, inMySize: inMySize, reach: reach, via: ai)
     }
 
     /// Sends the refused turn again — after signing in, buying credits, or a network blink.
-    func retry(inMySize: Bool, via ai: AIStore) async {
+    func retry(inMySize: Bool, reach: Reach, via ai: AIStore) async {
         guard let text = refusedText ?? opening else { return }
-        await send(text, inMySize: inMySize, via: ai)
+        await send(text, inMySize: inMySize, reach: reach, via: ai)
     }
 
     func end() {
@@ -110,14 +121,15 @@ final class ShopAsk {
         refusedText = nil
         charge = nil
         web = .idle
+        webQuery = nil
     }
 
-    private func send(_ text: String, inMySize: Bool, via ai: AIStore) async {
+    private func send(_ text: String, inMySize: Bool, reach: Reach, via ai: AIStore) async {
         isAsking = true
         refusal = nil
         defer { isAsking = false }
 
-        let request: AISearchRequest
+        var request: AISearchRequest
         if continues {
             request = AISearchRequest(text: text, thread: turns, threadToken: token, inMySize: inMySize)
         } else if let reading {
@@ -128,6 +140,10 @@ final class ShopAsk {
         } else {
             request = AISearchRequest(text: text, inMySize: inMySize)
         }
+        // The same one list the field searches (Phase 5).
+        request.scope = reach.scope
+        request.boost = reach.boost
+        request.meaning = true
 
         switch await ai.search(request) {
         case .success(let answer):
@@ -143,15 +159,18 @@ final class ShopAsk {
             refusedText = nil
             // A new reading is a new question for the web too.
             web = .idle
+            webQuery = nil
         case .failure(let why):
             refusal = why
             refusedText = text
         }
     }
 
-    /// "Show me more": the latest reading, asked of the open web in the reader's country.
-    func showMore(country: String?, via ai: AIStore) async {
-        guard let query = reading?.query, web != .looking else { return }
+    /// "Show me more": the latest reading — or, with no thread, the field's own text — asked of
+    /// the open web in the reader's country.
+    func showMore(_ fallback: String?, country: String?, via ai: AIStore) async {
+        guard let query = reading?.query ?? fallback, !query.isEmpty, web != .looking else { return }
+        webQuery = query
         web = .looking
         switch await ai.webSearch(AIWebSearchRequest(query: query, country: country)) {
         case .success(let answer):
@@ -213,7 +232,7 @@ struct AskOffer: View {
 
     private var note: String {
         ai.isSignedIn
-            ? "AI READS YOUR DESCRIPTION, THEN SEARCHES YOUR SHOPS · REPLIES IN THE SAME SEARCH ARE FREE"
+            ? "AI READS YOUR DESCRIPTION, THEN SEARCHES EVERY SHOP WE WATCH · REPLIES IN THE SAME SEARCH ARE FREE"
             : "AI READS YOUR DESCRIPTION — CREDITS NEED AN ACCOUNT"
     }
 }
@@ -424,13 +443,20 @@ struct ShowMoreSection: View {
     @Environment(LocationSetting.self) private var location: LocationSetting
 
     let ask: ShopAsk
+    /// The free search's grammar text, asked when no thread has a reading.
+    var query: String?
     let followShop: (AIWebItem) -> Void
+
+    /// The answer only while it is about what is on screen: a new search is a new question.
+    private var web: ShopAsk.Web {
+        ask.webQuery == (ask.reading?.query ?? query) ? ask.web : .idle
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             Rule()
                 .padding(.bottom, 14)
-            switch ask.web {
+            switch web {
             case .idle:
                 offer
             case .looking:
@@ -440,7 +466,7 @@ struct ShowMoreSection: View {
                 }
             case .refused(let why):
                 AIRefusalNotice(refusal: why) {
-                    Task { await ask.showMore(country: location.country, via: ai) }
+                    Task { await ask.showMore(query, country: location.country, via: ai) }
                 }
             case .answered(let items, let charge):
                 answered(items, charge: charge)
@@ -452,7 +478,7 @@ struct ShowMoreSection: View {
 
     private var offer: some View {
         Button {
-            Task { await ask.showMore(country: location.country, via: ai) }
+            Task { await ask.showMore(query, country: location.country, via: ai) }
         } label: {
             HStack(alignment: .firstTextBaseline) {
                 VStack(alignment: .leading, spacing: 5) {

@@ -326,12 +326,16 @@ struct ScanView: View {
             choiceRow(
                 title: "Find this or something like it",
                 detail: response.similar?.isEmpty == false
-                    ? "PRODUCTS THAT LOOK LIKE YOUR PHOTOGRAPH."
+                    ? (response.similarBasis == "photograph"
+                        ? "PRODUCTS THAT LOOK LIKE YOUR PHOTOGRAPH."
+                        : "PRODUCTS LIKE “\(scanned.reading.searchText.uppercased())”.")
                     : "SEARCHES THE SHOPS DROPWALL WATCHES FOR “\(scanned.reading.searchText.uppercased())”.",
                 systemImage: "magnifyingglass",
                 isOn: choice == .find
             ) {
-                if let onFind {
+                // What the photograph matched is shown here, wherever the scan was opened: in
+                // Shop's field it would be reduced to the reading's words.
+                if let onFind, response.similar?.isEmpty != false {
                     onFind(scanned.reading.searchText)
                     dismiss()
                 } else {
@@ -339,7 +343,7 @@ struct ScanView: View {
                 }
             }
             if choice == .find {
-                ScanFindResults(searchText: scanned.reading.searchText, similar: response.similar)
+                ScanFindResults(searchText: scanned.reading.searchText, similar: response.similar, similarBasis: response.similarBasis)
                     .padding(.top, 4)
             }
             Rule()

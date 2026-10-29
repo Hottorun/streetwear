@@ -1,4 +1,4 @@
-"""HTTP surface: /health, /embed/text and /embed/image.
+"""HTTP surface: /health, /embed/text, /embed/image and /embed/photo.
 
 Embedding is CPU-bound and torch already spreads one forward pass across every thread it
 was given, so requests take turns at the model (`_model_lock`) rather than running side
@@ -21,6 +21,8 @@ from .fetch import FetchRefused, ImageFetcher
 from .model import Embedder, UnreadableImage, decode
 
 MAX_JSON_BYTES = 1024 * 1024
+# JPEG's start-of-image marker — the server's `AIImages.isJPEG`, checked again here.
+JPEG_MARKER = b"\xff\xd8\xff"
 
 
 class Refused(Exception):
@@ -154,6 +156,30 @@ def create_app(
                 vectors[position] = vector
         return answer(vectors, errors)
 
+    async def embed_photo(request: Request) -> JSONResponse:
+        """One photograph somebody took, as JPEG bytes — the scan's "find this".
+
+        Its own route rather than the image/* branch of /embed/image because what it accepts is
+        narrower and the cap is the scan's, not a product photo's: a reader's photograph arrives
+        already scaled to at most 1024 px and 1.5 MB, so anything near the 10 MB a storefront
+        photo may be is not one. Embedded and dropped: nothing here writes it anywhere or logs
+        a byte of it, and the access log line is the method and the path.
+        """
+        authorise(request)
+        content_type = request.headers.get("content-type", "").split(";")[0].strip().lower()
+        if content_type != "image/jpeg":
+            raise Refused(415, "send one photograph as image/jpeg")
+        data = await body(request, settings.max_photo_bytes)
+        if not data:
+            raise Refused(400, "the body is empty")
+        if not data.startswith(JPEG_MARKER):
+            raise Refused(415, "the body is not a JPEG")
+        try:
+            image = await asyncio.to_thread(decode, data)
+        except UnreadableImage as error:
+            raise Refused(422, str(error)) from error
+        return answer(await run_model(state["embedder"].embed_images, [image]))
+
     async def refused(request: Request, error: Refused) -> JSONResponse:
         return JSONResponse({"error": error.message}, status_code=error.status)
 
@@ -162,6 +188,7 @@ def create_app(
             Route("/health", health, methods=["GET"]),
             Route("/embed/text", embed_text, methods=["POST"]),
             Route("/embed/image", embed_image, methods=["POST"]),
+            Route("/embed/photo", embed_photo, methods=["POST"]),
         ],
         exception_handlers={Refused: refused},
         lifespan=lifespan,

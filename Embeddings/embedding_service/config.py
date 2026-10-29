@@ -28,6 +28,9 @@ class Settings:
     max_items: int = 64
     max_text_chars: int = 1000
     max_image_bytes: int = 10 * 1024 * 1024
+    # A reader's photograph on /embed/photo: the scan's own cap (`AIScan.maxBytes`, 1.5 MB)
+    # with room to spare, and far under a storefront photo's.
+    max_photo_bytes: int = 2 * 1024 * 1024
     fetch_timeout: float = 10.0
     fetch_concurrency: int = 8
     port: int = 8080
@@ -43,6 +46,7 @@ class Settings:
             batch_size=_int("EMBEDDING_BATCH_SIZE", cls.batch_size),
             max_items=_int("EMBEDDING_MAX_ITEMS", cls.max_items),
             max_image_bytes=_int("EMBEDDING_MAX_IMAGE_BYTES", cls.max_image_bytes),
+            max_photo_bytes=_int("EMBEDDING_MAX_PHOTO_BYTES", cls.max_photo_bytes),
             fetch_timeout=_float("EMBEDDING_FETCH_TIMEOUT", cls.fetch_timeout),
             port=_int("PORT", cls.port),
         )
