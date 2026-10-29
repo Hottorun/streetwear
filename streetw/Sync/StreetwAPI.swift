@@ -300,6 +300,8 @@ struct StreetwAPI: Sendable {
         cheaper: Bool,
         formal: Bool,
         inMySize: Bool,
+        boost: FollowedBoost? = nil,
+        meaning: Bool = false,
         cursor: String? = nil
     ) async throws -> ProductSearchResponse {
         var query = [
@@ -309,6 +311,10 @@ struct StreetwAPI: Sendable {
         if cheaper { query.append(URLQueryItem(name: "cheaper", value: "true")) }
         if formal { query.append(URLQueryItem(name: "formal", value: "true")) }
         if inMySize { query.append(URLQueryItem(name: "inMySize", value: "true")) }
+        // Phase 5's one list. A server that predates them ignores both and answers the plain
+        // search — whose answer then says so, by carrying no `boost`.
+        if let boost { query.append(URLQueryItem(name: "boost", value: boost.rawValue)) }
+        if meaning { query.append(URLQueryItem(name: "meaning", value: "true")) }
         if let cursor { query.append(URLQueryItem(name: "cursor", value: cursor)) }
         return try await send(path: "v1/products/search", method: "GET", body: Optional<Never>.none, query: query)
     }

@@ -1,4 +1,7 @@
+import io
+
 import httpx
+from PIL import Image
 
 from conftest import auth, png
 
@@ -111,3 +114,57 @@ def test_embed_image_wrong_content_type(client_for):
     response = client_for().post("/embed/image", content=b"x",
                                  headers={**auth(), "Content-Type": "text/plain"})
     assert response.status_code == 415
+
+
+def jpeg(width=8, height=8, colour=(20, 20, 20)) -> bytes:
+    buf = io.BytesIO()
+    Image.new("RGB", (width, height), colour).save(buf, format="JPEG")
+    return buf.getvalue()
+
+
+def test_embed_photo(client_for, embedder):
+    response = client_for().post("/embed/photo", content=jpeg(),
+                                 headers={**auth(), "Content-Type": "image/jpeg"})
+    assert response.status_code == 200
+    body = response.json()
+    assert body["model"] == "fake/model@000000000000"
+    assert len(body["vectors"]) == 1 and len(body["vectors"][0]) == 4
+    assert embedder.calls == [("image", 1)]
+
+
+def test_embed_photo_needs_the_token(client_for, embedder):
+    client = client_for()
+    headers = {"Content-Type": "image/jpeg"}
+    assert client.post("/embed/photo", content=jpeg(), headers=headers).status_code == 401
+    assert client.post("/embed/photo", content=jpeg(),
+                       headers={**headers, **auth("nope")}).status_code == 401
+    assert client_for(token="").post("/embed/photo", content=jpeg(),
+                                     headers={**headers, **auth("")}).status_code == 503
+    assert embedder.calls == []
+
+
+def test_embed_photo_takes_only_a_jpeg(client_for, embedder):
+    client = client_for()
+    # Declared as something else.
+    assert client.post("/embed/photo", content=png(),
+                       headers={**auth(), "Content-Type": "image/png"}).status_code == 415
+    # Declared a JPEG and not one.
+    assert client.post("/embed/photo", content=png(),
+                       headers={**auth(), "Content-Type": "image/jpeg"}).status_code == 415
+    assert client.post("/embed/photo", content=b"",
+                       headers={**auth(), "Content-Type": "image/jpeg"}).status_code == 400
+    # A JPEG's marker and then nothing a decoder can read.
+    assert client.post("/embed/photo", content=b"\xff\xd8\xff" + b"\0" * 32,
+                       headers={**auth(), "Content-Type": "image/jpeg"}).status_code == 422
+    assert embedder.calls == []
+
+
+def test_embed_photo_is_capped_at_the_scan_size(client_for, embedder):
+    client = client_for(max_photo_bytes=1000)
+    big = jpeg(400, 400, colour=(10, 200, 90)) + b"\0" * 2000
+    assert client.post("/embed/photo", content=big,
+                       headers={**auth(), "Content-Type": "image/jpeg"}).status_code == 413
+    # The product-photo cap is separate and much larger: the same bytes there are fine.
+    assert client.post("/embed/image", content=big,
+                       headers={**auth(), "Content-Type": "image/jpeg"}).status_code == 200
+    assert embedder.calls == [("image", 1)]

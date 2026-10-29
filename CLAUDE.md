@@ -149,7 +149,7 @@ Dev-only launch flags (all read via `UserDefaults`, all no-ops when absent):
 |---|---|
 | `-seedBrands kith.com,bbcicecream.com` | Populates the store from real sites, skipping the add flow |
 | `-seedSizes "M,L,9,9.5"` | Fills the size profile |
-| `-startTab saved` | Opens straight to a tab, so screenshots need no UI automation. One of `feed`, `shop`, `saved`. Retired names still open something via `Tabs.resolve` rather than a blank page: `discover` opens Shop, `style` opens Saved › Fits (where the Style tab's fits went), anything else — including `brands` — the feed |
+| `-startTab saved` | Opens straight to a tab, so screenshots need no UI automation. One of `feed`, `shop`, `saved`; with no flag the app opens on Shop (Phase 5). Retired names still open something via `Tabs.resolve` rather than a blank page: `discover` opens Shop, `style` opens Saved › Fits (where the Style tab's fits went), anything else — including `brands` — the feed |
 | `-standalone YES` | Runs with no server, so `SyncEngine` polls from the phone |
 | `-fakeAppleSignIn alice` | DEBUG only. Replaces Apple's button with "Sign in as alice (debug)", which sends an unsigned identity token for that subject. Offered only against a server on `127.0.0.1`/`localhost`, and accepted only by one started with `SIWA_TEST_TOKENS=true` outside production. This is how sign-in → merge → delete is driven in a simulator with no Apple ID |
 | `-seedSaves 8` | Files garments into the wardrobe, spread across `GarmentSlot.essential`. Independent of `-seedBrands`: it reads whatever brands the store holds, so in server mode it runs after the launch sync rather than at launch |
@@ -764,25 +764,35 @@ project and every one names what it fixed. The ones most easily broken by accide
 
 Discover with a search field on top (`ShopView`): a field that takes a description, today's picks
 while it is empty, and the deck one row below. **Read `docs/discover.md` (*Shop*) before touching
-`ShopView`, `ShopAsk`, `AIStore`, `ShopCatalogue`, `PickLedger`, `TodaysPicks`, `ShopQuery`,
+`ShopView`, `ShopAsk`, `HowWeSortNote`, `AIStore`, `ShopCatalogue`, `PickLedger`, `TodaysPicks`, `ShopQuery`,
 `ShopSearch`, `TasteOrder` or `DailyPicks`.** The rules most easily broken:
 
-- **It searches your shops, and says where** — in server mode every product the server holds for
-  them (`GET /v1/products/search`, "IN YOUR SHOPS · N PRODUCTS"), standalone the ones on this
-  phone ("… ON THIS PHONE"). **The free field never says AI or the web** — a magnifying glass and
-  not a sparkle. Every other shop the server watches is one quiet row under the answer, asked only
-  when tapped, and shows only what your shops did not. A request that failed says it failed, never
-  "no results".
+- **One list over every shop, and it says where** (Phase 5) — in server mode every product the
+  server holds for every shop it watches, ranked once, your own shops lifted by a fixed amount of
+  score (`GET /v1/products/search?scope=all&boost=standard&meaning=true`, "IN EVERY SHOP WE WATCH
+  · N PRODUCTS"); chips **More from my brands** (`boost=more`) and **Only my brands**
+  (`scope=followed`, "IN YOUR SHOPS"); standalone the products from your shops on this phone
+  ("… ON THIS PHONE"). The line is printed from the answer, never from the chips. 1.2 and 1.3
+  send `scope` alone and get exactly what they got. **The free field never says AI or the web** —
+  a magnifying glass and not a sparkle. A request that failed says it failed, never "no results".
+- **Meaning counts, labelled, and never past the grammar** — with `meaning=true` a product whose
+  text vector clears the model's measured threshold (`ProductSearch.measuredThresholds`) is a
+  result without the words, MATCHED BY MEANING on its tile; price bounds, "no …", in my size and
+  gender still apply to it. A model with no measured threshold makes no meaning matches. The
+  search eval (`Server/SearchEval`, `docs/server.md`) is run before and after every ranking
+  change. **How we sort** (`HowWeSortNote`) is beside the count: match, followed shops, taste,
+  size — never commission — each sentence about the answer on screen.
 - **Asking Dropwall is a second, explicit act, and it says it is AI and what it costs** (`ShopAsk`,
   Phase 4): a sparkle row with the server's price, drawn only where `AIStore.isAvailable` (server
   mode and `GET /v1/ai` available) — signed out it says "SIGN IN TO USE" and opens You, never a
   dead button. The model's `reading.query` is printed through the phone's own `ShopQuery` line and
-  is what the page searches; replies continue the thread with its signed token, free, and the
-  reply field says when the next one starts a new, paid search. Your shops' answer is re-ordered
-  by taste on the phone (`TasteOrder`), never on the server. Every action prints its `AICharge`; a
-  refusal (402, 403, 429, 503) is said in words (`AIRefusal`), never as an empty list. **Show me
-  more** is the open web at its own price; a result's shop opens, follows, or goes to the ordinary
-  site check. `AIStore` is the account's, built in `streetwApp.init`, asked at the root keyed on
+  is what the page searches, over the same one list as the field (the turn carries the chips'
+  reach); replies continue the thread with its signed token, free, and the reply field says when
+  the next one starts a new, paid search. A thread's answer is re-ordered by taste on the phone
+  (`TasteOrder`), never on the server. Every action prints its `AICharge`; a refusal (402, 403,
+  429, 503) is said in words (`AIRefusal`), never as an empty list. **Show me more** is the open
+  web at its own price, at the end of a thread and on its own under a free search that found
+  little; a result's shop opens, follows, or goes to the ordinary site check. `AIStore` is the account's, built in `streetwApp.init`, asked at the root keyed on
   the token and the account, and is the one way any surface calls `/v1/ai/*`.
 - **One grammar on both ends**: the server parses the text with the same `ShopQuery` and runs the
   same `ShopSearch.run` over candidates its full-text index found (`ProductSearch`), told by the
@@ -1042,7 +1052,7 @@ the local path in the `else`. Adding a new one means adding both halves:
 | poll hints from the drop calendar | `PUT /v1/poll-hints` (whole set; no-op standalone) |
 | anonymous usage counts | `POST /v1/usage` (daily tallies; standalone counts and sends nothing) — read back with `GET /admin/usage`, see `docs/server.md` |
 | recommendations | `GET /v1/brands/popular` |
-| Shop's search field | `GET /v1/products/search?q=&scope=followed\|all&cheaper=&formal=&inMySize=&cursor=` — standalone, `ShopSearch` over `ShopCatalogue` |
+| Shop's search field | `GET /v1/products/search?q=&scope=followed\|all&cheaper=&formal=&inMySize=&cursor=`, plus `&boost=standard\|more&meaning=true` for the one list (Phase 5) — standalone, `ShopSearch` over `ShopCatalogue` |
 | "more like this" on a product page | `GET /v1/products/:id/similar?brand=` (the external id, one escaped segment) — falls back to the phone's own `SimilarItems` answer when it fails, and is that answer standalone |
 | credits: balance, this month's usage, the packs | `GET /v1/credits` (`signedIn: false` and nothing else without an account; no standalone equivalent, and the section is hidden) |
 | buying a pack | StoreKit, then `POST /v1/credits/purchases` with the signed transaction — finished only once the server took it (`CreditStore`). Refunds arrive from Apple at `POST /v1/app-store/notifications`; costs read back with `GET /admin/costs`, see `docs/credits.md` |
@@ -1051,7 +1061,7 @@ the local path in the `else`. Adding a new one means adding both halves:
 | a described search, and its follow-ups | `POST /v1/ai/search` — the thread travels with each turn, signed (`threadToken`); a follow-up inside it is free. Standalone has no model: `ShopSearch` over `ShopCatalogue`, as before |
 | "Show me more" on the open web | `POST /v1/ai/search/web` |
 | a daily pick's sentence | `POST /v1/ai/picks/reasons` (free; at most three; standalone keeps the phone's own reason) |
-| the clothes scan | `POST /v1/ai/scan` (one JPEG, never stored) |
+| the clothes scan | `POST /v1/ai/scan` (one JPEG, never stored); its `similar` matches the photograph through the sidecar's `POST /embed/photo` where it can, else the reading's words |
 | judging a fit, and suggesting for one from the photographs | `POST /v1/ai/fits/judge`, `POST /v1/ai/fits/suggest` — the rule-based `Outfit` and `FitSuggestions` stay the free, standalone answer |
 
 **Discovery is a check, not a request.** A site that is not on Shopify takes longer to read than

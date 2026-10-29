@@ -32,6 +32,8 @@ struct CatalogueScope: Sendable {
     /// served its main shop. One shop per brand, never both — the rule the feed keeps.
     var serving: [UUID: StorefrontModel]
     var dialect: String
+    /// The brands the caller follows, whatever the scope — what a search over every shop lifts.
+    var followed: Set<UUID> = []
 
     /// The products this caller may be shown, as a predicate on `p`.
     ///

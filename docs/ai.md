@@ -104,8 +104,9 @@ credits — an unlimited account and a free follow-up are still calls.
 - **The model never answers with products.** It rewrites the thread into the `ShopQuery`
   grammar ("black suit under 400 no wool formal"), and the server's own `ProductSearch.run`
   finds them — exactly what `GET /v1/products/search` answers for that text, with the request's
-  `scope` and `inMySize`. A model that names products names ones that do not exist, at prices
-  nobody charges. An empty query is a failed call.
+  `scope`, `inMySize` and, since Phase 5, `boost` and `meaning` (absent from 1.2 and 1.3, which
+  get the search they always got). A model that names products names ones that do not exist, at
+  prices nobody charges. An empty query is a failed call.
 - **The thread is the phone's.** Each turn sends the previous turns back with an
   `AIThreadToken` — `base64url(payload).base64url(HMAC-SHA256)`, keyed by `AI_THREAD_SECRET`
   (random per boot when unset, which only costs a paid thread its follow-ups across a deploy or
@@ -120,9 +121,9 @@ credits — an unlimited account and a free follow-up are still calls.
   model call; the model's `suggestions` (two to four, each at most 40 characters) are short
   replies the grammar does not have, and `reply` is one sentence only when the query alone does
   not show what was understood.
-- **"Followed shops first, ranked by taste, then similar brands"**: the server searches
-  `followed`, then `all` when asked; the taste ranking is the phone's, because the taste vector
-  never leaves it.
+- **The one list, ranked by taste on the phone** (Phase 5): the phone sends the chips' reach —
+  every shop with your own lifted, or only yours — so a thread answers with the same list the
+  field does, and the taste ranking is the phone's, because the taste vector never leaves it.
 - **Show me more** (`POST /v1/ai/search/web`) asks Claude's web search (`web_search_20260209`,
   five searches at most, `user_location` set to the reader's country — the request's, else the
   account's) for product pages, answered through the `report_products` tool, which can only be
@@ -170,12 +171,21 @@ credits — an unlimited account and a free follow-up are still calls.
   no product behind it. *Does it go with my wardrobe* runs on the phone (`Pairing`, `Outfit`)
   over the reading — the wardrobe never leaves it. *Find this* uses `similar` when it is there,
   else searches `searchText`.
-- **`similar` is found by the reading's words, not the photograph's pixels.** The embedding
-  sidecar only fetches photographs by URL and never accepts bytes, and the reader's photograph
-  has no URL by design. So when semantic search is on (`Application.semanticSearch`) and not
-  resting, `searchText` is embedded under the same 1.5 s deadline a search gets and the eight
-  nearest shown products across every shop come back; otherwise, or on any failure, it is nil.
-  Reading the image vector would need a bytes endpoint on the sidecar.
+- **`similar` is found by the photograph first, then by the reading's words** (Phase 5,
+  `AIScanSimilar`). The photograph's bytes go to the sidecar's `POST /embed/photo` — JPEG only,
+  capped at 2 MB, the same token, embedded and dropped by both sides — under a 4 s deadline
+  (`photoTimeout`: one forward pass is about 0.3 s on 2 vCPU), and its vector is compared with
+  every product's *image* vector under the same model; the eight nearest shown products across
+  every shop come back with `similarBasis: "photograph"`. Where that cannot answer — a provider
+  that does not embed images, a slow sidecar, no product photograph embedded yet — `searchText`
+  is embedded under the 1.5 s deadline a search gets and matched against the products' text
+  vectors, `similarBasis: "description"`, as before Phase 5. Semantic search off or resting, or
+  nothing near: nil, and the phone searches `searchText` as the field would. The log line on a
+  failure names what failed, never what was sent.
+- **The reading has a short name** (Phase 5, `AIScanReading.name`, required in the tool's schema,
+  at most 40 characters on the way out): "Black chore jacket", which *Add to my wardrobe* makes the
+  save's title, with `description` kept as the save's note. A server that predates it sends none,
+  and the save is titled by the description, as before.
 - **On the phone** (`ScanView`, `ScanPhoto`, `OwnGarment`): the entry point is `ScanButton`
   (Saved's "+" offers it as "Scan a garment"; `ScanButton(onFind:)` is the control for Shop's
   field, and `.scanSheet(isPresented:onFind:)` presents it from a host's own control). Camera
@@ -188,8 +198,10 @@ credits — an unlimited account and a free follow-up are still calls.
   your own*); *Does it go* is `ScanVerdict` — a count of what it pairs with and up to three
   `FitProposal.outfits`, each opening the canvas pre-filled; *Find this* is `ScanFindResults`
   (`similar`, else `GET /v1/products/search` over your shops and then every shop), or the
-  host's own field when it passed `onFind`. A reading that is not a garment offers none of the
-  three.
+  host's own field when it passed `onFind` — unless `similar` came back, which is shown in the
+  sheet wherever the scan was opened, because the field would reduce it to the reading's words.
+  The line above it says which it was ("… LOOK LIKE YOUR PHOTOGRAPH", "… LIKE ITS DESCRIPTION").
+  A reading that is not a garment offers none of the three.
 - **The scan and the fit canvas call through `AIStore`**, the same store Shop's search does —
   `isAvailable` draws the camera and the Ask menu at all, `costLabel(for:)` puts the price on the
   button (and nothing is printed as free when the server named none), and every refusal is an

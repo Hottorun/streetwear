@@ -64,6 +64,10 @@ public struct ShopListing: Sendable, Hashable, Identifiable {
     /// query gives is the grammar's on both ends and the index only settles what the
     /// grammar calls equal.
     public var relevance: Double
+    /// Added to the field-weighted score: how much the reader's own shops are lifted in a
+    /// search over every shop (`ProductSearch`, `FollowedBoost`). Zero on the phone, where
+    /// every listing is from a followed shop and a lift for all of them would order nothing.
+    public var boost: Double
 
     public init(
         id: String,
@@ -80,7 +84,8 @@ public struct ShopListing: Sendable, Hashable, Identifiable {
         publishedAt: Date = Date(timeIntervalSince1970: 0),
         isAvailable: Bool = true,
         isShown: Bool = true,
-        relevance: Double = 0
+        relevance: Double = 0,
+        boost: Double = 0
     ) {
         self.id = id
         self.brandKey = brandKey
@@ -102,6 +107,7 @@ public struct ShopListing: Sendable, Hashable, Identifiable {
         self.isAvailable = isAvailable
         self.isShown = isShown
         self.relevance = relevance
+        self.boost = boost
     }
 }
 
@@ -229,6 +235,10 @@ public enum ShopSearch {
         public var matched: [String]
         /// Carries every word that exists in the store.
         public var isExact: Bool
+        /// In the main list because an embedding found it close to the query, not because it
+        /// carries every word — `matched` then says which words it does carry, often none.
+        /// Only ever true where the caller passed `meaning:`; the phone has no vectors.
+        public var byMeaning: Bool
         var score: Double
     }
 
@@ -313,12 +323,18 @@ public enum ShopSearch {
     ///     is required and what is set aside, or a rare word crowded out of the candidates
     ///     would be "not in your shops" there and required here. Nil reads it off `index`,
     ///     which on the phone is the whole store.
+    ///   - meaning: listings an embedding found close enough to the query to be results
+    ///     without carrying the words, by id. The server's alone (`ProductSearch`); the phone
+    ///     has no vectors and passes nothing, which leaves every step below exactly the word
+    ///     search it always was. A listing here still meets every constraint — "no …", the
+    ///     gender filter, the price, "in my size" — because those were asked for in words.
     public static func run(
         _ query: ShopQuery,
         in index: ShopIndex,
         hasSizes: Bool,
         fits: (ShopListing) -> Bool,
-        knows: ((ShopQuery.Term) -> Bool)? = nil
+        knows: ((ShopQuery.Term) -> Bool)? = nil,
+        meaning: Set<String> = []
     ) -> Result {
         var result = Result()
         guard !query.isEmpty else { return result }
@@ -329,15 +345,20 @@ public enum ShopSearch {
         let hasConstraint = query.ceiling != nil || query.floor != nil || query.inMySize
             || !query.excluded.isEmpty || query.cheaper || query.formal
 
+        // Listings close by meaning, by position — only where some were offered.
+        let near: Set<Int> = meaning.isEmpty
+            ? []
+            : Set(index.listings.indices.filter { meaning.contains(index.listings[$0].id) })
+
         if required.isEmpty {
-            if !query.terms.isEmpty {
+            if !query.terms.isEmpty, near.isEmpty {
                 // Every word was unknown. Searching for nothing *but* the constraints would
                 // answer "black suit under 400" with every product under 400, which is not
                 // what was asked; saying the words are not there is.
                 result.outcome = .notInYourShops(result.unknown)
                 return result
             }
-            guard hasConstraint else { return result }
+            guard hasConstraint || !near.isEmpty else { return result }
         }
 
         if query.inMySize, !hasSizes {
@@ -345,8 +366,12 @@ public enum ShopSearch {
             return result
         }
 
+        // Every word unknown, and something close by meaning: those are the answer, and
+        // nothing else is — the constraints alone would be every product under the price.
+        let byMeaningOnly = required.isEmpty && !query.terms.isEmpty
+
         // What carries the words, before any constraint.
-        var candidates: [(index: Int, matched: [String], score: Double)] = []
+        var candidates: [Entry] = []
         for position in index.listings.indices {
             var matched: [String] = []
             var score = 0.0
@@ -356,8 +381,17 @@ public enum ShopSearch {
                     score += weight
                 }
             }
-            guard required.isEmpty || !matched.isEmpty else { continue }
-            candidates.append((position, matched, score))
+            let complete = !required.isEmpty && matched.count == required.count
+            // Close by meaning and short of the words: a result in its own right, credited
+            // for each missing word as if the weakest field carried it (`meaningWeight`).
+            let isNear = !complete && near.contains(position)
+            if byMeaningOnly {
+                guard isNear else { continue }
+            } else {
+                guard required.isEmpty || !matched.isEmpty || isNear else { continue }
+            }
+            if isNear { score += Double(max(required.count - matched.count, 1)) * meaningWeight }
+            candidates.append(Entry(index: position, matched: matched, score: score, byMeaning: isNear))
         }
 
         // The constraints, in a fixed order, and the first to empty the list is the answer.
@@ -372,8 +406,8 @@ public enum ShopSearch {
         // The counts an empty answer prints are of what carried every word, where anything
         // did — "1 matches, none in your size" is about the trousers that were asked for, not
         // about everything else that happened to be black.
-        func reported(_ entries: [(index: Int, matched: [String], score: Double)]) -> [(index: Int, matched: [String], score: Double)] {
-            let complete = entries.filter { $0.matched.count == required.count }
+        func reported(_ entries: [Entry]) -> [Entry] {
+            let complete = entries.filter { !$0.byMeaning && $0.matched.count == required.count }
             return complete.isEmpty ? entries : complete
         }
 
@@ -405,8 +439,9 @@ public enum ShopSearch {
             }
         }
 
-        var exact = sized.filter { $0.matched.count == required.count }
-        var partial = required.count >= 2 ? sized.filter { $0.matched.count < required.count } : []
+        // A meaning match is in the main list: it is a result, not a near miss.
+        var exact = sized.filter { $0.byMeaning || $0.matched.count == required.count }
+        var partial = required.count >= 2 ? sized.filter { !$0.byMeaning && $0.matched.count < required.count } : []
 
         // "Cheaper" is the cheaper half of what matched, said as a number. A bare re-sort
         // would leave the page looking unchanged above the fold; a bound the reading prints
@@ -417,7 +452,7 @@ public enum ShopSearch {
             if !prices.isEmpty {
                 let middle = prices[(prices.count - 1) / 2]
                 result.cheaperThan = middle
-                let under: ((index: Int, matched: [String], score: Double)) -> Bool = {
+                let under: (Entry) -> Bool = {
                     guard let price = index.listings[$0.index].price else { return false }
                     return price <= middle
                 }
@@ -433,7 +468,7 @@ public enum ShopSearch {
         }
 
         result.total = exact.count
-        result.exact = exact.prefix(limit).map { hit(from: $0, in: index, isExact: true) }
+        result.exact = exact.prefix(limit).map { hit(from: $0, in: index, isExact: !$0.byMeaning) }
         if exact.count < partialBelow {
             result.partial = partial.prefix(partialLimit).map { hit(from: $0, in: index, isExact: false) }
         }
@@ -441,12 +476,28 @@ public enum ShopSearch {
         return result
     }
 
-    private static func hit(
-        from entry: (index: Int, matched: [String], score: Double),
-        in index: ShopIndex,
-        isExact: Bool
-    ) -> Hit {
-        Hit(listing: index.listings[entry.index], matched: entry.matched, isExact: isExact, score: entry.score)
+    /// One listing on its way through `run`.
+    struct Entry {
+        var index: Int
+        var matched: [String]
+        var score: Double
+        var byMeaning = false
+    }
+
+    /// What a meaning match is credited for each word it does not carry: a tag's weight, the
+    /// weakest field a word can be found in. So a product carrying the words in its title
+    /// still comes first, and one the embedding found sits among those that carry them only
+    /// in their tags, where the index's rank and the similarity settle the order.
+    public static let meaningWeight = ShopIndex.Field.tag.weight
+
+    private static func hit(from entry: Entry, in index: ShopIndex, isExact: Bool) -> Hit {
+        Hit(
+            listing: index.listings[entry.index],
+            matched: entry.matched,
+            isExact: isExact,
+            byMeaning: entry.byMeaning,
+            score: entry.score
+        )
     }
 
     /// The order a result list is read in. Total, so the same query gives the same page.
@@ -457,7 +508,7 @@ public enum ShopSearch {
         query: ShopQuery,
         index: ShopIndex,
         among positions: [Int]
-    ) -> ((index: Int, matched: [String], score: Double), (index: Int, matched: [String], score: Double)) -> Bool {
+    ) -> (Entry, Entry) -> Bool {
         var formality: [Int: Int] = [:]
         if query.formal {
             for position in positions {
@@ -480,7 +531,10 @@ public enum ShopSearch {
                 let x = formality[a.index] ?? 0, y = formality[b.index] ?? 0
                 if x != y { return x > y }
             }
-            if a.score != b.score { return a.score > b.score }
+            // The followed shops' lift counts as score: it decides among matches, and never
+            // lifts a sold-out piece over a buyable one or a partial into the main list.
+            let x = a.score + one.boost, y = b.score + other.boost
+            if x != y { return x > y }
             if one.relevance != other.relevance { return one.relevance > other.relevance }
             if one.publishedAt != other.publishedAt { return one.publishedAt > other.publishedAt }
             return one.id < other.id

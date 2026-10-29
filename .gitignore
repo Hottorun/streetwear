@@ -8,3 +8,4 @@ Server/.swiftpm/
 *.sqlite-wal
 xcuserdata/
 DerivedData/
+Server/SearchEval/catalogue.json

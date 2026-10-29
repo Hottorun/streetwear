@@ -245,6 +245,99 @@ struct ShopSearchTests {
         }
     }
 
+    // MARK: - One list over every shop (Phase 5)
+
+    @Test("A followed shop's lift decides between equal matches, and never more than the words")
+    func followedLift() {
+        func store(lift: Double) -> ShopIndex {
+            ShopIndex([
+                // Every one a title match for "hoodie"; the newest first by default.
+                ShopListing(id: "theirs", brandKey: "noah", brandName: "Noah", title: "Core Hoodie", publishedAt: Date(timeIntervalSince1970: 3)),
+                ShopListing(id: "mine", brandKey: "kith", brandName: "Kith", title: "Williams Hoodie", publishedAt: Date(timeIntervalSince1970: 2), boost: lift),
+                // Only a tag says it — weaker than any title, unless lifted far enough.
+                ShopListing(id: "tagged", brandKey: "kith", brandName: "Kith", title: "Fleece Crew", tags: ["hoodie"], publishedAt: Date(timeIntervalSince1970: 1), boost: lift),
+                // Sold out stays last whatever the lift.
+                ShopListing(id: "gone", brandKey: "kith", brandName: "Kith", title: "Box Hoodie", isAvailable: false, boost: lift)
+            ])
+        }
+        let none = ShopSearch.run(ShopQuery.parse("hoodie"), in: store(lift: 0), hasSizes: false, fits: { _ in true })
+        #expect(none.exact.map(\.id) == ["theirs", "mine", "tagged", "gone"])
+        let standard = ShopSearch.run(ShopQuery.parse("hoodie"), in: store(lift: 1), hasSizes: false, fits: { _ in true })
+        #expect(standard.exact.map(\.id) == ["mine", "theirs", "tagged", "gone"])
+        let more = ShopSearch.run(ShopQuery.parse("hoodie"), in: store(lift: 3), hasSizes: false, fits: { _ in true })
+        #expect(more.exact.map(\.id) == ["mine", "tagged", "theirs", "gone"])
+    }
+
+    @Test("Close by meaning is a result without the words, and says so")
+    func meaningMatches() {
+        let index = ShopIndex([
+            listing("jacket", "Cotton Chore Jacket", type: "Outerwear", price: 300),
+            listing("blazer", "Linen Blazer — Sand", type: "Tailoring", price: 450),
+            listing("wool", "Wool Blazer", type: "Tailoring", tags: ["wool"], price: 600),
+            listing("tee", "Heavy Tee", type: "T-Shirt", price: 60)
+        ])
+        let query = ShopQuery.parse("summer jacket")
+        // Without vectors, the words alone — "summer" is in no product, so it is set aside.
+        let words = ShopSearch.run(query, in: index, hasSizes: false, fits: { _ in true })
+        #expect(words.exact.map(\.id) == ["jacket"])
+        #expect(words.unknown == ["summer"])
+
+        let near = ShopSearch.run(query, in: index, hasSizes: false, fits: { _ in true }, meaning: ["blazer", "jacket"])
+        // The word match first, then the one found by meaning, labelled.
+        #expect(near.exact.map(\.id) == ["jacket", "blazer"])
+        #expect(near.exact.map(\.byMeaning) == [false, true])
+        #expect(near.exact.map(\.isExact) == [true, false])
+        #expect(near.outcome == .found)
+    }
+
+    @Test("A meaning match still meets every constraint the words set")
+    func meaningMeetsTheConstraints() {
+        let index = ShopIndex([
+            listing("blazer", "Linen Blazer", type: "Tailoring", price: 450),
+            listing("wool", "Wool Blazer", type: "Tailoring", tags: ["wool"], price: 300),
+            listing("hidden", "Seersucker Jacket", type: "Outerwear", price: 200, shown: false),
+            listing("dear", "Silk Jacket", type: "Outerwear", price: 900)
+        ])
+        let near: Set<String> = ["blazer", "wool", "hidden", "dear"]
+        func run(_ text: String, fits: @escaping (ShopListing) -> Bool = { _ in true }) -> [String] {
+            ShopSearch.run(ShopQuery.parse(text), in: index, hasSizes: true, fits: fits, meaning: near).exact.map(\.id)
+        }
+        // "no wool" rules the wool blazer out, however close it is.
+        #expect(run("smart wedding no wool").contains("wool") == false)
+        // The gender filter, the price and "in my size" all still apply.
+        #expect(run("wedding").contains("hidden") == false)
+        #expect(run("wedding under 500") == ["blazer", "wool"])
+        #expect(run("wedding in my size", fits: { $0.id == "blazer" }) == ["blazer"])
+    }
+
+    @Test("Every word unknown: what is close by meaning answers, or the words are said to be missing")
+    func meaningWhenNoWordExists() {
+        let index = ShopIndex([
+            listing("blazer", "Linen Blazer", type: "Tailoring", price: 450),
+            listing("tee", "Heavy Tee", type: "T-Shirt", price: 60)
+        ])
+        let query = ShopQuery.parse("wedding")
+        let empty = ShopSearch.run(query, in: index, hasSizes: false, fits: { _ in true })
+        #expect(empty.outcome == .notInYourShops(["wedding"]))
+        let near = ShopSearch.run(query, in: index, hasSizes: false, fits: { _ in true }, meaning: ["blazer"])
+        #expect(near.exact.map(\.id) == ["blazer"])
+        #expect(near.exact.first?.byMeaning == true)
+        // The word is still in no product, and is still said to be.
+        #expect(near.unknown == ["wedding"])
+        #expect(near.outcome == .found)
+    }
+
+    @Test("A wire answer from an older server, with no lift and no meaning, still decodes")
+    func olderAnswersDecode() throws {
+        let old = #"{"scope":"all","exact":[],"partial":[],"unknown":[],"outcome":{"found":{}},"total":0,"isCapped":false,"searched":3,"shops":2}"#
+        let response = try APICoding.decoder.decode(ProductSearchResponse.self, from: Data(old.utf8))
+        #expect(response.boost == nil)
+        #expect(response.meaningSearched == nil)
+        // A lift a newer server names is read as the standard one, not a failure.
+        let newer = #"{"scope":"all","exact":[],"partial":[],"unknown":[],"outcome":{"found":{}},"total":0,"isCapped":false,"searched":3,"shops":2,"boost":"enormous"}"#
+        #expect(try APICoding.decoder.decode(ProductSearchResponse.self, from: Data(newer.utf8)).boost == .standard)
+    }
+
     /// The server finds a category word through this list before `classify` decides it, so
     /// anything the classifier places in a slot must carry one of its words.
     @Test("A slot's vocabulary covers everything the classifier places there", arguments: [

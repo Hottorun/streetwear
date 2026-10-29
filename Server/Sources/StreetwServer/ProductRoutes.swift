@@ -14,6 +14,11 @@ func productRoutes(authed: any RoutesBuilder) {
     /// default); `?cheaper=`, `?formal=`, `?inMySize=` for the chips, which set the same flags
     /// the words do; `?limit=` and `?cursor=` to page the exact matches.
     ///
+    /// Phase 5, both optional and both absent from 1.2 and 1.3, which therefore get exactly
+    /// what they always got: `?boost=standard|more` makes `scope=all` the one list in which the
+    /// caller's own shops are lifted, and `?meaning=true` lets a product close to the query by
+    /// meaning be a result without its words.
+    ///
     /// For the profile the request acts for: its follows, its sizes, its gender filter, and
     /// the shop serving its account's country.
     authed.get("products", "search") { req async throws -> ProductSearchResponse in
@@ -27,7 +32,9 @@ func productRoutes(authed: any RoutesBuilder) {
             limit: (try? req.query.get(Int.self, at: "limit")) ?? ProductSearch.defaultLimit,
             // Opaque on the wire, for the reason `DiscoverResponse.nextCursor` is; an offset
             // into one query's ranking underneath.
-            offset: (try? req.query.get(String.self, at: "cursor")).flatMap(Int.init) ?? 0
+            offset: (try? req.query.get(String.self, at: "cursor")).flatMap(Int.init) ?? 0,
+            boost: (try? req.query.get(String.self, at: "boost")).map { FollowedBoost(query: $0) },
+            meaning: (try? req.query.get(Bool.self, at: "meaning")) ?? false
         )
         // A sentence, not an essay: the grammar reads a few words and the index is asked one
         // condition per word.

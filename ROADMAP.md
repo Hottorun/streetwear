@@ -476,20 +476,30 @@ fit editor; the starter pack of six womenswear and six menswear shops. See
 
 Agreed with the owner on 2026-10-27. 1.4:
 
-- [ ] **One search over the whole catalogue.** One ranked list across every shop the server
+- [x] **One search over the whole catalogue.** One ranked list across every shop the server
       watches, followed brands given a fixed boost; chips "More from my brands" (raises it) and
       "Only my brands" (limits to them); a "How we sort" note reachable from the results (match,
       followed brands, taste, size — never commission). The line under the field still says what
       was searched. The app opens on Shop; the tab order stays.
-- [ ] **Meaning counts.** A product the embeddings find close to the query is a result even
+      *Done:* `scope=all&boost=standard|more` (`ProductSearch.lift`, 1 and 3 points of score);
+      Only my brands is `scope=followed`; 1.2/1.3 unchanged. Ask Dropwall and the scan's fallback
+      use the same list. `HowWeSortNote`; `Tabs.resolve(nil)` is Shop. `docs/discover.md`.
+- [x] **Meaning counts.** A product the embeddings find close to the query is a result even
       without the typed words, with its reason printed; the grammar still decides price bounds,
       "no …", size and gender. Web search stays an explicit, paid step at the end of the results,
       offered on its own when the catalogue finds little.
-- [ ] **A search eval.** About fifty real searches with judged answers, run before and after
+      *Done:* `meaning=true`, `ShopSearch.run(meaning:)`, MATCHED BY MEANING; threshold measured
+      per model (`ProductSearch.measuredThresholds`, `docs/server.md`). Show me more also under a
+      free search with fewer than six results.
+- [x] **A search eval.** About fifty real searches with judged answers, run before and after
       every ranking change.
-- [ ] **Search by photo.** The sidecar takes image bytes; the scan's "find this" matches the
+      *Done:* `Server/SearchEval` — 53 searches over 9,947 products from seven shops;
+      `docs/server.md` (*The search eval*) has the numbers and how to run it.
+- [x] **Search by photo.** The sidecar takes image bytes; the scan's "find this" matches the
       picture. The scan's reading gains a short name, used as the save's title, the description
       kept as its note.
+      *Done:* `POST /embed/photo` (JPEG, 2 MB, token); `AIScanSimilar` matches image vectors,
+      else the words (`similarBasis`); `AIScanReading.name` → `ownTitle`, description → note.
 - [ ] **Follow only part of a brand.** A follow gets an optional filter: category chips plus the
       reader's own words in the `ShopQuery` grammar, evaluated on both ends like `FollowMode`
       (what it does not admit is stored read and never pushed; tightening it does not resurrect).

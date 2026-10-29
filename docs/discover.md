@@ -12,8 +12,10 @@ this section is still the deck's, unchanged.
 ### The field searches your shops, and says so
 
 - **The scope is the honesty.** In server mode the field searches every product the server
-  holds for the shops you follow (`GET /v1/products/search`, below), and says "IN YOUR SHOPS ·
-  1,907 PRODUCTS" — the count the last answer gave, and never "on this phone". Standalone it
+  holds for every shop it watches, as one list (`GET /v1/products/search`, below — Phase 5), and
+  says "IN EVERY SHOP WE WATCH · 9,947 PRODUCTS", or with *Only my brands* "IN YOUR SHOPS · 1,907
+  PRODUCTS" — the scope and the count the last answer gave, never what the chips asked for, and
+  never "on this phone". Standalone it
   searches the products from your shops **that are on this phone** (`ShopCatalogue`) — the
   newest few hundred per shop (`retentionPerBrand`) — and says "IN YOUR SHOPS · 398 PRODUCTS ON
   THIS PHONE", exactly as before. **The free field never says AI and never says the web**, and it
@@ -76,7 +78,7 @@ this section is still the deck's, unchanged.
   `imageURLStrings` is a crash, not a narrowing. Standalone only: in server mode the picks still
   read `ShopCatalogue`, the search does not.
 
-### In server mode the field asks the server
+### In server mode the field asks the server — one list over every shop (Phase 5)
 
 - **The same grammar on both ends.** The phone parses the text with `ShopQuery` and prints its own
   reading; the server parses the same text with the same code and runs the same `ShopSearch.run`,
@@ -85,12 +87,44 @@ this section is still the deck's, unchanged.
   `ProductSearchResponse`: the words that exist nowhere in the scope (struck in the reading), the
   outcome, the "cheaper" bound. The chips go up as their own flags (`cheaper`, `formal`,
   `inMySize`), not folded into the text. The server's half is in `docs/server.md`.
-- **Your shops first; every other shop only when asked.** Under your shops' answer, always, one
-  quiet row — "Also look in every shop we watch" — and only a tap asks `scope=all`. The answer is
-  headed IN EVERY SHOP WE WATCH and shows only what your own shops did not: products of brands you
-  follow are left out of it, so a product is never on the page twice, and its count reads IN THE
-  OTHER SHOPS WE WATCH. Once asked, a new query asks both until the field is cleared, like the
-  chips. Shop searches your shops; the wider look is labelled as one.
+- **One ranked list across every shop the server watches, your shops lifted.** Phase 4 searched
+  your shops and offered "Also look in every shop we watch" as a second, tapped search under them;
+  Phase 5 asks once, `scope=all&boost=standard&meaning=true`, and the server lifts every product
+  from a shop you follow by a fixed amount of the grammar's own score (`ProductSearch.lift`: a
+  tag's weight, 1). That decides between equally good matches and never more — a sold-out piece
+  still goes below a buyable one and a partial match never joins the main list, because those are
+  decided before the score is read. Two chips after the grammar's three, one at a time: **More
+  from my brands** (`boost=more`, a title's weight, 3 — a followed shop's tag match beside
+  another shop's title match) and **Only my brands** (`scope=followed`, exactly the Phase 4
+  search). Cleared with the field, like the others; standalone has neither, because it searches
+  nothing but your shops already.
+- **The old wire still means what it meant.** 1.2 and 1.3 send `scope=followed|all` and nothing
+  else, and get exactly what they got — no lift, no meaning matches, no new fields set. The new
+  parameters are new names (`boost`, `meaning`), not new meanings of old ones, and the answer
+  carries what was *done* (`ProductSearchResponse.boost`, `meaningSearched`), so a server that
+  predates them answers the plain search and the screen says so rather than claiming a lift.
+- **Meaning counts** (`meaning=true`). Below the words, a product whose text vector is close
+  enough to the query's (`ProductSearch.measuredThresholds`, per model) is a result even when it
+  carries none of the words — "smart summer jacket" can find a linen blazer — and the tile says
+  MATCHED BY MEANING in place of the words it carried (`ProductSearchHit.byMeaning`). It is
+  ranked as if each missing word were found in a tag, the weakest field, so a product naming the
+  words in its title still comes first. **The grammar still decides everything it read**: price
+  bounds, "no …", in my size and the gender filter apply to a meaning match exactly as to a word
+  match, and "no wool" is never embedded, so it cannot pull wool towards the query. A word no
+  product carries is still struck; where meaning was compared the line says "LOOKED FOR BY
+  MEANING" rather than "LEFT OUT". With the sidecar down, slow or resting, or a model nobody
+  measured, the answer is the words alone, which is complete on its own. The threshold, how it
+  was chosen and the eval that measures it are in `docs/server.md`.
+- **How we sort** (`HowWeSortNote`), beside the count on every answer: by how well a product
+  matches — and, labelled, by meaning; the shops you follow, lifted, from the answer's own `boost`
+  (an answer with none says every shop was treated the same); your taste, when you ask Dropwall,
+  on this phone; your size, through In my size; and **never by commission** — no shop pays to be
+  placed or lifted. Every sentence is about the answer on screen.
+- **The open web is still a separate, paid tap** (`ShowMoreSection`): at the end of a thread's
+  results as before, and now also on its own, without asking Dropwall first, under a free search
+  that found little (`ShopView.foundLittle`: fewer than six results, or no word in any shop).
+  It searches the field's own text, and its answer is shown only while it is about the query on
+  screen (`ShopAsk.webQuery`).
 - **A failed request says it failed** — "The search didn't run · COULDN'T REACH DROPWALL — …" with
   a way to try again — and never draws "no results". An empty list for "couldn't ask" and for
   "asked, nothing there" is the failure `CLAUDE.md` names; the `Answer` enum keeps them apart.
@@ -118,7 +152,7 @@ this section is still the deck's, unchanged.
 
 - **The AI path says it is AI and what it costs; the free path still must not.** One row under
   the field, drawn only in server mode and only where `GET /v1/ai` answered `available: true`:
-  a sparkle, "Ask Dropwall", "AI READS YOUR DESCRIPTION, THEN SEARCHES YOUR SHOPS", and the
+  a sparkle, "Ask Dropwall", "AI READS YOUR DESCRIPTION, THEN SEARCHES EVERY SHOP WE WATCH", and the
   price from the server's table ("1 CREDIT"). The field itself keeps its magnifying glass and its
   scope line; nothing typed there reaches a model until the row is pressed.
 - **Signed out it still draws, as "SIGN IN TO USE", and opens You** — where sign-in leads the
@@ -139,13 +173,14 @@ this section is still the deck's, unchanged.
   less a minute's margin — "THIS SEARCH IS USED UP — A REPLY STARTS A NEW ONE · 1 CREDIT". A new
   thread opens on the last reading plus the reply, so "no wool" still means no wool suits.
   Editing the field, clearing it, or BACK TO SEARCH ends the thread.
-- **Followed shops first, ordered by taste on the phone** (`TasteOrder`, core, tested): each hit
-  is scored by `Pairing` against `TasteScope.pairingPool`, read in tenths so the server's order
-  decides between near-equals, sold-out still last, nothing hidden, and with an empty wardrobe
-  the server's order exactly. Worked out in a `.task`, never per body, and **only appended to**
-  within one query, so a MORE page never moves a card already read. The free search keeps the
-  grammar's order — it is one answer on both ends. Then the existing "Also look in every shop we
-  watch" row, over the reading.
+- **The same one list, ordered by taste on the phone** (`TasteOrder`, core, tested): a turn
+  sends the chips' reach (`AISearchRequest.scope`, `boost`, `meaning`, Phase 5), so a thread
+  answers with the list the field would, and each hit is scored by `Pairing` against
+  `TasteScope.pairingPool`, read in tenths so the server's order decides between near-equals,
+  sold-out still last, nothing hidden, and with an empty wardrobe the server's order exactly.
+  Worked out in a `.task`, never per body, and **only appended to** within one query, so a MORE
+  page never moves a card already read. The free search keeps the server's order — it is one
+  answer on both ends.
 - **Every action says what it took**, from its own `AICharge`: "1 CREDIT · 48 LEFT", "NO CHARGE —
   PART OF THIS SEARCH · 48 LEFT", "NO CHARGE · UNLIMITED ACCOUNT". The charge goes to
   `CreditStore.apply`, so You's balance is right without asking again.

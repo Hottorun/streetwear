@@ -1196,6 +1196,27 @@ public enum ProductSearchScope: String, Codable, Sendable, CaseIterable {
     }
 }
 
+/// How far a search over every shop lifts the reader's own (Phase 5).
+///
+/// **Asked for by name, so an older client is never re-ranked.** 1.2 and 1.3 send `scope`
+/// alone and get exactly the lists they always got; only a request that says `boost=` gets the
+/// one list in which a followed shop's products are lifted. `standard` is the lift every search
+/// gets, `more` is the "More from my brands" chip. Decoded leniently — a lift a newer server
+/// names is read as the standard one, rather than failing the whole answer.
+public enum FollowedBoost: String, Codable, Sendable, CaseIterable {
+    case standard
+    case more
+
+    public init(query raw: String?) {
+        guard let raw else { self = .standard; return }
+        self = Self(rawValue: raw) ?? .standard
+    }
+
+    public init(from decoder: any Decoder) throws {
+        self = Self(rawValue: try decoder.singleValueContainer().decode(String.self)) ?? .standard
+    }
+}
+
 /// One product a search found, and how.
 public struct ProductSearchHit: Codable, Sendable, Hashable, Identifiable {
     /// The product, in the shape the deck already draws and saves: a product with its brand
@@ -1205,13 +1226,19 @@ public struct ProductSearchHit: Codable, Sendable, Hashable, Identifiable {
     /// The words it carried. Nil for an exact match, where the reading under the field
     /// already says them; a partial match prints these because they are its whole reason.
     public var matched: [String]?
+    /// True when the product is a result because its embedding is close to the query's, not
+    /// because it carries every word — the screen prints "MATCHED BY MEANING" on it. Nil on
+    /// every word match, and on everything answered to a request that did not ask for
+    /// `meaning=true`, so an older client never sees one.
+    public var byMeaning: Bool?
 
     public var id: String { card.productExternalID }
     public var isExact: Bool { matched == nil }
 
-    public init(card: DiscoverCard, matched: [String]? = nil) {
+    public init(card: DiscoverCard, matched: [String]? = nil, byMeaning: Bool? = nil) {
         self.card = card
         self.matched = matched
+        self.byMeaning = byMeaning
     }
 }
 
@@ -1245,6 +1272,13 @@ public struct ProductSearchResponse: Codable, Sendable {
     public var shops: Int
     /// Pass back as `cursor` for the next page of exact matches; nil on the last.
     public var nextCursor: String?
+    /// The lift the reader's own shops were given, when one was — `scope` `all` and a request
+    /// that asked for one. Nil means none was applied, whatever was asked: an older server
+    /// ignores `boost=`, and the screen says what was done, never what was requested.
+    public var boost: FollowedBoost?
+    /// Whether the query was also compared by meaning — asked for, and the embeddings answered
+    /// in time. Nil or false: words alone, which is a complete answer on its own.
+    public var meaningSearched: Bool?
 
     public init(
         scope: ProductSearchScope,
@@ -1257,7 +1291,9 @@ public struct ProductSearchResponse: Codable, Sendable {
         isCapped: Bool = false,
         searched: Int = 0,
         shops: Int = 0,
-        nextCursor: String? = nil
+        nextCursor: String? = nil,
+        boost: FollowedBoost? = nil,
+        meaningSearched: Bool? = nil
     ) {
         self.scope = scope
         self.exact = exact
@@ -1270,6 +1306,8 @@ public struct ProductSearchResponse: Codable, Sendable {
         self.searched = searched
         self.shops = shops
         self.nextCursor = nextCursor
+        self.boost = boost
+        self.meaningSearched = meaningSearched
     }
 }
 
