@@ -346,6 +346,61 @@ Changing these silently will break intended behavior:
     filed a big catalogue under *Sales only* at follow time would be a filter somebody did not
     set, which is indistinguishable from a broken follow — and product velocity alone does not
     tell Kith, the roadmap's *Everything* brand, from H&M.
+- **A follow can be narrowed to part of a brand, and the narrowing is decided exactly where the
+  mode is** (`FollowFilter`, Phase 5). Following COS for its knitwear or Carhartt for its trousers
+  meant every tee and cap as well, and the only way out was *Quiet*, which takes the knitwear
+  too. A follow's filter is category chips ("Jeans", "Bags" — a `GarmentSlot` or a finer kind the
+  grammar already knows, `FollowCategory`) and/or the reader's own words in Shop's grammar
+  (`ShopQuery`: "black trousers", "no kids", "under 100"). The decisions:
+  - **One definition, both ends.** `FollowFilter.Matcher.admits` is asked by `Notifier` before a
+    push and by the phone where a row is written (`Brand.admits` = the mode *and* the filter, in
+    `RemoteSync.merge`, `SyncEngine.insert` and `refresh`); what it does not admit is **stored
+    read, with no arrival, and never pushed** — the mode's rule, so the feed, every count,
+    `FollowedSupply` and `FeedHistory` agree without knowing filters exist. The inputs are the
+    four fields both ends hold when they decide — title, product type, tags, price — and nothing
+    else: the notifier loads a product without its variants, and the shop's own name is on every
+    row, so a word matching it would admit everything. `FollowFilterServerTests.parity` holds the
+    two to one answer.
+  - **Chips are alternatives; words are Shop's.** Any chip admits ("Jeans" or "Bags"); every
+    word must be carried, as in Shop, so "black jeans" is black jeans. A kind chip asks the shelf
+    as well as the word — "Jeans" does not admit a jean jacket — and admits exactly what the
+    dialog counted for it. "In my size", "cheaper" and "formal" are about a search and a reader,
+    not a shop's shelves, and are printed as unused rather than applied.
+  - **What always passes**: a garment the classifier cannot place (unknown is never filtered —
+    YoungLA's `W2156`); a brand-wide sale, a lock, a post, a page change, none of which is a
+    garment; a release, whose title cannot say which shelf it is from ("Denim Tears FW26" is not
+    a pair of jeans), unless an exclusion names it; and a watch, on both ends, which asks
+    nothing of the follow. An exclusion ("no kids") is the one part that hides whatever carries
+    the word, placed or not — it is a word the row literally carries.
+  - **Tightening takes rows out; loosening brings nothing back** (`Brand.apply(_ filter:)`), the
+    mode's rule: what a filter kept out was history when it arrived and stays history.
+  - **The server's filter is the filter** — `PATCH /v1/follows/:id` first, the phone only once it
+    took it, mirrored from `GET /v1/follows` beside the mode (nil there is *All*), restored with
+    the follows after a re-registration. Per profile, because a profile's follows are its own.
+  - **Asked once, after every new follow, and skippable** (`FollowFilterPrompt`,
+    `FollowFilterView`): *All* (chosen unless changed), the brand's three biggest categories by
+    product count (`GET /v1/brands/:id/categories`; standalone, the phone's own rows), and a field
+    for own words printed back through the grammar's reading, with a line saying how many of the
+    products on this phone the choice lets through. Any surface that follows calls
+    `prompt.ask(brandID:)` — `RemoteSync`'s follow calls do it themselves — and the topmost host
+    on screen (`followFilterHost()`: the root, You, Brands, a brand page opened from a push) draws
+    it after a beat, so a follow made from a sheet that closes as it lands asks from underneath
+    once it has gone. The add-brand sheet asks inline. A check watched while it ran is asked
+    about on the foreground that finds it a follow. **The starter pack does not ask**: a dozen
+    questions in a row is not a welcome, and each brand is narrowable from its page. Editable
+    under the brand page's *What reaches you*, beside the mode ("Which pieces").
+- **A site nobody can watch says why** (`ShopRefusal`, `BrandCheck.Refusal`, the add-brand
+  screen). One sentence used to cover three shops: "It may be down, or blocking us." Now a check
+  says which. **Blocks automated readers** — every request turned away by bot protection (Akamai's
+  "Access Denied", Cloudflare's block page — `HTTPResponse.isChallenged`), dropped, or refused by
+  robots.txt, with not one ordinary answer among them: Bershka, Stradivarius, Pull&Bear, Chanel,
+  lululemon.de, ASOS. "Bershka blocks automated readers. Saving from Safari still works." — the
+  share sheet gets in because it is the person's own browser. **Never worked around**: no browser
+  User-Agent, no retry dressed as a person (`ROADMAP.md`, *Decided*); the evidence is a
+  `ProbeLog` that watches the check's own requests and changes none of them. **Doesn't sell
+  clothes online** — a short curated list by registrable domain (`ShopRefusal.sellsNoClothes`,
+  `chanel.com` alone), refused before any request. **Nothing answered** is the rest, and the only
+  one worth trying again. Standalone reads the same evidence on the phone.
 - **A collection is not a product** (the feed's release card, `CollectionReleaseView`). It is the one update
   that is *about* other updates, and it was drawn as a garment: no photograph (a season page rarely
   has one), an empty size run, no price, and a tap onto a product page with nothing on it — so

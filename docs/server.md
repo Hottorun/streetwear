@@ -109,6 +109,35 @@ Part of the streetw guidance set; see `CLAUDE.md` for the index and the build ru
   The feed is **not** filtered here: every event still goes to the phone, which stores the
   ones the mode does not admit already read. A quiet brand's own page is still its catalogue,
   and a server-side filter would have frozen it at the moment it went quiet.
+- **A follow can carry a filter, and `Notifier` asks it after the mode** (`follows.filter`,
+  `AddFollowFilter`, `FollowFilter`; the rules are in `docs/design-decisions.md`). Four details:
+  - **One nullable JSON text column, and null is *All*.** Every follow before the migration and
+    every one 1.0–1.3 makes has none, which is the truth about them. Text rather than `TEXT[]` or
+    discrete columns because nothing asks SQL about it — the notifier and the follow list decode
+    it in Swift — and an array column is the one shape SQLite cannot reproduce. Written through
+    `FollowModel.filter`, which normalises (lowercased chips, bounded words) and stores an empty
+    filter as nil, so *All* has one spelling.
+  - **`PATCH /v1/follows/:id` changes it only when one is sent**, beside the mode the body
+    always carries; an empty one clears it. 1.3's body — a mode alone — still decodes and must
+    not clear a filter another phone on the account set. `GET /v1/follows` returns it as
+    `BrandDTO.followFilter`; no other route does. A profile's follows are its own rows, so its
+    filter is too, and the account merge moves the row whole.
+  - **Read once per follow per pass**, not per event (`FollowFilter.Matcher`): parsing the words
+    is the expensive half and a drop is hundreds of events. The product's title, type, tags and
+    price are what it reads, the four fields the phone holds when it stores the row; a sale has no
+    product and passes. `notifyWatches` and `notifyWatchedPriceDrops` never ask it.
+  - **`GET /v1/brands/:id/categories`** counts the brand's biggest categories for the follow
+    dialog (`FollowCategory.biggest`): the main shop's listed products, the newest 2,500, three
+    columns of each (`.field`), on the standard device budget.
+- **A refused check records why** (`brand_checks.refusal`, `AddBrandCheckRefusal`,
+  `BrandCheck.Refusal`, `ShopRefusal`). `BrandChecks.run` wraps the shared fetcher in a `ProbeLog`
+  for the length of the check — above `PoliteFetcher`, so robots.txt, spacing and the host check
+  are untouched and no request changes — and a check that finds nothing watchable is
+  `blocksReaders` when every request was a bot-protection page, a dropped connection or a robots
+  refusal, else `nothingAnswered`. A domain on the curated `sellsNoClothes` list is refused at
+  `start` with no fetch. The push to somebody who asked to be told says which. **No retry, no
+  other User-Agent, ever**: the label is the whole response (`ROADMAP.md`, *Decided*). The 1.0
+  routes (`GET /v1/brands/probe`, `POST /v1/brands/discover`) are unchanged.
 - **`/status` counts every table**, `users` included. It was the one table it didn't touch,
   which is exactly why a completely broken registration path still reported green.
 - **Only the *unexpected* is worth a buzz** (`Notifier.isWorthWaking`). A drop, a collection, a

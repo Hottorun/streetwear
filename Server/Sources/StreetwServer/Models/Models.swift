@@ -637,6 +637,8 @@ final class FollowModel: Model, @unchecked Sendable {
     /// carries one: a mode a later deploy writes must still read on an earlier one, as
     /// `.everything`. See `AddFollowMode`.
     @Field(key: "mode") var modeRaw: String
+    /// `FollowFilter` as JSON text, or nil for *All* — see `AddFollowFilter`.
+    @OptionalField(key: "filter") var filterJSON: String?
 
     init() {
         self.modeRaw = FollowMode.everything.rawValue
@@ -651,6 +653,17 @@ final class FollowModel: Model, @unchecked Sendable {
     var mode: FollowMode {
         get { FollowMode(lenient: modeRaw) }
         set { modeRaw = newValue.rawValue }
+    }
+
+    /// Which part of the brand this follow lets through. Setting an empty filter stores nil,
+    /// so *All* has one spelling (`FollowFilter.normalized`).
+    var filter: FollowFilter? {
+        get { filterJSON.flatMap { try? JSONDecoder().decode(FollowFilter.self, from: Data($0.utf8)) } }
+        set {
+            filterJSON = newValue?.normalized
+                .flatMap { try? JSONEncoder().encode($0) }
+                .map { String(decoding: $0, as: UTF8.self) }
+        }
     }
 }
 
@@ -760,6 +773,8 @@ final class BrandCheckModel: Model, @unchecked Sendable {
     @OptionalParent(key: "brand_id") var brand: BrandModel?
     @Timestamp(key: "created_at", on: .create) var createdAt: Date?
     @OptionalField(key: "finished_at") var finishedAt: Date?
+    /// A `BrandCheck.Refusal` raw value, on a refused check only — see `AddBrandCheckRefusal`.
+    @OptionalField(key: "refusal") var refusal: String?
 
     @Children(for: \.$check) var watchers: [BrandCheckWatcherModel]
 

@@ -126,6 +126,12 @@ final class BrandUpdate {
     /// drawing one for a pass, and reading any property of a deleted model traps.
     var isGone: Bool { isDeleted || modelContext == nil }
 
+    /// The garment as a follow filter reads it — the four fields the server's notifier holds
+    /// too, and no others, so both ends decide this row on the same evidence.
+    var followItem: FollowFilter.Item {
+        FollowFilter.Item(title: title, productType: productType, tags: tags, price: priceAmount)
+    }
+
     /// Dominant colour read off the photograph rather than out of the title — a brand
     /// calling a shoe "Triple White" is naming a colourway, not a colour.
     var visionColor: String?

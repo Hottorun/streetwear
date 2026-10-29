@@ -42,6 +42,7 @@ struct SaveDetailView: View {
     @Environment(SizeProfileStore.self) private var sizes: SizeProfileStore
     @Environment(RemoteSync.self) private var remote: RemoteSync
     @Environment(ServerSettings.self) private var settings: ServerSettings
+    @Environment(FollowFilterPrompt.self) private var followPrompt: FollowFilterPrompt
     @Query(sort: [SortDescriptor(\Board.sortIndex), SortDescriptor(\Board.createdAt)])
     private var boards: [Board]
 
@@ -739,6 +740,9 @@ struct SaveDetailView: View {
         if let brand = update?.brand {
             brand.followed = true
             try? context.save()
+            // Standalone, this is the follow, so it asks what to see; `followExisting` asks
+            // in server mode.
+            if !settings.isConfigured { followPrompt.ask(brandID: brand.id) }
         }
         brandDestination = nil
     }

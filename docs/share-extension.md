@@ -88,10 +88,12 @@ Part of the streetw guidance set; see `CLAUDE.md` for the index and the build ru
   `…/watch`), which the server finishes with the app closed; later foregrounds ask after the check
   until it settles. Standalone, the phone discovers the site as `AddBrandView` does. A refused
   check, or eight failed tries, lets it go. Each pending follow is kept in `ShareQuestions` until
-  done. Then the follow-filter question is raised through `NewFollows.announce` — the seam to
-  `FollowFilterPrompt` (another branch), whose own server-mode follow paths ask on their own and
-  whose queue deduplicates; merging replaces the announce body with
-  `session.followPrompt.ask(brandID:)`.
+  done. Then the follow-filter question is asked by `FollowFilterPrompt`, the one dialog every
+  new follow gets: in server mode `RemoteSync.followExisting` and `watch(check:)` ask it
+  themselves (or hand a running check to its `expect(check:)`), so the share's later re-poll of a
+  settled check passes `asks: false` — asking again there would put the dialog up a second time
+  after it had been answered. Standalone nothing else asks, so `ShareFollows` calls
+  `followPrompt.ask(brandID:)` with the new brand's local id.
 - **Every question a share raises is kept until it has been seen** (`ShareQuestions`,
   `ShareQuestionHost`). "I share, and a while later the dialog to get notified is gone": it was
   a sheet bound to an in-memory `PushRoute.watchOffer`, and anything that stopped it appearing —

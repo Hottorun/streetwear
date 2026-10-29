@@ -220,8 +220,8 @@ plutil -p /tmp/streetw-dd/Build/Products/Debug-iphonesimulator/streetw.app/Info.
 ### Tests
 
 ```bash
-swift test                                    # all 734
-cd Server && swift test                       # 397, of which 13 need STREETW_TEST_POSTGRES_URL (run those --no-parallel)
+swift test                                    # all 762
+cd Server && swift test                       # 413, of which 14 need STREETW_TEST_POSTGRES_URL (run those --no-parallel)
 cd Embeddings && pytest                       # 63; -m slow adds 3 against real weights
 swift test --filter "Size normalisation"      # one suite
 swift test --filter relockFiresAgain          # one test
@@ -416,6 +416,10 @@ bought it. The short form of the load-bearing ones:
 - A follow has a mode, and `FollowMode.admits` is the one rule: `Notifier` asks it before a push,
   and the phone asks it where a row is written — what the mode does not admit is stored already
   read and with no arrival, so no count or list needs to know. A watch ignores every mode.
+- A follow can also be narrowed to part of a brand — category chips and/or Shop's grammar
+  (`FollowFilter`), decided by the same rule in the same places (`Brand.admits`, `Notifier`);
+  unplaceable garments, brand-wide sales and watches always pass, and a new follow asks once
+  (`FollowFilterPrompt.ask(brandID:)`, hosted by `.followFilterHost()`).
 - Ordering: a brand's output by `BrandUpdate.newestFirst`; one garment one row via
   `oncePerProduct`, in every list including the timeline.
 - Only a price *drop* past 5% is an event; restock outranks it; a lock fires on the transition. A
@@ -1039,6 +1043,7 @@ the local path in the `else`. Adding a new one means adding both halves:
 | add a brand nobody has | `POST /v1/brands/checks/:id/watch` — the server follows it, now or when the check finishes |
 | delete / unfollow | `DELETE /v1/follows/:id` |
 | follow mode (Everything / Sales only / Quiet) | `PATCH /v1/follows/:id` — the server first, the phone only once it took it; standalone, `Brand.followModeRaw` alone |
+| follow only part of a brand (`FollowFilter`) | `PATCH /v1/follows/:id` with `filter` beside the mode, mirrored from `GET /v1/follows`; the dialog's chips from `GET /v1/brands/:id/categories` — standalone, `Brand.followFilterJSON` and the phone's own rows |
 | size and gender profile | `PATCH /v1/devices/me` |
 | country (You › Location) | `PATCH /v1/devices/me` (`country`; also sent at registration) — standalone stores it and changes nothing |
 | APNs token / environment | `PATCH /v1/devices/me` |

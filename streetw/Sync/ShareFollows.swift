@@ -8,10 +8,12 @@
 // once it settles, with the app closed if need be, and the next foreground that finds it
 // settled finishes here. Standalone, the phone discovers the site itself, as `AddBrandView` does.
 //
-// Then the follow-filter question — what do you want to see from them — is asked through
-// `announce`, the seam to that dialog (see `NewFollows`). Each step is kept in `ShareQuestions`
-// until it is done, so a follow wished for in the sheet survives a kill, a profile switch and a
-// server that was down for an afternoon.
+// Then the follow-filter question — what do you want to see from them (`FollowFilterPrompt`).
+// In server mode `RemoteSync`'s follow paths ask it themselves, and a check still running is
+// left to the prompt's own `expect(check:)`, so re-asking after a check settles passes
+// `asks: false`. Standalone nothing else asks, so `announce` does. Each step is kept in
+// `ShareQuestions` until it is done, so a follow wished for in the sheet survives a kill, a
+// profile switch and a server that was down for an afternoon.
 
 import Foundation
 import OSLog
@@ -48,7 +50,7 @@ enum ShareFollows {
                 : await followHere(follow, context: context, engine: engine)
             guard let brandID else { continue }
             questions.finish(follow, for: scope)
-            announce(brandID)
+            if !settings.isConfigured { announce(brandID) }
             log.info("followed \(follow.url.absoluteString, privacy: .public) from a share")
         }
     }
@@ -70,8 +72,9 @@ enum ShareFollows {
                     return nil
                 case .ready:
                     // Watching is idempotent, and is what brings the brand in when the server
-                    // made the follow while the app was closed.
-                    let watched = try await remote.watch(check: checkID, instagram: nil, sizes: sizes.profile)
+                    // made the follow while the app was closed. The question was already handed
+                    // to the prompt when the check was first watched.
+                    let watched = try await remote.watch(check: checkID, instagram: nil, sizes: sizes.profile, asks: false)
                     guard let id = watched.brand?.id else { return nil }
                     await remote.sync(sizes: sizes.profile)
                     return id
@@ -145,27 +148,5 @@ enum ShareFollows {
     private static func followedBrand(for url: URL, in context: ModelContext) -> Brand? {
         let brands = (try? context.fetch(FetchDescriptor<Brand>(predicate: #Predicate { $0.followed }))) ?? []
         return brands.first { BrandDiscovery.isSameBrandHost(url, $0.websiteURL) }
-    }
-}
-
-/// **The seam to the follow-filter dialog**, which is built on another branch
-/// (`FollowFilterPrompt`, "what do you want to see from them?").
-///
-/// That dialog keeps its own persisted per-profile queue and is asked with
-/// `session.followPrompt.ask(brandID:)`, by a server id or a local `Brand.id`. Its server-mode
-/// follow paths in `RemoteSync` ask on their own, so in server mode the share's follow is asked
-/// about twice and deduplicated by that queue; standalone, this is the only call. Until the two
-/// branches meet, `announce` posts `NewFollows.followed` with the brand id and the store's home
-/// — merging means replacing the body with `session.followPrompt.ask(brandID:)` at the call site
-/// in `streetwApp`.
-enum NewFollows {
-    static let followed = Notification.Name("com.kern.functional.streetw.newFollow")
-
-    static func announce(_ brandID: UUID, scope: ProfileScope) {
-        NotificationCenter.default.post(
-            name: followed,
-            object: nil,
-            userInfo: ["brandID": brandID, "home": scope.home as Any]
-        )
     }
 }

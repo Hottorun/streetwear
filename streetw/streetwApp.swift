@@ -115,6 +115,7 @@ struct streetwApp: App {
                 .environment(session.collection)
                 .environment(you)
                 .environment(session.hints)
+                .environment(session.followPrompt)
                 .modelContainer(session.container)
                 .task {
                     await DevSeed.runIfRequested(in: session.container.mainContext)
@@ -195,7 +196,7 @@ struct streetwApp: App {
                     // A board named in the sheet now exists, so the next sheet offers it.
                     ShareContextWriter.publish(session)
                     // "Follow this shop" from the sheet: the catalogue first, else a site check
-                    // watched until it is ready; then the follow-filter question, through its seam.
+                    // watched until it is ready; then the follow-filter question (`FollowFilterPrompt`).
                     await ShareFollows.process(
                         scope: session.scope,
                         context: context,
@@ -204,7 +205,7 @@ struct streetwApp: App {
                         settings: settings,
                         sizes: session.sizes,
                         questions: questions,
-                        announce: { NewFollows.announce($0, scope: session.scope) }
+                        announce: { session.followPrompt.ask(brandID: $0) }
                     )
                     // After the inbox, never before it: a share that just arrived is what
                     // somebody is waiting on, and the repair queue is a backlog nobody
