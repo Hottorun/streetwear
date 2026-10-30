@@ -992,8 +992,13 @@ read **once per product** on the server and sent on the wire. The phone's Vision
   leaves the reading unsettled with its best answer so far, asked again at one hour, then four,
   sixteen and sixty-four, and settled as it stands on the fifth. `POST /admin/readings?batches=`
   runs it by hand and says why when it cannot. **Pace, measured** on this Mac (sidecar on 4
-  threads, renditions): the first 160 products in 44 s with 99 extra photographs;
-  PACE_PLACEHOLDER. Railway's 2 vCPU should be expected at about half that.
+  threads, renditions): the first 160 products in 44 s with 99 extra photographs; then 3,305 of
+  the 10,043 in about 40 minutes (with builds competing), at 1.0–2.4 products a second depending on the shop — STAUD and
+  Drake's, whose leads are models or lifestyle shots, cost five photographs a product, Colorful
+  Standard and Aimé Leon Dore none. Of those 3,305, 564 got a shot past the lead (139 of Drake's,
+  254 of Stüssy's, 153 of STAUD's) and 328 none, 283 of them STAUD's on-model galleries. A whole
+  10,000-product catalogue is therefore about two hours here, and should be expected to take
+  twice that on Railway's 2 vCPU — once; afterwards it is only new products.
 - **On the wire**: `FeedItem.productShotIndex` and `.styleWords`, `DiscoverCard` the same (search
   hits are `DiscoverCard`s), optional and ignored by older apps; `readShotIndex` drops an index
   the gallery no longer reaches. **`POST /v1/products/readings`** answers for products the phone
