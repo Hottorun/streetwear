@@ -352,7 +352,7 @@ enum ProductSearch {
 
         let rows = try await sql.raw("""
             SELECT id, brand_id, title, product_type, tags, price_amount, published_at, is_available,
-                   image_urls, link_url
+                   image_urls, link_url, style_words
             FROM products WHERE id IN (\(binds: ids))
             """).all()
         return try rows.compactMap { row in
@@ -387,6 +387,7 @@ enum ProductSearch {
                     productType: productType,
                     tags: tags,
                     colourways: colourways,
+                    styleWords: try row.decode(column: "style_words", as: [String]?.self) ?? [],
                     price: try row.decode(column: "price_amount", as: Double?.self),
                     publishedAt: try row.decode(column: "published_at", as: Date.self),
                     isAvailable: own.isEmpty

@@ -215,6 +215,16 @@ enum ImageTagger {
         saves.count { $0.update.map(isDue) == true }
     }
 
+    /// The server's product shot, loaded — the lead itself when that is the shot — or nil when
+    /// there is none to use.
+    private static func serverShot(of update: BrandUpdate, lead: ProductShot.Choice) async -> ProductShot.Choice? {
+        guard let string = update.serverShotURLString, update.imageURLStrings.contains(string),
+              let url = URL(string: string) else { return nil }
+        if url == lead.url { return lead }
+        guard case .image(let image) = await load(url) else { return nil }
+        return ProductShot.Choice(url: url, image: image)
+    }
+
     /// One batch. Returns how many were resolved.
     private static func analyzeBatch(_ pending: [BrandUpdate], in context: ModelContext) async -> Int {
         guard !pending.isEmpty else { return 0 }
@@ -293,13 +303,25 @@ enum ImageTagger {
             // a shirt, and the dominant colour came off a lookbook background. See
             // `ProductShot`. `analyzedImageURL` is still stamped with the **lead** URL
             // below, because that field's job is to notice the gallery being replaced.
-            let shot = await ProductShot.choose(
-                first: ProductShot.Choice(url: url, image: lead),
-                others: Array(update.imageURLs.dropFirst()),
-                load: { candidate in
-                    if case .image(let image) = await load(candidate) { image } else { nil }
-                }
-            )
+            //
+            // **The server's product shot first**, when it read one (`serverShotURLString`):
+            // it looked at every phone's photographs once, before anybody saved this, and it
+            // answers in the Simulator where Vision does not. Vision's walk is the fallback —
+            // for a product the server has not read, found no shot in, or whose shot will not
+            // load here.
+            let serverShot = await serverShot(of: update, lead: ProductShot.Choice(url: url, image: lead))
+            let shot: ProductShot.Choice
+            if let serverShot {
+                shot = serverShot
+            } else {
+                shot = await ProductShot.choose(
+                    first: ProductShot.Choice(url: url, image: lead),
+                    others: Array(update.imageURLs.dropFirst()),
+                    load: { candidate in
+                        if case .image(let image) = await load(candidate) { image } else { nil }
+                    }
+                )
+            }
             let image = shot.image
             update.packshotURLString = shot.url.absoluteString
 

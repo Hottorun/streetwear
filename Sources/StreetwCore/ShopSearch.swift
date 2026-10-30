@@ -49,6 +49,9 @@ public struct ShopListing: Sendable, Hashable, Identifiable {
     /// What `ImageTagger` measured, canonical. Usually empty: it only reads saved photographs.
     public var measuredColours: [String]
     public var visionCategories: [String]
+    /// The server's style words for it (`StyleWords`), read once off its photographs. Matched at a
+    /// tag's weight: like a tag, it is a filing, not the garment's name.
+    public var styleWords: [String]
     public var slot: GarmentSlot
     public var price: Double?
     public var publishedAt: Date
@@ -79,6 +82,7 @@ public struct ShopListing: Sendable, Hashable, Identifiable {
         colourways: [String] = [],
         measuredColours: [String] = [],
         visionCategories: [String] = [],
+        styleWords: [String] = [],
         slot: GarmentSlot? = nil,
         price: Double? = nil,
         publishedAt: Date = Date(timeIntervalSince1970: 0),
@@ -96,6 +100,7 @@ public struct ShopListing: Sendable, Hashable, Identifiable {
         self.colourways = colourways
         self.measuredColours = measuredColours
         self.visionCategories = visionCategories
+        self.styleWords = styleWords
         self.slot = slot ?? GarmentClassifier.classify(
             title: title,
             productType: productType,
@@ -168,6 +173,7 @@ public struct ShopIndex: Sendable {
             }
             note(listing.brandName, as: .brand)
             listing.tags.forEach { note($0, as: .tag) }
+            listing.styleWords.forEach { note($0, as: .tag) }
             listing.colourways.forEach { note($0, as: .colourway) }
             if let type = listing.productType { note(type, as: .type) }
             note(listing.title, as: .title)

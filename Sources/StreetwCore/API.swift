@@ -898,6 +898,16 @@ public struct FeedItem: Codable, Sendable, Hashable, Identifiable {
     /// read while AI was off, and from a server that predates them; ignored by older apps.
     public var saleEndsAt: Date?
     public var saleTerms: String?
+    /// Which of `imageURLs` is the clean product shot — the garment on its own, nobody wearing
+    /// it — as the server read it once per product (Phase 5, `ProductReading`). Nil when the
+    /// product has not been read, when no photograph is one, and from a server that predates
+    /// it. The feed itself keeps leading with the brand's first photograph; this is for the
+    /// wall's cover and for what the phone measures. See `ProductPhotoReading`.
+    public var productShotIndex: Int?
+    /// A few words from `StyleWords.vocabulary` the same reading found in the photograph
+    /// ("workwear", "minimal"). Nil when the product has not been read; empty when it was and
+    /// nothing was clear enough to say.
+    public var styleWords: [String]?
 
     public var id: UUID { eventID }
 
@@ -946,7 +956,9 @@ public struct FeedItem: Codable, Sendable, Hashable, Identifiable {
         productExternalID: String? = nil,
         memberExternalIDs: [String]? = nil,
         saleEndsAt: Date? = nil,
-        saleTerms: String? = nil
+        saleTerms: String? = nil,
+        productShotIndex: Int? = nil,
+        styleWords: [String]? = nil
     ) {
         self.eventID = eventID
         self.kind = kind
@@ -976,6 +988,8 @@ public struct FeedItem: Codable, Sendable, Hashable, Identifiable {
         self.memberExternalIDs = memberExternalIDs
         self.saleEndsAt = saleEndsAt
         self.saleTerms = saleTerms
+        self.productShotIndex = productShotIndex
+        self.styleWords = styleWords
     }
 }
 
@@ -1136,6 +1150,10 @@ public struct DiscoverCard: Codable, Sendable, Hashable, Identifiable {
     /// own saves — which never leave the device. Optional: a brand too new to have been
     /// vectorised is still worth showing.
     public var vector: BrandVector?
+    /// The server's reading of the photographs, as `FeedItem.productShotIndex` and
+    /// `FeedItem.styleWords`. Optional, and ignored by older apps.
+    public var productShotIndex: Int?
+    public var styleWords: [String]?
 
     /// The product key, not the brand's. Two cards from one brand are two rows.
     public var id: String { productExternalID }
@@ -1172,7 +1190,9 @@ public struct DiscoverCard: Codable, Sendable, Hashable, Identifiable {
         variants: [VariantInfo]? = nil,
         publishedAt: Date,
         spread: [String] = [],
-        vector: BrandVector? = nil
+        vector: BrandVector? = nil,
+        productShotIndex: Int? = nil,
+        styleWords: [String]? = nil
     ) {
         self.productExternalID = productExternalID
         self.brand = brand
@@ -1195,6 +1215,8 @@ public struct DiscoverCard: Codable, Sendable, Hashable, Identifiable {
         self.publishedAt = publishedAt
         self.spread = spread
         self.vector = vector
+        self.productShotIndex = productShotIndex
+        self.styleWords = styleWords
     }
 }
 

@@ -352,6 +352,11 @@ struct StreetwAPI: Sendable {
 
     // MARK: AI — see `docs/ai.md`
 
+    /// The server's reading of the photographs for products this phone holds.
+    func productReadings(_ body: ProductReadingsRequest) async throws -> ProductReadingsResponse {
+        try await send(path: "v1/products/readings", method: "POST", body: body)
+    }
+
     func aiStatus() async throws -> AIStatus {
         try await send(path: "v1/ai", method: "GET", body: Optional<Never>.none)
     }

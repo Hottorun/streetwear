@@ -251,12 +251,20 @@ never a reader's action. Off entirely when AI is off. `AIBackgroundReading`.
   over the row exactly as a structured page is; a URL only the page could confirm
   (`PendingAnnouncement.confirm`) needs a price as well. Never a baseline's rows, never a
   watched re-read.
+- **Product photographs, only when the owner switches it on** (`PRODUCT_READING=haiku`, Phase 5,
+  `CreditAction.productReading`). The product shot and style words are read by FashionSigLIP
+  through the embedding sidecar by default; this sends the first six photographs, as 400 px
+  renditions by URL, to the fast model in one call instead (`readProductPhotos`, tool
+  `read_photos`: a photograph number, nought for none, and style words held to
+  `StyleWords.vocabulary`). Estimated, not yet measured, at about $0.002 a product (six 400 px
+  photographs are some 1,300 input tokens) — so roughly five hundred a day under the default cap — and switching method reads the catalogue again. The comparison that decides it
+  is `Server/ReadingEval`; see `docs/server.md` (*The product photograph and style words*).
 
 ## Privacy
 
 Every action is something the reader asked for, about what they chose to send, except the
-pick sentence (a short description and an id) and the background reading (storefront pages,
-about nobody). No prompt, answer, photograph or typed text is stored or logged on our server:
+pick sentence (a short description and an id) and the background reading (storefront pages and
+product photographs, about nobody). No prompt, answer, photograph or typed text is stored or logged on our server:
 Vapor's route log line is the method and the path, every body here is a POST, and errors carry
 statuses and error types only. `ai_costs` keeps numbers only; the two texts stored are a pick's
 sentence (keyed by a hash, naming nobody) and a sale's end date and fine print (about a shop).

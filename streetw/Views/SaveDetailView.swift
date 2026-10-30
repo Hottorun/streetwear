@@ -340,6 +340,12 @@ struct SaveDetailView: View {
                 }
                 Spacer(minLength: 0)
             }
+
+            // The server's style words for it, read off its photographs — printed because Shop's
+            // search matches them, and a word that finds a garment should be visible on it.
+            if let words = update?.styleWords, !words.isEmpty {
+                DataLabel(text: (["STYLE"] + words).joined(separator: " · ").uppercased(), size: 10)
+            }
         }
     }
 

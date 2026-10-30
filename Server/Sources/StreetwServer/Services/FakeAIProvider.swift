@@ -130,4 +130,13 @@ struct FakeAIProvider: AIProvider {
             sizes: [.init(size: "S", available: false), .init(size: "M", available: true)]
         ), costs: cost(.pageReading))
     }
+
+    /// The first photograph whose address does not say `person`, and whichever of the title's
+    /// words are style words.
+    func readProductPhotos(imageURLs: [URL], title: String) async throws -> AIAnswer<AIPhotoReading> {
+        AIAnswer(value: AIPhotoReading(
+            productShot: imageURLs.firstIndex { !$0.lastPathComponent.contains("person") },
+            styleWords: StyleWords.clean(ShopText.tokens(title))
+        ), costs: cost(.productReading))
+    }
 }

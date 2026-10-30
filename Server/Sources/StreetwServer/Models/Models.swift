@@ -320,6 +320,12 @@ final class ProductModel: Model, @unchecked Sendable {
     /// When a second complete scan in a row failed to find it: the shop no longer lists it.
     /// Retention counts from here (`Reaper`). Cleared by any read that sees it again.
     @OptionalField(key: "unlisted_at") var unlistedAt: Date?
+    /// Which of `imageURLs` is the clean product shot, as `ProductReading` read it — nil before
+    /// it has, and when no photograph is one. See `AddProductReading`.
+    @OptionalField(key: "shot_index") var shotIndex: Int?
+    /// The style words the same reading found (`StyleWords`): nil before it has read the
+    /// product, empty when it did and nothing was clear.
+    @OptionalField(key: "style_words") var styleWords: [String]?
 
     @Children(for: \.$product) var variants: [VariantModel]
 

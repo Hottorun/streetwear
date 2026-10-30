@@ -887,9 +887,21 @@ set on this service.
   The scan's "find this" (Phase 5, `AIScanSimilar`) sends the reader's photograph to the
   sidecar's `POST /embed/photo` (`EmbeddingProvider.embed(photo:)`) and compares it with every
   product's *image* vector (`SemanticIndex.nearest(column: .image)`), falling back to its words
-  against text vectors. Each column has its own HNSW index per model (`ensureIndex`); the image
-  one is new in Phase 5 and is built by the first backfill batch after the deploy — a one-off
-  `CREATE INDEX` that reads are not blocked by.
+  against text vectors. **The image vector it compares is the clean product shot's where the
+  reading found one past the lead** — `COALESCE(shot_embedding, image_embedding)`
+  (`Column.expression`, *The product photograph and style words* below) — because a reader's
+  photograph of a jacket is a garment on its own, and a lookbook lead put somebody's jeans first.
+  Each column has its own HNSW index per model (`ensureIndex`); the image one, on that
+  expression, is new in Phase 5 and is built by the first backfill batch after the deploy — a
+  one-off `CREATE INDEX` that reads are not blocked by.
+- **The sidecar is sent a 400 px rendition, never the original** (`SemanticIndex.rendition`,
+  `ImageRendition`; Shopify's CDN takes `width`, an unknown host is sent untouched). The model
+  reads 224 px, and fetching 2,000–3,000 px originals was most of a batch: measured on 48 lead
+  photographs each from Billionaire Boys Club, Stüssy and STAUD, originals ran at 0.87 a second
+  with 7 timeouts, renditions at 4.2 a second with none. `image_url` still records the stored
+  address, which is what the due query compares, and nothing is re-embedded: on the 203 products
+  of `Server/ReadingEval` a rendition's vector sits at a median cosine of 0.998 from the
+  original's.
 - **A photograph that cannot be read costs its product only the image vector.** The sidecar
   answers `null` for it with a reason and a `transient` flag, which the provider turns into
   `.gone` (a 4xx, a 200 that will not decode, a refused address) or `.unavailable` (a timeout,
@@ -980,6 +992,118 @@ admits 9, of which 8 are right (89 %)**, with nothing above 0.68. So 0.66 is the
 is mostly right, and the gate is what keeps the other 84 % off the page; the ungated row above
 is what happens without it. Nine is a small sample — re-run `thresholds` on a bigger catalogue,
 and on any new model, before moving it.
+
+## The product photograph and style words
+
+Phase 5, `ProductReading.swift`. Which of a product's photographs is the clean product shot —
+the garment on its own, nobody wearing it — and up to two style words from a fixed vocabulary,
+read **once per product** on the server and sent on the wire. The phone's Vision check
+(`ProductShot`) is now the fallback; `docs/collection.md` (*The cover*) has the phone's half.
+
+- **FashionSigLIP zero-shot is the method** (`ZeroShot`), the owner's rule: Claude only if it
+  clearly reads the photographs better, which is the comparison below. A photograph's score is
+  its best similarity to five product-shot prompts ("a product photo of a garment on a plain
+  background", "a flat lay photo of clothing", …) minus its best to six others ("a person wearing
+  clothes", "a fashion model posing", … and "a close-up photo of fabric texture", without which a
+  model-first gallery handed its cover to the swatch). A product shot leads by more than
+  `shotMargin`, 0.02 — 99.5 % of the labelled product shots clear it, and it is what turned
+  STAUD's on-model leads (0.01–0.016) from "product shot" into "look further". The prompts are
+  embedded once per model through the sidecar's own `/embed/text`; **the sidecar is unchanged** —
+  every comparison is a dot product in Swift.
+- **The other photographs are embedded only when the first looks like a person.** The lead's
+  vector is the one `EmbeddingBackfill` already stored, so most products (170 of the eval's 203)
+  are answered with no request at all. Otherwise up to five more, as 400 px renditions, **four
+  to a request with a 250 ms pause after each**, stopping at the first request that holds a
+  shot: the sidecar takes requests one at a time, and a search's query embedding waits behind
+  whichever is in. Measured while the reading ran flat out: single query embeddings answered in
+  0.02–0.10 s, far inside their 1.5 s.
+- **Style words** (`StyleWords.vocabulary` in the core: workwear, minimal, preppy, streetwear,
+  tailoring, y2k, sporty, outdoor, romantic, vintage, skate, western, boho, grunge, graphic —
+  single tokens, so a search can match them whole) are scored as 0.7 × the shot's similarity to
+  the word's prompt (a few phrases averaged, "a photo of rugged canvas work jacket clothing") plus
+  0.3 × the product's text vector's, **minus the word's mean over the catalogue**, and at most two
+  above 0.01 are given. The mean is the dot product with the average stored photograph and text
+  vector — pgvector's `avg()` over up to 2,000 rows, one query, refreshed daily; nothing is read
+  until there are 200 photographs to average (`minimumCalibration`). Without the calibration a
+  prompt's raw similarity says as much about the prompt as the photograph.
+- **Stored once per product.** `products.shot_index` (nil when none is one) and
+  `products.style_words` (`TEXT[]`, nil = not read, empty = read and nothing clear), GIN-indexed
+  for search; `AddProductReading`. The ledger is `product_readings` (Postgres only): the method
+  key (method, `ZeroShot.version`, model id), an md5 of the first six photographs read, attempts,
+  `retry_at` and `gone` — so a restart resumes, a new gallery or model or version reads again,
+  and nothing on `products` changes unless the answer did. A shot past the lead also writes its
+  vector to `product_embeddings.shot_embedding` (added at boot by `SemanticIndex.prepare`), which
+  photo search compares instead of the lead.
+- **The backfill** (`ProductReadingBackfill`) runs behind the embedding backfill, sixteen products
+  a batch, where the poller runs and only where `semanticSearch` is on — idle, and said at boot,
+  when the sidecar is off. A product is due once its lead photograph's embedding has settled
+  (a vector, or written off). A photograph the sidecar cannot read follows `EmbeddingBackfill`'s
+  rules: `.gone` goes into `gone` and is never asked again for this reading; `.unavailable`
+  leaves the reading unsettled with its best answer so far, asked again at one hour, then four,
+  sixteen and sixty-four, and settled as it stands on the fifth. `POST /admin/readings?batches=`
+  runs it by hand and says why when it cannot. **Pace, measured** on this Mac (sidecar on 4
+  threads, renditions): the first 160 products in 44 s with 99 extra photographs; then 3,305 of
+  the 10,043 in about 40 minutes (with builds competing), at 1.0–2.4 products a second depending on the shop — STAUD and
+  Drake's, whose leads are models or lifestyle shots, cost five photographs a product, Colorful
+  Standard and Aimé Leon Dore none. Of those 3,305, 564 got a shot past the lead (139 of Drake's,
+  254 of Stüssy's, 153 of STAUD's) and 328 none, 283 of them STAUD's on-model galleries. A whole
+  10,000-product catalogue is therefore about two hours here, and should be expected to take
+  twice that on Railway's 2 vCPU — once; afterwards it is only new products.
+- **On the wire**: `FeedItem.productShotIndex` and `.styleWords`, `DiscoverCard` the same (search
+  hits are `DiscoverCard`s), optional and ignored by older apps; `readShotIndex` drops an index
+  the gallery no longer reaches. **`POST /v1/products/readings`** answers for products the phone
+  already holds (its saves, whose feed rows were sent before the reading) — at most a hundred,
+  keyed by brand and external id or the external id alone, only those read, the shot as its URL.
+- **Search matches style words like tags.** `ShopListing.styleWords` is noted at a tag's weight in
+  `ShopIndex` (so "workwear" finds a canvas jacket, and a title that says workwear still ranks
+  first), `PostgresTextIndex` adds `p.style_words && ARRAY[…]` to the candidates and to `existing`
+  for the words that are style words, and `PortableTextIndex` a `LIKE`. The phone stores the words
+  and `ShopCatalogue` reads them, so parity holds. The ranking is otherwise untouched.
+- **The Haiku switch.** `PRODUCT_READING=haiku` reads with the fast model instead
+  (`AIProvider.readProductPhotos`, `docs/ai.md`), owner-paid as `product_reading` under
+  `AI_BACKGROUND_DAILY_CAP_MICROS`, checked before every product; off by default, and switching
+  method reads the catalogue again.
+
+### The reading eval
+
+`Server/ReadingEval/labelled.json`: 203 products from the search eval's seven shops (29 each,
+chosen by a hash of the id among products with two or more photographs), their first six
+photographs, and labels made by hand on 2026-10-30 by looking at every photograph — every
+acceptable product-shot index (null when none is: lookbook pages, galleries on models all the way
+down) and every plausible style word. 33 of the 203 do not lead with a product shot. The harness
+is `ReadingEvalTests`, which runs the shipped code against the network and writes
+`results-<method>.json` beside the labels, printing the other method's last run for comparison.
+From `Server/` in a checkout named `streetw`, with `DEVELOPER_DIR` set:
+
+```bash
+STREETW_READING_EVAL=siglip EMBEDDING_URL=http://127.0.0.1:8080 EMBEDDING_TOKEN=… swift test --filter ReadingEval
+STREETW_READING_EVAL=haiku ANTHROPIC_API_KEY=… swift test --filter ReadingEval   # AI_MODEL_FAST= to try another
+```
+
+The Haiku run needs nothing but the key — no database, no server, no sidecar — and is estimated
+at about forty cents. **Measured on 2026-10-30, FashionSigLIP v1:**
+
+| | SigLIP zero-shot | Haiku |
+|---|---|---|
+| product shot right | **196/203 = 0.966** | not yet run (no key on the build machine) |
+| …where the lead is not one | 28/33 = 0.848 | |
+| lead photograph judged right | 199/203 = 0.980 | |
+| style words right (precision) | 177/273 = 0.648 | |
+| products with a right word | 129/199 = 0.648 | |
+| products given any word | 158/203 = 0.778 | |
+| photographs embedded beyond the leads | 136 | |
+| time / cost | 53 s on a Mac / nothing | |
+
+For scale: always answering "streetwear" would be right on 35 % of products, so the words are
+about twice the base rate, and the misses are honest ones (a puffer read as grunge). **The prompts,
+the margin, the weights and the bar were tuned on these same labels**, which flatters SigLIP: the
+shot margin is a round number that clears 99.5 % of product shots, and the richer style prompts
+moved top-two precision from 0.61 to 0.64, so expect a few points less on a fresh set. Haiku gets
+no tuning beyond its prompt — label a second set before switching on a small margin. The shot
+misses (seven): a lifestyle lead of loafers on feet that scored just over the bar (0.021), a
+lookbook page read as a product, two galleries on models all the way down where a later on-model
+photograph cleared the bar (STAUD's silk top, Stüssy's bib), a close-up of board shorts on a
+body, sunglasses seen side-on, and a Siouxsie Sioux tee whose printed face read as a person.
 
 ## AI
 

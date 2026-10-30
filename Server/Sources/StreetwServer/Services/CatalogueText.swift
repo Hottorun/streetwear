@@ -162,6 +162,15 @@ struct PostgresTextIndex: CatalogueTextIndex {
         words.map { "(" + tsquery($0) + ")" }.joined(separator: " | ")
     }
 
+    /// The word's forms that are style words, as a `text[]` to overlap `products.style_words`
+    /// with (its GIN index, `AddProductReading`) — nil when the word is not one, so a query
+    /// with no style word in it reads exactly as it did before.
+    static func styleArray(_ word: IndexWord) -> SQLQueryString? {
+        let styles = word.lexemes.filter(StyleWords.vocabulary.contains)
+        guard !styles.isEmpty else { return nil }
+        return "ARRAY[\(binds: styles)]::text[]"
+    }
+
     func candidates(
         for words: [IndexWord],
         narrowing: SQLQueryString?,
@@ -203,6 +212,7 @@ struct PostgresTextIndex: CatalogueTextIndex {
         var joins: [SQLQueryString] = []
         var anyColour: [SQLQueryString] = []
         var hits: [SQLQueryString] = []
+        var anyStyle: [SQLQueryString] = []
         var brands = Set<UUID>()
         for (index, word) in words.enumerated() {
             let column = "c\(index)"
@@ -216,11 +226,16 @@ struct PostgresTextIndex: CatalogueTextIndex {
                 "p.search @@ to_tsquery('simple', \(bind: Self.tsquery(word)))",
                 "\(ident: column).product_id IS NOT NULL"
             ]
+            if let styles = Self.styleArray(word) {
+                carried.append("p.style_words && \(styles)")
+                anyStyle.append("p.style_words && \(styles)")
+            }
             if !word.brands.isEmpty { carried.append("p.brand_id IN (\(binds: word.brands))") }
             hits.append("(" + carried.joined(separator: " OR ") + ")::int")
             brands.formUnion(word.brands)
         }
         let byBrand: SQLQueryString = brands.isEmpty ? "" : " OR p.brand_id IN (\(binds: Array(brands)))"
+        let byStyle: SQLQueryString = anyStyle.isEmpty ? "" : " OR " + anyStyle.joined(separator: " OR ")
 
         let rows = try await sql.raw("""
             WITH \(colours.joined(separator: ", "))
@@ -229,7 +244,7 @@ struct PostgresTextIndex: CatalogueTextIndex {
                    \(hits.joined(separator: " + ")) AS hits
             FROM products p \(joins.joined(separator: " "))
             WHERE \(scope.predicate)\(extra)\(excluded)
-              AND (p.search @@ to_tsquery('simple', \(bind: any)) OR \(anyColour.joined(separator: " OR "))\(byBrand))
+              AND (p.search @@ to_tsquery('simple', \(bind: any)) OR \(anyColour.joined(separator: " OR "))\(byBrand)\(byStyle))
             ORDER BY hits DESC, rank DESC, p.published_at DESC, p.id
             LIMIT \(literal: limit)
             """).all()
@@ -256,6 +271,9 @@ struct PostgresTextIndex: CatalogueTextIndex {
             }
             if !word.brands.isEmpty {
                 found.append("EXISTS (SELECT 1 FROM products p WHERE \(scope.predicate) AND p.brand_id IN (\(binds: word.brands)))")
+            }
+            if let styles = Self.styleArray(word) {
+                found.append("EXISTS (SELECT 1 FROM products p WHERE \(scope.predicate) AND p.style_words && \(styles))")
             }
             let expression: SQLQueryString = found.isEmpty ? "false" : found.joined(separator: " OR ")
             columns.append("(\(expression)) AS \(ident: "k\(index)")")
@@ -308,7 +326,7 @@ struct PortableTextIndex: CatalogueTextIndex {
         let pattern = "%\(lexeme)%"
         return """
             (lower(p.title) LIKE \(bind: pattern) OR lower(coalesce(p.product_type, '')) LIKE \(bind: pattern) \
-            OR lower(p.tags) LIKE \(bind: pattern) \
+            OR lower(p.tags) LIKE \(bind: pattern) OR lower(coalesce(p.style_words, '')) LIKE \(bind: pattern) \
             OR EXISTS (SELECT 1 FROM variants v WHERE v.product_id = p.id AND lower(coalesce(v.color, '')) LIKE \(bind: pattern)))
             """
     }

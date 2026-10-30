@@ -97,6 +97,15 @@ struct AIPageReading: Sendable, Equatable {
     var sizes: [Size]
 }
 
+/// What a model read off one product's photographs — the alternative to the zero-shot reader
+/// (`ProductReading`), off unless `PRODUCT_READING=haiku`.
+struct AIPhotoReading: Sendable, Equatable {
+    /// Zero-based, into the photographs sent; nil when none is a clean product shot.
+    var productShot: Int?
+    /// Already held to `StyleWords.vocabulary` and `StyleWords.maximum`.
+    var styleWords: [String]
+}
+
 protocol AIProvider: Sendable {
     /// Whether "Show me more" can be offered.
     var supportsWebSearch: Bool { get }
@@ -118,6 +127,9 @@ protocol AIProvider: Sendable {
     func readSaleBanner(message: String, brand: String, today: Date) async throws -> AIAnswer<AISaleReading>
     /// Nil when the page is not one product.
     func readProductPage(text: String, url: URL) async throws -> AIAnswer<AIPageReading?>
+    /// Which of a product's photographs (small renditions, in the shop's order) is the clean
+    /// product shot, and its style words. Owner-paid background work.
+    func readProductPhotos(imageURLs: [URL], title: String) async throws -> AIAnswer<AIPhotoReading>
 }
 
 // MARK: - Prices

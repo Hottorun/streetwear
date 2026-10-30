@@ -811,6 +811,44 @@ final class RemoteSync {
     /// follow list arrives first, so this is a brand being unfollowed), and a duplicate of a
     /// local watch the create call never confirmed — that one is adopted instead, by product,
     /// size and colour, which is the identity the server's unique constraint uses.
+    /// When this session last asked for readings, so a save the server has not read yet costs one
+    /// request an hour rather than one a sync. In memory: a pause, not a verdict.
+    private var readingsAskedAt: Date?
+
+    /// The server's reading of the photographs (`POST /v1/products/readings`) for what is saved
+    /// here and has not got one — or had it long ago, since a new gallery is read again.
+    ///
+    /// **A feed row is sent before the server reads its photographs** — the reading runs behind
+    /// the embedding backfill, minutes after a poll — and the merge never revisits a row it holds,
+    /// so without this the wall's cover would only ever be the server's product shot for things
+    /// saved from Discover or a search. Saves only: a cover is the wall's, and the feed and
+    /// Discover keep the brand's first photograph by design.
+    private func mergeReadings(from api: StreetwAPI, now: Date = Date()) async {
+        if let asked = readingsAskedAt, now.timeIntervalSince(asked) < 3_600 { return }
+        let stale = now.addingTimeInterval(-14 * 86_400)
+        let saved = (try? context.fetch(FetchDescriptor<BrandUpdate>(predicate: #Predicate { !$0.saves.isEmpty }))) ?? []
+        var rows: [ProductReadingsRequest.Item: [BrandUpdate]] = [:]
+        for update in saved where update.hasPhotograph && (update.readingCheckedAt.map { $0 < stale } ?? true) {
+            // The catalogue's key: a feed row's product, or a Discover save's own key.
+            guard let key = update.productExternalID ?? (update.externalID.hasPrefix("event:") ? nil : update.externalID) else { continue }
+            rows[ProductReadingsRequest.Item(brandID: update.brand?.remoteID, externalID: key), default: []].append(update)
+            if rows.count == ProductReadingsRequest.limit { break }
+        }
+        guard !rows.isEmpty else { return }
+        readingsAskedAt = now
+        do {
+            let answer = try await api.productReadings(ProductReadingsRequest(items: Array(rows.keys)))
+            for reading in answer.readings {
+                for update in rows[ProductReadingsRequest.Item(brandID: reading.brandID, externalID: reading.externalID)] ?? [] {
+                    update.adoptReading(shotURL: reading.productShotURL, styleWords: reading.styleWords, at: now)
+                }
+            }
+        } catch {
+            // An older server has no such route; nothing here is worth failing a sync for.
+            Self.log.info("readings not fetched: \(error.localizedDescription)")
+        }
+    }
+
     private func mergeWatches() async {
         guard let api else { return }
         for id in pendingWatchDeletes {
@@ -1007,6 +1045,7 @@ final class RemoteSync {
                 Self.log.info("feed read stopped after \(outcome.pagesRead) page(s): \(interruption.localizedDescription)")
             }
             await mergeWatches()
+            await mergeReadings(from: api)
             try? context.save()
 
             // The batch that just landed carries the server's classifier revision, which
@@ -1327,6 +1366,13 @@ final class RemoteSync {
             // sends nil, and the app degrades exactly as it did before rather than
             // storing an empty list that reads as "no sizes".
             update.variants = item.variants ?? []
+            // What the server read off the photographs, when it already has: the product shot
+            // the wall's cover leads with, and the style words search matches. Usually nil on
+            // a fresh event — `readings` asks again for the ones that are saved.
+            update.adoptReading(
+                shotURL: ProductShotIndex.url(in: item.imageURLs, at: item.productShotIndex),
+                styleWords: item.styleWords
+            )
             // Whether this is clothing at all, classified at write time rather than per
             // render — the same argument `refreshGender` makes one line further down every
             // other insert path. See `BrandUpdate.isMerchandise`.
@@ -1439,6 +1485,13 @@ final class RemoteSync {
             update.originalPriceAmount = original
             update.originalPriceText = item.originalPriceText
             changed = true
+        }
+        // A row stored before the server read its photographs, sent again now that it has.
+        if update.readingCheckedAt == nil, item.styleWords != nil {
+            update.adoptReading(
+                shotURL: ProductShotIndex.url(in: item.imageURLs, at: item.productShotIndex),
+                styleWords: item.styleWords
+            )
         }
         guard changed else { return }
         if let gender = item.gender {

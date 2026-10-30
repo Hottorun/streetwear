@@ -9,3 +9,4 @@ Server/.swiftpm/
 xcuserdata/
 DerivedData/
 Server/SearchEval/catalogue.json
+__pycache__/
