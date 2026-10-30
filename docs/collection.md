@@ -245,7 +245,10 @@ Part of the streetw guidance set; see `CLAUDE.md` for the index and the build ru
     two weeks, at most a hundred a request and one request every ten minutes. **Feed rows, saved
     or not — never saves alone**: a list of only the saved products would tell the server what
     somebody saved, which never leaves the phone, while every feed row is one the server sent.
-    A save from Discover or a search takes the card's reading at once (`DiscoverSave`).
+    A feed row is one keyed `event:`; `productExternalID` alone is not the test, because a share
+    the catalogue answered carries one too, and asking about it sent the server a product saved
+    from a shop it had never heard of. A save from Discover or a search takes the card's reading
+    at once (`DiscoverSave`).
   - **`adoptReading` makes the analysis due again** when the server's shot is not the frame the
     phone measured: it clears `analyzedImageURL`, the trigger `ImageTagger` already honours, and
     `ImageTagger` then measures the server's shot first (`serverShot`) and walks the gallery with

@@ -827,6 +827,11 @@ final class RemoteSync {
     /// leaves the phone. Every row asked about here is one the server sent in the feed, newest
     /// first, so the request says nothing the server did not already know. A save from Discover
     /// has no feed row behind it and keeps the reading it arrived with.
+    ///
+    /// A feed row is one keyed `event:` — `productExternalID` alone does not say so, because a
+    /// share the catalogue answered (`SharedSaveImporter.apply`) and a Discover save carry one
+    /// too, and a shared save from a shop the catalogue lacks is the clearest case of a product
+    /// the server was never told about.
     private func mergeReadings(from api: StreetwAPI, now: Date = Date()) async {
         if let asked = readingsAskedAt, now.timeIntervalSince(asked) < 600 { return }
         let stale = now.addingTimeInterval(-14 * 86_400)
@@ -835,7 +840,7 @@ final class RemoteSync {
             sortBy: [SortDescriptor(\.publishedAt, order: .reverse)]
         )
         recent.fetchLimit = ProductReadingsRequest.limit * 6
-        let candidates = (try? context.fetch(recent)) ?? []
+        let candidates = ((try? context.fetch(recent)) ?? []).filter { $0.externalID.hasPrefix("event:") }
         var rows: [ProductReadingsRequest.Item: [BrandUpdate]] = [:]
         for update in candidates where update.hasPhotograph && (update.readingCheckedAt.map { $0 < stale } ?? true) {
             guard let key = update.productExternalID else { continue }
