@@ -42,6 +42,7 @@ struct SaveDetailView: View {
     @Environment(SizeProfileStore.self) private var sizes: SizeProfileStore
     @Environment(RemoteSync.self) private var remote: RemoteSync
     @Environment(ServerSettings.self) private var settings: ServerSettings
+    @Environment(FollowFilterPrompt.self) private var followPrompt: FollowFilterPrompt
     @Query(sort: [SortDescriptor(\Board.sortIndex), SortDescriptor(\Board.createdAt)])
     private var boards: [Board]
 
@@ -338,6 +339,12 @@ struct SaveDetailView: View {
                     }
                 }
                 Spacer(minLength: 0)
+            }
+
+            // The server's style words for it, read off its photographs — printed because Shop's
+            // search matches them, and a word that finds a garment should be visible on it.
+            if let words = update?.styleWords, !words.isEmpty {
+                DataLabel(text: (["STYLE"] + words).joined(separator: " · ").uppercased(), size: 10)
             }
         }
     }
@@ -739,6 +746,9 @@ struct SaveDetailView: View {
         if let brand = update?.brand {
             brand.followed = true
             try? context.save()
+            // Standalone, this is the follow, so it asks what to see; `followExisting` asks
+            // in server mode.
+            if !settings.isConfigured { followPrompt.ask(brandID: brand.id) }
         }
         brandDestination = nil
     }

@@ -67,6 +67,11 @@ final class RemoteSync {
     /// back on the page for a minute. A mode set after the list was asked for wins.
     private var modeChangedAt: [UUID: Date] = [:]
 
+    /// Where a new follow asks what to see from the brand (`FollowFilterPrompt`). Set by the
+    /// session that owns both; every follow this makes asks, unless its caller draws the
+    /// question itself (`asks: false`) or is a bulk follow that should not.
+    var followPrompt: FollowFilterPrompt?
+
     init(
         context: ModelContext,
         settings: ServerSettings,
@@ -213,6 +218,11 @@ final class RemoteSync {
             guard let id = brand.remoteID else { continue }
             let mode = brand.followMode
             try? await api.follow(brandID: id, mode: mode == .everything ? nil : mode)
+            // And which part of it, for the same reason: a follow narrowed to jeans restored
+            // as all of it starts waking somebody about tees they had asked not to hear of.
+            if let filter = brand.followFilter {
+                try? await api.setFollowFilter(brandID: id, mode: mode, filter: filter)
+            }
         }
     }
 
@@ -328,7 +338,10 @@ final class RemoteSync {
     /// No `name` parameter, deliberately. The catalogue is global, so the server reads a
     /// brand's name off its own storefront and ignores whatever a client sends — see the
     /// discover route. Passing one here would be offering a value that is thrown away.
-    func addBrand(url: String, instagram: String?, sizes: SizeProfile) async throws -> BrandDTO {
+    /// - Parameter asks: whether the follow raises "what do you want to see" (`followPrompt`).
+    ///   False for onboarding's starter pack: a dozen questions in a row is not a welcome, and
+    ///   every one of those brands can be narrowed from its page later.
+    func addBrand(url: String, instagram: String?, sizes: SizeProfile, asks: Bool = true) async throws -> BrandDTO {
         try await ensureRegistered(sizes: sizes)
         guard let api else { throw APIError.notConfigured }
 
@@ -343,6 +356,7 @@ final class RemoteSync {
             // the feed cursor is one timestamp across everything this device follows, so it
             // cannot answer "is this brand new to me".
             await catchUp(brandID: id)
+            if asks { followPrompt?.ask(brandID: id) }
         }
         return brand
     }
@@ -365,6 +379,19 @@ final class RemoteSync {
         return check
     }
 
+    /// Whether there is a server to send anything to. Standalone, nothing a share learns about
+    /// a shop leaves the phone (`CatalogueSuggestions`).
+    var isServerBacked: Bool { settings.isConfigured }
+
+    /// Tells the catalogue about a shop something was saved from, so search can recommend from
+    /// it — a catalogue-only check, which follows nothing and keeps nothing about the caller.
+    /// The origin (`https://<host>`) is the whole of what is sent. See `CatalogueSuggestions`.
+    func suggestShop(origin: String) async throws {
+        try await ensureRegistered()
+        guard let api else { throw APIError.notConfigured }
+        _ = try await api.startCheck(url: origin, catalogueOnly: true)
+    }
+
     func check(id: UUID) async throws -> BrandCheck {
         guard let api else { throw APIError.notConfigured }
         return try await api.check(id: id)
@@ -376,7 +403,9 @@ final class RemoteSync {
     /// The follow is made server-side rather than here because the second case has to work
     /// with this screen, or the whole app, closed. When it lands now, the brand is pulled in
     /// and caught up exactly as `addBrand` does.
-    func watch(check id: UUID, instagram: String?, sizes: SizeProfile) async throws -> BrandCheck {
+    /// - Parameter asks: see `addBrand`. A watch the server keeps until the check finishes is
+    ///   remembered, and asked about on the foreground that finds it a follow.
+    func watch(check id: UUID, instagram: String?, sizes: SizeProfile, asks: Bool = true) async throws -> BrandCheck {
         try await ensureRegistered(sizes: sizes)
         guard let api else { throw APIError.notConfigured }
         let check = try await api.watchCheck(id: id, instagram: instagram)
@@ -388,6 +417,9 @@ final class RemoteSync {
             mergeBrands([brand], isCompleteList: false)
             try? context.save()
             await catchUp(brandID: brandID)
+            if asks { followPrompt?.ask(brandID: brandID) }
+        } else if asks, check.status == .checking, check.isWatching {
+            followPrompt?.expect(check: check.id)
         }
         return check
     }
@@ -420,11 +452,14 @@ final class RemoteSync {
         cheaper: Bool,
         formal: Bool,
         inMySize: Bool,
+        boost: FollowedBoost? = nil,
+        meaning: Bool = false,
         cursor: String? = nil
     ) async throws -> ProductSearchResponse {
         guard let api else { throw APIError.notConfigured }
         return try await api.searchProducts(
-            text, scope: scope, cheaper: cheaper, formal: formal, inMySize: inMySize, cursor: cursor
+            text, scope: scope, cheaper: cheaper, formal: formal, inMySize: inMySize,
+            boost: boost, meaning: meaning, cursor: cursor
         )
     }
 
@@ -436,7 +471,8 @@ final class RemoteSync {
 
     /// Follows a brand the catalog already has, and pulls it straight into the local
     /// store so the UI reflects it without waiting for a full sync.
-    func followExisting(_ dto: BrandDTO, sizes: SizeProfile) async throws {
+    /// - Parameter asks: see `addBrand`.
+    func followExisting(_ dto: BrandDTO, sizes: SizeProfile, asks: Bool = true) async throws {
         try await ensureRegistered(sizes: sizes)
         guard let api, let id = dto.id else { throw APIError.notConfigured }
         try await api.follow(brandID: id)
@@ -444,13 +480,16 @@ final class RemoteSync {
         mergeBrands([dto], isCompleteList: false)
         try? context.save()
         await catchUp(brandID: id)
+        if asks { followPrompt?.ask(brandID: id) }
     }
 
-    func follow(brandID: UUID) async throws {
+    /// - Parameter asks: see `addBrand`.
+    func follow(brandID: UUID, asks: Bool = true) async throws {
         guard let api else { throw APIError.notConfigured }
         try await api.follow(brandID: brandID)
         UsageCounts.record(.brandFollowed)
         await catchUp(brandID: brandID)
+        if asks { followPrompt?.ask(brandID: brandID) }
     }
 
     // MARK: - Follow modes
@@ -476,6 +515,41 @@ final class RemoteSync {
         }
         brand.apply(mode)
         try? context.save()
+    }
+
+    /// Changes which part of a brand reaches this device — see `FollowFilter`. The same order
+    /// as the mode, for the same reason: `Notifier` reads the server's copy before it sends
+    /// anything, so a filter that changed only here would let the lock screen go on talking
+    /// about tees the feed no longer shows. Nil, or an empty filter, is *All*.
+    func setFollowFilter(_ filter: FollowFilter?, for brand: Brand) async throws {
+        if settings.isConfigured, let id = brand.remoteID {
+            guard let api else { throw APIError.notConfigured }
+            try await api.setFollowFilter(brandID: id, mode: brand.followMode, filter: filter ?? FollowFilter())
+            modeChangedAt[id] = Date()
+            guard !brand.isDeleted, brand.modelContext != nil else { return }
+        }
+        brand.apply(filter)
+        try? context.save()
+    }
+
+    /// A brand's biggest categories, for the follow dialog. The server counts the whole
+    /// catalogue it holds; standalone, or when it cannot be asked, the phone counts its own
+    /// rows — the newest few hundred per brand, which is what it has.
+    func categories(for brand: Brand) async -> BrandCategories {
+        if settings.isConfigured, let id = brand.remoteID, let api,
+           let answer = try? await api.categories(brandID: id), !answer.categories.isEmpty {
+            return answer
+        }
+        // One per garment, as the server counts products rather than events: in server mode a
+        // jacket that dropped and restocked is two rows here. `isMerchandise` is true of a gift
+        // card or a size chart, which no shelf holds.
+        var seen = Set<String>()
+        var items: [FollowFilter.Item] = []
+        for update in brand.updates where [.product, .restock, .priceDrop].contains(update.kind) && !update.isMerchandise {
+            guard seen.insert(update.productExternalID ?? update.externalID).inserted else { continue }
+            items.append(update.followItem)
+        }
+        return BrandCategories(categories: FollowCategory.biggest(in: items), products: items.count)
     }
 
     /// 1.0's per-phone mute, carried onto the server as *Quiet* — once.
@@ -737,6 +811,57 @@ final class RemoteSync {
     /// follow list arrives first, so this is a brand being unfollowed), and a duplicate of a
     /// local watch the create call never confirmed — that one is adopted instead, by product,
     /// size and colour, which is the identity the server's unique constraint uses.
+    /// When this session last asked for readings. In memory: a pause, not a verdict.
+    private var readingsAskedAt: Date?
+
+    /// The server's reading of the photographs (`POST /v1/products/readings`) for feed rows that
+    /// have not got one — or had it long ago, since a new gallery is read again.
+    ///
+    /// **A feed row is sent before the server reads its photographs** — the reading runs behind
+    /// the embedding backfill, minutes after a poll — and the merge never revisits a row it holds,
+    /// so without this the wall's cover would only ever be the server's product shot for things
+    /// saved from Discover or a search.
+    ///
+    /// **It asks about feed rows, saved or not, and never about saves alone.** Asking only for
+    /// what is saved would tell the server what somebody saved, which is the one thing that never
+    /// leaves the phone. Every row asked about here is one the server sent in the feed, newest
+    /// first, so the request says nothing the server did not already know. A save from Discover
+    /// has no feed row behind it and keeps the reading it arrived with.
+    ///
+    /// A feed row is one keyed `event:` — `productExternalID` alone does not say so, because a
+    /// share the catalogue answered (`SharedSaveImporter.apply`) and a Discover save carry one
+    /// too, and a shared save from a shop the catalogue lacks is the clearest case of a product
+    /// the server was never told about.
+    private func mergeReadings(from api: StreetwAPI, now: Date = Date()) async {
+        if let asked = readingsAskedAt, now.timeIntervalSince(asked) < 600 { return }
+        let stale = now.addingTimeInterval(-14 * 86_400)
+        var recent = FetchDescriptor<BrandUpdate>(
+            predicate: #Predicate { $0.productExternalID != nil },
+            sortBy: [SortDescriptor(\.publishedAt, order: .reverse)]
+        )
+        recent.fetchLimit = ProductReadingsRequest.limit * 6
+        let candidates = ((try? context.fetch(recent)) ?? []).filter { $0.externalID.hasPrefix("event:") }
+        var rows: [ProductReadingsRequest.Item: [BrandUpdate]] = [:]
+        for update in candidates where update.hasPhotograph && (update.readingCheckedAt.map { $0 < stale } ?? true) {
+            guard let key = update.productExternalID else { continue }
+            rows[ProductReadingsRequest.Item(brandID: update.brand?.remoteID, externalID: key), default: []].append(update)
+            if rows.count == ProductReadingsRequest.limit { break }
+        }
+        guard !rows.isEmpty else { return }
+        readingsAskedAt = now
+        do {
+            let answer = try await api.productReadings(ProductReadingsRequest(items: Array(rows.keys)))
+            for reading in answer.readings {
+                for update in rows[ProductReadingsRequest.Item(brandID: reading.brandID, externalID: reading.externalID)] ?? [] {
+                    update.adoptReading(shotURL: reading.productShotURL, styleWords: reading.styleWords, at: now)
+                }
+            }
+        } catch {
+            // An older server has no such route; nothing here is worth failing a sync for.
+            Self.log.info("readings not fetched: \(error.localizedDescription)")
+        }
+    }
+
     private func mergeWatches() async {
         guard let api else { return }
         for id in pendingWatchDeletes {
@@ -781,6 +906,17 @@ final class RemoteSync {
             watch.firedAt = dto.firedAt
             watch.firedSizes = dto.firedSizes
             context.insert(watch)
+        }
+
+        // A watch the server has not got, on a row that now names a catalogue product: the
+        // share sheet's "Notify me" is set at the drain, and when the catalogue read missed its
+        // cap the row was still keyed `shared:`, so the create was refused as "No such product"
+        // and the watch lived on this phone alone — where, in server mode, nothing ever
+        // re-reads the product and it could not fire. `SharedSaveImporter.repair` names the
+        // product later; this is what sends the watch again once it has. A row that never
+        // reached the catalogue is not retried: the server would refuse it the same way.
+        for watch in unconfirmed where watch.update?.productExternalID != nil {
+            await createWatch(watch)
         }
     }
 
@@ -933,6 +1069,7 @@ final class RemoteSync {
                 Self.log.info("feed read stopped after \(outcome.pagesRead) page(s): \(interruption.localizedDescription)")
             }
             await mergeWatches()
+            await mergeReadings(from: api)
             try? context.save()
 
             // The batch that just landed carries the server's classifier revision, which
@@ -1064,6 +1201,10 @@ final class RemoteSync {
                 // write.
                 if let mode = dto.followMode, !isNewerHere(id, than: listedAt) {
                     brand.apply(mode)
+                    // The filter rides on the same list and the same rule: present beside a
+                    // mode, and nil there is *All*. A server that predates filters sends none,
+                    // and holds none either — so nil is true of it too.
+                    brand.apply(dto.followFilter)
                 }
             } else {
                 let brand = Brand(
@@ -1082,6 +1223,9 @@ final class RemoteSync {
                 // A new row has no unread rows to clear, so the plain assignment is the same
                 // as `apply` here and cheaper than faulting an empty relationship.
                 brand.followModeRaw = (dto.followMode ?? .everything).rawValue
+                brand.followFilterJSON = dto.followFilter?.normalized
+                    .flatMap { try? JSONEncoder().encode($0) }
+                    .map { String(decoding: $0, as: UTF8.self) }
                 context.insert(brand)
                 byRemoteID[id] = brand
             }
@@ -1184,6 +1328,9 @@ final class RemoteSync {
             ((try? context.fetch(descriptor)) ?? []).map { ($0.externalID, $0) },
             uniquingKeysWith: { first, _ in first }
         )
+        // Each brand's follow filter, read once per merge rather than once per row: building one
+        // parses the reader's words, and a page is hundreds of rows from a handful of brands.
+        var filters: [UUID: FollowFilter.Matcher] = [:]
 
         for item in items {
             let externalID = "event:\(item.eventID.uuidString)"
@@ -1243,18 +1390,30 @@ final class RemoteSync {
             // sends nil, and the app degrades exactly as it did before rather than
             // storing an empty list that reads as "no sizes".
             update.variants = item.variants ?? []
+            // What the server read off the photographs, when it already has: the product shot
+            // the wall's cover leads with, and the style words search matches. Usually nil on
+            // a fresh event — `mergeReadings` asks again for the newest feed rows, saved or not.
+            update.adoptReading(
+                shotURL: ProductShotIndex.url(in: item.imageURLs, at: item.productShotIndex),
+                styleWords: item.styleWords
+            )
             // Whether this is clothing at all, classified at write time rather than per
             // render — the same argument `refreshGender` makes one line further down every
             // other insert path. See `BrandUpdate.isMerchandise`.
             update.refreshMerchandise()
-            // History, or something this brand's mode does not let into the feed. The row is
-            // still stored — the brand page is its catalogue, whatever reaches the feed — and
-            // it arrives read and with no arrival, so the feed and every count agree without
-            // knowing the mode exists. See `Brand.apply`.
+            // History, or something this brand's mode or filter does not let into the feed. The
+            // row is still stored — the brand page is its catalogue, whatever reaches the feed —
+            // and it arrives read and with no arrival, so the feed and every count agree without
+            // knowing either exists. See `Brand.apply` and `Brand.admits`.
             //
             // News is stamped with when it arrived, which is what places it against the
             // feed's "since you were last here" line. See `BrandUpdate.arrivedAt`.
-            if asBaseline || !brand.followMode.admits(kind) {
+            let filter = filters[brand.id] ?? brand.followFilterMatcher
+            filters[brand.id] = filter
+            let garment = FollowFilter.Item(
+                title: item.title, productType: item.productType, tags: item.tags ?? [], price: item.priceAmount
+            )
+            if asBaseline || !brand.admits(kind, garment, filter: filter) {
                 update.isSeen = true
             } else {
                 update.arrive()
@@ -1350,6 +1509,13 @@ final class RemoteSync {
             update.originalPriceAmount = original
             update.originalPriceText = item.originalPriceText
             changed = true
+        }
+        // A row stored before the server read its photographs, sent again now that it has.
+        if update.readingCheckedAt == nil, item.styleWords != nil {
+            update.adoptReading(
+                shotURL: ProductShotIndex.url(in: item.imageURLs, at: item.productShotIndex),
+                styleWords: item.styleWords
+            )
         }
         guard changed else { return }
         if let gender = item.gender {

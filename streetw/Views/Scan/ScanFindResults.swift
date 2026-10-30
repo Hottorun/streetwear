@@ -2,11 +2,12 @@
 // "Find this or something like it": what the server says looks like the photograph, or a
 // search for the scan's own words.
 //
-// **`similar` first, when it came back** — the embedding service read the photograph itself,
-// which beats any description of it. Otherwise the reading's `searchText` is searched exactly as
-// Shop's field would search it (`GET /v1/products/search`), your shops first and every shop the
-// server watches when yours have nothing, and the line above the grid says which it was. The
-// search is free: the reading was what was paid for. A search that failed says it failed.
+// **`similar` first, when it came back** — the server compared the photograph itself with every
+// product's photograph (`similarBasis` `photograph`, Phase 5), or, where it could not, the
+// reading's words with their text (`description`); the line above the grid says which.
+// Otherwise the reading's `searchText` is searched exactly as Shop's field searches it — the
+// one list over every shop the server watches, your own shops lifted — and the line says where.
+// The search is free: the reading was what was paid for. A search that failed says it failed.
 
 import StreetwCore
 import SwiftData
@@ -20,6 +21,8 @@ struct ScanFindResults: View {
 
     let searchText: String
     let similar: [DiscoverCard]?
+    /// `AIScanResponse.similarBasis`; nil from a server that predates it, which matched words.
+    var similarBasis: String?
 
     private enum Answer {
         case loading
@@ -103,10 +106,7 @@ struct ScanFindResults: View {
 
     private func find() async {
         if let similar, !similar.isEmpty {
-            answer = .found(
-                cards: similar.map { (card: $0, matched: nil) },
-                label: similar.count == 1 ? "ONE PRODUCT LOOKS LIKE IT" : "\(similar.count) PRODUCTS LOOK LIKE IT"
-            )
+            answer = .found(cards: similar.map { (card: $0, matched: nil) }, label: Self.similarLabel(similar.count, basis: similarBasis))
             return
         }
         guard let baseURL = settings.baseURL else {
@@ -116,20 +116,33 @@ struct ScanFindResults: View {
         answer = .loading
         let api = StreetwAPI(baseURL: baseURL, token: settings.token, profileID: profiles.session.scope.id)
         do {
-            for scope in [ProductSearchScope.followed, .all] {
-                let response = try await api.searchProducts(searchText, scope: scope, cheaper: false, formal: false, inMySize: false)
-                let hits = response.exact + response.partial
-                guard !hits.isEmpty else { continue }
-                let place = scope == .followed ? "IN YOUR SHOPS" : "IN EVERY SHOP DROPWALL WATCHES"
-                answer = .found(
-                    cards: hits.map { (card: $0.card, matched: $0.matched) },
-                    label: "\(place) · “\(searchText.uppercased())”"
-                )
+            let response = try await api.searchProducts(
+                searchText, scope: .all, cheaper: false, formal: false, inMySize: false,
+                boost: .standard, meaning: true
+            )
+            let hits = response.exact + response.partial
+            guard !hits.isEmpty else {
+                answer = .none("Nothing in the shops Dropwall watches matches “\(searchText)”.")
                 return
             }
-            answer = .none("Nothing in the shops Dropwall watches matches “\(searchText)”.")
+            // From the answer's own scope, never from what was asked.
+            let place = response.scope == .followed ? "IN YOUR SHOPS" : "IN EVERY SHOP DROPWALL WATCHES"
+            answer = .found(
+                cards: hits.map { (card: $0.card, matched: $0.byMeaning == true ? nil : $0.matched) },
+                label: "\(place) · “\(searchText.uppercased())”"
+            )
         } catch {
             answer = .failed
+        }
+    }
+
+    /// What `similar` was compared by, said above it.
+    static func similarLabel(_ count: Int, basis: String?) -> String {
+        let products = count == 1 ? "ONE PRODUCT" : "\(count) PRODUCTS"
+        switch basis {
+        case "photograph": return "\(products) THAT LOOK LIKE YOUR PHOTOGRAPH"
+        case "description": return "\(products) LIKE ITS DESCRIPTION"
+        default: return count == 1 ? "ONE PRODUCT LOOKS LIKE IT" : "\(count) PRODUCTS LOOK LIKE IT"
         }
     }
 }
@@ -141,11 +154,12 @@ struct ScanFindSheet: View {
 
     let searchText: String
     let similar: [DiscoverCard]?
+    var similarBasis: String?
 
     var body: some View {
         NavigationStack {
             ScrollView {
-                ScanFindResults(searchText: searchText, similar: similar)
+                ScanFindResults(searchText: searchText, similar: similar, similarBasis: similarBasis)
                     .padding(.top, 12)
             }
             .scrollIndicators(.hidden)

@@ -175,9 +175,15 @@ public struct FollowBrand: Codable, Sendable {
 /// Changes how much of an already-followed brand reaches this person. See `FollowMode`.
 public struct UpdateFollow: Codable, Sendable {
     public var mode: FollowMode
+    /// Which part of the brand reaches them (`FollowFilter`). Absent leaves the stored filter
+    /// as it is — every body 1.3 and earlier send — and an empty one clears it, which is how
+    /// *All* is said. Sent beside the mode, never instead of it, so a server that predates
+    /// filters still decodes the body and keeps the mode.
+    public var filter: FollowFilter?
 
-    public init(mode: FollowMode) {
+    public init(mode: FollowMode, filter: FollowFilter? = nil) {
         self.mode = mode
+        self.filter = filter
     }
 }
 
@@ -557,6 +563,10 @@ public struct BrandDTO: Codable, Sendable, Hashable, Identifiable {
     /// keeps the mode it already holds rather than resetting a quiet brand because it
     /// happened to reappear in a search result.
     public var followMode: FollowMode?
+    /// Which part of the brand the caller follows (`FollowFilter`) — on the follow list only,
+    /// beside `followMode`, and there nil is *All*. Every other route leaves it nil, which says
+    /// nothing: the client reads it only where `followMode` is set.
+    public var followFilter: FollowFilter?
     /// The country shop serving the caller, or nil for the brand's main shop. When set,
     /// `currency` and `sources` are that shop's — a brand page describes the shop it is
     /// showing. Optional, and absent from everything 1.0 is sent.
@@ -573,8 +583,10 @@ public struct BrandDTO: Codable, Sendable, Hashable, Identifiable {
         logoURL: String? = nil,
         sources: [BrandSourceDTO] = [],
         followMode: FollowMode? = nil,
+        followFilter: FollowFilter? = nil,
         storefront: StorefrontDTO? = nil
     ) {
+        self.followFilter = followFilter
         self.id = id
         self.name = name
         self.slug = slug
@@ -671,9 +683,15 @@ public struct BrandProbe: Codable, Sendable, Hashable {
 /// Ask the server to look at a site, without waiting for the answer.
 public struct StartBrandCheck: Codable, Sendable {
     public var url: String
+    /// Add the shop to the catalogue if it is a real one, and follow nobody: the app sends this
+    /// when something was saved from a shop the catalogue did not have, so search can recommend
+    /// from it. Only the shop's domain is sent this way, never the product. Absent on every
+    /// older client, which is a check made to follow the shop.
+    public var catalogueOnly: Bool?
 
-    public init(url: String) {
+    public init(url: String, catalogueOnly: Bool? = nil) {
         self.url = url
+        self.catalogueOnly = catalogueOnly
     }
 }
 
@@ -726,19 +744,44 @@ public struct BrandCheck: Codable, Sendable, Hashable, Identifiable {
     /// Whether the caller has asked to watch it. A check is shared by everybody who asks
     /// about the same shop, so this is the one field that is about *you*.
     public var isWatching: Bool
+    /// Why a refused check was refused, where the server could tell (`Refusal`). Nil on every
+    /// other status and from a server that predates it, which reads as `nothingAnswered`.
+    public var refusal: Refusal?
+
+    /// Why nothing on a site can be watched. Said, because the three have different fixes:
+    /// one is the shop refusing machines (save from Safari instead), one is a brand with no
+    /// clothes to sell online, and only the last is worth trying again.
+    public enum Refusal: String, Codable, Sendable {
+        /// Every request was turned away by bot protection, or the connection was dropped on
+        /// every one: the shop is up and will not be read by a machine. Never worked around —
+        /// see `ROADMAP.md`, *Decided*.
+        case blocksReaders
+        /// The brand sells no clothes online at all — a short, curated list (`ShopRefusal`).
+        case sellsNoClothes
+        /// Nothing answered with anything watchable, and nothing said why.
+        case nothingAnswered
+
+        /// Lenient: a reason a newer server learns reads as the generic one.
+        public init(from decoder: any Decoder) throws {
+            let raw = try decoder.singleValueContainer().decode(String.self)
+            self = Refusal(rawValue: raw) ?? .nothingAnswered
+        }
+    }
 
     public init(
         id: UUID,
         status: Status,
         probe: BrandProbe? = nil,
         brand: BrandDTO? = nil,
-        isWatching: Bool = false
+        isWatching: Bool = false,
+        refusal: Refusal? = nil
     ) {
         self.id = id
         self.status = status
         self.probe = probe
         self.brand = brand
         self.isWatching = isWatching
+        self.refusal = refusal
     }
 }
 
@@ -855,6 +898,16 @@ public struct FeedItem: Codable, Sendable, Hashable, Identifiable {
     /// read while AI was off, and from a server that predates them; ignored by older apps.
     public var saleEndsAt: Date?
     public var saleTerms: String?
+    /// Which of `imageURLs` is the clean product shot — the garment on its own, nobody wearing
+    /// it — as the server read it once per product (Phase 5, `ProductReading`). Nil when the
+    /// product has not been read, when no photograph is one, and from a server that predates
+    /// it. The feed itself keeps leading with the brand's first photograph; this is for the
+    /// wall's cover and for what the phone measures. See `ProductPhotoReading`.
+    public var productShotIndex: Int?
+    /// A few words from `StyleWords.vocabulary` the same reading found in the photograph
+    /// ("workwear", "minimal"). Nil when the product has not been read; empty when it was and
+    /// nothing was clear enough to say.
+    public var styleWords: [String]?
 
     public var id: UUID { eventID }
 
@@ -903,7 +956,9 @@ public struct FeedItem: Codable, Sendable, Hashable, Identifiable {
         productExternalID: String? = nil,
         memberExternalIDs: [String]? = nil,
         saleEndsAt: Date? = nil,
-        saleTerms: String? = nil
+        saleTerms: String? = nil,
+        productShotIndex: Int? = nil,
+        styleWords: [String]? = nil
     ) {
         self.eventID = eventID
         self.kind = kind
@@ -933,6 +988,8 @@ public struct FeedItem: Codable, Sendable, Hashable, Identifiable {
         self.memberExternalIDs = memberExternalIDs
         self.saleEndsAt = saleEndsAt
         self.saleTerms = saleTerms
+        self.productShotIndex = productShotIndex
+        self.styleWords = styleWords
     }
 }
 
@@ -1093,6 +1150,10 @@ public struct DiscoverCard: Codable, Sendable, Hashable, Identifiable {
     /// own saves — which never leave the device. Optional: a brand too new to have been
     /// vectorised is still worth showing.
     public var vector: BrandVector?
+    /// The server's reading of the photographs, as `FeedItem.productShotIndex` and
+    /// `FeedItem.styleWords`. Optional, and ignored by older apps.
+    public var productShotIndex: Int?
+    public var styleWords: [String]?
 
     /// The product key, not the brand's. Two cards from one brand are two rows.
     public var id: String { productExternalID }
@@ -1129,7 +1190,9 @@ public struct DiscoverCard: Codable, Sendable, Hashable, Identifiable {
         variants: [VariantInfo]? = nil,
         publishedAt: Date,
         spread: [String] = [],
-        vector: BrandVector? = nil
+        vector: BrandVector? = nil,
+        productShotIndex: Int? = nil,
+        styleWords: [String]? = nil
     ) {
         self.productExternalID = productExternalID
         self.brand = brand
@@ -1152,6 +1215,8 @@ public struct DiscoverCard: Codable, Sendable, Hashable, Identifiable {
         self.publishedAt = publishedAt
         self.spread = spread
         self.vector = vector
+        self.productShotIndex = productShotIndex
+        self.styleWords = styleWords
     }
 }
 
@@ -1196,6 +1261,27 @@ public enum ProductSearchScope: String, Codable, Sendable, CaseIterable {
     }
 }
 
+/// How far a search over every shop lifts the reader's own (Phase 5).
+///
+/// **Asked for by name, so an older client is never re-ranked.** 1.2 and 1.3 send `scope`
+/// alone and get exactly the lists they always got; only a request that says `boost=` gets the
+/// one list in which a followed shop's products are lifted. `standard` is the lift every search
+/// gets, `more` is the "More from my brands" chip. Decoded leniently — a lift a newer server
+/// names is read as the standard one, rather than failing the whole answer.
+public enum FollowedBoost: String, Codable, Sendable, CaseIterable {
+    case standard
+    case more
+
+    public init(query raw: String?) {
+        guard let raw else { self = .standard; return }
+        self = Self(rawValue: raw) ?? .standard
+    }
+
+    public init(from decoder: any Decoder) throws {
+        self = Self(rawValue: try decoder.singleValueContainer().decode(String.self)) ?? .standard
+    }
+}
+
 /// One product a search found, and how.
 public struct ProductSearchHit: Codable, Sendable, Hashable, Identifiable {
     /// The product, in the shape the deck already draws and saves: a product with its brand
@@ -1205,13 +1291,19 @@ public struct ProductSearchHit: Codable, Sendable, Hashable, Identifiable {
     /// The words it carried. Nil for an exact match, where the reading under the field
     /// already says them; a partial match prints these because they are its whole reason.
     public var matched: [String]?
+    /// True when the product is a result because its embedding is close to the query's, not
+    /// because it carries every word — the screen prints "MATCHED BY MEANING" on it. Nil on
+    /// every word match, and on everything answered to a request that did not ask for
+    /// `meaning=true`, so an older client never sees one.
+    public var byMeaning: Bool?
 
     public var id: String { card.productExternalID }
     public var isExact: Bool { matched == nil }
 
-    public init(card: DiscoverCard, matched: [String]? = nil) {
+    public init(card: DiscoverCard, matched: [String]? = nil, byMeaning: Bool? = nil) {
         self.card = card
         self.matched = matched
+        self.byMeaning = byMeaning
     }
 }
 
@@ -1245,6 +1337,13 @@ public struct ProductSearchResponse: Codable, Sendable {
     public var shops: Int
     /// Pass back as `cursor` for the next page of exact matches; nil on the last.
     public var nextCursor: String?
+    /// The lift the reader's own shops were given, when one was — `scope` `all` and a request
+    /// that asked for one. Nil means none was applied, whatever was asked: an older server
+    /// ignores `boost=`, and the screen says what was done, never what was requested.
+    public var boost: FollowedBoost?
+    /// Whether the query was also compared by meaning — asked for, and the embeddings answered
+    /// in time. Nil or false: words alone, which is a complete answer on its own.
+    public var meaningSearched: Bool?
 
     public init(
         scope: ProductSearchScope,
@@ -1257,7 +1356,9 @@ public struct ProductSearchResponse: Codable, Sendable {
         isCapped: Bool = false,
         searched: Int = 0,
         shops: Int = 0,
-        nextCursor: String? = nil
+        nextCursor: String? = nil,
+        boost: FollowedBoost? = nil,
+        meaningSearched: Bool? = nil
     ) {
         self.scope = scope
         self.exact = exact
@@ -1270,6 +1371,8 @@ public struct ProductSearchResponse: Codable, Sendable {
         self.searched = searched
         self.shops = shops
         self.nextCursor = nextCursor
+        self.boost = boost
+        self.meaningSearched = meaningSearched
     }
 }
 

@@ -472,6 +472,94 @@ fit editor; the starter pack of six womenswear and six menswear shops. See
       visible text, two a pass. Owner-paid, metered as nobody's, stopped for the UTC day at
       `AI_BACKGROUND_DAILY_CAP_MICROS` ($1 by default). The app does not print the sale's end yet.
 
+### Phase 5 — search at the centre (1.4), then picks from everything (1.5)
+
+Agreed with the owner on 2026-10-27. 1.4:
+
+- [x] **One search over the whole catalogue.** One ranked list across every shop the server
+      watches, followed brands given a fixed boost; chips "More from my brands" (raises it) and
+      "Only my brands" (limits to them); a "How we sort" note reachable from the results (match,
+      followed brands, taste, size — never commission). The line under the field still says what
+      was searched. The app opens on Shop; the tab order stays.
+      *Done:* `scope=all&boost=standard|more` (`ProductSearch.lift`, 1 and 3 points of score);
+      Only my brands is `scope=followed`; 1.2/1.3 unchanged. Ask Dropwall and the scan's fallback
+      use the same list. `HowWeSortNote`; `Tabs.resolve(nil)` is Shop. `docs/discover.md`.
+- [x] **Meaning counts.** A product the embeddings find close to the query is a result even
+      without the typed words, with its reason printed; the grammar still decides price bounds,
+      "no …", size and gender. Web search stays an explicit, paid step at the end of the results,
+      offered on its own when the catalogue finds little.
+      *Done:* `meaning=true`, `ShopSearch.run(meaning:)`, MATCHED BY MEANING — only where the
+      words found fewer than twelve, at 0.66, measured per model (`ProductSearch.measuredThresholds`,
+      `docs/server.md`). Show me more also under a free search with fewer than six results.
+- [x] **A search eval.** About fifty real searches with judged answers, run before and after
+      every ranking change.
+      *Done:* `Server/SearchEval` — 53 searches over 10,041 products from seven shops;
+      `docs/server.md` (*The search eval*) has the numbers and how to run it.
+- [x] **Search by photo.** The sidecar takes image bytes; the scan's "find this" matches the
+      picture. The scan's reading gains a short name, used as the save's title, the description
+      kept as its note.
+      *Done:* `POST /embed/photo` (JPEG, 2 MB, token); `AIScanSimilar` matches image vectors,
+      else the words (`similarBasis`); `AIScanReading.name` → `ownTitle`, description → note.
+- [x] **Follow only part of a brand.** A follow gets an optional filter: category chips plus the
+      reader's own words in the `ShopQuery` grammar, evaluated on both ends like `FollowMode`
+      (what it does not admit is stored read and never pushed; tightening it does not resurrect).
+      Unplaceable products and brand-wide sales always pass. On every new follow a dialog offers
+      All, the brand's three biggest categories, and own words; editable in the follow menu.
+      *Done:* `FollowFilter` (core) is the one rule — chips are alternatives, words are Shop's,
+      exclusions hide what carries the word; unplaced garments, sales, locks, posts, page
+      changes, releases (except an exclusion) and watches pass — asked by `Brand.admits` where a
+      row is written and by `Notifier.isRelevant`. `follows.filter` (JSON text, nullable),
+      `PATCH /v1/follows/:id` `filter`, `BrandDTO.followFilter`, `GET /v1/brands/:id/categories`.
+      The dialog is `FollowFilterView`, asked through `FollowFilterPrompt.ask(brandID:)` and
+      drawn by the top `.followFilterHost()`; inline in the add-brand sheet; the starter pack does
+      not ask. Brand page › What reaches you › Which pieces edits it. Verified against a local
+      server: a jeans-only Taylor Stitch follow stored 14 of 16 new events read and showed the two
+      jeans. See `docs/design-decisions.md`.
+- [x] **The share sheet stays until Done.** It reads the page Safari already loaded (JavaScript
+      preprocessing: title, photographs, price, JSON-LD, product or shop page) — which fixes
+      Intimissimi's missing photographs and gives a blocked shop's saves their pictures — offers
+      board chips (from a per-profile board list the app writes into the App Group) and, on a shop
+      page, "Follow this shop", saying the app will ask what to see when it next opens. Still no
+      networking and no SwiftData in the extension. Every question a share raises is kept until
+      answered. The app's own fallback reads JSON-LD and retries saves with no photograph.
+      *Done:* `ReadPage.js`, inbox contract 2 (`SharedPage`, choices, `isComplete`), the sheet
+      (`ShareSheet`: board chips and New board…, Notify me with the page's sizes pre-selected from
+      the profile, Follow on a shop page — which then saves nothing), `SharedContext` per store,
+      `ShareFollows` (catalogue first, else a watched check; standalone discovery) announcing to
+      the follow-filter dialog (`FollowFilterPrompt`), `ShareQuestions` kept until seen, JSON-LD in
+      the app's own fetch, photo retries on `.unavailable`, caps that return at the deadline. See
+      `docs/share-extension.md`.
+- [x] **The product photograph and style words, read once per product.** FashionSigLIP zero-shot
+      on the server: which photograph is the clean product shot (the others embedded only when
+      the first shows a person) and a few style words, stored once and sent on the wire; the
+      phone's Vision check becomes the fallback. Evaluated against Claude Haiku on ~200 products
+      first; switched to Claude only if it clearly wins.
+      *Done:* `ProductReading.swift` (`ZeroShot`, `ProductReadingBackfill`), `AddProductReading`,
+      `FeedItem`/`DiscoverCard.productShotIndex` and `.styleWords`, `POST /v1/products/readings`;
+      cover order hand-picked → server → Vision → lead (`SavedItem`). `Server/ReadingEval`: 203
+      products labelled by hand, SigLIP 0.966 on the shot (0.848 where the lead is not one), style
+      words 0.65 precision; the Haiku half is one command for the owner with a key, and
+      `PRODUCT_READING=haiku` switches to it. Photo search compares the shot. `docs/server.md`.
+- [x] **A blocked shop says why** — "blocks automated readers, saving from Safari still works",
+      "doesn't sell clothes online".
+      *Done:* `ShopRefusal` reads a check's own requests (`ProbeLog`, which changes none of them):
+      every one a bot-protection page, a dropped connection or a robots refusal is
+      `blocksReaders`; `chanel.com` is on a curated `sellsNoClothes` list, refused before any
+      request; the rest `nothingAnswered`. `BrandCheck.refusal` (optional),
+      `brand_checks.refusal`; the add-brand screen and the "couldn't watch" push say which, and
+      standalone reads the same evidence. One live check of bershka.com confirmed Akamai's
+      signature; never retried another way.
+
+1.5:
+
+- [ ] **Daily picks from the whole catalogue**, from a numeric taste summary (the average of the
+      saved products' vectors, computed on the phone; opt-in; policy and label first).
+- [ ] **"Find me things like my style"** — a paid web search from a short description of taste.
+- [ ] **Awin product feeds** (the owner applies as KERN AG): a daily feed source; feed shops in
+      search, picks and sale alerts but not drop alerts, "Updated daily"; every feed buy link
+      marked "Ad · Dropwall may earn a commission" ("Werbelink"); commission never ranks;
+      review notes, privacy policy and About updated.
+
 ### Later
 
 - **A UCP cart, handed over to finish.** The sanctioned version of auto-buy: for a shop that

@@ -58,6 +58,9 @@ public struct CreditAction: RawRepresentable, Codable, Hashable, Sendable {
     public static let pickReason = CreditAction("pick_reason")
     public static let saleReading = CreditAction("sale_reading")
     public static let pageReading = CreditAction("page_reading")
+    /// A product's photographs read by the model instead of the embeddings — the product shot and
+    /// its style words — when the owner switches `PRODUCT_READING=haiku` on (Phase 5).
+    public static let productReading = CreditAction("product_reading")
 
     /// The actions the roadmap's Phase 4 names. Not a whitelist — the server records what it
     /// is told — only the ones this build has words for.

@@ -48,14 +48,25 @@ struct AddBrandView: View {
     /// actually probe. This is the "nobody has added this yet" path.
     @State private var newBrand: NewBrandDraft?
 
+    /// A brand this screen has just followed, being asked what to see from it — drawn here,
+    /// pushed over the search, rather than by `FollowFilterPrompt` from under a closing sheet.
+    @State private var askingAbout: Brand?
+
     var body: some View {
         NavigationStack {
             Group {
                 if let newBrand {
-                    NewBrandView(draft: newBrand) { dismiss() }
+                    NewBrandView(draft: newBrand) { brand in
+                        if let brand { askingAbout = brand } else { dismiss() }
+                    }
                 } else {
                     searchResults
                 }
+            }
+            .navigationDestination(item: $askingAbout) { brand in
+                FollowFilterView(brand: brand, isNewFollow: true) { dismiss() }
+                    .navigationBarBackButtonHidden()
+                    .toolbar(.hidden, for: .navigationBar)
             }
             .background(Color.paper)
             .navigationTitle("Add a brand")
@@ -309,9 +320,13 @@ struct AddBrandView: View {
         failedToFollow = nil
         defer { pending = nil }
         do {
-            try await remote.followExisting(dto, sizes: sizes.profile)
+            try await remote.followExisting(dto, sizes: sizes.profile, asks: false)
             await remote.sync(sizes: sizes.profile)
-            dismiss()
+            if let id = dto.id, let brand = FollowFilterPrompt.brand(id, in: context) {
+                askingAbout = brand
+            } else {
+                dismiss()
+            }
         } catch {
             // **Not `searchError`.** That one is rendered as a full-page "Couldn't search"
             // state, so a failed *follow* replaced the results list the person was looking
@@ -341,9 +356,12 @@ struct NewBrandView: View {
     @Environment(RemoteSync.self) private var remote: RemoteSync
     @Environment(ServerSettings.self) private var settings: ServerSettings
     @Environment(SizeProfileStore.self) private var sizes: SizeProfileStore
+    @Environment(FollowFilterPrompt.self) private var prompt: FollowFilterPrompt
 
     let draft: NewBrandDraft
-    let onDone: () -> Void
+    /// Finished: with the brand now followed, so the add-brand sheet can ask what to see from
+    /// it, or nil when there is none yet — a watch the server keeps until its check settles.
+    let onDone: (Brand?) -> Void
 
     @State private var instagram = ""
     /// The server's look at this site — see `BrandCheck`. Started on appearance and asked
@@ -351,6 +369,8 @@ struct NewBrandView: View {
     /// than one request is allowed to wait.
     @State private var check: BrandCheck?
     @State private var discovered: DiscoveredSources?
+    /// Standalone's answer to why a site cannot be watched; the server's is `check.refusal`.
+    @State private var localRefusal: BrandCheck.Refusal?
     @State private var isProbing = true
     @State private var isSaving = false
     @State private var failure: String?
@@ -487,7 +507,7 @@ struct NewBrandView: View {
         .scrollIndicators(.hidden)
         .safeAreaInset(edge: .bottom) {
             Button {
-                if isQueued { onDone() } else { Task { await save() } }
+                if isQueued { onDone(nil) } else { Task { await save() } }
             } label: {
                 Group {
                     if isSaving {
@@ -543,17 +563,54 @@ struct NewBrandView: View {
     /// not publish anything a machine can read, which is a fact about the shop rather than a
     /// fault in the app, and saying so is more use than a brand page that stays empty
     /// forever without explaining itself.
+    ///
+    /// **Which refusal it is decides what to say** (`BrandCheck.Refusal`, `ShopRefusal`). A shop
+    /// that turns machines away is not "down, or blocking us — try later": it will block us
+    /// tomorrow too, and the thing that does work is saving from Safari, whose requests are
+    /// the person's own. A brand that sells no clothes online has nothing to follow. Only the
+    /// last is worth trying again. A server that predates the reason sends none, which is the
+    /// generic copy this screen always printed.
     private var cannotMonitor: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("Nothing to watch here")
-                .font(.editorial(19))
-                .foregroundStyle(Color.ink)
-            Text("Dropwall couldn't read anything from this site — no catalogue, no feed, no sitemap, not even the page itself. It may be down, or blocking us.")
-                .font(.editorial(14))
-                .foregroundStyle(Color.muted)
-                .fixedSize(horizontal: false, vertical: true)
-            DataLabel(text: "WORTH TRYING AGAIN LATER")
+        let name = BrandDiscovery.normalizedURL(draft.url)?.host().flatMap(BrandNaming.hostName(of:))
+            ?? declaredName
+        return VStack(alignment: .leading, spacing: 10) {
+            switch refusal {
+            case .blocksReaders:
+                Text("\(name) blocks automated readers.")
+                    .font(.editorial(19))
+                    .foregroundStyle(Color.ink)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text("Saving from Safari still works. Its site turns away programs like Dropwall's, so it can't be followed here — but share a product from Safari and Dropwall saves it from your own browser.")
+                    .font(.editorial(14))
+                    .foregroundStyle(Color.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+                DataLabel(text: "SHARE FROM SAFARI › DROPWALL")
+            case .sellsNoClothes:
+                Text("\(name) doesn't sell clothes online.")
+                    .font(.editorial(19))
+                    .foregroundStyle(Color.ink)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text("Its own site sells no clothes — they are sold in its boutiques — so there is nothing here for a follow to watch.")
+                    .font(.editorial(14))
+                    .foregroundStyle(Color.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+            case .nothingAnswered:
+                Text("Nothing to watch here")
+                    .font(.editorial(19))
+                    .foregroundStyle(Color.ink)
+                Text("Dropwall couldn't read anything from this site — no catalogue, no feed, no sitemap, not even the page itself. It may be down.")
+                    .font(.editorial(14))
+                    .foregroundStyle(Color.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+                DataLabel(text: "WORTH TRYING AGAIN LATER")
+            }
         }
+    }
+
+    /// Why nothing here can be watched — the server's word, or the phone's own reading of
+    /// the requests it made standalone.
+    private var refusal: BrandCheck.Refusal {
+        check?.refusal ?? localRefusal ?? .nothingAnswered
     }
 
     /// The other refusal, and the one that is about us rather than about the shop.
@@ -594,10 +651,22 @@ struct NewBrandView: View {
         isProbing = true
         probeError = nil
         check = nil
+        localRefusal = nil
         defer { isProbing = false }
 
         guard settings.isConfigured else {
-            discovered = await BrandDiscovery.discover(website: draft.url, instagramHandle: nil)
+            // The same two answers the server gives, from the same evidence: the curated list
+            // before any request, and what each request came back with after. The log only
+            // watches — nothing about the requests changes, and nothing is retried another way.
+            if let host = BrandDiscovery.normalizedURL(draft.url)?.host(), ShopRefusal.sellsNoClothes(host: host) {
+                discovered = DiscoveredSources()
+                localRefusal = .sellsNoClothes
+                return
+            }
+            let log = ProbeLog(wrapping: Net.live)
+            let found = await BrandDiscovery.discover(website: draft.url, instagramHandle: nil, http: log)
+            discovered = found
+            localRefusal = found.canMonitor ? nil : ShopRefusal.classify(log.outcomes)
             return
         }
 
@@ -623,9 +692,9 @@ struct NewBrandView: View {
             case .ready where current.isWatching:
                 // Watched while it ran. Asking again is idempotent and waits for the server's
                 // own settle, so the brand arrives now rather than on the next foreground.
-                check = try await remote.watch(check: current.id, instagram: handle, sizes: sizes.profile)
+                check = try await remote.watch(check: current.id, instagram: handle, sizes: sizes.profile, asks: false)
                 await remote.sync(sizes: sizes.profile)
-                onDone()
+                onDone(followed(check?.brand))
             default:
                 break
             }
@@ -643,13 +712,16 @@ struct NewBrandView: View {
         if settings.isConfigured {
             guard let check else { return }
             do {
-                let watched = try await remote.watch(check: check.id, instagram: handle, sizes: sizes.profile)
+                let watched = try await remote.watch(check: check.id, instagram: handle, sizes: sizes.profile, asks: false)
                 self.check = watched
                 // While the check is still running the server holds the request and the
                 // screen says so (`isQueued`); with a brand, this is the add it always was.
                 if watched.brand != nil {
                     await remote.sync(sizes: sizes.profile)
-                    onDone()
+                    onDone(followed(watched.brand))
+                } else if watched.status == .checking {
+                    // Asked on the foreground that finds the follow made.
+                    prompt.expect(check: watched.id)
                 }
             } catch {
                 failure = error.localizedDescription
@@ -671,7 +743,12 @@ struct NewBrandView: View {
 
         // First sync establishes the baseline so the feed isn't flooded on day one.
         await engine.sync(brands: [brand])
-        onDone()
+        onDone(brand)
+    }
+
+    /// The local row for a brand the server just followed.
+    private func followed(_ dto: BrandDTO?) -> Brand? {
+        dto?.id.flatMap { FollowFilterPrompt.brand($0, in: context) }
     }
 }
 

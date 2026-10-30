@@ -49,6 +49,17 @@ the app's entire view tree. `FeedView.markSeen` stamps `brand.lastOpenedAt`, whi
 marking one brand read was felt on every screen at once. Narrow it, cap it with `fetchLimit`,
 or ask a `FetchDescriptor` once in a `.task` and hold the answer in `@State`.
 
+**…but a count is the wrong cap for rows that arrive in bursts.** The feed's `fetchLimit` of 500
+arrivals let one day of scan markdowns push the morning out of the read (`docs/design-decisions.md`,
+*bounded by an arrival date*). It is `FeedWindow` now: a predicate on `arrivedAt` at the 500th
+newest arrival, deepened 500 at a time from the foot of the grid, reopened a page deep on each new
+visit. Measured on a 1,373-arrival server-mode store, iPhone 17e simulator, debug: `FeedPass` warm
+is 16–22ms at 500 rows and 41–66ms at 1,373, and the first pass after a deeper read faults its
+rows in, 125–155ms at 1,000 and 185–240ms at 1,373 — about what the launch's own first pass
+already cost at 500 (100–240ms). So the opening read is the cost it always was; a reader pays for
+depth only by scrolling to it, once per page, and only until the next visit. The edge is one
+fetch of one row (`fetchOffset`, `fetchLimit = 1`), and the end is asked with `fetchCount`.
+
 **Walking a to-many relationship faults the whole thing in.** `brand.updates` is the brand's
 entire catalogue, so `Brand.unseenCount(matching:)` per visible row was a full catalogue walk
 per row. The fix is always the same shape: ask the *store* the narrow question

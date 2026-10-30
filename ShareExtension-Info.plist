@@ -11,13 +11,21 @@
 		<key>NSExtensionAttributes</key>
 		<dict>
 			<!--
-			  Web URLs only. Supporting NSExtensionActivationSupportsWebPageWithMaxCount
-			  would also require a JavaScript preprocessing file, and the page's own
-			  metadata is fetched by the app anyway — so the extra permission would buy
-			  nothing and ask for more than we need.
+			  A web page as well as a URL, so Safari runs ReadPage.js on the page it already
+			  loaded and hands the result over. This was once left out as buying nothing,
+			  because the app fetched the page itself. It does buy something: the app's fetch
+			  is not the page the person saw. A shop that turns the app's reader away, or
+			  draws its gallery with a script, has already shown everything to their browser
+			  — and the colourway on screen is in the address Safari had, not in the canonical
+			  one it shares. Nothing is fetched by the extension either way; see
+			  docs/share-extension.md.
 			-->
+			<key>NSExtensionJavaScriptPreprocessingFile</key>
+			<string>ReadPage</string>
 			<key>NSExtensionActivationRule</key>
 			<dict>
+				<key>NSExtensionActivationSupportsWebPageWithMaxCount</key>
+				<integer>1</integer>
 				<key>NSExtensionActivationSupportsWebURLWithMaxCount</key>
 				<integer>1</integer>
 				<key>NSExtensionActivationSupportsText</key>

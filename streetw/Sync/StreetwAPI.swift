@@ -217,8 +217,12 @@ struct StreetwAPI: Sendable {
         try await send(path: "v1/brands/discover", method: "POST", body: body)
     }
 
-    func startCheck(url: String) async throws -> BrandCheck {
-        try await send(path: "v1/brands/checks", method: "POST", body: StartBrandCheck(url: url))
+    func startCheck(url: String, catalogueOnly: Bool = false) async throws -> BrandCheck {
+        try await send(
+            path: "v1/brands/checks",
+            method: "POST",
+            body: StartBrandCheck(url: url, catalogueOnly: catalogueOnly ? true : nil)
+        )
     }
 
     func check(id: UUID) async throws -> BrandCheck {
@@ -253,6 +257,21 @@ struct StreetwAPI: Sendable {
             method: "PATCH",
             body: UpdateFollow(mode: mode)
         )
+    }
+
+    /// The filter, with the mode it sits beside — the body must carry one, and sending the
+    /// one already held changes nothing. An empty filter is *All*.
+    func setFollowFilter(brandID: UUID, mode: FollowMode, filter: FollowFilter) async throws {
+        try await sendVoid(
+            path: "v1/follows/\(brandID.uuidString)",
+            method: "PATCH",
+            body: UpdateFollow(mode: mode, filter: filter)
+        )
+    }
+
+    /// The brand's biggest categories, for the dialog a new follow raises.
+    func categories(brandID: UUID) async throws -> BrandCategories {
+        try await send(path: "v1/brands/\(brandID.uuidString)/categories", method: "GET", body: Optional<Never>.none)
     }
 
     func unfollow(brandID: UUID) async throws {
@@ -300,6 +319,8 @@ struct StreetwAPI: Sendable {
         cheaper: Bool,
         formal: Bool,
         inMySize: Bool,
+        boost: FollowedBoost? = nil,
+        meaning: Bool = false,
         cursor: String? = nil
     ) async throws -> ProductSearchResponse {
         var query = [
@@ -309,6 +330,10 @@ struct StreetwAPI: Sendable {
         if cheaper { query.append(URLQueryItem(name: "cheaper", value: "true")) }
         if formal { query.append(URLQueryItem(name: "formal", value: "true")) }
         if inMySize { query.append(URLQueryItem(name: "inMySize", value: "true")) }
+        // Phase 5's one list. A server that predates them ignores both and answers the plain
+        // search — whose answer then says so, by carrying no `boost`.
+        if let boost { query.append(URLQueryItem(name: "boost", value: boost.rawValue)) }
+        if meaning { query.append(URLQueryItem(name: "meaning", value: "true")) }
         if let cursor { query.append(URLQueryItem(name: "cursor", value: cursor)) }
         return try await send(path: "v1/products/search", method: "GET", body: Optional<Never>.none, query: query)
     }
@@ -326,6 +351,11 @@ struct StreetwAPI: Sendable {
     }
 
     // MARK: AI — see `docs/ai.md`
+
+    /// The server's reading of the photographs for products this phone holds.
+    func productReadings(_ body: ProductReadingsRequest) async throws -> ProductReadingsResponse {
+        try await send(path: "v1/products/readings", method: "POST", body: body)
+    }
 
     func aiStatus() async throws -> AIStatus {
         try await send(path: "v1/ai", method: "GET", body: Optional<Never>.none)

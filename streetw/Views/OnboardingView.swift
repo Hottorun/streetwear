@@ -600,7 +600,10 @@ struct OnboardingView: View {
                     _ = try await remote.addBrand(
                         url: brand.domain,
                         instagram: nil,
-                        sizes: sizes.profile
+                        sizes: sizes.profile,
+                        // Bulk, and every one narrowable from its page later: a dozen
+                        // questions in a row is not a welcome. See `FollowFilterPrompt`.
+                        asks: false
                     )
                     added += 1
                 } catch {

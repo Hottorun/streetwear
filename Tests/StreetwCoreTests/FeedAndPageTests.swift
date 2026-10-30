@@ -953,6 +953,14 @@ struct PageMetadataTests {
         #expect(PageMetadataParser.parse(html, base: base).title == "Ronnie Fieg & Clarks – 8th St.")
     }
 
+    /// Intimissimi's JSON-LD names its products with Latin-1 entities, and the share sheet
+    /// printed "f&uuml;r" until the letters were in the table.
+    @Test("Decodes the accented letters European shops write by name")
+    func decodesLatinLetters() {
+        #expect(HTMLEntities.decode("Langarmshirt f&uuml;r Herren") == "Langarmshirt für Herren")
+        #expect(HTMLEntities.decode("&Auml;rmel, Stra&szlig;e, cr&egrave;me, &Ntilde;") == "Ärmel, Straße, crème, Ñ")
+    }
+
     @Test("A page with no metadata at all yields nothing rather than junk")
     func emptyPage() {
         let meta = PageMetadataParser.parse("<html><body>hello</body></html>", base: base)

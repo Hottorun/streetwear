@@ -264,6 +264,8 @@ final class SyncEngine {
             brand.updates.map { ($0.externalID, $0) },
             uniquingKeysWith: { first, _ in first }
         )
+        // The follow's filter, read once for the batch — see `Brand.admits`.
+        let filter = brand.followFilterMatcher
 
         for item in items {
             if let match = existing[item.externalID] {
@@ -278,7 +280,10 @@ final class SyncEngine {
                 // feed as "new" — the first sync is a baseline. And a kind the brand's mode
                 // keeps out of the feed is stored read, the same rule `RemoteSync.merge`
                 // applies — see `Brand.apply`.
-                let admitted = news.map(brand.followMode.admits) ?? false
+                let garment = FollowFilter.Item(
+                    title: item.title, productType: item.productType, tags: item.tags, price: item.priceAmount
+                )
+                let admitted = news.map { brand.admits($0, garment, filter: filter) } ?? false
                 insert(item, into: brand, as: news, markSeen: isFirstSync || !admitted, isHistory: isFirstSync)
             }
         }
@@ -377,7 +382,7 @@ final class SyncEngine {
         // Whether the brand's mode lets a rewrite back into the feed. The row is rewritten
         // either way — it is the catalogue's record of the garment — but a quiet brand's
         // restock is not news, and flagging it unread would put it there regardless.
-        let admits = { (kind: UpdateKind) in update.brand?.followMode.admits(kind) ?? true }
+        let admits = { (kind: UpdateKind) in update.brand?.admits(kind, update.followItem) ?? true }
 
         // **The rewrite is a new arrival of the same row**, so it is restamped rather than
         // left at the first sighting — or a restock this morning would sit below the line

@@ -383,21 +383,9 @@ final class PushRoute {
     /// Cleared by whoever handles it, so the same tap can't re-navigate on every redraw.
     var pending: PushDestination?
 
-    /// Something just shared in that turned out to be sold out. Offered rather than
-    /// navigated to, so it is one tap to set the watch and one to ignore.
-    var watchOffer: BrandUpdate?
-
     func open(_ destination: PushDestination) {
         guard destination != .none else { return }
         pending = destination
-    }
-
-    /// First one wins for the pass. Sharing five sold-out links should ask once, not
-    /// stack five sheets — and the alternative to asking is the watch section on the item
-    /// itself, which is always there.
-    func offerWatch(_ update: BrandUpdate) {
-        guard watchOffer == nil else { return }
-        watchOffer = update
     }
 }
 

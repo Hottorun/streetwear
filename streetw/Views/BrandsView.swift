@@ -82,6 +82,7 @@ struct BrandsView: View {
             }
         }
         .tint(.ink)
+        .followFilterHost()
     }
 
     private func delete(at offsets: IndexSet) {

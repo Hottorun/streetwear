@@ -43,6 +43,8 @@ enum AILimits {
     static let notes = 4
     static let note = 200
     static let similar = 8
+    /// A scan's name — "Black chore jacket" — which becomes a save's title.
+    static let scanName = 40
 
     /// One JPEG under `AIScan.maxBytes`, base64 in JSON: four thirds of it and a little.
     static let scanBody: ByteCount = "2100kb"
@@ -125,7 +127,10 @@ func aiRoutes(_ app: Application, authed: any RoutesBuilder) {
             let reading = AIText.reading(meter.take(try await service.provider.readSearch(text: text, thread: body.thread)))
             guard !reading.query.isEmpty else { throw AIFailure(.malformed("an empty query")) }
             let results = try await ProductSearch.run(
-                ProductSearch.Ask(text: reading.query, scope: body.scope, inMySize: body.inMySize),
+                ProductSearch.Ask(
+                    text: reading.query, scope: body.scope, inMySize: body.inMySize,
+                    boost: body.boost, meaning: body.meaning ?? false
+                ),
                 for: user, app: req.application, on: req.db
             )
             return (reading, results)
@@ -203,9 +208,9 @@ func aiRoutes(_ app: Application, authed: any RoutesBuilder) {
             AIText.scan(meter.take(try await service.provider.readScan(image: body.image)))
         }
         let similar = reading.isGarment
-            ? await AIScanSimilar.cards(for: reading, user: user, app: req.application, on: req.db)
+            ? await AIScanSimilar.cards(for: reading, photo: body.image, user: user, app: req.application, on: req.db)
             : nil
-        return AIScanResponse(reading: reading, similar: similar, charge: charge)
+        return AIScanResponse(reading: reading, similar: similar?.cards, similarBasis: similar?.basis.rawValue, charge: charge)
     }
 
     // MARK: Fits
@@ -289,6 +294,7 @@ enum AIText {
         reading.material = raw.material.map { clean($0, 60) }.flatMap { $0.isEmpty ? nil : $0 }
         reading.pattern = raw.pattern.map { clean($0, 60) }.flatMap { $0.isEmpty ? nil : $0 }
         reading.style = Array(raw.style.map { clean($0, 30) }.filter { !$0.isEmpty }.prefix(5))
+        reading.name = raw.name.map { clean($0, AILimits.scanName) }.flatMap { $0.isEmpty ? nil : $0 }
         reading.description = clean(raw.description, AILimits.reply)
         reading.searchText = clean(raw.searchText, AILimits.searchText)
         // A reading with nothing to search for is not a garment the phone can do anything with.
@@ -526,40 +532,95 @@ enum AIPickCache {
 // MARK: - The scan's "find this"
 
 enum AIScanSimilar {
-    /// Products near the reading, from every shop the server holds, by the vector index.
+    /// How `similar` was found — `AIScanResponse.similarBasis`.
+    enum Basis: String {
+        case photograph
+        case description
+    }
+
+    /// One photograph in hand is one forward pass, about 0.3 s on 2 vCPU; this is the whole of
+    /// what the scan waits for it, after a reading that took seconds.
+    static let photoTimeout = 4.0
+
+    /// Products like the garment, from every shop the server holds, by the vector index.
     ///
-    /// **The reading's words, not the photograph's pixels.** The embedding sidecar only fetches
-    /// photographs by URL — it never accepts bytes — and the reader's photograph has no URL,
-    /// by design. So the reading's search text is embedded with the same model the catalogue
-    /// was, and the nearest products by text vector answer. Nil whenever semantic search is
-    /// off, resting, slow or empty; the phone then searches `searchText` instead.
-    static func cards(for reading: AIScanReading, user: UserModel, app: Application, on db: any Database) async -> [DiscoverCard]? {
+    /// **The photograph first** (Phase 5): its own vector, from the sidecar's bytes endpoint,
+    /// against every product's photograph vector — a picture of a garment is a better question
+    /// than three words about it. The bytes go to the sidecar for that one forward pass and are
+    /// kept by neither side. **Then the reading's words**, as before Phase 5, against the
+    /// products' text vectors — whenever the photograph could not be embedded in time, or no
+    /// product has a photograph vector under this model yet (a backfill still to run). Nil
+    /// whenever semantic search is off, resting or found nothing; the phone then searches
+    /// `searchText` instead.
+    static func cards(
+        for reading: AIScanReading,
+        photo: Data,
+        user: UserModel,
+        app: Application,
+        on db: any Database
+    ) async -> (cards: [DiscoverCard], basis: Basis)? {
         guard let provider = app.semanticSearch, app.semanticRest?.isResting() != true,
               let sql = db as? any SQLDatabase
         else { return nil }
+        let scope: CatalogueScope
+        do {
+            scope = try await ProductSearch.scope(.all, for: user, app: app, on: db)
+        } catch {
+            return nil
+        }
+        guard !scope.brands.isEmpty else { return nil }
+
+        if provider.embedsImages {
+            do {
+                let (space, vector) = try await withTimeout(photoTimeout) {
+                    (try await provider.space, try await provider.embed(photo: photo))
+                }
+                if vector.count == space.dimension,
+                   let cards = try await page(near: vector, in: space, column: .image, scope: scope, user: user, on: db, sql: sql) {
+                    return (cards, .photograph)
+                }
+            } catch {
+                // Never the photograph in the line: what failed, not what was sent.
+                app.logger.warning("ai: scan photograph not matched, using its words: \(String(describing: error))")
+            }
+        }
+
         do {
             let (space, vectors) = try await withTimeout(ProductSearch.embeddingTimeout) {
                 (try await provider.space, try await provider.embed(texts: [reading.searchText]))
             }
             guard let vector = vectors.first, vector.count == space.dimension else { return nil }
-            let scope = try await ProductSearch.scope(.all, for: user, app: app, on: db)
-            guard !scope.brands.isEmpty else { return nil }
-            let near = try await SemanticIndex.nearest(to: vector, in: space, scope: scope.predicate, limit: 40, on: sql)
-            let loaded = try await ProductSearch.load(
-                near.map { IndexCandidate(id: $0.id, relevance: $0.similarity) }, scope: scope, profile: user.sizeProfile, on: sql
-            )
-            .filter(\.listing.isShown)
-            .sorted { a, b in
-                a.listing.relevance != b.listing.relevance ? a.listing.relevance > b.listing.relevance : a.listing.id < b.listing.id
-            }
-            let page = Array(loaded.prefix(AILimits.similar))
-            guard !page.isEmpty else { return nil }
-            let cards = try await ProductSearch.cards(for: page, scope: scope, on: db)
-            return page.compactMap { cards[$0.listing.id] }
+            return try await page(near: vector, in: space, column: .text, scope: scope, user: user, on: db, sql: sql)
+                .map { ($0, .description) }
         } catch {
             app.semanticRest?.rest()
             app.logger.warning("ai: scan similar skipped: \(String(describing: error))")
             return nil
         }
+    }
+
+    /// The nearest shown products in one column, as cards; nil when there are none.
+    private static func page(
+        near vector: [Float],
+        in space: EmbeddingSpace,
+        column: SemanticIndex.Column,
+        scope: CatalogueScope,
+        user: UserModel,
+        on db: any Database,
+        sql: any SQLDatabase
+    ) async throws -> [DiscoverCard]? {
+        let near = try await SemanticIndex.nearest(to: vector, in: space, column: column, scope: scope.predicate, limit: 40, on: sql)
+        let loaded = try await ProductSearch.load(
+            near.map { IndexCandidate(id: $0.id, relevance: $0.similarity) }, scope: scope, profile: user.sizeProfile, on: sql
+        )
+        .filter(\.listing.isShown)
+        .sorted { a, b in
+            a.listing.relevance != b.listing.relevance ? a.listing.relevance > b.listing.relevance : a.listing.id < b.listing.id
+        }
+        let page = Array(loaded.prefix(AILimits.similar))
+        guard !page.isEmpty else { return nil }
+        let cards = try await ProductSearch.cards(for: page, scope: scope, on: db)
+        let out = page.compactMap { cards[$0.listing.id] }
+        return out.isEmpty ? nil : out
     }
 }

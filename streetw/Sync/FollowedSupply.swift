@@ -137,7 +137,9 @@ enum FollowedSupply {
             // rather than inventing either — and `DiscoverDeck` treats a followed brand as
             // familiar regardless, so a missing vector cannot land it in an exploration slot.
             spread: [],
-            vector: nil
+            vector: nil,
+            productShotIndex: update.serverShotURLString.flatMap(update.imageURLStrings.firstIndex(of:)),
+            styleWords: update.readingCheckedAt == nil ? nil : update.styleWords
         )
     }
 }

@@ -109,6 +109,35 @@ Part of the streetw guidance set; see `CLAUDE.md` for the index and the build ru
   The feed is **not** filtered here: every event still goes to the phone, which stores the
   ones the mode does not admit already read. A quiet brand's own page is still its catalogue,
   and a server-side filter would have frozen it at the moment it went quiet.
+- **A follow can carry a filter, and `Notifier` asks it after the mode** (`follows.filter`,
+  `AddFollowFilter`, `FollowFilter`; the rules are in `docs/design-decisions.md`). Four details:
+  - **One nullable JSON text column, and null is *All*.** Every follow before the migration and
+    every one 1.0–1.3 makes has none, which is the truth about them. Text rather than `TEXT[]` or
+    discrete columns because nothing asks SQL about it — the notifier and the follow list decode
+    it in Swift — and an array column is the one shape SQLite cannot reproduce. Written through
+    `FollowModel.filter`, which normalises (lowercased chips, bounded words) and stores an empty
+    filter as nil, so *All* has one spelling.
+  - **`PATCH /v1/follows/:id` changes it only when one is sent**, beside the mode the body
+    always carries; an empty one clears it. 1.3's body — a mode alone — still decodes and must
+    not clear a filter another phone on the account set. `GET /v1/follows` returns it as
+    `BrandDTO.followFilter`; no other route does. A profile's follows are its own rows, so its
+    filter is too, and the account merge moves the row whole.
+  - **Read once per follow per pass**, not per event (`FollowFilter.Matcher`): parsing the words
+    is the expensive half and a drop is hundreds of events. The product's title, type, tags and
+    price are what it reads, the four fields the phone holds when it stores the row; a sale has no
+    product and passes. `notifyWatches` and `notifyWatchedPriceDrops` never ask it.
+  - **`GET /v1/brands/:id/categories`** counts the brand's biggest categories for the follow
+    dialog (`FollowCategory.biggest`): the main shop's listed products, the newest 2,500, three
+    columns of each (`.field`), on the standard device budget.
+- **A refused check records why** (`brand_checks.refusal`, `AddBrandCheckRefusal`,
+  `BrandCheck.Refusal`, `ShopRefusal`). `BrandChecks.run` wraps the shared fetcher in a `ProbeLog`
+  for the length of the check — above `PoliteFetcher`, so robots.txt, spacing and the host check
+  are untouched and no request changes — and a check that finds nothing watchable is
+  `blocksReaders` when every request was a bot-protection page, a dropped connection or a robots
+  refusal, else `nothingAnswered`. A domain on the curated `sellsNoClothes` list is refused at
+  `start` with no fetch. The push to somebody who asked to be told says which. **No retry, no
+  other User-Agent, ever**: the label is the whole response (`ROADMAP.md`, *Decided*). The 1.0
+  routes (`GET /v1/brands/probe`, `POST /v1/brands/discover`) are unchanged.
 - **`/status` counts every table**, `users` included. It was the one table it didn't touch,
   which is exactly why a completely broken registration path still reported green.
 - **Only the *unexpected* is worth a buzz** (`Notifier.isWorthWaking`). A drop, a collection, a
@@ -217,6 +246,27 @@ Part of the streetw guidance set; see `CLAUDE.md` for the index and the build ru
   at every `await` and two settles could otherwise create the same brand twice. And **a refused
   check creates nothing**, the same rule the discover route holds. The two 1.0 routes stay, using
   the same `BrandCatalog` helpers, because the build in the App Store calls them and waits.
+- **A save from a shop the catalogue lacks adds the shop, for search, and follows nobody**
+  (`StartBrandCheck.catalogueOnly`, `brand_checks.catalogue_only`, `AddCatalogueOnlyCheck`; the
+  app's half is `CatalogueSuggestions`). Search can only recommend from shops the server reads,
+  and the shops people save from without following are the ones it is missing. Rules, each one
+  held by `CatalogueOnlyCheckTests`:
+  **Only the domain arrives**, once per shop per install, server mode only. **Nothing about the
+  requester is kept**: the device token authenticates the request as on every `/v1` route, and
+  that is all it does — no watcher row is written, `brand_checks` has no column a requester could
+  go in, and the route logs nothing about the caller — so the domain cannot become a record that
+  this person saved from that shop. **Only a real shop is added** (`BrandChecks.addsToCatalogue`):
+  a ready check with a source that reads products — Shopify, a sitemap, UCP. A page watch is
+  enough to *follow* a shop and nothing to search; a refusal of any kind (`ShopRefusal`: readers
+  blocked, no clothes sold, nothing answered) adds nothing; a shop the catalogue already has is
+  left alone by `BrandCatalog.existing` before anything is fetched. A catalogue-only request that
+  joins somebody's recent preview sets the flag on that check, and is added from its finished
+  answer. The add goes through `materialize` inside the check's settle chain, so it and a follow
+  of the same shop make one brand. **Its own budget**, per device, on top of the outbound one:
+  ten in a burst, thirty a day (`RateLimits.catalogueOnly`), because every success is a brand the
+  poller then reads for everybody. Such a brand is an ordinary unfollowed catalogue brand: the
+  poll claim takes every main shop (`storefront_id IS NULL`) whether or not anybody follows it,
+  and only country storefronts wait for a follower.
 - **Usage counts are totals, and the only per-device fact is one overwritten day**
   (`POST /v1/usage`, `UsageLedger`, `UsagePolicy`). 1.0 promised no analytics; the roadmap
   needs to know which features are used before paying for AI ones, so this is the smallest
@@ -715,6 +765,31 @@ Part of the streetw guidance set; see `CLAUDE.md` for the index and the build ru
 - **Paging is an offset into one query's ranking** (`cursor`, opaque). Total, with no randomness, so
   the same query pages the same way; a catalogue that changes between two pages can repeat or skip a
   product at the seam, which is the price of not holding a cursor's state.
+- **One list over every shop is `scope=all` plus `boost=`** (Phase 5). The scope reads every
+  follow whatever the scope (`CatalogueScope.followed`), and `ProductSearch.load` adds
+  `ProductSearch.lift` to the score of every listing from a followed brand (`ShopListing.boost`):
+  1 for `standard`, 3 for `more`. In `ShopSearch`'s ranking it sits beside the field-weighted
+  score, after availability and the leanings, so it settles near-equals and nothing else; on the
+  phone every listing is followed and the boost is zero, which orders nothing. `boost` on
+  `scope=followed` is ignored and not reported. The answer's `boost` says what was applied.
+- **Meaning matches** (`meaning=true`, Phase 5). The query's hundred nearest products by text
+  vector (price-narrowed, as the full-text candidates are) are still candidates and still add
+  their similarity to `relevance`; those at or above the model's threshold
+  (`ProductSearch.measuredThresholds[model]`, `Application.meaningThresholds`) are also handed to
+  `ShopSearch.run(meaning:)`, which lets them into the main list without the words — only while
+  fewer than `ShopSearch.partialBelow` products carry every word, measured below — credits each
+  missing word at a tag's weight (`ShopSearch.meaningWeight`), and runs every constraint over
+  them — so "no wool" still rules out the wool blazer the embedding liked. The query is embedded
+  as its words plus "formal" when it leans that way (`embeddingText`), never a ruled-out word.
+  `meaningSearched` is true only when vectors answered and the model has a threshold; **a model
+  with none makes no meaning matches**, so switching models cannot put unmeasured guesses on the
+  page. Without `meaning=true` none of this happens and the candidates are read exactly as
+  before, which is what 1.2 and 1.3 ask for.
+- **Parity is defined for the word path.** The phone has no vectors, so `parity` (and
+  `parityWithTheLift`, the same over a followed and an unfollowed shop with the lift on) holds
+  the route and `ShopSearch` to the same page for the same products when no vector speaks:
+  SQLite has none, and that is the configuration the parity tests run in. A meaning match is
+  the one thing the server may add, and it is labelled.
 - **"More like this"** takes the product's id, or the external id the phone holds with `?brand=` —
   percent-encoded as one segment, because a sitemap product's key is its whole URL. By vector where
   this product has one under the current model, otherwise by its own words read as a query and
@@ -806,10 +881,27 @@ set on this service.
   catalogue's whole footprint is roughly 16 MB per 1,000 products before events. A re-embed
   rewrites every row, so until autovacuum reuses the space the table is briefly twice that, and the
   old model's index stays until dropped.
-- **What is compared is text with text.** A search embeds its own words and is matched against
-  each product's *text* vector (title, type, brand, colourways, tags — the fields the grammar
-  reads), and "more like this" compares two products' text vectors. The image vector is stored
-  for the photo matching to come and read by no query yet.
+- **What is compared is text with text, and a photograph with photographs.** A search embeds its
+  own words and is matched against each product's *text* vector (title, type, brand, colourways,
+  tags — the fields the grammar reads), and "more like this" compares two products' text vectors.
+  The scan's "find this" (Phase 5, `AIScanSimilar`) sends the reader's photograph to the
+  sidecar's `POST /embed/photo` (`EmbeddingProvider.embed(photo:)`) and compares it with every
+  product's *image* vector (`SemanticIndex.nearest(column: .image)`), falling back to its words
+  against text vectors. **The image vector it compares is the clean product shot's where the
+  reading found one past the lead** — `COALESCE(shot_embedding, image_embedding)`
+  (`Column.expression`, *The product photograph and style words* below) — because a reader's
+  photograph of a jacket is a garment on its own, and a lookbook lead put somebody's jeans first.
+  Each column has its own HNSW index per model (`ensureIndex`); the image one, on that
+  expression, is new in Phase 5 and is built by the first backfill batch after the deploy — a
+  one-off `CREATE INDEX` that reads are not blocked by.
+- **The sidecar is sent a 400 px rendition, never the original** (`SemanticIndex.rendition`,
+  `ImageRendition`; Shopify's CDN takes `width`, an unknown host is sent untouched). The model
+  reads 224 px, and fetching 2,000–3,000 px originals was most of a batch: measured on 48 lead
+  photographs each from Billionaire Boys Club, Stüssy and STAUD, originals ran at 0.87 a second
+  with 7 timeouts, renditions at 4.2 a second with none. `image_url` still records the stored
+  address, which is what the due query compares, and nothing is re-embedded: on the 203 products
+  of `Server/ReadingEval` a rendition's vector sits at a median cosine of 0.998 from the
+  original's.
 - **A photograph that cannot be read costs its product only the image vector.** The sidecar
   answers `null` for it with a reason and a `transient` flag, which the provider turns into
   `.gone` (a 4xx, a 200 that will not decode, a refused address) or `.unavailable` (a timeout,
@@ -824,8 +916,8 @@ set on this service.
   leaves them out.
 - **Query time needs the provider up.** A search embeds its words under a 1.5 s deadline
   (`ProductSearch.embeddingTimeout`, `withTimeout`); slow or down, the answer is the full-text one,
-  which is complete on its own. Vectors widen the candidates and add to their rank; they never make
-  a match the grammar would not. **`withTimeout` returns at the deadline whether or not the work
+  which is complete on its own. Vectors widen the candidates and add to their rank; they make a
+  match the grammar would not only when `meaning=true` asks (above), and then labelled. **`withTimeout` returns at the deadline whether or not the work
   listens**: a task group cancels its children and then *waits* for them, and an HTTP request on
   an event loop does not hear cancellation, so a group-based timeout over the sidecar returned
   when the request's own timeout fired. The abandoned request ends by its own timeout
@@ -842,6 +934,176 @@ set on this service.
   *and* a provider — so nothing runs half on. The backfill loop starts only behind it and only where
   the poller runs; `POST /admin/embed?batches=` runs batches by hand (and is how a server with
   `DISABLE_POLLER=true` embeds anything), and says which half is missing when it cannot.
+
+## The search eval
+
+`Server/SearchEval/` (Phase 5) — fifty-three searches a person would type (`queries.json`:
+colours, garments, price bounds, "no …", shop names, German shoppers' English — "pullover",
+"trainers", "shoes for the office", "bermuda" — and vague style words), each with a written
+judge in `searcheval.py` (`JUDGES`) of what a person would accept, applied to the whole
+catalogue and frozen in `judgements.json` with the day it was judged. Standard library only;
+Postgres through `psql`; every address must be `127.0.0.1`, so it cannot be pointed at a
+deployment. **Run it before and after every ranking change**, and paste both into the change.
+
+1. A scratch Postgres with pgvector, the sidecar (`Embeddings/README.md`, natively or Docker),
+   and a local server with the poller on, `DATABASE_URL` on the scratch database and
+   `EMBEDDING_URL`/`EMBEDDING_TOKEN` set. Add the shops with `POST /v1/brands/discover` and follow
+   them with one device so the poller reads them; the poller is polite by construction. The
+   judged catalogue is Drake's, Stüssy, Noah, Aimé Leon Dore, STAUD, Billionaire Boys Club and
+   Colorful Standard — 10,041 products, read 2026-10-27 to 29. Wait for the backfill
+   (`product_embeddings` as many rows as listed products).
+2. `python3 searcheval.py dump` and, only when the catalogue has moved, `judge --date …` — then
+   read the pooled top tens (`run … --out`) and correct the judges, never the JSON.
+3. `python3 searcheval.py run before after` prints P@10, recall in the first 100 (out of at most
+   100, so a vague search with nine hundred right answers is not penalised for showing a
+   hundred), nDCG@10, MRR, how many came back empty and how many results were by meaning, then
+   P@10 by kind. The eval's reader follows Drake's and Colorful Standard, so the lift has
+   something to lift. `before` is `scope=all` alone — what 1.2 and 1.3 send, and still answered
+   that way.
+4. `EMBEDDING_TOKEN=… python3 searcheval.py thresholds` embeds each query as the server does
+   and, for each bar, counts the products among its hundred nearest that the words did **not**
+   find and how many of those are judged right — the precision of what meaning adds.
+
+**Measured on 2026-10-29** (FashionSigLIP v1, the catalogue above, 10,041 products, 14,378
+judged answers; debug build):
+
+| variant | P@10 | R@100 | nDCG@10 | MRR | empty | by meaning |
+|---|---|---|---|---|---|---|
+| `before` (`scope=all`, what 1.2/1.3 ask) | 0.834 | 0.697 | 0.849 | 0.895 | 2 | 0 |
+| `after-words` (lift, no meaning) | 0.832 | 0.696 | 0.856 | 0.926 | 2 | 0 |
+| `after` (lift + meaning — what the app sends) | **0.836** | 0.693 | **0.861** | **0.945** | **1** | 27 |
+| `after-more` ("More from my brands") | 0.826 | 0.678 | 0.853 | 0.945 | 1 | 27 |
+| ungated, every one of the hundred nearest admitted | 0.809 | 0.692 | 0.836 | 0.931 | 0 | 987 |
+
+The base build's `before` gave the same top ten as the new build's on all 53 queries. By kind,
+`after` moved style from 0.58 to 0.61 and German phrasing from 0.72 to 0.68; "smart summer
+jacket" went from 0.6 to 0.8 and "something for a wedding" from nothing to one. The lift costs
+"pullover" and "a jacket for rain" a place or two to the followed shops, which is the price of
+the lift and why it is one point, not three. Small gains, measured — not a transformation:
+FashionSigLIP's *text* vectors are a weak signal for what the words missed.
+
+**The threshold is 0.66, and only under a search the words found little for** (fewer than
+`ShopSearch.partialBelow`, twelve, word matches). From `thresholds`: of what meaning would add
+to a search the words already answered, at most 16 % is right at *any* bar (0.159 at 0.64, 0.160
+at 0.66, falling to 3 % at 0.74 — the nearest texts above 0.7 are mostly products whose *shop's
+name* is in the query, "billionaire boys club hoodie" finding everything Billionaire Boys Club
+makes); under the five searches the words found little for, 0.64 admits 29 at 28 % and **0.66
+admits 9, of which 8 are right (89 %)**, with nothing above 0.68. So 0.66 is the lowest bar that
+is mostly right, and the gate is what keeps the other 84 % off the page; the ungated row above
+is what happens without it. Nine is a small sample — re-run `thresholds` on a bigger catalogue,
+and on any new model, before moving it.
+
+## The product photograph and style words
+
+Phase 5, `ProductReading.swift`. Which of a product's photographs is the clean product shot —
+the garment on its own, nobody wearing it — and up to two style words from a fixed vocabulary,
+read **once per product** on the server and sent on the wire. The phone's Vision check
+(`ProductShot`) is now the fallback; `docs/collection.md` (*The cover*) has the phone's half.
+
+- **FashionSigLIP zero-shot is the method** (`ZeroShot`), the owner's rule: Claude only if it
+  clearly reads the photographs better, which is the comparison below. A photograph's score is
+  its best similarity to five product-shot prompts ("a product photo of a garment on a plain
+  background", "a flat lay photo of clothing", …) minus its best to six others ("a person wearing
+  clothes", "a fashion model posing", … and "a close-up photo of fabric texture", without which a
+  model-first gallery handed its cover to the swatch). A product shot leads by more than
+  `shotMargin`, 0.02 — 99.5 % of the labelled product shots clear it, and it is what turned
+  STAUD's on-model leads (0.01–0.016) from "product shot" into "look further". The prompts are
+  embedded once per model through the sidecar's own `/embed/text`; **the sidecar is unchanged** —
+  every comparison is a dot product in Swift.
+- **The other photographs are embedded only when the first looks like a person.** The lead's
+  vector is the one `EmbeddingBackfill` already stored, so most products (170 of the eval's 203)
+  are answered with no request at all. Otherwise up to five more, as 400 px renditions, **four
+  to a request with a 250 ms pause after each**, stopping at the first request that holds a
+  shot: the sidecar takes requests one at a time, and a search's query embedding waits behind
+  whichever is in. Measured while the reading ran flat out: single query embeddings answered in
+  0.02–0.10 s, far inside their 1.5 s.
+- **Style words** (`StyleWords.vocabulary` in the core: workwear, minimal, preppy, streetwear,
+  tailoring, y2k, sporty, outdoor, romantic, vintage, skate, western, boho, grunge, graphic —
+  single tokens, so a search can match them whole) are scored as 0.7 × the shot's similarity to
+  the word's prompt (a few phrases averaged, "a photo of rugged canvas work jacket clothing") plus
+  0.3 × the product's text vector's, **minus the word's mean over the catalogue**, and at most two
+  above 0.01 are given. The mean is the dot product with the average stored photograph and text
+  vector — pgvector's `avg()` over up to 2,000 rows, one query, refreshed daily; nothing is read
+  until there are 200 photographs to average (`minimumCalibration`). Without the calibration a
+  prompt's raw similarity says as much about the prompt as the photograph.
+- **Stored once per product.** `products.shot_index` (nil when none is one) and
+  `products.style_words` (`TEXT[]`, nil = not read, empty = read and nothing clear), GIN-indexed
+  for search; `AddProductReading`. The ledger is `product_readings` (Postgres only): the method
+  key (method, `ZeroShot.version`, model id), an md5 of the first six photographs read, attempts,
+  `retry_at` and `gone` — so a restart resumes, a new gallery or model or version reads again,
+  and nothing on `products` changes unless the answer did. A shot past the lead also writes its
+  vector to `product_embeddings.shot_embedding` (added at boot by `SemanticIndex.prepare`), which
+  photo search compares instead of the lead.
+- **The backfill** (`ProductReadingBackfill`) runs behind the embedding backfill, sixteen products
+  a batch, where the poller runs and only where `semanticSearch` is on — idle, and said at boot,
+  when the sidecar is off. A product is due once its lead photograph's embedding has settled
+  (a vector, or written off). A photograph the sidecar cannot read follows `EmbeddingBackfill`'s
+  rules: `.gone` goes into `gone` and is never asked again for this reading; `.unavailable`
+  leaves the reading unsettled with its best answer so far, asked again at one hour, then four,
+  sixteen and sixty-four, and settled as it stands on the fifth. `POST /admin/readings?batches=`
+  runs it by hand and says why when it cannot. **Pace, measured** on this Mac (sidecar on 4
+  threads, renditions): the first 160 products in 44 s with 99 extra photographs; then 3,305 of
+  the 10,043 in about 40 minutes (with builds competing), at 1.0–2.4 products a second depending on the shop — STAUD and
+  Drake's, whose leads are models or lifestyle shots, cost five photographs a product, Colorful
+  Standard and Aimé Leon Dore none. Of those 3,305, 564 got a shot past the lead (139 of Drake's,
+  254 of Stüssy's, 153 of STAUD's) and 328 none, 283 of them STAUD's on-model galleries. A whole
+  10,000-product catalogue is therefore about two hours here, and should be expected to take
+  twice that on Railway's 2 vCPU — once; afterwards it is only new products.
+- **On the wire**: `FeedItem.productShotIndex` and `.styleWords`, `DiscoverCard` the same (search
+  hits are `DiscoverCard`s), optional and ignored by older apps; `readShotIndex` drops an index
+  the gallery no longer reaches. **`POST /v1/products/readings`** answers for products the phone
+  already holds (its saves, whose feed rows were sent before the reading) — at most a hundred,
+  keyed by brand and external id or the external id alone, only those read, the shot as its URL.
+- **Search matches style words like tags.** `ShopListing.styleWords` is noted at a tag's weight in
+  `ShopIndex` (so "workwear" finds a canvas jacket, and a title that says workwear still ranks
+  first), `PostgresTextIndex` adds `p.style_words && ARRAY[…]` to the candidates and to `existing`
+  for the words that are style words, and `PortableTextIndex` a `LIKE`. The phone stores the words
+  and `ShopCatalogue` reads them, so parity holds. The ranking is otherwise untouched.
+- **The Haiku switch.** `PRODUCT_READING=haiku` reads with the fast model instead
+  (`AIProvider.readProductPhotos`, `docs/ai.md`), owner-paid as `product_reading` under
+  `AI_BACKGROUND_DAILY_CAP_MICROS`, checked before every product; off by default, and switching
+  method reads the catalogue again.
+
+### The reading eval
+
+`Server/ReadingEval/labelled.json`: 203 products from the search eval's seven shops (29 each,
+chosen by a hash of the id among products with two or more photographs), their first six
+photographs, and labels made by hand on 2026-10-30 by looking at every photograph — every
+acceptable product-shot index (null when none is: lookbook pages, galleries on models all the way
+down) and every plausible style word. 33 of the 203 do not lead with a product shot. The harness
+is `ReadingEvalTests`, which runs the shipped code against the network and writes
+`results-<method>.json` beside the labels, printing the other method's last run for comparison.
+From `Server/` in a checkout named `streetw`, with `DEVELOPER_DIR` set:
+
+```bash
+STREETW_READING_EVAL=siglip EMBEDDING_URL=http://127.0.0.1:8080 EMBEDDING_TOKEN=… swift test --filter ReadingEval
+STREETW_READING_EVAL=haiku ANTHROPIC_API_KEY=… swift test --filter ReadingEval   # AI_MODEL_FAST= to try another
+```
+
+The Haiku run needs nothing but the key — no database, no server, no sidecar — and is estimated
+at about forty cents. **Measured on 2026-10-30, FashionSigLIP v1:**
+
+| | SigLIP zero-shot | Haiku |
+|---|---|---|
+| product shot right | **196/203 = 0.966** | not yet run (no key on the build machine) |
+| …where the lead is not one | 28/33 = 0.848 | |
+| lead photograph judged right | 199/203 = 0.980 | |
+| style words right (precision) | 177/273 = 0.648 | |
+| products with a right word | 129/199 = 0.648 | |
+| products given any word | 158/203 = 0.778 | |
+| photographs embedded beyond the leads | 136 | |
+| time / cost | 53 s on a Mac / nothing | |
+
+For scale: always answering "streetwear" would be right on 35 % of products, so the words are
+about twice the base rate, and the misses are honest ones (a puffer read as grunge). **The prompts,
+the margin, the weights and the bar were tuned on these same labels**, which flatters SigLIP: the
+shot margin is a round number that clears 99.5 % of product shots, and the richer style prompts
+moved top-two precision from 0.61 to 0.64, so expect a few points less on a fresh set. Haiku gets
+no tuning beyond its prompt — label a second set before switching on a small margin. The shot
+misses (seven): a lifestyle lead of loafers on feet that scored just over the bar (0.021), a
+lookbook page read as a product, two galleries on models all the way down where a later on-model
+photograph cleared the bar (STAUD's silk top, Stüssy's bib), a close-up of board shorts on a
+body, sunglasses seen side-on, and a Siouxsie Sioux tee whose printed face read as a person.
 
 ## AI
 

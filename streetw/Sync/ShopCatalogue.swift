@@ -172,6 +172,7 @@ private nonisolated struct CatalogueRow: Sendable {
     var colourways: [String]
     var measuredColours: [String]
     var visionCategories: [String]
+    var styleWords: [String]
     var price: Double?
     var publishedAt: Date
     var isAvailable: Bool
@@ -195,6 +196,9 @@ private nonisolated struct CatalogueRow: Sendable {
         self.colourways = colourways
         measuredColours = [update.visionColor, update.visionSecondaryColor].compactMap { $0 }
         visionCategories = update.visionCategories
+        // The server's, read off the photographs — so "workwear" means the same garments here
+        // as in the server's search over the same products.
+        styleWords = update.styleWords
         price = update.priceAmount
         publishedAt = update.publishedAt
         isAvailable = variants.isEmpty ? (update.isAvailable ?? true) : variants.contains(where: \.available)
@@ -214,6 +218,7 @@ private nonisolated struct CatalogueRow: Sendable {
             colourways: colourways,
             measuredColours: measuredColours,
             visionCategories: visionCategories,
+            styleWords: styleWords,
             price: price,
             publishedAt: publishedAt,
             isAvailable: isAvailable,

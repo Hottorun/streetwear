@@ -284,6 +284,9 @@ struct ShopCardTile: View {
     let card: DiscoverCard
     /// As `ShopResultTile.matched`.
     let matched: [String]?
+    /// A result because the server found it close to the query by meaning rather than by its
+    /// words (`ProductSearchHit.byMeaning`) — said on the tile in place of the words.
+    var byMeaning = false
     let isSaved: Bool
     let onSave: () -> Void
     let onOpen: () -> Void
@@ -347,7 +350,11 @@ struct ShopCardTile: View {
                 DataLabel(text: "SOLD OUT", size: 9)
             }
 
-            if let matched, !matched.isEmpty {
+            if byMeaning {
+                // Its whole reason for being here, since it may carry none of the words.
+                DataLabel(text: "MATCHED BY MEANING", size: 8.5, color: .ink)
+                    .lineLimit(1)
+            } else if let matched, !matched.isEmpty {
                 DataLabel(text: "MATCHED " + matched.joined(separator: " · ").uppercased(), size: 8.5)
                     .lineLimit(1)
             }

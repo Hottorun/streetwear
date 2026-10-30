@@ -34,10 +34,11 @@ reachable immediately. If the feed looks empty, it is
 because no brand has published anything in the last few minutes; the brand's own page shows
 its full catalogue right away.
 
-Shop's search box searches the catalogue our server holds of the shops the user follows (and,
-when asked, of every shop it watches), and says which under the field. That plain search is not
-a web search and no generative model is involved. The text of a search is used to answer it and
-is not stored or logged.
+Shop's search box searches the catalogue our server holds of every shop it watches, with the
+shops the user follows ranked a little higher (a "How we sort" note beside the results says
+exactly how; nothing is ranked for payment), and says what it searched under the field. That
+plain search is not a web search and no generative model is involved. The text of a search is
+used to answer it and is not stored or logged.
 
 AI FEATURES AND CREDITS
 
@@ -152,6 +153,17 @@ Anthropic: the text of an Ask Dropwall search, the one photograph of a scan, or 
 fit. Nothing identifying the user or the device is sent with it, and none of it is stored or
 logged on our server. Those are declared as Photos, Search History and Other User Content, not
 linked to the user.
+
+When the user saves something from a shop our catalogue does not have yet, the app sends that
+shop's web address — the domain only, never the product, the page or the fact that something was
+saved — so the shop can be added to search. The server records nothing about which device sent
+it, and adds the shop only if its products can be read. This is declared as Browsing History,
+not linked to the user, for App Functionality.
+
+The share sheet reads the page Safari has already loaded (a JavaScript preprocessing file) for
+its title, photographs, price and the product's own structured data, so a saved item has its
+picture even where the shop turns away other readers. That happens on the device; the
+extension sends nothing anywhere, and what it read is filed by the app as part of the save.
 
 Nothing is shared with data brokers, nothing is joined with data from other companies' apps
 or websites, and no advertising or analytics SDK is present. The app does not use App

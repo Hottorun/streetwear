@@ -145,8 +145,10 @@ A store per profile makes partitioning a property of the container, which no que
   go: still nowhere.
 - **`UserDefaults` keys that describe a person are scoped; keys that describe the phone are not.**
   Scoped: sizes, the style statement, the feed cursor and pending reads, pending unfollows and
-  watch deletions, the Discover ledger, Shop's picks, the feed's visit line, drop-hint state and
-  the starter-pack latch. Device: the server address, token and account, `didRegisterAfresh`, the
+  watch deletions, the Discover ledger, Shop's picks, the feed's visit line, drop-hint state,
+  the starter-pack latch and the questions and follows shares are waiting on (`ShareQuestions`).
+  The share sheet's own picture of a store (`SharedContext`) is a file per store in the App
+  Group, not a key. Device: the server address, token and account, `didRegisterAfresh`, the
   usage tally, the saved-price-drop alert setting and every dev flag. A new key has to be put in
   one list or the other (`ProfileScope.scopedKeys`), which is also what deletion clears.
 - **Local alerts carry the label too.** `WatchNotifier`, `PriceAlerts` and `DropReminders` run on

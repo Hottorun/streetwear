@@ -250,6 +250,13 @@ final class RateLimits: @unchecked Sendable {
     /// spends one, and the phone asks once per day's picks, so this is far above an app's need
     /// and well below a script's — the owner pays for these.
     let pickReasons = RateLimitStore(capacity: 12, refillPerSecond: 12.0 / 86_400)
+
+    /// Catalogue-only checks, per device, on top of the outbound budget: ten in a burst and
+    /// thirty a day. The app sends one per shop per install, the first time something is saved
+    /// from a shop the catalogue lacks, so a person who shares from a dozen new shops in an
+    /// evening is well inside it — and every one that succeeds is a brand the poller then reads
+    /// for everybody, which is exactly what must not be floodable through a share.
+    let catalogueOnly = RateLimitStore(capacity: 10, refillPerSecond: 30.0 / 86_400)
 }
 
 extension Application {

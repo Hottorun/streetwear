@@ -221,8 +221,9 @@ Part of the streetw guidance set; see `CLAUDE.md` for the index and the build ru
   announcement and the styling is part of it, so the feed and Discover keep the brand's first
   photograph. A wall of things somebody kept is a collection of *garments*, and Stüssy's
   model-first galleries put a person in boots on the wall to stand for a shirt. The order is a
-  cover chosen by hand ("Set as cover", on the photograph in `SaveDetailView`), then the
-  packshot, then the lead shot — so **where no packshot is known nothing changes**. Both stored
+  cover chosen by hand ("Set as cover", on the photograph in `SaveDetailView`), then **the
+  server's product shot** (`serverShotURLString`, Phase 5 — below), then Vision's packshot, then
+  the lead shot — so **where neither reading knows a product shot nothing changes**. Both stored
   answers are honoured only while they are still one of the product's image strings, because
   `SharedSaveImporter.repair` can replace a share's whole gallery. The page's gallery *leads*
   with the cover and is never filtered (`SavedItem.galleryURLs`); a colourway's photograph is
@@ -232,6 +233,30 @@ Part of the streetw guidance set; see `CLAUDE.md` for the index and the build ru
   display choice and nothing else**: the cutout, the colour and the silhouette are still
   measured on the packshot, and a fit's piece still falls back to it — somebody choosing a
   lookbook frame to *look at* has not said it is a better photograph to *measure*.
+- **The server reads the product shot first, and Vision is the fallback** (Phase 5,
+  `docs/server.md`, *The product photograph and style words*). The server compares every
+  product's photographs with FashionSigLIP once — before anybody saves it, for every phone, and
+  in the Simulator, where Vision's detector does not run — and sends the answer as
+  `FeedItem.productShotIndex` / `DiscoverCard.productShotIndex`, stored as the photograph's URL
+  (`BrandUpdate.serverShotURLString`, nil when the server found none or has not read it).
+  - **A feed row arrives before the server has read it** (the reading runs minutes behind a
+    poll), and the merge never revisits a row it holds — so `RemoteSync.mergeReadings` asks
+    `POST /v1/products/readings` for the newest **feed rows** with no reading, or one older than
+    two weeks, at most a hundred a request and one request every ten minutes. **Feed rows, saved
+    or not — never saves alone**: a list of only the saved products would tell the server what
+    somebody saved, which never leaves the phone, while every feed row is one the server sent.
+    A feed row is one keyed `event:`; `productExternalID` alone is not the test, because a share
+    the catalogue answered carries one too, and asking about it sent the server a product saved
+    from a shop it had never heard of. A save from Discover or a search takes the card's reading
+    at once (`DiscoverSave`).
+  - **`adoptReading` makes the analysis due again** when the server's shot is not the frame the
+    phone measured: it clears `analyzedImageURL`, the trigger `ImageTagger` already honours, and
+    `ImageTagger` then measures the server's shot first (`serverShot`) and walks the gallery with
+    `ProductShot` only when there is none or it will not load. Until then
+    `coverAspectMeasured` says nothing rather than the shape of another photograph.
+  - **The style words travel with it** (`BrandUpdate.styleWords`), are matched by Shop's
+    search like a tag (`ShopCatalogue`), and are printed on the save's page as "STYLE · …",
+    because a word that finds a garment should be visible on it.
 - **The wall's tile shape is the cover's shape.** `imageAspect` is measured on the photograph
   `ImageTagger` analysed, which is the packshot — so until this the wall drew the lead shot in
   a tile shaped for the packshot, letterboxing every model-first gallery. It is now written
@@ -274,6 +299,11 @@ kept with **your** photograph and no product at all.
   Shop's search on the phone and "more like this" all read — none of them should ever offer
   somebody their own jacket — and a new `@Model` would have been a second kind of save for every
   query to union.
+- **Titled by the scan's short name, noted by its sentence** (Phase 5). `ownTitle` is
+  `AIScanReading.name` ("Black chore jacket") and the reading's one-line `description` becomes the
+  save's `note`, where a note somebody writes would go — so the wall reads like a shop's titles
+  and the sentence is still there to edit. A reading from a server that predates the name has
+  none, and the description is the title as before.
 - **The photograph is a file beside the store, named after the store** —
   `default.store-photos/<save id>.jpg`, `-cutout.png` beside it (`OwnPhotos`). Resolved from the
   save's own container, never from the current profile, and stored as a name, never a path,

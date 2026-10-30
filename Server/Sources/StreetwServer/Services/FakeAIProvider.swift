@@ -81,6 +81,7 @@ struct FakeAIProvider: AIProvider {
             material: "canvas",
             pattern: nil,
             style: ["workwear"],
+            name: "Black chore jacket",
             description: "Black canvas chore jacket with patch pockets",
             searchText: "black chore jacket canvas",
             isGarment: true
@@ -128,5 +129,14 @@ struct FakeAIProvider: AIProvider {
             available: true,
             sizes: [.init(size: "S", available: false), .init(size: "M", available: true)]
         ), costs: cost(.pageReading))
+    }
+
+    /// The first photograph whose address does not say `person`, and whichever of the title's
+    /// words are style words.
+    func readProductPhotos(imageURLs: [URL], title: String) async throws -> AIAnswer<AIPhotoReading> {
+        AIAnswer(value: AIPhotoReading(
+            productShot: imageURLs.firstIndex { !$0.lastPathComponent.contains("person") },
+            styleWords: StyleWords.clean(ShopText.tokens(title))
+        ), costs: cost(.productReading))
     }
 }

@@ -561,6 +561,9 @@ struct WatchEditor: View {
     /// Set when the sheet appears unasked-for — after sharing in something sold out —
     /// where it has to say why it is here before it asks anything.
     var headline: String?
+    /// Called when somebody answers — Start watching or Cancel — as opposed to the sheet being
+    /// taken down by something else. A share's question is kept until this (`ShareQuestionHost`).
+    var onAnswer: (() -> Void)?
 
     @State private var size: String?
     @State private var color: String?
@@ -570,8 +573,13 @@ struct WatchEditor: View {
     /// matters.
     private var allSizes: [String] {
         var seen = Set<String>()
+        // A variant whose only label is the product's own name is not a size. Intimissimi's
+        // JSON-LD lists each size as a product named exactly like its group, so a shared
+        // Intimissimi page offered "LANGARMSHIRT AUS KASCHMIR-MODAL…" as the one size to watch.
+        let name = update.title.lowercased()
         return update.variants
             .filter(\.isMeaningfulSize)
+            .filter { $0.size != nil || $0.title.lowercased() != name }
             .filter { color == nil || $0.color?.caseInsensitiveCompare(color!) == .orderedSame }
             .map(\.displaySize)
             .filter { seen.insert($0).inserted }
@@ -631,7 +639,10 @@ struct WatchEditor: View {
             }
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button("Cancel") { dismiss() }
+                    Button("Cancel") {
+                        onAnswer?()
+                        dismiss()
+                    }
                 }
             }
         }
@@ -683,6 +694,7 @@ struct WatchEditor: View {
         if settings.isConfigured {
             Task { await remote.createWatch(watch) }
         }
+        onAnswer?()
         dismiss()
     }
 }

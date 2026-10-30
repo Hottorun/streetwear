@@ -25,8 +25,17 @@
 // 4. **Page**, by offset into that order, and hydrate only the page.
 //
 // Semantic retrieval, where it is switched on (`Application.semanticSearch`), adds the
-// query's nearest neighbours to the candidates and to their rank; it never adds a match the
-// grammar would not make. With the provider down or slow the full-text answer stands.
+// query's nearest neighbours to the candidates and to their rank. **Where the request asks for
+// it (`meaning=true`, Phase 5), a neighbour close enough (`meaningThreshold`) is a result even
+// without the typed words**, labelled as one (`ProductSearchHit.byMeaning`) — and still has to
+// pass every constraint the grammar read: "no …", the price, the gender filter, "in my size".
+// Without the flag it never adds a match the grammar would not make, which is what 1.2 and 1.3
+// get. With the provider down or slow the full-text answer stands.
+//
+// **One list over every shop** (Phase 5) is `scope=all` with `boost=`: the reader's own shops
+// are lifted by a fixed amount of score (`lift`), "More from my brands" lifts them further, and
+// "Only my brands" is `scope=followed`, exactly as it always was. Without `boost=`, `all` is
+// the unlifted search 1.2 and 1.3 ask for under "Also look in every shop we watch".
 
 import Fluent
 import Foundation
@@ -44,6 +53,28 @@ enum ProductSearch {
     static let semanticPool = 100
     /// How long a search waits for its query to be embedded before answering without it.
     static let embeddingTimeout = 1.5
+    /// How close, by cosine similarity of text vectors, a product must be to the query to be a
+    /// result without its words — per model id, because a threshold is a property of the model
+    /// as much as of the catalogue: two models put the same pair of texts at different
+    /// distances. Measured on the search eval (`Server/SearchEval`, `docs/server.md`, *The
+    /// search eval*). **A model missing here makes no meaning matches at all** — its vectors
+    /// still widen and order the candidates, and a model switched to without being measured
+    /// cannot start putting unmeasured guesses on the page.
+    static let measuredThresholds: [String: Double] = [
+        "Marqo/marqo-fashionSigLIP@c56244cc94f9": 0.66,
+    ]
+
+    /// The followed shops' lift, in the grammar's own score: a tag's weight for every search
+    /// over every shop, a title's for "More from my brands" — enough to decide between equal
+    /// matches, or, for "more", to put a followed shop's tag match beside another shop's title
+    /// match. Never enough to put a sold-out piece above a buyable one, or a partial match in
+    /// the main list: those are decided before the score is read.
+    static func lift(_ boost: FollowedBoost) -> Double {
+        switch boost {
+        case .standard: 1
+        case .more: 3
+        }
+    }
     static let defaultLimit = 40
     static let maxLimit = 100
 
@@ -55,6 +86,10 @@ enum ProductSearch {
         var inMySize = false
         var limit = ProductSearch.defaultLimit
         var offset = 0
+        /// The lift for the reader's own shops, honoured only for `scope` `all`.
+        var boost: FollowedBoost?
+        /// Whether a product close by meaning may be a result without its words.
+        var meaning = false
     }
 
     // MARK: - Scope
@@ -67,17 +102,17 @@ enum ProductSearch {
         on db: any Database
     ) async throws -> CatalogueScope {
         let dialect = (db as? any SQLDatabase)?.dialect.name ?? "unknown"
+        // Every follow, whatever its mode: a quiet brand is out of the feed and the alerts,
+        // and still one of your shops.
+        let userID = try user.requireID()
+        let followed = try await FollowModel.query(on: db)
+            .filter(\.$user.$id == userID)
+            .all()
+            .map(\.$brand.id)
         let brands: [BrandModel]
         switch kind {
         case .followed:
-            // Every follow, whatever its mode: a quiet brand is out of the feed and the alerts,
-            // and still one of your shops.
-            let userID = try user.requireID()
-            let ids = try await FollowModel.query(on: db)
-                .filter(\.$user.$id == userID)
-                .all()
-                .map(\.$brand.id)
-            brands = ids.isEmpty ? [] : try await BrandModel.query(on: db).filter(\.$id ~~ ids).all()
+            brands = followed.isEmpty ? [] : try await BrandModel.query(on: db).filter(\.$id ~~ followed).all()
         case .all:
             brands = try await BrandModel.query(on: db).all()
         }
@@ -92,7 +127,8 @@ enum ProductSearch {
             kind: kind,
             brands: Dictionary(brands.compactMap { brand in brand.id.map { ($0, brand.name) } }, uniquingKeysWith: { a, _ in a }),
             serving: serving,
-            dialect: dialect
+            dialect: dialect,
+            followed: Set(followed)
         )
     }
 
@@ -104,6 +140,9 @@ enum ProductSearch {
         let scope = try await scope(ask.scope, for: user, app: app, on: db)
 
         var response = ProductSearchResponse(scope: ask.scope, shops: scope.brands.count)
+        // Said only where it was done: a lift over your own shops alone would order nothing.
+        let lift = ask.scope == .all ? ask.boost.map(lift) : nil
+        if lift != nil { response.boost = ask.boost }
         guard !scope.brands.isEmpty else { return response }
         response.searched = try await count(in: scope, on: sql)
         guard !query.isEmpty else { return response }
@@ -124,15 +163,24 @@ enum ProductSearch {
                 for: words, narrowing: nil, ruledOut: [], scope: scope, limit: diagnosticPool, on: sql
             )
         }
-        if !words.isEmpty {
-            found += await semanticCandidates(for: query, scope: scope, app: app, on: sql)
+        var meaning: Set<String> = []
+        // Narrowed by the price only where meaning is asked for, so the plain search an older
+        // client asks for reads exactly the candidates it always read.
+        if !words.isEmpty, let near = await semanticCandidates(
+            for: query, scope: scope, narrowing: ask.meaning ? narrowing : nil, meaning: ask.meaning, app: app, on: sql
+        ) {
+            found += near.candidates
+            if ask.meaning, let threshold = app.meaningThresholds[near.model] {
+                response.meaningSearched = true
+                meaning = Set(near.candidates.filter { $0.relevance >= threshold }.map(\.id.uuidString))
+            }
         }
 
         // 2. Ask what exists.
         let existing = try await index.existing(words, scope: scope, on: sql)
 
         // 3. Match.
-        let listings = try await load(found, scope: scope, profile: user.sizeProfile, on: sql)
+        let listings = try await load(found, scope: scope, profile: user.sizeProfile, lift: lift ?? 0, on: sql)
         let profile = user.sizeProfile
         let byID = Dictionary(listings.map { ($0.listing.id, $0) }, uniquingKeysWith: { a, _ in a })
         let result = ShopSearch.run(
@@ -140,7 +188,8 @@ enum ProductSearch {
             in: ShopIndex(listings.map(\.listing)),
             hasSizes: !profile.isEmpty,
             fits: { byID[$0.id]?.fits(profile) ?? false },
-            knows: existing.map { known in { known.contains($0.word) } }
+            knows: existing.map { known in { known.contains($0.word) } },
+            meaning: meaning
         )
 
         // 4. Page.
@@ -150,7 +199,9 @@ enum ProductSearch {
         let partial = offset == 0 ? result.partial : []
         let cards = try await cards(for: (exact + partial).compactMap { byID[$0.id] }, scope: scope, on: db)
 
-        response.exact = exact.compactMap { hit in cards[hit.id].map { ProductSearchHit(card: $0) } }
+        response.exact = exact.compactMap { hit in
+            cards[hit.id].map { hit.byMeaning ? ProductSearchHit(card: $0, matched: hit.matched, byMeaning: true) : ProductSearchHit(card: $0) }
+        }
         response.partial = partial.compactMap { hit in cards[hit.id].map { ProductSearchHit(card: $0, matched: hit.matched) } }
         response.unknown = result.unknown
         response.outcome = result.outcome
@@ -175,16 +226,22 @@ enum ProductSearch {
             .first()?.decode(column: "n", as: Int.self) ?? 0
     }
 
-    /// The query's nearest products, where vectors exist and the provider answers in time.
-    /// Never a reason for the search to fail.
+    /// The query's nearest products, where vectors exist and the provider answers in time —
+    /// nil when they were not asked, so a caller can tell "compared by meaning, nothing near"
+    /// from "not compared". Never a reason for the search to fail.
+    ///
+    /// The price bound narrows them, as it narrows the full-text candidates, so the hundred are
+    /// spent on what can survive it.
     static func semanticCandidates(
         for query: ShopQuery,
         scope: CatalogueScope,
+        narrowing: SQLQueryString? = nil,
+        meaning: Bool = false,
         app: Application,
         on sql: any SQLDatabase
-    ) async -> [IndexCandidate] {
-        guard let provider = app.semanticSearch, app.semanticRest?.isResting() != true else { return [] }
-        let text = query.terms.map(\.word).joined(separator: " ")
+    ) async -> (candidates: [IndexCandidate], model: String)? {
+        guard let provider = app.semanticSearch, app.semanticRest?.isResting() != true else { return nil }
+        let text = embeddingText(for: query, meaning: meaning)
         let space: EmbeddingSpace
         let vectors: [[Float]]
         do {
@@ -195,17 +252,29 @@ enum ProductSearch {
         } catch {
             app.semanticRest?.rest()
             app.logger.warning("search: semantic retrieval skipped for \(Int(SemanticRest.interval))s: \(String(describing: error))")
-            return []
+            return nil
         }
-        guard let vector = vectors.first, vector.count == space.dimension else { return [] }
+        guard let vector = vectors.first, vector.count == space.dimension else { return nil }
+        let within: SQLQueryString = narrowing.map { scope.predicate + " AND " + $0 } ?? scope.predicate
         do {
-            return try await SemanticIndex.nearest(
-                to: vector, in: space, scope: scope.predicate, limit: semanticPool, on: sql
+            let near = try await SemanticIndex.nearest(
+                to: vector, in: space, scope: within, limit: semanticPool, on: sql
             ).map { IndexCandidate(id: $0.id, relevance: $0.similarity) }
+            return (near, space.model)
         } catch {
             app.logger.warning("search: semantic retrieval skipped: \(String(describing: error))")
-            return []
+            return nil
         }
+    }
+
+    /// What a query is embedded as: the words to find, in the order typed — never a ruled-out
+    /// word, which would pull the vector *towards* wool for "no wool", and never a price. Where
+    /// meaning is asked for, "formal" too when the query leans that way: "smart" is read as the
+    /// leaning and is not a word to find, and "smart summer jacket" embedded as "summer jacket"
+    /// would lose the one word that makes it a blazer. `Server/SearchEval` embeds its queries the
+    /// same way to choose the threshold.
+    static func embeddingText(for query: ShopQuery, meaning: Bool = false) -> String {
+        (query.terms.map(\.word) + (meaning && query.formal ? ["formal"] : [])).joined(separator: " ")
     }
 
     private static func space(of provider: any EmbeddingProvider, app: Application) async -> EmbeddingSpace? {
@@ -251,10 +320,13 @@ enum ProductSearch {
     /// `VariantModel`s through Fluent was most of a search — 380ms of 650 measured on eight
     /// thousand products, in release — for a page that shows forty. The candidates are read
     /// as rows into values, and only the page becomes models (`cards`).
+    ///
+    /// - Parameter lift: added to the score of every listing from a shop the reader follows.
     static func load(
         _ candidates: [IndexCandidate],
         scope: CatalogueScope,
         profile: SizeProfile,
+        lift: Double = 0,
         on sql: any SQLDatabase
     ) async throws -> [Loaded] {
         var relevance: [UUID: Double] = [:]
@@ -280,7 +352,7 @@ enum ProductSearch {
 
         let rows = try await sql.raw("""
             SELECT id, brand_id, title, product_type, tags, price_amount, published_at, is_available,
-                   image_urls, link_url
+                   image_urls, link_url, style_words
             FROM products WHERE id IN (\(binds: ids))
             """).all()
         return try rows.compactMap { row in
@@ -315,13 +387,15 @@ enum ProductSearch {
                     productType: productType,
                     tags: tags,
                     colourways: colourways,
+                    styleWords: try row.decode(column: "style_words", as: [String]?.self) ?? [],
                     price: try row.decode(column: "price_amount", as: Double?.self),
                     publishedAt: try row.decode(column: "published_at", as: Date.self),
                     isAvailable: own.isEmpty
                         ? (try row.decode(column: "is_available", as: Bool?.self) ?? true)
                         : own.contains(where: \.available),
                     isShown: shown,
-                    relevance: relevance[id] ?? 0
+                    relevance: relevance[id] ?? 0,
+                    boost: lift != 0 && scope.followed.contains(brandID) ? lift : 0
                 ),
                 productID: id,
                 brandID: brandID,

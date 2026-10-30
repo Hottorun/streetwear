@@ -33,6 +33,7 @@
 import Fluent
 import Foundation
 import SQLKit
+import StreetwCore
 import Synchronization
 import Vapor
 
@@ -74,6 +75,9 @@ protocol EmbeddingProvider: Sendable {
     /// One answer per photograph, in order. A photograph that could not be read is an answer,
     /// not a failure of the whole batch.
     func embed(imageURLs: [URL]) async throws -> [ImageEmbedding]
+    /// One photograph sent as its bytes — the reader's own, from the scan, which has no URL by
+    /// design. JPEG, at most `AIScan.maxBytes`. Never stored or logged on either side.
+    func embed(photo: Data) async throws -> [Float]
 }
 
 /// Every way embedding can fail, so search can say which before falling back to full-text.
@@ -125,6 +129,8 @@ actor SidecarEmbeddingProvider: EmbeddingProvider {
         /// Images are fetched by the sidecar before they are embedded, so a batch is
         /// bounded by the slowest storefront CDN in it as well as by the CPU.
         var imageTimeout: Duration = .seconds(60)
+        /// One photograph already in hand: no fetch, one forward pass — 0.3s on 2 vCPU.
+        var photoTimeout: Duration = .seconds(10)
         /// Inputs per request. The sidecar refuses more than its own `EMBEDDING_MAX_ITEMS`
         /// (64 by default); larger calls are split and the answers concatenated in order.
         var batchSize = 32
@@ -213,6 +219,22 @@ actor SidecarEmbeddingProvider: EmbeddingProvider {
             }
         }
         return out
+    }
+
+    func embed(photo: Data) async throws -> [Float] {
+        let response = try await send(.POST, "embed/photo", timeout: configuration.photoTimeout) { request in
+            request.headers.contentType = HTTPMediaType(type: "image", subType: "jpeg")
+            request.body = ByteBuffer(data: photo)
+        }
+        let answer = try decode(Answer.self, from: response, path: "embed/photo", allowing: [200])
+        try adopt(EmbeddingSpace(model: answer.model, dimension: answer.dimension))
+        guard answer.vectors.count == 1, let vector = answer.vectors[0] else {
+            throw EmbeddingError.wrongCount(expected: 1, got: answer.vectors.compactMap { $0 }.count)
+        }
+        guard vector.count == answer.dimension else {
+            throw EmbeddingError.malformedResponse("a vector is not \(answer.dimension) wide")
+        }
+        return vector
     }
 
     // MARK: Wire
@@ -332,6 +354,10 @@ struct SemanticRestKey: StorageKey {
     typealias Value = SemanticRest
 }
 
+struct MeaningThresholdsKey: StorageKey {
+    typealias Value = [String: Double]
+}
+
 /// A short pause on asking the provider, after it failed a search.
 ///
 /// The deadline bounds one search, not an outage: with the sidecar down, every search would
@@ -364,6 +390,13 @@ extension Application {
     }
 
     var semanticRest: SemanticRest? { storage[SemanticRestKey.self] }
+
+    /// How close is close enough to be a search result by meaning, per model id —
+    /// `ProductSearch.measuredThresholds` unless a test sets its own fake model's.
+    var meaningThresholds: [String: Double] {
+        get { storage[MeaningThresholdsKey.self] ?? ProductSearch.measuredThresholds }
+        set { storage[MeaningThresholdsKey.self] = newValue }
+    }
 
     /// What `SemanticIndex.prepare` found at boot. `.unavailable` until it has run.
     var semanticStatus: SemanticIndex.Status {
@@ -427,6 +460,9 @@ enum SemanticIndex {
                 "image_failure TEXT",
                 "image_attempts INTEGER NOT NULL DEFAULT 0",
                 "image_retry_at TIMESTAMPTZ",
+                // The clean product shot's vector, where it is not the lead photograph
+                // (`ProductReadingBackfill`) — what photo search compares instead.
+                "shot_embedding vector",
             ] {
                 try await sql.raw("ALTER TABLE product_embeddings ADD COLUMN IF NOT EXISTS \(unsafeRaw: column)").run()
             }
@@ -444,22 +480,47 @@ enum SemanticIndex {
         }
     }
 
-    /// The approximate nearest-neighbour index for one model, built the first time the model
-    /// is used. Partial on the model and cast to its dimension, which is how a bare `vector`
-    /// column can carry an index at all — and how two models' vectors stay apart.
-    static func ensureIndex(for space: EmbeddingSpace, on sql: any SQLDatabase) async throws {
-        try await sql.raw("""
-            CREATE INDEX IF NOT EXISTS \(ident: indexName(for: space)) ON product_embeddings \
-            USING hnsw ((text_embedding::vector(\(literal: space.dimension))) vector_cosine_ops) \
-            WHERE model = \(literal: space.model)
-            """).run()
+    /// Which of a product's two vectors a query compares with. Text with text is search and
+    /// "more like this"; a photograph with photographs is the scan's "find this".
+    enum Column: String, Sendable {
+        case text = "text_embedding"
+        case image = "image_embedding"
+
+        /// What is compared, on the table aliased `alias` (or bare, for the index). A photograph
+        /// is compared with the product's **clean product shot** where the reading found one past
+        /// the lead (`shot_embedding`), and with the lead otherwise: a reader's photograph of a
+        /// jacket is a garment on its own, and a lookbook lead put somebody's jeans first.
+        func expression(_ alias: String? = nil) -> SQLQueryString {
+            let prefix = alias.map { "\($0)." } ?? ""
+            switch self {
+            case .text: return "\(unsafeRaw: prefix)text_embedding"
+            case .image: return "COALESCE(\(unsafeRaw: prefix)shot_embedding, \(unsafeRaw: prefix)image_embedding)"
+            }
+        }
     }
 
-    /// One name per model and dimension, stable across restarts: FNV-1a, since `Hasher` is
-    /// seeded per process.
-    static func indexName(for space: EmbeddingSpace) -> String {
+    /// The approximate nearest-neighbour indexes for one model, built the first time the model
+    /// is used. Partial on the model and cast to its dimension, which is how a bare `vector`
+    /// column can carry an index at all — and how two models' vectors stay apart. The image
+    /// index skips the products with no photograph vector, as HNSW skips nulls.
+    static func ensureIndex(for space: EmbeddingSpace, on sql: any SQLDatabase) async throws {
+        for column in [Column.text, .image] {
+            try await sql.raw("""
+                CREATE INDEX IF NOT EXISTS \(ident: indexName(for: space, column: column)) ON product_embeddings \
+                USING hnsw (((\(column.expression()))::vector(\(literal: space.dimension))) vector_cosine_ops) \
+                WHERE model = \(literal: space.model)
+                """).run()
+        }
+    }
+
+    /// One name per model, dimension and column, stable across restarts: FNV-1a, since
+    /// `Hasher` is seeded per process. The text index keeps the name it was first built under.
+    static func indexName(for space: EmbeddingSpace, column: Column = .text) -> String {
         var hash: UInt64 = 0xcbf2_9ce4_8422_2325
-        for byte in "\(space.model)#\(space.dimension)".utf8 {
+        // The photograph index is over the shot-or-lead expression, and named for it, so an index
+        // built on the lead alone before the reading existed is never mistaken for it.
+        let key = column == .text ? "\(space.model)#\(space.dimension)" : "\(space.model)#\(space.dimension)#shot"
+        for byte in key.utf8 {
             hash ^= UInt64(byte)
             hash = hash &* 0x0000_0100_0000_01b3
         }
@@ -473,22 +534,25 @@ enum SemanticIndex {
     }
 
     /// The products nearest `vector` among those `allowed` says, closest first, with the
-    /// cosine similarity — the model's vectors only.
+    /// cosine similarity — the model's vectors only, in one column. A product with no vector
+    /// in that column (no photograph read) is not a neighbour.
     static func nearest(
         to vector: [Float],
         in space: EmbeddingSpace,
+        column: Column = .text,
         scope: SQLQueryString,
         excluding product: UUID? = nil,
         limit: Int,
         on sql: any SQLDatabase
     ) async throws -> [(id: UUID, similarity: Double)] {
         let cast = SQLQueryString("::vector(\(literal: space.dimension))")
+        let stored = SQLQueryString("(\(column.expression("e")))")
         let exclusion: SQLQueryString = product.map { "AND p.id <> \(bind: $0)" } ?? ""
         let rows = try await sql.raw("""
-            SELECT p.id AS id, 1 - ((e.text_embedding\(cast)) <=> (\(bind: literal(vector))\(cast))) AS similarity
+            SELECT p.id AS id, 1 - ((\(stored)\(cast)) <=> (\(bind: literal(vector))\(cast))) AS similarity
             FROM product_embeddings e JOIN products p ON p.id = e.product_id
-            WHERE e.model = \(bind: space.model) AND \(scope) \(exclusion)
-            ORDER BY (e.text_embedding\(cast)) <=> (\(bind: literal(vector))\(cast))
+            WHERE e.model = \(bind: space.model) AND \(stored) IS NOT NULL AND \(scope) \(exclusion)
+            ORDER BY (\(stored)\(cast)) <=> (\(bind: literal(vector))\(cast))
             LIMIT \(literal: limit)
             """).all()
         return try rows.map { (try $0.decode(column: "id", as: UUID.self), try $0.decode(column: "similarity", as: Double.self)) }
@@ -501,6 +565,14 @@ enum SemanticIndex {
             WHERE product_id = \(bind: product) AND model = \(bind: space.model)
             """).first() else { return nil }
         return parse(try row.decode(column: "v", as: String.self))
+    }
+
+    /// What the sidecar is sent for a product photograph: `ImageRendition` at 400 px where the CDN
+    /// takes a width (Shopify's), the address untouched where it does not.
+    static let renditionPixels = 400
+
+    static func rendition(_ url: URL) -> URL {
+        ImageRendition.sized(url, width: renditionPixels, scale: 1)
     }
 
     static func parse(_ text: String) -> [Float]? {
@@ -747,7 +819,11 @@ actor EmbeddingBackfill {
             }
         }
         if !asked.isEmpty {
-            let answered = try await provider.embed(imageURLs: asked.map(\.url))
+            // A small rendition, not the storefront's 2000–3000 px original: the model reads
+            // 224 px, and fetching originals is most of a batch's time (Billionaire Boys Club's
+            // timed out). `image_url` still records the stored address, which is what the due
+            // query compares.
+            let answered = try await provider.embed(imageURLs: asked.map { SemanticIndex.rendition($0.url) })
             guard answered.count == asked.count else {
                 throw EmbeddingError.wrongCount(expected: asked.count, got: answered.count)
             }

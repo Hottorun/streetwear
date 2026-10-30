@@ -82,19 +82,27 @@ public struct AISearchRequest: Codable, Sendable {
     /// Passed through to the search, as on `GET /v1/products/search`.
     public var scope: ProductSearchScope
     public var inMySize: Bool
+    /// As `boost=` and `meaning=` on `GET /v1/products/search` (Phase 5), so a thread answers
+    /// with the same one list the field does. Absent on 1.2 and 1.3, which get what they got.
+    public var boost: FollowedBoost?
+    public var meaning: Bool?
 
     public init(
         text: String,
         thread: [AISearchTurn] = [],
         threadToken: String? = nil,
         scope: ProductSearchScope = .followed,
-        inMySize: Bool = false
+        inMySize: Bool = false,
+        boost: FollowedBoost? = nil,
+        meaning: Bool? = nil
     ) {
         self.text = text
         self.thread = thread
         self.threadToken = threadToken
         self.scope = scope
         self.inMySize = inMySize
+        self.boost = boost
+        self.meaning = meaning
     }
 }
 
@@ -282,6 +290,9 @@ public struct AIScanReading: Codable, Sendable, Hashable {
     public var pattern: String?
     /// A few words of style — "workwear", "minimal".
     public var style: [String]
+    /// A short name for it — "Black chore jacket" — which becomes the save's title (Phase 5).
+    /// Nil from a server that predates it; the phone then titles the save as before.
+    public var name: String?
     /// One line to print under the photograph.
     public var description: String
     /// The grammar text to search for this or something like it — "black chore jacket canvas".
@@ -296,6 +307,7 @@ public struct AIScanReading: Codable, Sendable, Hashable {
         material: String? = nil,
         pattern: String? = nil,
         style: [String] = [],
+        name: String? = nil,
         description: String,
         searchText: String,
         isGarment: Bool = true
@@ -306,6 +318,7 @@ public struct AIScanReading: Codable, Sendable, Hashable {
         self.material = material
         self.pattern = pattern
         self.style = style
+        self.name = name
         self.description = description
         self.searchText = searchText
         self.isGarment = isGarment
@@ -314,14 +327,20 @@ public struct AIScanReading: Codable, Sendable, Hashable {
 
 public struct AIScanResponse: Codable, Sendable {
     public var reading: AIScanReading
-    /// Products that look like it, when the embedding service is on and could read the
-    /// photograph; nil otherwise, and the phone searches `reading.searchText` instead.
+    /// Products that look like it, when the embedding service is on and answered in time; nil
+    /// otherwise, and the phone searches `reading.searchText` instead.
     public var similar: [DiscoverCard]?
+    /// How `similar` was found: `photograph` — the picture's own vector against the products'
+    /// photographs — or `description`, the reading's words against their text. Nil from a
+    /// server that predates it, which only ever matched the words. A string, so a third way
+    /// does not fail to decode on a client that knows two.
+    public var similarBasis: String?
     public var charge: AICharge
 
-    public init(reading: AIScanReading, similar: [DiscoverCard]? = nil, charge: AICharge) {
+    public init(reading: AIScanReading, similar: [DiscoverCard]? = nil, similarBasis: String? = nil, charge: AICharge) {
         self.reading = reading
         self.similar = similar
+        self.similarBasis = similarBasis
         self.charge = charge
     }
 }

@@ -16,6 +16,10 @@ import Vapor
 /// where it does not, the poller fills the page in from the next drop onwards.
 private let catchUpWindow: TimeInterval = 30 * 86_400
 
+/// How many of a brand's newest products its categories are counted over — the poll's own
+/// baseline, so a big shop's chips describe what it sells now rather than its archive.
+private let categoryWindow = 2_500
+
 /// Makes this device the only holder of an APNs token.
 ///
 /// **A token identifies a phone, and a phone must not appear twice.** `apns_token` carries
@@ -506,7 +510,20 @@ func routes(_ app: Application) throws {
         let userID = try await req.actingUserID()
         let body = try req.content.decode(StartBrandCheck.self)
         guard let checks = req.application.brandChecks else { throw Abort(.serviceUnavailable) }
-        let check = try await checks.start(url: body.url)
+        // **Catalogue-only: a save from a shop the catalogue lacks.** The device token is the
+        // auth it always is, and nothing more: no watcher is added, the check row has no
+        // column for a requester, and nothing here logs one — a shop's domain arriving this
+        // way must not become a record that this person saved something from it. Its own
+        // budget, because every success is a brand the poller then reads for everybody.
+        if body.catalogueOnly == true {
+            let key = RateLimit.key(for: .device, request: req)
+            if let wait = await req.application.rateLimits.catalogueOnly.take(key) {
+                var headers = HTTPHeaders()
+                headers.replaceOrAdd(name: .retryAfter, value: String(Int(wait)))
+                throw Abort(.tooManyRequests, headers: headers, reason: "Too many requests. Try again in \(Int(wait))s.")
+            }
+        }
+        let check = try await checks.start(url: body.url, catalogueOnly: body.catalogueOnly == true)
         return try await checks.response(for: check, userID: userID)
     }
 
@@ -587,11 +604,19 @@ func routes(_ app: Application) throws {
             .first()
         else { throw Abort(.notFound, reason: "You don't follow that brand.") }
 
-        // Guarded, like every write here that can change nothing.
+        // Guarded, like every write here that can change nothing. The filter only when one
+        // was sent: 1.3 and earlier send a mode alone, and must not clear a filter another
+        // phone on the account set. An empty one is *All*, and stores nil.
+        var changed = false
         if follow.mode != body.mode {
             follow.mode = body.mode
-            try await follow.save(on: req.db)
+            changed = true
         }
+        if let filter = body.filter, follow.filter != filter.normalized {
+            follow.filter = filter
+            changed = true
+        }
+        if changed { try await follow.save(on: req.db) }
         return .noContent
     }
 
@@ -637,9 +662,38 @@ func routes(_ app: Application) throws {
                 $0.brand,
                 sources: $0.brand.sources,
                 followMode: $0.mode,
+                followFilter: $0.filter,
                 storefront: serving[$0.$brand.id]
             )
         }
+    }
+
+    /// The brand's biggest categories by product count, for the dialog a new follow raises
+    /// (`FollowCategory.biggest`). The main shop's listed products, the newest
+    /// `categoryWindow` of them, and three fields of each: the classifier reads nothing else,
+    /// and a whole row with its search vector and embedding is a lot to load to count shelves.
+    authed.get("brands", ":brandID", "categories") { req async throws -> BrandCategories in
+        guard let brandID = req.parameters.get("brandID", as: UUID.self) else {
+            throw Abort(.badRequest)
+        }
+        guard try await BrandModel.find(brandID, on: req.db) != nil else {
+            throw Abort(.notFound, reason: "No brand with that id.")
+        }
+        let products = try await ProductModel.query(on: req.db)
+            .filter(\.$brand.$id == brandID)
+            .filter(\.$storefrontID == nil)
+            .filter(\.$kind == UpdateKind.product.rawValue)
+            .filter(\.$unlistedAt == nil)
+            .sort(\.$publishedAt, .descending)
+            .limit(categoryWindow)
+            .field(\.$title)
+            .field(\.$productType)
+            .field(\.$tags)
+            .all()
+        let items = products.map {
+            FollowFilter.Item(title: $0.title, productType: $0.productType, tags: $0.tags)
+        }
+        return BrandCategories(categories: FollowCategory.biggest(in: items), products: items.count)
     }
 
     // MARK: Discover
@@ -2010,6 +2064,21 @@ func routes(_ app: Application) throws {
                 // Not a failure: the next batch reads the new model and starts re-embedding.
                 lines.append("the sidecar now runs \(to), not \(from) — re-embedding")
             }
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    /// One batch of the photograph reading (`ProductReadingBackfill`), now — or `?batches=` of
+    /// them, stopping early when nothing is read. Says why when it cannot read.
+    admin.post("readings") { req async throws -> String in
+        let app = req.application
+        let batches = min(max((try? req.query.get(Int.self, at: "batches")) ?? 1, 1), 100)
+        let readings = app.productReading ?? ProductReadingBackfill(app: app, method: app.productReadingMethod)
+        var lines: [String] = []
+        for _ in 0..<batches {
+            let pass = try await readings.runOnce()
+            lines.append(pass.description)
+            if pass.read == 0 { break }
         }
         return lines.joined(separator: "\n")
     }

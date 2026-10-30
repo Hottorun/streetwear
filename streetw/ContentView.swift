@@ -21,8 +21,13 @@ enum Tabs {
     /// - `style` held the fits, kept and proposed, which are Saved › Fits now (`opensOnFits`).
     ///   Its taste reading is on You, which is not a tab.
     /// - `brands`, and anything else, is the feed.
+    ///
+    /// **No name at all is Shop** (Phase 5): the app opens on the search, because that is what
+    /// most launches come for. Only the launch default moved — the tab order is unchanged, a
+    /// push still opens its own item, and every name above still lands where it did.
     static func resolve(_ name: String?) -> String {
         switch name {
+        case nil: "shop"
         case let name? where all.contains(name): name
         case "discover": "shop"
         case "style": "saved"
@@ -44,9 +49,11 @@ struct ContentView: View {
     @Environment(SizeProfileStore.self) private var sizes: SizeProfileStore
     @Environment(PushRoute.self) private var route: PushRoute
     @Environment(SaveConfirmation.self) private var confirmation: SaveConfirmation
+    @Environment(ShareQuestions.self) private var questions: ShareQuestions
     @Environment(CollectionRoute.self) private var collection: CollectionRoute
     @Environment(YouRoute.self) private var you: YouRoute
     @Environment(AIStore.self) private var ai: AIStore
+    @Environment(FollowFilterPrompt.self) private var followPrompt: FollowFilterPrompt
     @Environment(\.scenePhase) private var scenePhase
 
     /// Dev affordance, matching `-seedBrands` / `-seedSizes`: `-startTab saved`
@@ -140,6 +147,9 @@ struct ContentView: View {
         }
         // Presented once, here, whichever tab's avatar asked — see `YouRoute`.
         .sheet(isPresented: Bindable(you).isOpen) { YouView() }
+        // "What do you want to see from them?" after a follow made on any tab — see
+        // `FollowFilterPrompt`. You and the sheets below host it too, when they are on top.
+        .followFilterHost()
         // Above the tab bar rather than over the card that was saved: a half-width card has
         // no room for it, and the card in question has usually been scrolled past by the
         // time you decide to amend it anyway.
@@ -185,6 +195,7 @@ struct ContentView: View {
             // in server mode the store is empty until this sync lands, and the flag is
             // documented as working on its own.
             DevSeed.seedSavesIfRequested(in: context)
+            await followPrompt.resolveChecks(using: remote)
         }
         // The anonymous usage counts — see `UsageCounts`. An open is counted here rather
         // than in `streetwApp`, because only this view knows which tab it opened on; and in a
@@ -197,6 +208,8 @@ struct ContentView: View {
         .onChange(of: scenePhase) { _, phase in
             switch phase {
             case .active: UsageCounts.sceneBecameActive(onTab: selection)
+                // A check watched while it ran may have become a follow with the app closed.
+                Task { await followPrompt.resolveChecks(using: remote) }
             case .background: UsageCounts.sceneEnteredBackground()
             default: break
             }
@@ -219,7 +232,7 @@ struct ContentView: View {
         // returned. Draining twice is harmless; the inbox empties itself.
         .task {
             await SharedSaveImporter.drain(
-                into: context, scope: remote.scope, route: route, confirm: confirmation
+                into: context, scope: remote.scope, questions: questions, remote: remote, confirm: confirmation
             )
         }
         // Only when there is genuinely nothing to show. A returning user who has removed
@@ -268,6 +281,7 @@ struct ContentView: View {
                         }
                     }
             }
+            .followFilterHost()
             .tint(.ink)
         }
         // Both driven from the confirmation rather than from the toast, which dismisses
@@ -311,19 +325,12 @@ struct ContentView: View {
             WatchEditor(update: update)
                 .presentationDetents([.medium, .large])
         }
-        // The answer to sharing in something that's gone. Kept as a sheet, and
-        // deliberately not folded into the toast: a share is acted on when the app comes
-        // back to the foreground, which can be long after the fact and while looking at
-        // something else entirely. A dismissible confirmation is right for a save you just
-        // made and watched happen; it is the wrong shape for an offer you might simply not
-        // be there for.
-        .sheet(item: Bindable(route).watchOffer) { update in
-            WatchEditor(
-                update: update,
-                headline: "This one's sold out. Want to know when it's back?"
-            )
-            .presentationDetents([.medium, .large])
-        }
+        // The questions a share raised — sold out, or which size to watch. A sheet rather than
+        // the toast, because a share is acted on when the app comes back to the foreground,
+        // which can be long after the fact and while looking at something else entirely; and
+        // kept until seen, because that is exactly when a sheet fails to appear. See
+        // `ShareQuestions`.
+        .shareQuestions()
     }
 
     /// Resolves a notification's destination against the store, now that the sync it

@@ -130,7 +130,14 @@ struct ScannedGarment: Identifiable {
         save.ownPhotoFile = files.photo
         save.ownCutoutFile = files.cutout
         save.ownAspect = aspect
-        save.ownTitle = reading.description
+        // The short name is the title and the sentence becomes the note (Phase 5). A server
+        // that predates the name sends none, and the sentence is the title as it always was.
+        if let name = reading.name, !name.isEmpty {
+            save.ownTitle = name
+            save.note = reading.description.isEmpty ? nil : reading.description
+        } else {
+            save.ownTitle = reading.description
+        }
         save.ownType = reading.type
         save.ownSlot = reading.slot
         save.ownColours = reading.colours

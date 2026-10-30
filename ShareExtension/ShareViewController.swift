@@ -1,13 +1,18 @@
 // ShareViewController.swift
 // "Share to Dropwall" from Safari, or anywhere else that offers a link.
 //
-// The extension does as little as possible: pull the URL out, write it to the App Group
-// inbox, confirm, dismiss. No network, no SwiftData, no image fetching — an extension
-// runs under a hard memory limit and is expected back almost immediately, and a share
-// sheet that spins is one people stop using. The app enriches the link with its title
-// and photograph when it next comes to the foreground (`SharedSaveImporter`).
+// **The save is written the moment the sheet opens, and the sheet then stays until Done.**
+// Saving is never a question — the same rule `SaveConfirmation` follows in the app — so the
+// inbox file exists before anything is drawn, and a sheet that is killed loses nothing. What
+// the sheet offers is amending it: boards, a watch, or, on a shop's page, following the shop
+// instead. Each choice rewrites the same file; Done marks it finished (`SharedSave.isComplete`).
+//
+// Still no network and no SwiftData. From Safari the page arrives already read
+// (`ReadPage.js`), and the sheet parses it with the same `ProductPage` the app uses — so
+// what it offers to watch is what the app will store. The app does all fetching when it next
+// comes to the foreground (`SharedSaveImporter`). See docs/share-extension.md.
 
-import Social
+import StreetwCore
 import SwiftUI
 import UIKit
 import UniformTypeIdentifiers
@@ -16,48 +21,80 @@ final class ShareViewController: UIViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = .clear
+        // Done is the way out. A swipe would leave the file marked open, and the app would
+        // then wait out `SharedInbox.openSheetGrace` before filing a save that is already made.
+        isModalInPresentation = true
 
         Task {
-            let outcome = await save()
-            present(outcome)
+            let draft = await makeDraft()
+            present(draft)
         }
     }
 
-    // MARK: - Extracting the link
+    // MARK: - Reading what was shared
 
-    private func save() async -> Outcome {
-        guard let url = await sharedURL() else { return .noLink }
-        guard SharedInbox.isAvailable else { return .noContainer }
+    private func makeDraft() async -> ShareDraft {
+        let input = await sharedInput()
+        guard let url = input.url ?? input.page?.url else { return ShareDraft(failure: .noLink) }
+        guard SharedInbox.isAvailable else { return ShareDraft(failure: .noContainer) }
 
         let title = (extensionContext?.inputItems.first as? NSExtensionItem)?
             .attributedContentText?.string
+        var save = SharedSave(url: url, title: title, profileID: SharedInbox.currentProfile())
+        save.version = SharedSave.currentVersion
+        save.page = input.page
+        save.isComplete = false
         // Into whichever profile was current in the app, so a link shared for somebody else
-        // lands on their wall. See `SharedInbox.currentProfile`.
-        let save = SharedSave(url: url, title: title, profileID: SharedInbox.currentProfile())
-        return SharedInbox.append(save) ? .saved : .failed
+        // lands on their wall — and offered that profile's boards. See `SharedInbox.currentProfile`.
+        let context = SharedInbox.context(for: save.profileID)
+        return ShareDraft(save: save, context: context)
     }
 
-    /// Safari offers the page as a URL; Notes and Messages often offer it as text with a
-    /// link inside. Both are worth accepting — the second is how a link pasted by a
-    /// friend usually arrives.
-    private func sharedURL() async -> URL? {
+    private struct Input {
+        var url: URL?
+        var page: SharedPage?
+    }
+
+    /// Safari offers the page twice: as a URL, and as the result of `ReadPage.js`. Notes and
+    /// Messages often offer text with a link inside, which is how a link pasted by a friend
+    /// usually arrives. All three are accepted; the page only ever adds to the address.
+    private func sharedInput() async -> Input {
+        var input = Input()
         let items = (extensionContext?.inputItems as? [NSExtensionItem]) ?? []
         for item in items {
             for provider in item.attachments ?? [] {
-                if provider.hasItemConformingToTypeIdentifier(UTType.url.identifier),
-                   let url = try? await provider.loadItem(forTypeIdentifier: UTType.url.identifier) as? URL {
-                    return url
+                if input.page == nil,
+                   provider.hasItemConformingToTypeIdentifier(UTType.propertyList.identifier),
+                   let list = try? await provider.loadItem(forTypeIdentifier: UTType.propertyList.identifier) as? NSDictionary,
+                   let results = list[NSExtensionJavaScriptPreprocessingResultsKey] as? [String: Any] {
+                    input.page = Self.page(from: results)
                 }
-                if provider.hasItemConformingToTypeIdentifier(UTType.plainText.identifier),
-                   let text = try? await provider.loadItem(
-                    forTypeIdentifier: UTType.plainText.identifier
-                   ) as? String,
+                if input.url == nil,
+                   provider.hasItemConformingToTypeIdentifier(UTType.url.identifier),
+                   let url = try? await provider.loadItem(forTypeIdentifier: UTType.url.identifier) as? URL {
+                    input.url = url
+                }
+                if input.url == nil,
+                   provider.hasItemConformingToTypeIdentifier(UTType.plainText.identifier),
+                   let text = try? await provider.loadItem(forTypeIdentifier: UTType.plainText.identifier) as? String,
                    let url = firstURL(in: text) {
-                    return url
+                    input.url = url
                 }
             }
         }
-        return nil
+        return input
+    }
+
+    /// What `ReadPage.js` returned, typed. Anything of the wrong shape is simply absent.
+    private static func page(from results: [String: Any]) -> SharedPage {
+        SharedPage(
+            url: (results["url"] as? String).flatMap(URL.init(string:)),
+            title: results["title"] as? String,
+            canonical: results["canonical"] as? String,
+            meta: results["meta"] as? [String: String] ?? [:],
+            jsonLD: results["jsonLD"] as? [String] ?? [],
+            images: results["images"] as? [String] ?? []
+        )
     }
 
     private func firstURL(in text: String) -> URL? {
@@ -66,82 +103,29 @@ final class ShareViewController: UIViewController {
         return detector?.firstMatch(in: text, range: range)?.url
     }
 
-    // MARK: - Confirming
+    // MARK: - The sheet
 
-    private func present(_ outcome: Outcome) {
-        let confirmation = UIHostingController(rootView: ShareConfirmation(outcome: outcome))
-        confirmation.view.backgroundColor = .clear
-        addChild(confirmation)
-        confirmation.view.frame = view.bounds
-        confirmation.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
-        view.addSubview(confirmation.view)
-        confirmation.didMove(toParent: self)
-
-        // Long enough to read, short enough not to be in the way. A failure gets longer,
-        // because it is the only chance to say what went wrong.
-        Task {
-            try? await Task.sleep(for: .seconds(outcome == .saved ? 0.9 : 1.8))
-            finish(outcome)
-        }
+    private func present(_ draft: ShareDraft) {
+        draft.start()
+        let sheet = UIHostingController(rootView: ShareSheet(draft: draft) { [weak self] in
+            self?.finish(draft)
+        })
+        sheet.view.backgroundColor = .clear
+        addChild(sheet)
+        sheet.view.frame = view.bounds
+        sheet.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        view.addSubview(sheet.view)
+        sheet.didMove(toParent: self)
     }
 
-    private func finish(_ outcome: Outcome) {
-        if outcome == .saved || outcome == .noLink {
+    private func finish(_ draft: ShareDraft) {
+        draft.finish()
+        if draft.failure == nil || draft.failure == .noLink {
             extensionContext?.completeRequest(returningItems: nil)
         } else {
             // Cancelling surfaces as "the share didn't happen", which is the truth when
             // the inbox couldn't be written.
             extensionContext?.cancelRequest(withError: NSError(domain: "streetw", code: 1))
         }
-    }
-
-    enum Outcome: Equatable {
-        case saved
-        case noLink
-        case noContainer
-        case failed
-
-        var headline: String {
-            switch self {
-            case .saved: "Saved"
-            case .noLink: "Nothing to save"
-            case .noContainer: "Dropwall can't reach its storage"
-            case .failed: "Couldn't save that"
-            }
-        }
-
-        var detail: String {
-            switch self {
-            case .saved: "IT'S IN YOUR COLLECTION"
-            case .noLink: "THIS DOESN'T CONTAIN A LINK"
-            case .noContainer: "REINSTALL THE APP TO FIX IT"
-            case .failed: "TRY AGAIN"
-            }
-        }
-    }
-}
-
-/// Same voice as the app: a serif line for what happened, mono for the detail.
-/// The design system lives in the app target, so the few values it needs are restated
-/// here rather than dragging the whole file into a second target.
-private struct ShareConfirmation: View {
-    let outcome: ShareViewController.Outcome
-
-    private var ink: Color { Color(uiColor: UIColor { $0.userInterfaceStyle == .dark ? .white : .black }) }
-
-    var body: some View {
-        VStack(spacing: 8) {
-            Text(outcome.headline)
-                .font(.system(size: 22, design: .serif))
-                .foregroundStyle(ink)
-            Text(outcome.detail)
-                .font(.system(size: 11, design: .monospaced))
-                .tracking(0.6)
-                .foregroundStyle(.secondary)
-        }
-        .multilineTextAlignment(.center)
-        .padding(28)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 20))
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }

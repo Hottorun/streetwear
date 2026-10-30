@@ -47,6 +47,8 @@ final class FeedVisit {
     /// Where this visit's line falls. Nil means there was no earlier visit.
     private(set) var boundary: Date?
     private(set) var isOnScreen = false
+    /// How many visits this feed has begun — what `FeedView` reopens its read on.
+    private(set) var started = 0
 
     /// `-feedLastVisitHours 5` pretends the last visit ended that long ago, for the first
     /// visit of a launch — so a screenshot or a test of the line does not have to wait out
@@ -90,6 +92,7 @@ final class FeedVisit {
     }
 
     private func begin(at line: Date?) {
+        started += 1
         boundary = line
         defaults.set(line, forKey: boundaryKey)
     }

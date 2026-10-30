@@ -166,6 +166,17 @@ func configure(_ app: Application) async throws {
         logger: app.logger
     )
 
+    // Which reader turns a product's photographs into its product shot and style words: the
+    // embeddings by default, the fast model only when the owner switches it on. Said here.
+    let readingMethod = ProductReadingMethod.from(environment: ProcessInfo.processInfo.environment)
+    app.productReadingMethod = readingMethod
+    switch readingMethod {
+    case .siglip:
+        app.logger.notice("readings: FashionSigLIP zero-shot — \(app.semanticSearch == nil ? "idle until embeddings are on" : "on")")
+    case .haiku:
+        app.logger.notice("readings: PRODUCT_READING=haiku — the fast model, owner-paid under the daily cap — \(app.ai == nil ? "idle until AI is on" : "on")")
+    }
+
     if Environment.get("DISABLE_POLLER") != "true" {
         let loop = PollLoop(poller: poller, notifier: notifier, reaper: reaper)
         app.storage[PollLoopKey.self] = loop
@@ -188,6 +199,14 @@ func configure(_ app: Application) async throws {
             let backfill = EmbeddingBackfill(app: app)
             app.storage[EmbeddingBackfillKey.self] = backfill
             await backfill.start()
+        }
+        // Behind the embedding backfill, which it reads from; or, by the model, wherever AI is
+        // on. `POST /admin/readings` runs a batch by hand.
+        let canRead = readingMethod == .siglip ? app.semanticSearch != nil : app.ai != nil
+        if canRead, (app.db as? any SQLDatabase)?.dialect.name == "postgresql" {
+            let readings = ProductReadingBackfill(app: app, method: readingMethod)
+            app.storage[ProductReadingBackfillKey.self] = readings
+            await readings.start()
         }
     }
 
@@ -309,4 +328,8 @@ func addMigrations(to app: Application) {
     app.migrations.add(AddProductEmbeddings())
     app.migrations.add(CreateAIPickReasons())
     app.migrations.add(AddSaleReading())
+    app.migrations.add(AddFollowFilter())
+    app.migrations.add(AddBrandCheckRefusal())
+    app.migrations.add(AddCatalogueOnlyCheck())
+    app.migrations.add(AddProductReading())
 }

@@ -8,11 +8,18 @@ import Vapor
 
 extension ProductSearchResponse: @retroactive Content {}
 extension SimilarProductsResponse: @retroactive Content {}
+extension ProductReadingsRequest: @retroactive Content {}
+extension ProductReadingsResponse: @retroactive Content {}
 
 func productRoutes(authed: any RoutesBuilder) {
     /// `?q=` as typed into Shop's field; `?scope=followed|all` (the caller's shops by
     /// default); `?cheaper=`, `?formal=`, `?inMySize=` for the chips, which set the same flags
     /// the words do; `?limit=` and `?cursor=` to page the exact matches.
+    ///
+    /// Phase 5, both optional and both absent from 1.2 and 1.3, which therefore get exactly
+    /// what they always got: `?boost=standard|more` makes `scope=all` the one list in which the
+    /// caller's own shops are lifted, and `?meaning=true` lets a product close to the query by
+    /// meaning be a result without its words.
     ///
     /// For the profile the request acts for: its follows, its sizes, its gender filter, and
     /// the shop serving its account's country.
@@ -27,12 +34,50 @@ func productRoutes(authed: any RoutesBuilder) {
             limit: (try? req.query.get(Int.self, at: "limit")) ?? ProductSearch.defaultLimit,
             // Opaque on the wire, for the reason `DiscoverResponse.nextCursor` is; an offset
             // into one query's ranking underneath.
-            offset: (try? req.query.get(String.self, at: "cursor")).flatMap(Int.init) ?? 0
+            offset: (try? req.query.get(String.self, at: "cursor")).flatMap(Int.init) ?? 0,
+            boost: (try? req.query.get(String.self, at: "boost")).map { FollowedBoost(query: $0) },
+            meaning: (try? req.query.get(Bool.self, at: "meaning")) ?? false
         )
         // A sentence, not an essay: the grammar reads a few words and the index is asked one
         // condition per word.
         guard ask.text.count <= 200 else { throw Abort(.badRequest, reason: "A search is at most 200 characters.") }
         return try await ProductSearch.run(ask, for: user, app: req.application, on: req.db)
+    }
+
+    /// The photograph reading (`ProductReading`) for products the phone already holds — its
+    /// saves, whose feed rows were sent before the server had read them. Only products that
+    /// have been read are answered; the rest are left out and asked about again later.
+    ///
+    /// Keyed as the phone keys them, by brand and external id. A product a country shop also
+    /// lists is the same garment with the same photographs, so whichever row was read answers.
+    authed.post("products", "readings") { req async throws -> ProductReadingsResponse in
+        let ask = try req.content.decode(ProductReadingsRequest.self)
+        guard ask.items.count <= ProductReadingsRequest.limit else {
+            throw Abort(.payloadTooLarge, reason: "At most \(ProductReadingsRequest.limit) products a request.")
+        }
+        let wanted = Set(ask.items)
+        guard !wanted.isEmpty else { return ProductReadingsResponse(readings: []) }
+        let products = try await ProductModel.query(on: req.db)
+            .filter(\.$externalID ~~ Array(Set(ask.items.map(\.externalID))))
+            .filter(\.$styleWords != nil)
+            .all()
+        var out: [ProductReadingsRequest.Item: ProductReadingsResponse.Reading] = [:]
+        for product in products {
+            guard let words = product.styleWords else { continue }
+            // Asked by brand and key, or by the key alone for a save with no brand row.
+            for item in [
+                ProductReadingsRequest.Item(brandID: product.$brand.id, externalID: product.externalID),
+                ProductReadingsRequest.Item(brandID: nil, externalID: product.externalID),
+            ] where wanted.contains(item) && out[item] == nil {
+                out[item] = ProductReadingsResponse.Reading(
+                    brandID: item.brandID,
+                    externalID: item.externalID,
+                    productShotURL: ProductShotIndex.url(in: product.imageURLs, at: product.shotIndex),
+                    styleWords: words
+                )
+            }
+        }
+        return ProductReadingsResponse(readings: out.values.sorted { $0.externalID < $1.externalID })
     }
 
     /// Products like one product, from the caller's shops (`?scope=all` for every shop).

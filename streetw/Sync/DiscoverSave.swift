@@ -37,6 +37,12 @@ enum DiscoverSave {
         in context: ModelContext
     ) -> BrandUpdate? {
         let update = existingRow(for: card, in: context) ?? mint(card, in: context)
+        // The server's reading of the photographs, which a card fetched now usually has and a
+        // feed row stored earlier usually does not — the cover the wall is about to draw.
+        update.adoptReading(
+            shotURL: ProductShotIndex.url(in: card.imageURLs, at: card.productShotIndex),
+            styleWords: card.styleWords
+        )
 
         // Already kept. Saving twice is a no-op rather than a second card — and returning
         // the row still lets the caller raise the confirmation, so the tap is acknowledged

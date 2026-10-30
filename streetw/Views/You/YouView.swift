@@ -109,6 +109,9 @@ struct YouView: View {
             .sheet(isPresented: $isShowingCalendar) { DropCalendarView() }
         }
         .tint(.ink)
+        // A follow made from You — a recommendation, a brand page — asks from here while
+        // You is on top. See `FollowFilterPrompt`.
+        .followFilterHost()
     }
 
     // MARK: - Your taste

@@ -84,7 +84,8 @@ struct ProfileScope: Hashable, Sendable {
         "pendingWatchDeletes", "discoverSeen", "shopPicksToday", "shopPicksRefused",
         "shopPickReasons", "shopPicksAnnounced",
         "feedLastOnScreenAt", "feedVisitBoundary", "pollHintsFingerprint", "pollHintState",
-        "didOfferStarterPack"
+        "didOfferStarterPack", "followFilterPrompts", "followFilterChecks", "shareQuestions",
+        "shareFollows"
     ]
 }
 
@@ -228,6 +229,8 @@ final class ProfileSession {
     let confirmation: SaveConfirmation
     let collection: CollectionRoute
     let hints: DropHintStore
+    /// "What do you want to see from them?", asked after every new follow — see `FollowFilterPrompt`.
+    let followPrompt: FollowFilterPrompt
 
     init(scope: ProfileScope, container: ModelContainer, settings: ServerSettings, location: LocationSetting) {
         self.scope = scope
@@ -241,6 +244,8 @@ final class ProfileSession {
         confirmation = SaveConfirmation()
         collection = CollectionRoute()
         hints = DropHintStore(scope: scope)
+        followPrompt = FollowFilterPrompt(scope: scope)
+        remote.followPrompt = followPrompt
     }
 
     static let schema = Schema([
@@ -511,6 +516,7 @@ final class ProfileStore {
         // The store, not the server user: the holder of an account that does not own
         // `default.store` sends no header but files into a store of its own.
         SharedInbox.setCurrentProfile(session.scope.home)
+        ShareContextWriter.publish(session)
         session.remote.profileRefused = { [weak self] in self?.profileRefused() }
         installed(session)
     }

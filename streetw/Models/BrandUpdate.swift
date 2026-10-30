@@ -126,6 +126,12 @@ final class BrandUpdate {
     /// drawing one for a pass, and reading any property of a deleted model traps.
     var isGone: Bool { isDeleted || modelContext == nil }
 
+    /// The garment as a follow filter reads it — the four fields the server's notifier holds
+    /// too, and no others, so both ends decide this row on the same evidence.
+    var followItem: FollowFilter.Item {
+        FollowFilter.Item(title: title, productType: productType, tags: tags, price: priceAmount)
+    }
+
     /// Dominant colour read off the photograph rather than out of the title — a brand
     /// calling a shoe "Triple White" is naming a colourway, not a colour.
     var visionColor: String?
@@ -176,6 +182,41 @@ final class BrandUpdate {
     var packshotURLString: String?
 
     var packshotURL: URL? { packshotURLString.flatMap(URL.init(string:)) }
+
+    /// The clean product shot as the **server** read it, once per product, off the embeddings
+    /// (Phase 5, `FeedItem.productShotIndex`) — stored as the photograph's URL, so an older
+    /// gallery that no longer holds it simply does not use it. Nil until the server has read
+    /// the product, and when none of its photographs is one. Outranks `packshotURLString`,
+    /// which is the phone's own Vision answer and now its fallback: see
+    /// `SavedItem.coverURLString` and `ImageTagger`.
+    var serverShotURLString: String?
+    /// The server's style words for this product (`StyleWords`), read off the same photographs —
+    /// what Shop's search matches a style word against (`ShopCatalogue`).
+    var styleWords: [String] = []
+    /// When the server last said what it read of this product's photographs — nil until it has.
+    /// A feed row arrives before the server reads it, so a save asks again (`RemoteSync.readings`).
+    var readingCheckedAt: Date?
+
+    /// Takes the server's reading. Returns whether anything changed.
+    ///
+    /// **A new product shot makes the photograph analysis due again** when the phone measured a
+    /// different frame: the cutout, the colours and the cover's aspect were all read off
+    /// `packshotURLString`, and a cover that is not the photograph they describe would be drawn
+    /// to the wrong shape. Clearing `analyzedImageURL` is the one-time trigger `ImageTagger`
+    /// already honours; it then measures the server's shot first.
+    @discardableResult
+    func adoptReading(shotURL: String?, styleWords words: [String]?, at now: Date = Date()) -> Bool {
+        guard let words else { return false }
+        let shot = shotURL.flatMap { imageURLStrings.contains($0) ? $0 : nil }
+        readingCheckedAt = now
+        guard shot != serverShotURLString || words != styleWords else { return false }
+        serverShotURLString = shot
+        styleWords = words
+        if let shot, analyzedAt != nil, packshotURLString != shot {
+            analyzedImageURL = nil
+        }
+        return true
+    }
 
     /// Filename of the subject lifted off this item's photograph, in `Cutout.directory`.
     ///
@@ -349,6 +390,20 @@ final class BrandUpdate {
     /// link is not re-fetched on every launch for the rest of its life. Bump the version
     /// whenever enrichment learns something new.
     var enrichmentVersion: Int = 0
+
+    /// When a share that landed with **no photograph** is next asked for one, and how many
+    /// times it has been. `.distantFuture` is "not due": every row but a bare share, and a share
+    /// whose page has answered that it has none.
+    ///
+    /// A version stamp alone gives a thin share one more look per bump, and one look is what a
+    /// slow storefront, a phone that was offline for a minute or a bot wall that lets the next
+    /// request through all cost a save its picture — permanently, since nothing else revisits
+    /// it. So a failure that could be temporary is retried, further apart each time and only a
+    /// few times (`SharedSaveImporter.photoRetryDelays`); a page that answered and has no
+    /// picture, or that is gone, is let go at once. Non-optional so `repair` can narrow on it
+    /// in SQL; a lightweight migration gives every older row the default.
+    var photoRetryAt: Date = Date.distantFuture
+    var photoAttempts: Int = 0
 
     /// When a sitemap product's own page was read for its price, stock and sizes — the
     /// standalone half of the server's `Poller.enrich`, see `ProductPage`. Nil is "not yet",
