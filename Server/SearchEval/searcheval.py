@@ -9,6 +9,7 @@ address is an argument with a 127.0.0.1 default. See `docs/server.md`, *The sear
     python3 searcheval.py judge       # the written judgements below, applied -> judgements.json
     python3 searcheval.py run before after
     python3 searcheval.py thresholds  # how close the judged answers are, by meaning
+    python3 searcheval.py meaning     # the model alone: nearest by text vector, scored
 
 `catalogue.json` is a snapshot of whatever the local poller read and is not committed;
 `judgements.json` is, together with the date it was judged on. A product judged then and gone
@@ -377,6 +378,56 @@ def embedded_text(text):
     return " ".join(out + (["formal"] if formal else []))
 
 
+def embed(args, texts):
+    """The texts as the sidecar embeds them, and the id of the model that did."""
+    request = urllib.request.Request(
+        f"{args.sidecar}/embed/text", method="POST", data=json.dumps({"texts": texts}).encode(),
+        headers={"content-type": "application/json", "authorization": f"Bearer {os.environ['EMBEDDING_TOKEN']}"})
+    with urllib.request.urlopen(request, timeout=120) as response:
+        answer = json.load(response)
+    return answer["model"], answer["vectors"]
+
+
+def nearest(args, model, vector, limit=100):
+    """The searchable products nearest a query by text vector, with their similarity. Exact: the
+    order is by similarity, not by the distance the HNSW index serves, so no index is used — the
+    server's own read goes through the index and returns at most `hnsw.ef_search` (40) rows."""
+    literal = "[" + ",".join(f"{x:.6f}" for x in vector) + "]"
+    return [(key, float(similarity)) for key, similarity in psql(f"""
+        SELECT b.slug || '|' || p.external_id,
+               1 - (e.text_embedding::vector({len(vector)}) <=> '{literal}'::vector({len(vector)}))
+        FROM product_embeddings e JOIN products p ON p.id = e.product_id JOIN brands b ON b.id = p.brand_id
+        WHERE e.model = '{model}' AND p.kind = 'product' AND p.unlisted_at IS NULL
+          AND p.storefront_id IS NULL AND cardinality(p.image_urls) > 0
+        ORDER BY 2 DESC LIMIT {limit}
+        """, args.database)]
+
+
+def meaning(args):
+    """Meaning alone: each query's hundred nearest products by text vector, in that order, scored
+    like `run` — no words, no grammar, no constraints. Not what the app shows; a measure of the
+    model alone, to compare one model with another on the same catalogue and judgements."""
+    with open(QUERIES) as f:
+        queries = json.load(f)
+    with open(JUDGEMENTS) as f:
+        judged = json.load(f)
+    model, vectors = embed(args, [embedded_text(q["text"]) for q in queries])
+    rows = []
+    for query, vector in zip(queries, vectors):
+        shown = [key for key, _ in nearest(args, model, vector)]
+        rows.append({"kind": query["kind"], **metrics(shown, set(judged["relevant"].get(query["id"], [])))})
+
+    def mean(rows, key):
+        values = [r[key] for r in rows if r[key] is not None]
+        return sum(values) / len(values) if values else float("nan")
+    print(f"model {model}; meaning alone, {len(queries)} queries\n")
+    print(f"{'P@10':>6} {'R@100':>6} {'nDCG@10':>8} {'MRR':>6}")
+    print(f"{mean(rows, 'p10'):6.3f} {mean(rows, 'r100'):6.3f} {mean(rows, 'ndcg10'):8.3f} {mean(rows, 'rr'):6.3f}")
+    print("\nP@10 by kind of search:")
+    for kind in sorted({r["kind"] for r in rows}):
+        print(f"{kind:16}{mean([r for r in rows if r['kind'] == kind], 'p10'):6.3f}")
+
+
 def thresholds(args):
     """How close the products the words did not find are to each query, read against the
     judgements — the bar a product must clear to be a result by meaning is chosen from this.
@@ -389,35 +440,23 @@ def thresholds(args):
         judged = json.load(f)
     token = reader(args.base)
     texts = [embedded_text(q["text"]) for q in queries]
-    request = urllib.request.Request(
-        f"{args.sidecar}/embed/text", method="POST", data=json.dumps({"texts": texts}).encode(),
-        headers={"content-type": "application/json", "authorization": f"Bearer {os.environ['EMBEDDING_TOKEN']}"})
-    with urllib.request.urlopen(request, timeout=120) as response:
-        answer = json.load(response)
-    model = answer["model"]
+    model, vectors = embed(args, texts)
     pairs = []  # (similarity, relevant, query, the words found little)
-    for query, text, vector in zip(queries, texts, answer["vectors"]):
+    for query, text, vector in zip(queries, texts, vectors):
         words, _ = ranked(args.base, token, query["text"], VARIANTS["after-words"], 1000)
         found = set(words)
         little = len(words) < args.little
-        literal = "[" + ",".join(f"{x:.6f}" for x in vector) + "]"
-        rows = psql(f"""
-            SELECT b.slug || '|' || p.external_id,
-                   1 - (e.text_embedding::vector({len(vector)}) <=> '{literal}'::vector({len(vector)}))
-            FROM product_embeddings e JOIN products p ON p.id = e.product_id JOIN brands b ON b.id = p.brand_id
-            WHERE e.model = '{model}' AND p.kind = 'product' AND p.unlisted_at IS NULL
-              AND p.storefront_id IS NULL AND cardinality(p.image_urls) > 0
-            ORDER BY 2 DESC LIMIT 100
-            """, args.database)
         relevant = set(judged["relevant"].get(query["id"], []))
-        for key, similarity in rows:
+        for key, similarity in nearest(args, model, vector):
             if key not in found:
-                pairs.append((float(similarity), key in relevant, query["id"], little))
+                pairs.append((similarity, key in relevant, query["id"], little))
     print(f"model {model}; of each query's 100 nearest products, those its words did not find")
     print(f"'little': the {len({p[2] for p in pairs if p[3]})} queries whose words found fewer than {args.little}\n")
     print(f"{'bar':>6} {'added':>7} {'relevant':>9} {'precision':>10} {'queries':>8}   "
           f"{'little: added':>13} {'relevant':>9} {'precision':>10}")
-    for step in range(50, 92, 2):
+    # Every model puts texts at its own distances — a multilingual E5 rarely scores a pair
+    # under 0.7 — so the bars are an argument.
+    for step in range(round(args.bars[0] * 100), round(args.bars[1] * 100) + 1, round(args.bars[2] * 100)):
         bar = step / 100
         admitted = [p for p in pairs if p[0] >= bar]
         good = sum(1 for p in admitted if p[1])
@@ -453,12 +492,15 @@ def main():
     t = sub.add_parser("thresholds")
     t.add_argument("--per-query", action="store_true")
     t.add_argument("--little", type=int, default=12, help="what counts as the words finding little")
+    t.add_argument("--bars", type=float, nargs=3, default=[0.50, 0.90, 0.02], metavar=("FROM", "TO", "STEP"),
+                   help="the bars to count at; each model needs its own range")
+    sub.add_parser("meaning")
     args = parser.parse_args()
     for name in ("base", "database", "sidecar"):
         value = getattr(args, name)
         if "127.0.0.1" not in value and "localhost" not in value:
             sys.exit(f"--{name} {value} is not local; the eval never runs against a deployment")
-    {"dump": dump, "judge": judge, "run": run, "thresholds": thresholds}[args.command](args)
+    {"dump": dump, "judge": judge, "run": run, "thresholds": thresholds, "meaning": meaning}[args.command](args)
 
 
 if __name__ == "__main__":
