@@ -67,7 +67,12 @@ Part of the streetw guidance set; see `CLAUDE.md` for the index and the build ru
   profile's `claims` on the garment's own `SizeContext`, the same reading the app makes. Each size
   chosen is one `StockWatch`, none is any size, made through the existing path (local
   `StockWatch`, then `RemoteSync.createWatch`, which mirrors it when the brand has a server id)
-  and never twice for the same pins, so a re-drain is harmless. A page that lists no sizes says
+  and never twice for the same pins, so a re-drain is harmless. **The mirror is sent again once
+  the row names its product**: the watch is set at the drain, and when the catalogue read missed
+  its cap the row was still keyed `shared:`, so the server refused it as "No such product" and
+  the watch lived on the phone alone — where, in server mode, nothing re-reads the product and
+  it could never fire. `repair` names the product later, and `RemoteSync.mergeWatches` then
+  re-sends every unconfirmed watch whose row has a `productExternalID`. A page that lists no sizes says
   so and the app asks which size once it knows the run (`ShareQuestions` `.pickSize`, the watch
   editor). **One question, answered once:** a share that chose Notify me is never also asked the
   sold-out question. Markdowns: saves already get local price-drop alerts (`PriceAlerts`), with no

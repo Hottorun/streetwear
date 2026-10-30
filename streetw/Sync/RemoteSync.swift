@@ -907,6 +907,17 @@ final class RemoteSync {
             watch.firedSizes = dto.firedSizes
             context.insert(watch)
         }
+
+        // A watch the server has not got, on a row that now names a catalogue product: the
+        // share sheet's "Notify me" is set at the drain, and when the catalogue read missed its
+        // cap the row was still keyed `shared:`, so the create was refused as "No such product"
+        // and the watch lived on this phone alone — where, in server mode, nothing ever
+        // re-reads the product and it could not fire. `SharedSaveImporter.repair` names the
+        // product later; this is what sends the watch again once it has. A row that never
+        // reached the catalogue is not retried: the server would refuse it the same way.
+        for watch in unconfirmed where watch.update?.productExternalID != nil {
+            await createWatch(watch)
+        }
     }
 
     /// The row a restored watch hangs off: the newest this store holds for the product, or one
