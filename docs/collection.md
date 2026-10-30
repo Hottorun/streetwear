@@ -241,9 +241,11 @@ Part of the streetw guidance set; see `CLAUDE.md` for the index and the build ru
   (`BrandUpdate.serverShotURLString`, nil when the server found none or has not read it).
   - **A feed row arrives before the server has read it** (the reading runs minutes behind a
     poll), and the merge never revisits a row it holds — so `RemoteSync.mergeReadings` asks
-    `POST /v1/products/readings` for saves with no reading, or one older than two weeks, at most
-    a hundred a request and one request an hour. A save from Discover or a search takes the
-    card's reading at once (`DiscoverSave`).
+    `POST /v1/products/readings` for the newest **feed rows** with no reading, or one older than
+    two weeks, at most a hundred a request and one request every ten minutes. **Feed rows, saved
+    or not — never saves alone**: a list of only the saved products would tell the server what
+    somebody saved, which never leaves the phone, while every feed row is one the server sent.
+    A save from Discover or a search takes the card's reading at once (`DiscoverSave`).
   - **`adoptReading` makes the analysis due again** when the server's shot is not the frame the
     phone measured: it clears `analyzedImageURL`, the trigger `ImageTagger` already honours, and
     `ImageTagger` then measures the server's shot first (`serverShot`) and walks the gallery with

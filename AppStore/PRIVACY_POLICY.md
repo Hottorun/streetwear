@@ -30,7 +30,7 @@ actually is on the day you ship.
 
 # Dropwall — Privacy Policy
 
-**Last updated: 27 October 2026**
+**Last updated: 30 October 2026**
 
 Dropwall is made by KERN AG, Germany. Questions about this
 policy go to hottorun@pm.me.
@@ -87,13 +87,15 @@ Deleting the app deletes all of it. We hold no copy and cannot recover it.
 - **A push notification token**, if you allow notifications, so that Apple can deliver alerts to
   your device. Removed if Apple tells us the token is no longer valid.
 - **Which brands you follow**, and for each whether you want everything, only sales and price
-  drops, or nothing at all, so we know which storefronts to watch and what to tell you.
+  drops, or nothing at all — and, if you choose, which kinds of pieces you want to hear about
+  ("jeans", "bags") — so we know which storefronts to watch and what to tell you.
 - **Which products you have asked to be alerted about**, including the size or colour you asked
   for.
-- **What you type into Shop's search box**, so our server can search everything the shops you
-  follow sell. It is used to answer that one search and then discarded: it is not stored, not
-  written to our logs, and not linked to you or your device. Finding products that look alike
-  runs on our own server too — no search, and no product, is sent to another company to do it.
+- **What you type into Shop's search box**, so our server can search every shop it watches.
+  It is used to answer that one search and then discarded: it is not stored, not written to our
+  logs, and not linked to you or your device. Finding products that look alike — including ones
+  that look like a garment you scanned — runs on our own server too, and the photograph is
+  compared and discarded, never stored.
 - **Your credit balance and purchases**, if you are signed in: each credit pack you buy (the
   App Store's transaction, which names the pack and when it was bought, never a payment
   detail — Apple handles the payment), each credit spent, with the kind of action it paid for

@@ -34,10 +34,11 @@ reachable immediately. If the feed looks empty, it is
 because no brand has published anything in the last few minutes; the brand's own page shows
 its full catalogue right away.
 
-Shop's search box searches the catalogue our server holds of the shops the user follows (and,
-when asked, of every shop it watches), and says which under the field. That plain search is not
-a web search and no generative model is involved. The text of a search is used to answer it and
-is not stored or logged.
+Shop's search box searches the catalogue our server holds of every shop it watches, with the
+shops the user follows ranked a little higher (a "How we sort" note beside the results says
+exactly how; nothing is ranked for payment), and says what it searched under the field. That
+plain search is not a web search and no generative model is involved. The text of a search is
+used to answer it and is not stored or logged.
 
 AI FEATURES AND CREDITS
 

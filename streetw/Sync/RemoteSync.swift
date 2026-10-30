@@ -811,26 +811,34 @@ final class RemoteSync {
     /// follow list arrives first, so this is a brand being unfollowed), and a duplicate of a
     /// local watch the create call never confirmed — that one is adopted instead, by product,
     /// size and colour, which is the identity the server's unique constraint uses.
-    /// When this session last asked for readings, so a save the server has not read yet costs one
-    /// request an hour rather than one a sync. In memory: a pause, not a verdict.
+    /// When this session last asked for readings. In memory: a pause, not a verdict.
     private var readingsAskedAt: Date?
 
-    /// The server's reading of the photographs (`POST /v1/products/readings`) for what is saved
-    /// here and has not got one — or had it long ago, since a new gallery is read again.
+    /// The server's reading of the photographs (`POST /v1/products/readings`) for feed rows that
+    /// have not got one — or had it long ago, since a new gallery is read again.
     ///
     /// **A feed row is sent before the server reads its photographs** — the reading runs behind
     /// the embedding backfill, minutes after a poll — and the merge never revisits a row it holds,
     /// so without this the wall's cover would only ever be the server's product shot for things
-    /// saved from Discover or a search. Saves only: a cover is the wall's, and the feed and
-    /// Discover keep the brand's first photograph by design.
+    /// saved from Discover or a search.
+    ///
+    /// **It asks about feed rows, saved or not, and never about saves alone.** Asking only for
+    /// what is saved would tell the server what somebody saved, which is the one thing that never
+    /// leaves the phone. Every row asked about here is one the server sent in the feed, newest
+    /// first, so the request says nothing the server did not already know. A save from Discover
+    /// has no feed row behind it and keeps the reading it arrived with.
     private func mergeReadings(from api: StreetwAPI, now: Date = Date()) async {
-        if let asked = readingsAskedAt, now.timeIntervalSince(asked) < 3_600 { return }
+        if let asked = readingsAskedAt, now.timeIntervalSince(asked) < 600 { return }
         let stale = now.addingTimeInterval(-14 * 86_400)
-        let saved = (try? context.fetch(FetchDescriptor<BrandUpdate>(predicate: #Predicate { !$0.saves.isEmpty }))) ?? []
+        var recent = FetchDescriptor<BrandUpdate>(
+            predicate: #Predicate { $0.productExternalID != nil },
+            sortBy: [SortDescriptor(\.publishedAt, order: .reverse)]
+        )
+        recent.fetchLimit = ProductReadingsRequest.limit * 6
+        let candidates = (try? context.fetch(recent)) ?? []
         var rows: [ProductReadingsRequest.Item: [BrandUpdate]] = [:]
-        for update in saved where update.hasPhotograph && (update.readingCheckedAt.map { $0 < stale } ?? true) {
-            // The catalogue's key: a feed row's product, or a Discover save's own key.
-            guard let key = update.productExternalID ?? (update.externalID.hasPrefix("event:") ? nil : update.externalID) else { continue }
+        for update in candidates where update.hasPhotograph && (update.readingCheckedAt.map { $0 < stale } ?? true) {
+            guard let key = update.productExternalID else { continue }
             rows[ProductReadingsRequest.Item(brandID: update.brand?.remoteID, externalID: key), default: []].append(update)
             if rows.count == ProductReadingsRequest.limit { break }
         }
@@ -1368,7 +1376,7 @@ final class RemoteSync {
             update.variants = item.variants ?? []
             // What the server read off the photographs, when it already has: the product shot
             // the wall's cover leads with, and the style words search matches. Usually nil on
-            // a fresh event — `readings` asks again for the ones that are saved.
+            // a fresh event — `mergeReadings` asks again for the newest feed rows, saved or not.
             update.adoptReading(
                 shotURL: ProductShotIndex.url(in: item.imageURLs, at: item.productShotIndex),
                 styleWords: item.styleWords
