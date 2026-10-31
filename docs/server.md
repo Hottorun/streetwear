@@ -1024,37 +1024,58 @@ already done — and switching the sidecar back finds the old vectors' bar still
 
 ## The product photograph and style words
 
-Phase 5, `ProductReading.swift`. Which of a product's photographs is the clean product shot —
-the garment on its own, nobody wearing it — and up to two style words from a fixed vocabulary,
-read **once per product** on the server and sent on the wire. The phone's Vision check
-(`ProductShot`) is now the fallback; `docs/collection.md` (*The cover*) has the phone's half.
+Phase 5, `ProductReading.swift`. Whether one of a product's later photographs should **stand in
+for the shop's first** — because the first is on a person and that one is the whole garment on
+its own — and up to two style words from a fixed vocabulary, read **once per product** on the
+server and sent on the wire. `docs/collection.md` (*The cover*) has the phone's half: the
+shop's first photograph is the cover unless the server says so or somebody chose one by hand.
 
+- **The shop's first photograph is right by default, and nil means "keep it"** — the owner's
+  rule, 2026-10-31 (`ZeroShot.version` 2). The first version answered the question "which
+  photograph is the clean product shot?", with 0 for a lead that was one and a later index
+  otherwise, and it decided "product shot" by "no person in it". On Motel Rocks most galleries
+  carry a close-up of the fabric; a swatch has nobody in it either, so the cover of a dress
+  became a square of cloth — on the server, and on the phone, whose Vision check asked the same
+  question. The question now is "should a later photograph stand in for the first?", and the
+  answer is yes only when the reading is **confident twice**: that the first photograph is on a
+  person, and that a later one is the whole garment on a plain background, ahead of "a person"
+  *and* ahead of "a close-up" by the model's margin. A lead that reads as a product, or that the
+  model is unsure about, is not looked past; a gallery of models and swatches all the way down
+  keeps the shop's choice. `shotIndex` is therefore nil or ≥ 1, never 0, and nil is "nothing
+  to say" rather than "no shot". **Precision over recall**: a wrong stand-in overrides a shop's
+  own choice with something worse, and the margins were chosen so that none on the labelled set
+  is wrong.
 - **Zero-shot through the embedding model is the method** (`ZeroShot`), the owner's rule: Claude
-  only if it clearly reads the photographs better, which is the comparison below. A photograph's
-  score is its best similarity to five product-shot prompts ("a product photo of a garment on a
-  plain background", "a flat lay photo of clothing", …) minus its best to six others ("a person
-  wearing clothes", "a fashion model posing", … and "a close-up photo of fabric texture", without
-  which a model-first gallery handed its cover to the swatch). A product shot leads by more than
-  the model's `shotMargin` — for FashionSigLIP 0.02: 99.5 % of the labelled product shots clear
-  it, and it is what turned STAUD's on-model leads (0.01–0.016) from "product shot" into "look
-  further". The prompts are embedded once per model through the sidecar's own `/embed/text`;
-  **the sidecar is unchanged** — every comparison is a dot product in Swift.
-- **The two bars are the model's, and are kept per model id** (`ZeroShot.Bars`,
-  `ZeroShot.measuredBars`, keyed like `ProductSearch.measuredThresholds`). Each model puts the
-  same photograph and sentence at its own distance — CLIP's margins and SigLIP's are not on one
-  scale — so the margin and the style bar tuned on one would be wrong on every product under
-  another, and nothing on the wire would show it: the shot index and the words would simply be
-  worse. **A model with no bars is not read.** `ZeroShot.prompts` throws `Unmeasured`, the
-  backfill answers `waiting` with the reason and logs it once (`POST /admin/readings` prints
-  it), and boot names the models that have bars. The reading eval below measures a new model's
-  bars; `ReadingEvalTests` run against a model with none sweeps both and prints the table.
-- **The other photographs are embedded only when the first looks like a person.** The lead's
-  vector is the one `EmbeddingBackfill` already stored, so most products (170 of the eval's 203)
-  are answered with no request at all. Otherwise up to five more, as 400 px renditions, **four
-  to a request with a 250 ms pause after each**, stopping at the first request that holds a
-  shot: the sidecar takes requests one at a time, and a search's query embedding waits behind
-  whichever is in. Measured while the reading ran flat out: single query embeddings answered in
-  0.02–0.10 s, far inside their 1.5 s.
+  only if it clearly reads the photographs better, which is the comparison below. A photograph
+  is scored against **three classes** of sentence — the whole garment on its own ("a product
+  photo of a whole garment on a plain background", "a ghost mannequin photo of a garment", …), a
+  person wearing it ("a fashion model posing", …) and a close-up ("a close-up photo of fabric
+  texture", "a swatch of material", "a clothing label", "a cropped close-up of part of a
+  garment", …) — each class's score its best similarity to its sentences, and what counts is how
+  far a class leads **both** of the others (`ZeroShot.Scores.personLead`, `.productLead`). Two
+  classes were not enough: with the fabric sentence one voice among the "not a product"
+  prompts, a swatch still read as more product than person. The prompts are embedded once per
+  model through the sidecar's own `/embed/text`; **the sidecar is unchanged** — every comparison
+  is a dot product in Swift.
+- **The bars are the model's, and are kept per model id** (`ZeroShot.Bars`,
+  `ZeroShot.measuredBars`, keyed like `ProductSearch.measuredThresholds`): `personMargin`, how
+  far "a person" must lead for the first photograph to be read as on a person at all;
+  `shotMargin`, how far "the whole garment" must lead for a later photograph to stand in; and
+  `styleBar`. Each model puts the same photograph and sentence at its own distance — CLIP's
+  margins and SigLIP's are not on one scale — so bars tuned on one would be wrong on every
+  product under another, and nothing on the wire would show it: the stand-ins and the words
+  would simply be worse. **A model with no bars is not read.** `ZeroShot.prompts` throws
+  `Unmeasured`, the backfill answers `waiting` with the reason and logs it once
+  (`POST /admin/readings` prints it), and boot names the models that have bars. The reading eval
+  below measures a new model's bars; `ReadingEvalTests` sweeps both margins and prints the table
+  whatever the model, and scores and writes a result only for a model that has them.
+- **The other photographs are embedded only when the first clearly looks like a person.** The
+  lead's vector is the one `EmbeddingBackfill` already stored, so most products (188 of the
+  eval's 233 under FashionCLIP, 198 under SigLIP) are answered with no request at all. Otherwise
+  up to five more, as 400 px renditions, **four to a request with a 250 ms pause after each**,
+  stopping at the first request that holds a stand-in: the sidecar takes requests one at a time,
+  and a search's query embedding waits behind whichever is in. Measured while the reading ran
+  flat out: single query embeddings answered in 0.02–0.10 s, far inside their 1.5 s.
 - **Style words** (`StyleWords.vocabulary` in the core: workwear, minimal, preppy, streetwear,
   tailoring, y2k, sporty, outdoor, romantic, vintage, skate, western, boho, grunge, graphic —
   single tokens, so a search can match them whole) are scored as 0.7 × the shot's similarity to
@@ -1064,14 +1085,30 @@ read **once per product** on the server and sent on the wire. The phone's Vision
   vector — pgvector's `avg()` over up to 2,000 rows, one query, refreshed daily; nothing is read
   until there are 200 photographs to average (`minimumCalibration`). Without the calibration a
   prompt's raw similarity says as much about the prompt as the photograph.
-- **Stored once per product.** `products.shot_index` (nil when none is one) and
-  `products.style_words` (`TEXT[]`, nil = not read, empty = read and nothing clear), GIN-indexed
-  for search; `AddProductReading`. The ledger is `product_readings` (Postgres only): the method
-  key (method, `ZeroShot.version`, model id), an md5 of the first six photographs read, attempts,
-  `retry_at` and `gone` — so a restart resumes, a new gallery or model or version reads again,
-  and nothing on `products` changes unless the answer did. A shot past the lead also writes its
-  vector to `product_embeddings.shot_embedding` (added at boot by `SemanticIndex.prepare`), which
-  photo search compares instead of the lead.
+- **Stored once per product.** `products.shot_index` (nil = keep the shop's first photograph,
+  which is also "not read") and `products.style_words` (`TEXT[]`, nil = not read, empty = read
+  and nothing clear), GIN-indexed for search; `AddProductReading`. The ledger is
+  `product_readings` (Postgres only): the method key (method, `ZeroShot.version`, model id), an
+  md5 of the first six photographs read, attempts, `retry_at` and `gone` — so a restart resumes,
+  a new gallery or model or version reads again, and nothing on `products` changes unless the
+  answer did. A stand-in also writes its vector to `product_embeddings.shot_embedding` (added at
+  boot by `SemanticIndex.prepare`), which photo search compares instead of the lead.
+- **A rule change reads the catalogue again, and forgets the old answers first.** Bumping
+  `ZeroShot.version` changes every method key, so every product is due; that is hours on
+  Railway (below), and until a product is reached its old `shot_index` would go on being served
+  on every feed row, Discover card and `/v1/products/readings` it is on. So `ClearProductShots`
+  — the migration that ships with version 2 — sets every `shot_index` to nil at deploy: nil is
+  the new rule's default, a wrong stand-in is worse than none, and the stand-ins the new rule
+  does find come back as the backfill reaches them. The style words are left (the same prompts
+  read them, and search needs them meanwhile), and the ledger keeps its old keys, which is what
+  makes everything due. **What the owner will see**: at deploy every cover is the shop's first
+  photograph; over the next hours (about two on this Mac, four on Railway's 2 vCPU for 10,000
+  products — the catalogue was 11,286 at the last count) the log prints `read 16 (n shots past
+  the first photograph, …)` batches and the few confident stand-ins arrive, then it is only new
+  products again. Phones learn a stand-in on their next `/v1/products/readings` ask for the row
+  (`docs/collection.md`) — and **the server goes first**: the app build that ships the rule
+  ignores stand-ins adopted under the old one and asks again, and with the migration run it can
+  never adopt an old answer as current.
 - **The backfill** (`ProductReadingBackfill`) runs behind the embedding backfill, sixteen products
   a batch, where the poller runs and only where `semanticSearch` is on — idle, and said at boot,
   when the sidecar is off. A product is due once its lead photograph's embedding has settled
@@ -1089,29 +1126,41 @@ read **once per product** on the server and sent on the wire. The phone's Vision
   twice that on Railway's 2 vCPU — once; afterwards it is only new products.
 - **On the wire**: `FeedItem.productShotIndex` and `.styleWords`, `DiscoverCard` the same (search
   hits are `DiscoverCard`s), optional and ignored by older apps; `readShotIndex` drops an index
-  the gallery no longer reaches. **`POST /v1/products/readings`** answers for products the phone
-  already holds (its saves, whose feed rows were sent before the reading) — at most a hundred,
-  keyed by brand and external id or the external id alone, only those read, the shot as its URL.
+  the gallery no longer reaches. An older app reads a stand-in exactly as it read a product shot
+  and shows it; where the server now keeps the shop's choice it falls back to its own Vision
+  pick, as it always did for a product with none. **`POST /v1/products/readings`** answers for
+  products the phone already holds (its saves, whose feed rows were sent before the reading) — at
+  most a hundred, keyed by brand and external id or the external id alone, only those read, the
+  stand-in as its URL.
 - **Search matches style words like tags.** `ShopListing.styleWords` is noted at a tag's weight in
   `ShopIndex` (so "workwear" finds a canvas jacket, and a title that says workwear still ranks
   first), `PostgresTextIndex` adds `p.style_words && ARRAY[…]` to the candidates and to `existing`
   for the words that are style words, and `PortableTextIndex` a `LIKE`. The phone stores the words
   and `ShopCatalogue` reads them, so parity holds. The ranking is otherwise untouched.
 - **The Haiku switch.** `PRODUCT_READING=haiku` reads with the fast model instead
-  (`AIProvider.readProductPhotos`, `docs/ai.md`), owner-paid as `product_reading` under
+  (`AIProvider.readProductPhotos`, `docs/ai.md`), asked the same three-way question in words —
+  is the first photograph clearly on a person; is a later one clearly the whole product on its
+  own; is it not a close-up, a crop, a swatch or a label — with 0 for "keep the first" and a
+  wrong stand-in named as worse than none. Numbered from one on the page, and 1 reads as 0: the
+  first photograph is never its own stand-in. Owner-paid as `product_reading` under
   `AI_BACKGROUND_DAILY_CAP_MICROS`, checked before every product; off by default, and switching
   method reads the catalogue again.
 
 ### The reading eval
 
 `Server/ReadingEval/labelled.json`: 203 products from the search eval's seven shops (29 each,
-chosen by a hash of the id among products with two or more photographs), their first six
-photographs, and labels made by hand on 2026-10-30 by looking at every photograph — every
-acceptable product-shot index (null when none is: lookbook pages, galleries on models all the way
-down) and every plausible style word. 33 of the 203 do not lead with a product shot. The harness
-is `ReadingEvalTests`, which runs the shipped code against the network and writes
-`results-<method>.json` beside the labels, printing the other method's last run for comparison.
-From `Server/` in a checkout named `streetw`, with `DEVELOPER_DIR` set:
+chosen by a hash of the id among products with two or more photographs) plus, for the close-up
+rule, 30 STAUD products whose gallery carries a swatch or a detail photograph (group
+`close-ups`, chosen by a hash of the id on 2026-10-31 — the local catalogue has no Motel Rocks,
+and STAUD is the shop in it that ends most galleries with a square of cloth); their first six
+photographs, and labels made by hand by looking at every photograph — `shots`, every photograph
+that is the whole product on its own (null when none is: lookbook pages, galleries on models all
+the way down), `details`, every close-up, crop, swatch or label (2026-10-31; 148 of the 233 have
+one), and every plausible style word (2026-10-30; the 30 added are unlabelled for words). 45 of
+the 233 do not lead with a product shot, and 20 of those have one later — the stand-ins there are
+to find. The harness is `ReadingEvalTests`, which runs the shipped code against the network and
+writes `results-<method>.json` beside the labels, printing the other method's last run for
+comparison. From `Server/` in a checkout named `streetw`, with `DEVELOPER_DIR` set:
 
 ```bash
 STREETW_READING_EVAL=siglip EMBEDDING_URL=http://127.0.0.1:8080 EMBEDDING_TOKEN=… swift test --filter ReadingEval
@@ -1121,47 +1170,60 @@ STREETW_READING_EVAL=haiku ANTHROPIC_API_KEY=… swift test --filter ReadingEval
 The Haiku run needs nothing but the key — no database, no server, no sidecar — and is estimated
 at about forty cents.
 
-**A model with no bars is measured, not scored.** Run the `siglip` command against a sidecar
-serving a model that `ZeroShot.measuredBars` does not name and the harness embeds every
-photograph, sweeps the shot margin and then the style bar, and prints both tables (shot right,
-right where the lead is not one, lead judged right; precision, products with a right word,
-products given a word) without writing a results file. Choose from the tables, add the row, and
-run it again for the scored table below. `results-siglip.json` is the last scored run of the
-default model.
+**Every run embeds every photograph and sweeps the margins.** The harness embeds the first six
+photographs of each product up front (the sidecar's batches of 64), runs the shipped reader
+against that cache — so what it *asks* is still what the backfill would ask — and then re-runs
+the rule from the same scores at every pair of margins from 0.00 to 0.08, printing for each:
+stand-ins right/made (the precision), how many were close-ups, how many overrode a lead that was
+a product shot already, stand-ins found of those there were to find, the answer right overall,
+and **which products the wrong ones were** (`#index→photograph`, into `labelled.json`), so a
+wrong stand-in can be looked at rather than counted. Then the style bar. A model that
+`ZeroShot.measuredBars` does not name is only measured — choose from the table, add the row, run
+again; one that is named is scored and written. `results-siglip.json` is the last scored run of
+the default model. The first rule, exactly as it shipped (its prompts and margins are kept in
+the harness as `V1`), is run on the same photographs for the "before" column.
 
-**Measured on 2026-10-30**, FashionSigLIP v1 (bars 0.02 / 0.01) and FashionCLIP (bars 0.03 /
-0.035, chosen from the sweep that day — the shot margin that read most right, and the style bar
-nearest SigLIP's precision):
+**Measured on 2026-10-31** over the 233, FashionSigLIP v1 (bars 0.01 / 0.02 / 0.01) and
+FashionCLIP (bars 0.03 / 0.04 / 0.035):
 
 | | SigLIP zero-shot | FashionCLIP zero-shot (default) | Haiku |
 |---|---|---|---|
-| product shot right | **196/203 = 0.966** | 186/203 = 0.916 | not yet run (no key on the build machine) |
-| …where the lead is not one | 28/33 = 0.848 | 22/33 = 0.667 | |
-| lead photograph judged right | 199/203 = 0.980 | 189/203 = 0.931 | |
-| style words right (precision) | 177/273 = 0.648 | 161/246 = 0.654 | |
-| products with a right word | 129/199 = 0.648 | 120/199 = 0.603 | |
-| products given any word | 158/203 = 0.778 | 147/203 = 0.724 | |
-| photographs embedded beyond the leads | 136 | 160 | |
-| time / cost | 53 s on a Mac / nothing | 38 s on a Mac / nothing | |
+| override precision (a stand-in that is a product shot) | **11/11 = 1.000** | **4/4 = 1.000** | not yet run (no key on the build machine) |
+| override rate | 11/233 = 0.047 | 4/233 = 0.017 | |
+| overrides to a close-up — before, under the first rule | 0 — 5 of its 23 stand-ins (precision 18/23 = 0.783) | 0 — 7 of its 38 (20/38 = 0.526) | |
+| stand-ins found, of the 20 there were to find | 11/20 = 0.550 | 4/20 = 0.200 | |
+| answer right (a right stand-in, or none where the lead is a shot or nothing is) | 224/233 = 0.961 | 217/233 = 0.931 | |
+| style words right (precision) | 186/287 = 0.648 | 173/269 = 0.643 | |
+| products with a right word | 137/199 = 0.688 | 129/199 = 0.648 | |
+| products given any word | 184/233 = 0.790 | 174/233 = 0.747 | |
+| photographs embedded beyond the leads | 85 | 43 | |
+| time / cost | 130 s on a Mac / nothing | 149 s on a Mac / nothing | |
 
-**FashionCLIP reads photographs worse than SigLIP by five points on the shot** and twelve where
-the lead is a person — its sweep peaks at 0.916 at any margin — while reading text better (*The
-search eval*). The one sidecar serves both, so the model is chosen for search and the reading
-takes what it gets; the phone's Vision check (`ProductShot`) still stands behind it for saves.
-If the reading matters more than the search's two points, the owner's switch back is the two
+The same sweep, for the choice: SigLIP at 0.00 / 0.02 is also every stand-in right and finds
+15 of 20, and at 0.00 / 0.01 its one wrong stand-in is STAUD's Teddy jean on a model's legs; the
+bars are the step inside that, because a lead that reads as a person by nothing at all is not
+"clearly" one and the prompts were tuned on these labels. FashionCLIP at 0.00 / 0.04 finds 10
+of 20 with one wrong in twelve — the Natalie suede jacket, a model seen from behind, read as a
+garment on a plain background — and below a shot margin of 0.04 its wrong stand-ins are all
+people on white; 0.03 / 0.04 is the first pair with none. **On the 30 close-up products neither
+model makes a stand-in** (the first rule chose a close-up on one of them), and 12 of the 30 lead
+with a model, so the price of the rule is visible there too: three had a product shot to find.
+
+**FashionCLIP reads photographs worse than SigLIP** — it finds a fifth of the stand-ins SigLIP
+finds at the same precision, and confuses a person on a plain ground with a garment on one —
+while reading text better (*The search eval*). The one sidecar serves both, so the model is
+chosen for search and the reading takes what it gets; what it gets under the new rule is a
+cover that is the shop's own photograph nearly everywhere, which is the safe side. If the
+stand-ins matter more than the search's two points, the owner's switch back is the two
 variables in `Embeddings/README.md`.
 
 For scale: always answering "streetwear" would be right on 35 % of products, so the words are
-about twice the base rate, and the misses are honest ones (a puffer read as grunge). **The prompts,
-the margin, the weights and the bar were tuned on these same labels**, which flatters both
-zero-shot columns: SigLIP's shot margin is a round number that clears 99.5 % of product shots, the
-richer style prompts moved its top-two precision from 0.61 to 0.64, and FashionCLIP's bars were
-picked off the same sweep — so expect a few points less on a fresh set. Haiku gets no tuning
-beyond its prompt — label a second set before switching on a small margin. SigLIP's shot misses
-(seven): a lifestyle lead of loafers on feet that scored just over the bar (0.021), a lookbook
-page read as a product, two galleries on models all the way down where a later on-model
-photograph cleared the bar (STAUD's silk top, Stüssy's bib), a close-up of board shorts on a
-body, sunglasses seen side-on, and a Siouxsie Sioux tee whose printed face read as a person.
+about twice the base rate, and the misses are honest ones (a puffer read as grunge). **The
+prompts, the margins, the weights and the bar were tuned on these same labels**, which flatters
+both zero-shot columns — the margins were picked off the sweep above as the first pair with no
+wrong stand-in — so expect a few points less on a fresh set, and expect the first wrong
+stand-in on a new shop to be a model on a plain background rather than a close-up. Haiku gets
+no tuning beyond its prompt — label a second set before switching on a small margin.
 
 ## AI
 
