@@ -10,4 +10,10 @@ Saved pieces lead with the clean product photo, not the styled one.
 
 Fixed: the feed no longer loses things you saw earlier in the day, and saves from some shops now arrive with their photos.
 
+A calmer app. Far less text on every screen, a short tour when you start, and a tip the first time you need one. You › Help shows the tour again.
+
+Sign out. You › Account now lets you sign out; your saves stay on the phone and come back when you sign in.
+
+Follow several brands in a row: adding a brand no longer closes the sheet.
+
 Dropwall now opens on Shop.

@@ -76,6 +76,9 @@ The account can be deleted in the app: You → Account → Delete account. That 
 every profile on it and every server-side record linked to it, and revokes the app's Sign in with
 Apple token. A single profile can be deleted the same way from its own row.
 
+You → Account → Sign out signs this phone out without deleting anything: the phone shows an empty
+app, and the account's saves come back when the same Apple ID signs in again.
+
 LOCATION
 
 You → Location is a country setting, defaulting to the phone's region. Where a brand runs a
