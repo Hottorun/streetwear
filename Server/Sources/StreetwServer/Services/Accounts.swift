@@ -92,6 +92,31 @@ enum Accounts {
         }
     }
 
+    /// Takes `device` off its account and gives it a fresh anonymous user: the phone is then
+    /// exactly what a new install is, and the account keeps everything it had.
+    ///
+    /// **The device moves; nothing else does.** The account's users — its holder, its
+    /// profiles — and their follows, watches, hints, sizes and credits stay where they are,
+    /// along with every other phone on it, so signing in again finds them unchanged. Moving
+    /// the device is what stops the account's alerts reaching it (`Notifier.audience` walks
+    /// the account's users' devices) and what makes this phone's next follow list empty.
+    /// The token is kept: it names the phone, not the person.
+    ///
+    /// The new user starts with no sizes, like a registration, and the phone's country, which
+    /// is where the phone is whoever holds it. A device with no account is left alone, so a
+    /// retry after a lost answer is harmless. Nothing is revoked at Apple: this is not deletion.
+    static func signOut(device: DeviceModel, on db: any Database) async throws {
+        try await db.transaction { db in
+            guard let current = try await UserModel.find(device.$user.id, on: db) else { throw AccountError.noUser }
+            guard current.$account.id != nil else { return }
+            let fresh = UserModel()
+            fresh.country = current.country
+            try await fresh.save(on: db)
+            device.$user.id = try fresh.requireID()
+            try await device.save(on: db)
+        }
+    }
+
     /// The account for `subject`, made if there is none — outside the sign-in's transaction,
     /// so a lost race can be answered by looking again.
     ///
