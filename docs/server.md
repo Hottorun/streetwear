@@ -344,12 +344,14 @@ Part of the streetw guidance set; see `CLAUDE.md` for the index and the build ru
   - **One brand at a time, through the shared `PoliteFetcher`**, one every `REDISCOVERY_INTERVAL`
     seconds (60) from `REDISCOVERY_START_AFTER` (300) after boot, so a deploy's first polls go first:
     a few hundred brands over a few hours, each ten-odd requests at its host's own spacing.
-  - **Once, and resumable.** A row per (brand, version), unique, written *before* the first request:
-    a restart takes the next brand, two instances never take one, and a row a dead process left
-    unfinished is taken again after `abandonAfter` (30 minutes) — `RediscoveryPostgresTests`. A brand
-    a check creates is discovered under the same rules and recorded then, so the pass skips it.
-    Bump `Rediscovery.version` to run it again — when discovery learns something, or a country is
-    switched on.
+  - **Once per pass, and resumable.** A pass is `Rediscovery.version` *and* the countries switched
+    on (`Rediscovery.pass`, "1:DE,US"): with the version alone, a deploy that ran the pass before
+    `STOREFRONT_COUNTRIES` named the US would never look for a US shop again. A row per (brand,
+    pass), unique, written *before* the first request: a restart takes the next brand, two instances
+    never take one, and a row a dead process left unfinished is taken again after `abandonAfter`
+    (30 minutes) — `RediscoveryPostgresTests`. A brand a check creates is discovered under the same
+    rules and recorded then, so the pass skips it. Bump `Rediscovery.version` when discovery learns
+    something every brand should have; changing the countries starts a pass by itself.
   - **What it did is a line per brand** — "subdued.com: +feed new_products, +storefront US
     us.subdued.com (ucp)" — logged (notice when something changed, info otherwise) and kept in the
     row; a summary when the queue empties. `GET /admin/rediscovery` (admin key) prints progress,
@@ -757,7 +759,7 @@ Part of the streetw guidance set; see `CLAUDE.md` for the index and the build ru
   rediscovery pass, each alternate is put through `CountryShops.plan`, in order:
   - **Only countries in `STOREFRONT_COUNTRIES`.** A country that is off records nothing, not even
     an offer: nothing would read the shop, and the alternate will be there the day the country is
-    switched on and `Rediscovery.version` moves.
+    switched on, which starts a new rediscovery pass.
   - **`x-default` and language-only codes (`en`, `fr`) are never countries**, nor is a script or a
     UN region (`zh-Hant`, `es-419`). A country named twice (`de-DE`, `en-DE`) takes the English one
     — `LocalePreference`'s default language, the one every copy here is read in — else the first.

@@ -8,7 +8,7 @@
 // away, while `/rss` lists a feed of its new products and its homepage names a Shopify store for
 // the US.
 //
-// So once per `version`, in the background, each brand is discovered again, one at a time, and:
+// So once per pass, in the background, each brand is discovered again, one at a time, and:
 //
 // - **Gains what it lacks, and loses nothing.** A source is added only where the brand has no
 //   source of that role: something that reads its products (Shopify, UCP, a sitemap, a feed of
@@ -27,9 +27,11 @@
 // - **Politely and slowly.** One brand at a time through the shared `PoliteFetcher`, a brand
 //   every `REDISCOVERY_INTERVAL` seconds (60) after a few minutes' grace at boot: a few hundred
 //   brands over a few hours, each of them ten-odd requests at the host's own spacing.
-// - **Once.** `rediscoveries` holds a row per brand per version, written before the first request,
-//   so a restart resumes with the next brand and no brand is looked at twice; a row a dead process
-//   left unfinished is taken again after `abandonAfter`. A brand a check adds is discovered by the
+// - **Once per pass.** A pass is the rules' `version` and the countries switched on
+//   (`pass(countries:)`), so switching a country on looks at every brand again for its shop
+//   there. `rediscoveries` holds a row per brand per pass, written before the first request, so a
+//   restart resumes with the next brand and no brand is looked at twice; a row a dead process left
+//   unfinished is taken again after `abandonAfter`. A brand a check adds is discovered by the
 //   check under these same rules and gets its row then.
 //
 // `GET /admin/rediscovery` reads the ledger back; `DISABLE_REDISCOVERY=true` switches it off.
@@ -178,12 +180,25 @@ enum Rediscovery {
         return line
     }
 
-    /// Claims the next brand to look at under this version: a look a dead process left, else
-    /// the next brand with no row. The row is the claim, and its unique key is what keeps two
+    /// Which pass a look belongs to: the rules' version and the countries switched on, so
+    /// switching a country on — after the pass, or with the deploy that brings it — looks at
+    /// every brand again for its shops there, where a version alone would have run once with
+    /// whatever `STOREFRONT_COUNTRIES` said that day.
+    static func pass(countries: Set<String>) -> String {
+        "\(version):" + countries.sorted().joined(separator: ",")
+    }
+
+    /// Claims the next brand to look at in this pass: a look a dead process left, else the
+    /// next brand with no row. The row is the claim, and its unique key is what keeps two
     /// instances off one brand.
-    static func claimNext(on db: any Database, now: Date = Date()) async throws -> RediscoveryModel? {
+    static func claimNext(
+        on db: any Database,
+        countries: Set<String> = [],
+        now: Date = Date()
+    ) async throws -> RediscoveryModel? {
+        let pass = pass(countries: countries)
         if let stale = try await RediscoveryModel.query(on: db)
-            .filter(\.$version == version)
+            .filter(\.$pass == pass)
             .filter(\.$finishedAt == nil)
             .filter(\.$startedAt < now.addingTimeInterval(-abandonAfter))
             .first() {
@@ -192,19 +207,19 @@ enum Rediscovery {
             return stale
         }
         let claimed = Set(try await RediscoveryModel.query(on: db)
-            .filter(\.$version == version)
+            .filter(\.$pass == pass)
             .all()
             .map(\.$brand.id))
         let brands = try await BrandModel.query(on: db).sort(\.$slug).all().compactMap(\.id)
         for brandID in brands where !claimed.contains(brandID) {
-            let row = RediscoveryModel(brandID: brandID, version: version, startedAt: now)
+            let row = RediscoveryModel(brandID: brandID, pass: pass, startedAt: now)
             do {
                 try await row.create(on: db)
                 return row
             } catch {
                 // Another instance took it between the read and the write — the unique key.
                 let taken = try await RediscoveryModel.query(on: db)
-                    .filter(\.$version == version).filter(\.$brand.$id == brandID).count() > 0
+                    .filter(\.$pass == pass).filter(\.$brand.$id == brandID).count() > 0
                 if taken { continue }
                 throw error
             }
@@ -212,18 +227,23 @@ enum Rediscovery {
         return nil
     }
 
+    /// The row of a brand in this pass, if it has one.
+    static func row(brandID: UUID, countries: Set<String>, on db: any Database) async throws -> RediscoveryModel? {
+        try await RediscoveryModel.query(on: db)
+            .filter(\.$pass == pass(countries: countries)).filter(\.$brand.$id == brandID).first()
+    }
+
     /// Records a brand a check has just discovered under these rules, so the pass leaves it be.
-    static func record(brandID: UUID, line: String, on db: any Database) async throws {
-        let exists = try await RediscoveryModel.query(on: db)
-            .filter(\.$version == version).filter(\.$brand.$id == brandID).first()
-        let row = exists ?? RediscoveryModel(brandID: brandID, version: version)
+    static func record(brandID: UUID, line: String, countries: Set<String>, on db: any Database) async throws {
+        let exists = try await row(brandID: brandID, countries: countries, on: db)
+        let row = exists ?? RediscoveryModel(brandID: brandID, pass: pass(countries: countries))
         row.finishedAt = Date()
         row.line = line
         try await row.save(on: db)
     }
 
     struct Summary: Content {
-        var version: Int
+        var pass: String
         var brands: Int
         var finished: Int
         var running: Int
@@ -231,11 +251,12 @@ enum Rediscovery {
         var storefrontsAttached: Int
     }
 
-    static func summary(on db: any Database) async throws -> Summary {
-        let rows = try await RediscoveryModel.query(on: db).filter(\.$version == version).all()
+    static func summary(on db: any Database, countries: Set<String>) async throws -> Summary {
+        let pass = pass(countries: countries)
+        let rows = try await RediscoveryModel.query(on: db).filter(\.$pass == pass).all()
         let finished = rows.filter { $0.finishedAt != nil }
         return Summary(
-            version: version,
+            pass: pass,
             brands: try await BrandModel.query(on: db).count(),
             finished: finished.count,
             running: rows.count - finished.count,
@@ -289,21 +310,22 @@ actor RediscoveryLoop {
 
     private func run() async {
         let logger = app.logger
-        if let summary = try? await Rediscovery.summary(on: app.db), summary.finished < summary.brands {
-            logger.notice("rediscovery v\(summary.version): \(summary.brands - summary.finished) of \(summary.brands) brands to look at, one every \(Int(interval))s from \(Int(startAfter))s after boot")
+        let countries = app.storefrontCountries
+        if let summary = try? await Rediscovery.summary(on: app.db, countries: countries), summary.finished < summary.brands {
+            logger.notice("rediscovery \(summary.pass): \(summary.brands - summary.finished) of \(summary.brands) brands to look at, one every \(Int(interval))s from \(Int(startAfter))s after boot")
         }
         try? await Task.sleep(for: .seconds(startAfter))
         var saidDone = false
         while !Task.isCancelled {
             do {
-                if let row = try await Rediscovery.claimNext(on: app.db) {
+                if let row = try await Rediscovery.claimNext(on: app.db, countries: countries) {
                     saidDone = false
                     await Rediscovery.look(at: row, app: app, http: http)
                     try? await Task.sleep(for: .seconds(interval))
                     continue
                 }
-                if !saidDone, let summary = try? await Rediscovery.summary(on: app.db) {
-                    logger.notice("rediscovery v\(summary.version): done — \(summary.finished) brands looked at, +\(summary.sourcesAdded) sources, +\(summary.storefrontsAttached) storefronts (GET /admin/rediscovery)")
+                if !saidDone, let summary = try? await Rediscovery.summary(on: app.db, countries: countries) {
+                    logger.notice("rediscovery \(summary.pass): done —\(summary.finished) brands looked at, +\(summary.sourcesAdded) sources, +\(summary.storefrontsAttached) storefronts (GET /admin/rediscovery)")
                     saidDone = true
                 }
             } catch {

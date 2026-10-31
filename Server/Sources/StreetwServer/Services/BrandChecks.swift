@@ -513,9 +513,9 @@ actor BrandChecks {
     private func discovered(_ brand: BrandModel, alternates raw: String?) async throws {
         let brandID = try brand.requireID()
         let line = "\(brand.slug): added by a check"
-        try await Rediscovery.record(brandID: brandID, line: line, on: app.db)
-
         let enabled = app.storefrontCountries
+        try await Rediscovery.record(brandID: brandID, line: line, countries: enabled, on: app.db)
+
         guard !enabled.isEmpty,
               let raw,
               let alternates = try? JSONDecoder().decode([LanguageAlternate].self, from: Data(raw.utf8)),
@@ -529,9 +529,8 @@ actor BrandChecks {
                 )
                 guard !results.isEmpty else { return }
                 let said = ([line] + results.map(\.line)).joined(separator: ", ")
-                try await Rediscovery.record(brandID: brandID, line: said, on: app.db)
-                if let row = try await RediscoveryModel.query(on: app.db)
-                    .filter(\.$version == Rediscovery.version).filter(\.$brand.$id == brandID).first() {
+                try await Rediscovery.record(brandID: brandID, line: said, countries: enabled, on: app.db)
+                if let row = try await Rediscovery.row(brandID: brandID, countries: enabled, on: app.db) {
                     row.storefronts = results.filter(\.isAttached).count
                     try await row.save(on: app.db)
                 }

@@ -1567,6 +1567,29 @@ func routes(_ app: Application) throws {
         return lines.joined(separator: "\n")
     }
 
+    /// What the rediscovery pass has done in the current pass (`Rediscovery.pass` — the rules'
+    /// version and the countries switched on): how far it has got, what it added, and one line
+    /// per brand that changed — every brand with `?all=true`. Newest first. Reads only.
+    admin.get("rediscovery") { req async throws -> String in
+        let all = (try? req.query.get(Bool.self, at: "all")) ?? false
+        let countries = req.application.storefrontCountries
+        let summary = try await Rediscovery.summary(on: req.db, countries: countries)
+        let rows = try await RediscoveryModel.query(on: req.db)
+            .filter(\.$pass == summary.pass)
+            .sort(\.$startedAt, .descending)
+            .all()
+        let lines = rows.compactMap { row -> String? in
+            guard let line = row.line else { return row.finishedAt == nil ? "… \(row.$brand.id) (in progress)" : nil }
+            return all || row.added > 0 || row.storefronts > 0 || line.contains("not added") ? line : nil
+        }
+        return ([
+            "rediscovery \(summary.pass): \(summary.finished) of \(summary.brands) brands looked at"
+                + (summary.running > 0 ? ", \(summary.running) in progress" : "")
+                + " — +\(summary.sourcesAdded) source(s), +\(summary.storefrontsAttached) storefront(s)"
+                + (all ? "" : " (changes only; ?all=true for every brand)"),
+        ] + lines).joined(separator: "\n")
+    }
+
     /// One line per brand: what it is watched with, how much it has, and what is failing.
     ///
     /// `/status` says the catalogue holds 22,000 products, which is true and answers nothing
@@ -1576,28 +1599,6 @@ func routes(_ app: Application) throws {
     /// storefront, a sitemap with no `lastmod`, a source erroring quietly behind a backoff.
     ///
     /// Sorted with the emptiest first, because the list is read to find what is broken.
-    /// What the rediscovery pass has done under the current rules (`Rediscovery`): how far it
-    /// has got, what it added, and one line per brand that changed — every brand with `?all=true`.
-    /// Newest first. Reads only.
-    admin.get("rediscovery") { req async throws -> String in
-        let all = (try? req.query.get(Bool.self, at: "all")) ?? false
-        let summary = try await Rediscovery.summary(on: req.db)
-        let rows = try await RediscoveryModel.query(on: req.db)
-            .filter(\.$version == Rediscovery.version)
-            .sort(\.$startedAt, .descending)
-            .all()
-        let lines = rows.compactMap { row -> String? in
-            guard let line = row.line else { return row.finishedAt == nil ? "… \(row.$brand.id) (in progress)" : nil }
-            return all || row.added > 0 || row.storefronts > 0 || line.contains("not added") ? line : nil
-        }
-        return ([
-            "rediscovery v\(summary.version): \(summary.finished) of \(summary.brands) brands looked at"
-                + (summary.running > 0 ? ", \(summary.running) in progress" : "")
-                + " — +\(summary.sourcesAdded) source(s), +\(summary.storefrontsAttached) storefront(s)"
-                + (all ? "" : " (changes only; ?all=true for every brand)"),
-        ] + lines).joined(separator: "\n")
-    }
-
     admin.get("catalog") { req async throws -> String in
         let brands = try await BrandModel.query(on: req.db)
             .with(\.$sources)

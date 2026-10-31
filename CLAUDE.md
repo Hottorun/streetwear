@@ -329,7 +329,8 @@ whenever nothing reads the products yet — beside Shopify, UCP or a feed of new
 name the same garments under a second id. The homepage is fetched once, first, for the name, the
 mark, the declared feeds and its `hreflang` country shops (`DiscoveredSources.alternates`).
 
-**Every brand is rediscovered once per `Rediscovery.version`** in the background, a brand a minute
+**Every brand is rediscovered once per pass** — `Rediscovery.version` plus the countries switched
+on — in the background, a brand a minute
 through `PoliteFetcher`: it gains sources it lacks (a source that reads products only if it reads
 none), never loses one, never gains a page watch, baselines whatever it gains, and attaches country
 shops. `GET /admin/rediscovery` shows it; `DISABLE_REDISCOVERY=true` stops it. See `docs/server.md`.

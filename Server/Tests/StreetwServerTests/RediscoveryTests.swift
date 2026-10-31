@@ -313,13 +313,17 @@ struct RediscoveryPassTests {
             let http = subdued()
             let (brandID, page) = try await seedSubdued(app)
 
-            let row = try #require(try await Rediscovery.claimNext(on: app.db))
+            let row = try #require(try await Rediscovery.claimNext(on: app.db, countries: app.storefrontCountries))
             let line = await Rediscovery.look(at: row, app: app, http: http)
             #expect(line.hasPrefix("www.subdued.com: +feed new_products"))
             #expect(line.contains("+storefront US us.subdued.com (ucp)"))
             #expect(line.contains("storefront DE www.subdued.com/de_en not attached"),
                     "nothing answers at /de_en here, so its discovery lands on the main shop's own feed and is refused")
-            #expect(try await Rediscovery.claimNext(on: app.db) == nil, "once per version")
+            #expect(try await Rediscovery.claimNext(on: app.db, countries: app.storefrontCountries) == nil, "once per pass")
+            // Switching a country on is a new pass: every brand is looked at again for its shop there.
+            let again = try await Rediscovery.claimNext(on: app.db, countries: ["US", "DE", "GB"])
+            #expect(again?.$brand.id == brandID)
+            if let again { try await again.delete(on: app.db) }
 
             let main = try await SourceModel.query(on: app.db)
                 .filter(\.$brand.$id == brandID).filter(\.$storefront.$id == nil).all()
@@ -385,7 +389,7 @@ struct RediscoveryPassTests {
             #expect(Set(brand.sources.filter { $0.$storefront.id == nil }.map(\.kind)) == ["feed", "page"])
             let shop = try #require(try await StorefrontModel.query(on: app.db).with(\.$countries).first())
             #expect(shop.countryCodes == ["US"])
-            #expect(try await Rediscovery.claimNext(on: app.db) == nil, "discovered under these rules already")
+            #expect(try await Rediscovery.claimNext(on: app.db, countries: app.storefrontCountries) == nil, "discovered under these rules already")
         }
     }
 }
