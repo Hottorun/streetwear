@@ -140,7 +140,7 @@ struct BrandRecommendations: View {
     @State private var previewed: PopularBrand?
 
     var title: String = "Also worth watching"
-    var blurb: String = "PICKED FROM WHAT YOU KEEP"
+    var blurb: String = "Picked from what you keep."
     /// How many cards this block prints before deferring to the full list.
     ///
     /// Six, not the whole list. The block sits on the feed, the brands tab *and* the style
@@ -307,7 +307,7 @@ struct BrandRecommendations: View {
                     Text(title)
                         .font(.editorial(19))
                         .foregroundStyle(Color.ink)
-                    DataLabel(text: blurb)
+                    NoteLine(text: blurb)
                 }
                 .padding(.horizontal, 20)
                 .padding(.bottom, 18)
@@ -324,7 +324,7 @@ struct BrandRecommendations: View {
 
                 if visible.count > shown.count {
                     Button { isShowingAll = true } label: {
-                        DataLabel(text: "SEE ALL \(visible.count)", color: .ink)
+                        NoteLine(text: "See all \(visible.count)", size: 15, color: .ink)
                             .overlay(alignment: .bottom) {
                                 Rectangle().fill(Color.ink).frame(height: 1).offset(y: 3)
                             }
@@ -355,7 +355,7 @@ struct BrandRecommendations: View {
         } else if suggestions.isLoading {
             HStack(spacing: 10) {
                 ProgressView()
-                DataLabel(text: "LOOKING FOR BRANDS")
+                NoteLine(text: "Looking for brands…")
             }
             .padding(20)
         }
@@ -411,14 +411,14 @@ struct SuggestedBrandCard: View {
     /// The line under the wordmark, in order of how much it is worth saying.
     private var subtitle: String {
         if !reason.isEmpty {
-            return "LIKE YOUR " + reason.map { $0.uppercased() }.joined(separator: " · ")
+            return "Like your " + reason.joined(separator: ", ")
         }
         // Only once a headcount is evidence rather than an artefact of a tiny sample —
         // the same threshold the ranking uses.
         if Double(item.followers) >= Popularity.meaningfulFollowers {
             return "\(item.followers) PEOPLE WATCHING"
         }
-        return item.brand.website.flatMap { URL(string: $0)?.host() }?.uppercased() ?? "NEW TO DROPWALL"
+        return item.brand.website.flatMap { URL(string: $0)?.host() } ?? "New to Dropwall"
     }
 
     var body: some View {
@@ -429,7 +429,7 @@ struct SuggestedBrandCard: View {
 
                     VStack(alignment: .leading, spacing: 5) {
                         Wordmark(name: item.brand.name, size: 14)
-                        DataLabel(text: subtitle, size: 10)
+                        NoteLine(text: subtitle, size: 13)
                     }
 
                     Spacer(minLength: 8)

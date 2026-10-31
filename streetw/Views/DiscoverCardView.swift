@@ -526,7 +526,7 @@ struct DiscoverCardView: View {
                 .padding(3)
                 .background(Color.sweep)
                 VStack(alignment: .leading, spacing: 2) {
-                    DataLabel(text: contextLabel, size: 9, color: .signal)
+                    NoteLine(text: contextLabel, size: 12, color: .signal)
                         .lineLimit(1)
                     Text("Goes with your \(item.title)")
                         .font(.editorial(13))
@@ -535,7 +535,7 @@ struct DiscoverCardView: View {
                 }
                 Spacer(minLength: 6)
                 HStack(spacing: 4) {
-                    DataLabel(text: "SEE THE FIT", size: 9, color: Self.groundInk.opacity(0.6))
+                    NoteLine(text: "See the fit", size: 13, color: Self.groundInk.opacity(0.7))
                     Image(systemName: "chevron.right")
                         .font(.system(size: 9, weight: .semibold))
                         .foregroundStyle(Self.groundInk.opacity(0.6))
@@ -580,18 +580,14 @@ struct DiscoverCardView: View {
             // argument and the chip is the way into the fit, and neither is worth giving up
             // to say where the garment came from.
             if entry.isFollowed {
-                DataLabel(
-                    text: "NEW FROM \(card.brand.name.uppercased())",
-                    size: 10,
-                    color: Self.groundInk.opacity(0.55)
-                )
+                NoteLine(text: "New from \(card.brand.name)", size: 14, color: Self.groundInk.opacity(0.65))
                 .padding(.bottom, anchor == nil ? 7 : 9)
             }
 
             if let anchor {
                 anchorRow(anchor).padding(.bottom, 13)
             } else if !entry.isFollowed {
-                DataLabel(text: contextLabel, size: 10, color: Self.groundInk.opacity(0.55))
+                NoteLine(text: contextLabel, size: 14, color: Self.groundInk.opacity(0.65))
                     .padding(.bottom, 7)
             }
 
@@ -645,13 +641,13 @@ struct DiscoverCardView: View {
         switch entry.presentation {
         case .release:
             let count = card.memberCount
-            return count > 0 ? "NEW COLLECTION · \(count) PIECES" : "NEW COLLECTION"
+            return count > 0 ? "A new collection of \(count) pieces" : "A new collection"
         case .pairing:
             // The verdict's own sentence where there is one — `Pairing` returns none until a
             // photograph has been read, and inventing one would be a claim we cannot back.
-            return (entry.reason ?? "Goes with what you own").uppercased()
+            return entry.reason ?? "Goes with what you own"
         case .brand:
-            return entry.isExploration ? "NEW TO YOU" : "BRAND YOU MIGHT LIKE"
+            return entry.isExploration ? "New to you" : "A brand you might like"
         }
     }
 
@@ -793,10 +789,10 @@ struct DiscoverCardView: View {
                     markedRead = true
                     onMarkRead()
                 } label: {
-                    DataLabel(
-                        text: markedRead ? "MARKED READ" : "MARK READ",
-                        size: 11,
-                        color: Self.groundInk.opacity(markedRead ? 0.3 : 0.55)
+                    NoteLine(
+                        text: markedRead ? "Marked read" : "Mark read",
+                        size: 15,
+                        color: Self.groundInk.opacity(markedRead ? 0.3 : 0.65)
                     )
                     .frame(minHeight: 34)
                     .contentShape(.rect)
@@ -820,7 +816,7 @@ struct DiscoverCardView: View {
             Spacer(minLength: 8)
 
             Button(action: onDismiss) {
-                DataLabel(text: "NOT FOR ME", size: 11, color: Self.groundInk.opacity(0.55))
+                NoteLine(text: "Not for me", size: 15, color: Self.groundInk.opacity(0.65))
                     .frame(minHeight: 34)
                     .contentShape(.rect)
             }

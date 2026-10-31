@@ -88,7 +88,7 @@ struct BrandPreviewSheet: View {
                 VStack(alignment: .leading, spacing: 5) {
                     Wordmark(name: item.brand.name, size: 16)
                     if let host = item.brand.website.flatMap({ URL(string: $0)?.host() }) {
-                        DataLabel(text: host.uppercased(), size: 10)
+                        DataLabel(text: host, size: 11)
                     }
                 }
                 Spacer(minLength: 0)
@@ -106,7 +106,7 @@ struct BrandPreviewSheet: View {
     private var traits: some View {
         VStack(alignment: .leading, spacing: 12) {
             if !reason.isEmpty {
-                labelled("WHY THIS", reason.map { $0.capitalized }.joined(separator: " · "))
+                labelled("Why this", reason.map { $0.capitalized }.joined(separator: ", "))
             }
             if let makes = topCategories {
                 labelled("MAKES", makes)
@@ -115,12 +115,12 @@ struct BrandPreviewSheet: View {
                 labelled("PRICES", price)
             }
             if Double(item.followers) >= Popularity.meaningfulFollowers {
-                labelled("WATCHED BY", "\(item.followers) people")
+                labelled("Watched by", "\(item.followers) people")
             }
             if reason.isEmpty, topCategories == nil, priceBand == nil {
                 // A brand that tags nothing usable. Saying so is better than an empty
                 // column, and better than inventing a reason it was suggested.
-                DataLabel(text: "NOT MUCH ON RECORD YET — THE PHOTOGRAPHS ARE THE BEST GUIDE")
+                NoteLine(text: "Not much on record yet; the photographs are the best guide.")
             }
         }
         .padding(.horizontal, 20)
@@ -128,7 +128,7 @@ struct BrandPreviewSheet: View {
 
     private func labelled(_ label: String, _ value: String) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 12) {
-            DataLabel(text: label, size: 10)
+            NoteLine(text: label, size: 13)
                 .frame(width: 92, alignment: .leading)
             Text(value)
                 .font(.editorial(15))
@@ -185,7 +185,7 @@ struct BrandPreviewSheet: View {
                     dismiss()
                 }, width: 120)
                 Spacer()
-                DataLabel(text: "YOU CAN UNFOLLOW ANY TIME", size: 10)
+                NoteLine(text: "You can unfollow any time.", size: 13)
             }
             .padding(.horizontal, 20)
             .padding(.vertical, 12)

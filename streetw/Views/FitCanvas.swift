@@ -445,7 +445,7 @@ struct FitCanvas: View {
             } else if shelf == .asked {
                 askedShelf
             } else if tray.wearable.isEmpty {
-                Text("Save a few things first — a fit is made from your collection.")
+                Text("Save a few things first; a fit is made from them.")
                     .font(.editorial(14))
                     .foregroundStyle(Color.muted)
                     .padding(.horizontal, 20)
@@ -531,7 +531,7 @@ struct FitCanvas: View {
                 .foregroundStyle(Color.muted)
                 .padding(.horizontal, 20)
         } else if hasNothingToAsk {
-            Text("Nothing in your collection goes with this by the rules, so there was nothing to ask about.")
+            Text("Nothing you've saved goes with this, so there was nothing to ask.")
                 .font(.editorial(14))
                 .foregroundStyle(Color.muted)
                 .fixedSize(horizontal: false, vertical: true)
@@ -543,7 +543,7 @@ struct FitCanvas: View {
                 Text(askFailure.refusal.title)
                     .font(.editorial(15))
                     .foregroundStyle(Color.ink)
-                DataLabel(text: askFailure.refusal.detail, size: 9)
+                NoteLine(text: askFailure.refusal.detail, size: 13)
                     .lineLimit(3)
             }
             .padding(.horizontal, 20)
@@ -1538,7 +1538,7 @@ private struct ShelfTile: View {
             )
             .lineLimit(1)
             if let reason = option.reason {
-                DataLabel(text: reason.uppercased(), size: 8)
+                NoteLine(text: reason, size: 11)
                     .lineLimit(1)
             }
         }

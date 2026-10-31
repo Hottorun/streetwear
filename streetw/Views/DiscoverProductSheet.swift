@@ -135,7 +135,7 @@ struct DiscoverProductSheet: View {
                         .foregroundStyle(Color.ink)
                 }
                 if card.isAvailable == false {
-                    DataLabel(text: "SOLD OUT", size: 10, color: .signal)
+                    NoteLine(text: "Sold out", size: 13, color: .signal)
                 }
                 Spacer(minLength: 0)
             }
@@ -192,7 +192,7 @@ struct DiscoverProductSheet: View {
             if let onOpenFit {
                 Button(action: onOpenFit) {
                     HStack(spacing: 5) {
-                        DataLabel(text: "BUILD A FIT", size: 11, color: .ink)
+                        NoteLine(text: "Build a fit", size: 15, color: .ink)
                         Image(systemName: "chevron.right")
                             .font(.system(size: 9, weight: .semibold))
                             .foregroundStyle(Color.muted)

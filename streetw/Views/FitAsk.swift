@@ -181,21 +181,19 @@ struct FitJudgementPanel: View {
 
     private var verdictLabel: String {
         switch judgement.verdict.verdict.lowercased() {
-        case "works": "IT WORKS"
-        case "risky": "RISKY"
-        case "clashes": "IT CLASHES"
-        default: judgement.verdict.verdict.uppercased()
+        case "works": "It works."
+        case "risky": "It's risky."
+        case "clashes": "It clashes."
+        default: judgement.verdict.verdict.prefix(1).uppercased() + judgement.verdict.verdict.dropFirst()
         }
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .firstTextBaseline) {
-                DataLabel(
-                    text: verdictLabel,
-                    size: 11,
-                    color: judgement.verdict.verdict.lowercased() == "clashes" ? .signal : .ink
-                )
+                Text(verdictLabel)
+                    .font(.editorial(18, .semibold))
+                    .foregroundStyle(judgement.verdict.verdict.lowercased() == "clashes" ? Color.signal : Color.ink)
                 Spacer(minLength: 8)
                 Button(action: onClose) {
                     Image(systemName: "xmark")
@@ -227,13 +225,13 @@ struct FitJudgementPanel: View {
                 ChargeLine(charge: judgement.charge)
             }
             if judgement.swap != nil, isCurrent {
-                DataLabel(text: "THE MARKED PIECE IS THE ONE TO CHANGE", size: 9, color: .signal)
+                NoteLine(text: "Change the marked piece.", size: 13, color: .signal)
             }
             if !isCurrent {
-                DataLabel(text: "THE FIT HAS CHANGED SINCE THIS WAS SAID", size: 9)
+                NoteLine(text: "The fit has changed since.", size: 13)
             }
             if !isExpanded, !judgement.verdict.notes.isEmpty {
-                DataLabel(text: judgement.verdict.notes.count == 1 ? "TAP FOR THE NOTE" : "TAP FOR \(min(judgement.verdict.notes.count, 4)) NOTES", size: 9)
+                NoteLine(text: judgement.verdict.notes.count == 1 ? "Tap for the note." : "Tap for \(min(judgement.verdict.notes.count, 4)) notes.", size: 13)
             }
         }
         .contentShape(.rect)
