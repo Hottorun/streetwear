@@ -909,6 +909,12 @@ actor EmbeddingBackfill {
                     pass.unavailable += 1
                 }
             }
+            // **A model change clears the product shot's vector.** The reading writes
+            // `shot_embedding` under the model of the day, and the upsert used to leave it:
+            // re-embedding under FashionCLIP kept FashionSigLIP's 768-d shot beside 512-d
+            // vectors, the image index's `COALESCE(shot_embedding, …)::vector(512)` refused the
+            // row, and the whole switch stalled on the first product. The reading re-reads
+            // under the new model and writes the shot again.
             try await sql.raw("""
                 INSERT INTO product_embeddings
                   (product_id, model, text_embedding, image_embedding, embedded_at,
@@ -920,7 +926,9 @@ actor EmbeddingBackfill {
                   model = EXCLUDED.model, text_embedding = EXCLUDED.text_embedding,
                   image_embedding = EXCLUDED.image_embedding, embedded_at = EXCLUDED.embedded_at,
                   image_url = EXCLUDED.image_url, image_failure = EXCLUDED.image_failure,
-                  image_attempts = EXCLUDED.image_attempts, image_retry_at = EXCLUDED.image_retry_at
+                  image_attempts = EXCLUDED.image_attempts, image_retry_at = EXCLUDED.image_retry_at,
+                  shot_embedding = CASE WHEN product_embeddings.model IS DISTINCT FROM EXCLUDED.model
+                                        THEN NULL ELSE product_embeddings.shot_embedding END
                 """).run()
             pass.embedded += 1
         }
