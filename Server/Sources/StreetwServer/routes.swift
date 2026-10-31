@@ -1639,7 +1639,8 @@ func routes(_ app: Application) throws {
             // shop a person in a given country is being served.
             let shops: String = brand.storefronts.sorted { $0.homeCountry < $1.homeCountry }.map { shop -> String in
                 let read = brand.sources.filter { $0.$storefront.id == shop.id }.map(\.kind)
-                let host = URL(string: shop.url)?.host() ?? shop.url
+                // With its path: a store view on the main shop's host (`/de_en`) is a shop too.
+                let host = URL(string: shop.url).map(CountryShops.display) ?? shop.url
                 return " · \(shop.countryCodes.joined(separator: ",")) \(host) \(read.joined(separator: "+"))"
             }.joined()
             let failing = brand.sources.compactMap(\.lastError).first
@@ -1789,13 +1790,12 @@ func routes(_ app: Application) throws {
     /// Attach a brand's shop by URL, for the countries it serves —
     /// `?url=https://…&countries=DE,FR,IT` (or `country=GB`, or a JSON body).
     ///
-    /// **By hand, because nothing finds these on its own.** A shop per country or per region
-    /// is the norm for big retailers and the exception for streetwear labels, and where one
-    /// exists it is usually a different host (`eu.kith.com`), a different company, or both.
-    /// Guessing at them would mean probing every brand's every plausible host for every
-    /// country, which is a crawl, not a poll. So an operator names the shop, and this runs
-    /// ordinary discovery on it — through the poller's fetcher, robots.txt and spacing
-    /// included.
+    /// **By hand, for the shops a brand's homepage does not name.** Most are found on their own
+    /// now, from the brand's `hreflang` (`CountryShops`); this is for the rest. Guessing at them
+    /// would mean probing every brand's every plausible host for every country, which is a
+    /// crawl, not a poll. So an operator names the shop, and this runs ordinary discovery on
+    /// it — through the poller's fetcher, robots.txt and spacing included — and writes it
+    /// through `Storefronts.attach`, the one path `CountryShops` uses too.
     ///
     /// **Naming no countries is the offer, and writes nothing**: every country the shop's own
     /// `/meta.json` ships to, minus those another shop of the brand already serves.
@@ -1833,7 +1833,7 @@ func routes(_ app: Application) throws {
         let force = (try? req.query.get(Bool.self, at: "force")) ?? false
         let host = base.host() ?? raw
         // Every `return` below is a refusal or the offer, and writes nothing — only the
-        // transaction at the end does.
+        // transaction inside `Storefronts.attach` does.
 
         let found = await BrandDiscovery.discover(website: raw, instagramHandle: nil, http: req.application.fetcher)
         let usable = found.sources.filter { $0.kind.isAutomatic }

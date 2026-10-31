@@ -256,7 +256,8 @@ Part of the streetw guidance set; see `CLAUDE.md` for the index and the build ru
   that is all it does — no watcher row is written, `brand_checks` has no column a requester could
   go in, and the route logs nothing about the caller — so the domain cannot become a record that
   this person saved from that shop. **Only a real shop is added** (`BrandChecks.addsToCatalogue`):
-  a ready check with a source that reads products — Shopify, a sitemap, UCP. A page watch is
+  a ready check with a source that reads products — Shopify, a sitemap, UCP, a feed of new
+  products (`BrandDiscovery.readsProducts`). A page watch is
   enough to *follow* a shop and nothing to search; a refusal of any kind (`ShopRefusal`: readers
   blocked, no clothes sold, nothing answered) adds nothing; a shop the catalogue already has is
   left alone by `BrandCatalog.existing` before anything is fetched. A catalogue-only request that
@@ -316,6 +317,44 @@ Part of the streetw guidance set; see `CLAUDE.md` for the index and the build ru
   the first read as its baseline, so a watched sitemap product's restock raises the same event a
   Shopify poll would and the watch fires on it; and `refresh` no longer lets a source that
   publishes no price or stock (a sitemap) erase the page's.
+- **A feed of new products is announced from its pages too** (`Poller.isAnnouncedFromItsPage`,
+  `FeedSource.announcesProducts`). Magento's `/rss/feed/index/type/new_products/` — Subdued's only
+  readable catalogue once its sitemap went — names each garment, its link and a 75-pixel
+  thumbnail, and no price, stock or sizes. Its items are `.product`, not `.post`, and take the
+  sitemap's path exactly: stored with `pending_announcement`, announced by `enrich` once the
+  page's JSON-LD has priced them (currency included), read for the backfill when a baseline
+  stored them (`feed:` beside `sitemap:` in that query, kept to `.product` so a blog's posts are
+  never read), and re-read when watched (`recheckedPrefixes`). A blog's feed is unchanged.
+- **Every brand is looked at again, once per version of discovery's rules** (`Rediscovery`,
+  `RediscoveryLoop`, `rediscoveries`, `AddRediscovery`). A brand's sources were decided the day it
+  was added and never revisited, so nothing discovery learned since — feed index pages, UCP behind
+  a rate-limited catalogue, Shopify on `www.`, country shops — reached a brand added before it;
+  Subdued sat on a page watch alone. Load-bearing:
+  - **Adds, never removes.** A source is added only where the brand has none in that role:
+    something that reads products only when it reads none (two would name the same garments under
+    two ids and put every one on screen twice), `collections` only beside Shopify, a blog's feed
+    only where there is no feed. A better catalogue beside a working one is *said* in the brand's
+    line ("not added; repoint by hand"), for `…/repoint`. **Never a page watch, and never the page
+    watch's removal** — it is the only lock detector, and a new one would put banner swaps into a
+    brand's followers' feeds overnight. A product source never read and failing (`baselined_at`
+    nil, failures above zero) is not "reading", which is the Hydrogen apex a `www.` catalogue fixes.
+  - **Every added source's first read is a baseline**, by the poll's own rule (`baselined_at`
+    starts nil), so a back catalogue arrives as context, never as drops to everybody following.
+  - **Country shops are attached** from the homepage's `hreflang` (`CountryShops`, above).
+  - **One brand at a time, through the shared `PoliteFetcher`**, one every `REDISCOVERY_INTERVAL`
+    seconds (60) from `REDISCOVERY_START_AFTER` (300) after boot, so a deploy's first polls go first:
+    a few hundred brands over a few hours, each ten-odd requests at its host's own spacing.
+  - **Once, and resumable.** A row per (brand, version), unique, written *before* the first request:
+    a restart takes the next brand, two instances never take one, and a row a dead process left
+    unfinished is taken again after `abandonAfter` (30 minutes) — `RediscoveryPostgresTests`. A brand
+    a check creates is discovered under the same rules and recorded then, so the pass skips it.
+    Bump `Rediscovery.version` to run it again — when discovery learns something, or a country is
+    switched on.
+  - **What it did is a line per brand** — "subdued.com: +feed new_products, +storefront US
+    us.subdued.com (ucp)" — logged (notice when something changed, info otherwise) and kept in the
+    row; a summary when the queue empties. `GET /admin/rediscovery` (admin key) prints progress,
+    the totals and the lines that changed something, `?all=true` for every brand.
+    `DISABLE_REDISCOVERY=true` switches it off; it runs only where the poller does.
 - **A sitemap source is never polled more than hourly** (`SitemapSource.minimumInterval`), drop
   window, hint and lock included. Sitemaps are regenerated on a schedule — Subdued's nightly,
   Victoria's Secret's at 02:31, Hollister's cached at the edge for a day — and Subdued's is 7.2 MB
@@ -704,7 +743,46 @@ Part of the streetw guidance set; see `CLAUDE.md` for the index and the build ru
   whole shop, for every country it serves, with its sources, products and events — the products
   by hand (`Storefronts.remove`), because `products.source_id` is `ON DELETE SET NULL` from the
   initial schema and the cascade from the storefront stops at its sources. `GET /admin/catalog`
-  prints each shop's whole set. Nothing discovers country storefronts automatically.
+  prints each shop's whole set. The route and `CountryShops` (below) write a shop through one
+  function, `Storefronts.attach`, so the three refusals hold on both paths.
+- **A brand's country shops are found where the brand says they are** (`CountryShops`,
+  `SiteAlternates`, `DiscoveredSources.alternates`). Its homepage's
+  `<link rel="alternate" hreflang="en-US" href="https://us.subdued.com">` names the shop it runs
+  for each country. **That is trustworthy enough to act on without somebody reading it first**:
+  it is the brand's own declaration, on its own homepage, made for search engines that will send
+  real shoppers to whichever copy it names — a wrong one sends the brand's own customers to the
+  wrong shop — and it is read out of the homepage discovery already fetches, so it costs no
+  request and no guess about hosts. During a brand check (the alternates are kept on the check,
+  `brand_checks.alternates`, and looked at in the background once it makes a brand) and during the
+  rediscovery pass, each alternate is put through `CountryShops.plan`, in order:
+  - **Only countries in `STOREFRONT_COUNTRIES`.** A country that is off records nothing, not even
+    an offer: nothing would read the shop, and the alternate will be there the day the country is
+    switched on and `Rediscovery.version` moves.
+  - **`x-default` and language-only codes (`en`, `fr`) are never countries**, nor is a script or a
+    UN region (`zh-Hant`, `es-419`). A country named twice (`de-DE`, `en-DE`) takes the English one
+    — `LocalePreference`'s default language, the one every copy here is read in — else the first.
+  - **A country another shop of the brand already serves is left to it** — attaching never takes a
+    country off a shop somebody put there.
+  - **The main shop again is not a country's shop**: an alternate at the brand's own homepage
+    (Kith's `en-US` is kith.com), and **a market subfolder** — a path on a host the main shop reads
+    by host (Shopify, UCP, collections). Shopify Markets serves `/en-gb/` from the same catalogue
+    in another currency; `ShopifySource.resolve` reads off the host, so it would be the main shop's
+    every product under a second id. Nothing is fetched for one. A path on a host that is read by
+    path — a Magento store view, `www.subdued.com/de_en` — is a shop of its own *if it verifies with
+    its own source*: discovery is run on the store view (`FeedSource.find` tries `/de_en/rss` first,
+    the page watch watches `/de_en`), and `Storefronts.attach` refuses it if any source it found is
+    one the brand already reads — `/it_en` is what Subdued's bare host serves, so its `en-IT`
+    alternate is refused as the main shop.
+  - **Verified, or not attached.** Each alternate is discovered like a brand being added, through
+    the shared fetcher, and must find a source that reads products (`DiscoveredSources.readsProducts`:
+    Shopify, UCP, a sitemap, a feed of new products); a host answering only bot walls is said to,
+    by `ShopRefusal`, and nothing is retried another way. Countries naming one URL become one shop
+    for all of them (`eu.kith.com` for DE and FR). The ships-to refusal applies as on the route,
+    never forced.
+  Measured on 2026-10-31: Subdued names 25 alternates; with `US,DE` switched on, `en-US` →
+  `us.subdued.com` attaches for the US, read through UCP because its `/products.json` answers 429
+  `local_rate_limited`, and `en-DE` → `www.subdued.com/de_en` attaches for Germany with its own
+  new-products feed.
 - **`HTTPFetching`, not `HTTPClient`** — Vapor re-exports `AsyncHTTPClient.HTTPClient` and
   an unqualified collision in the server target is nastier than the wordier name.
 - **Don't name a test helper `withApp`.** VaporTesting exports a generic `withApp<T>` that
