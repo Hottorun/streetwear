@@ -9,6 +9,10 @@
 // `Tips.configure`, so it cannot answer a button pressed mid-session. Each tip's id carries
 // `TipEpoch`, and "Show tips again" moves the epoch on: every tip becomes one TipKit has never
 // seen. The epoch describes the phone, not a person, so it is not a profile-scoped key.
+//
+// **Once is one showing, not "until somebody taps ×".** TipKit keeps a tip eligible until it is
+// invalidated, so a tip nobody closed came back on every launch. `MaxDisplayCount(1)` spends it
+// the first time it is drawn.
 
 import SwiftUI
 import TipKit
@@ -35,6 +39,7 @@ struct ShopSearchTip: Tip {
     var scans = false
 
     var id: String { "shop-search.\(epoch)" }
+    var options: [any TipOption] { [Tips.MaxDisplayCount(1)] }
     var title: Text {
         Text(scans ? "Describe it in your words, or scan a garment" : "Describe it in your words — a colour, a garment, a price")
     }
@@ -45,6 +50,7 @@ struct WardrobeTip: Tip {
     var epoch = TipEpoch.current
 
     var id: String { "saved-wardrobe.\(epoch)" }
+    var options: [any TipOption] { [Tips.MaxDisplayCount(1)] }
     var title: Text { Text("Long-press a save to add it to your Wardrobe") }
 }
 
@@ -53,6 +59,7 @@ struct FitCanvasTip: Tip {
     var epoch = TipEpoch.current
 
     var id: String { "fit-canvas.\(epoch)" }
+    var options: [any TipOption] { [Tips.MaxDisplayCount(1)] }
     var title: Text { Text("Pinch a piece, or drag its corner, to size it") }
 }
 
