@@ -707,6 +707,46 @@ struct ProductSearchPostgresTests {
         }
     }
 
+    /// pgvector's HNSW scan returns at most `hnsw.ef_search` rows — forty by default — so the
+    /// hundred `semanticPool` asks for came back as forty. `nearest` raises the setting for its
+    /// own transaction; this holds it to the whole limit on a catalogue the planner reads
+    /// through the index (checked, so a seq scan cannot pass the test for it — which is what
+    /// the planner chooses under a few thousand rows, hence the catalogue's size here).
+    @Test("The nearest neighbours are the whole limit, not pgvector's forty")
+    func nearestIsTheWholeLimit() async throws {
+        try await withPostgres { app in
+            guard case .installed = app.semanticStatus else { return }
+            let sql = try #require(app.db as? any SQLDatabase)
+            let kith = try await shop(app, "Kith", slug: "kith.com")
+            // Three tokens of its own per product, and a wide fake, so no two products hash to
+            // one vector: pgvector's cap counts index *elements*, and identical vectors share
+            // one, so duplicates would slip past it.
+            for index in 0..<(ProductSearch.pool * 5) {
+                try await product(app, kith, "Garment \(index) \(index * 7_919) \(index * 104_729)", id: "g\(index)", type: "Tees", daysAgo: 0, sizes: [])
+            }
+            let fake = FakeEmbeddingProvider(dimension: 256)
+            app.embeddingProvider = fake
+            let backfill = EmbeddingBackfill(app: app, batch: 500)
+            while try await embedded(backfill) > 0 {}
+            try await sql.raw("ANALYZE product_embeddings").run()
+            try await sql.raw("ANALYZE products").run()
+            let space = EmbeddingSpace(model: fake.model, dimension: fake.dimension)
+            let scope: SQLQueryString = "p.kind = 'product'"
+            let query = fake.vector("Garment 3 3 3")
+
+            let plan = try await sql.raw("""
+                EXPLAIN SELECT p.id FROM product_embeddings e JOIN products p ON p.id = e.product_id
+                WHERE e.model = \(bind: space.model) AND \(scope)
+                ORDER BY (e.text_embedding::vector(256)) <=> (\(bind: SemanticIndex.literal(query))::vector(256)) LIMIT \(literal: ProductSearch.semanticPool)
+                """).all().map { try $0.decode(column: "QUERY PLAN", as: String.self) }.joined(separator: "\n")
+            #expect(plan.contains(SemanticIndex.indexName(for: space)), "the planner must read the index for the cap to show: \(plan)")
+
+            let near = try await SemanticIndex.nearest(to: query, in: space, scope: scope, limit: ProductSearch.semanticPool, on: sql)
+            #expect(near.count == ProductSearch.semanticPool)
+            #expect(try await SemanticIndex.nearest(to: query, in: space, scope: scope, limit: 10, on: sql).count == 10)
+        }
+    }
+
     @Test("A photograph that cannot be read costs only its image vector, and is not asked about forever")
     func unreadablePhotographs() async throws {
         try await withPostgres { app in

@@ -27,10 +27,14 @@ private let packshot = unit([(.product, 1), (.workwear, 0.6)])
 private let person = unit([(.person, 1)])
 private let neutral = unit([(.neutral, 1)])
 
+/// The fake model's bars: SigLIP's, which the vectors above were drawn to clear.
+private let fakeBars = ZeroShot.Bars(shotMargin: 0.02, styleBar: 0.01)
+
 /// Prompts as the reader would embed them, in the directions above.
 private func prompts() -> ZeroShot.Prompts {
     ZeroShot.Prompts(
         model: "reading-fake",
+        bars: fakeBars,
         product: [unit([(.product, 1)])],
         other: [unit([(.person, 1)])],
         styles: [("workwear", unit([(.workwear, 1)])), ("minimal", unit([(.minimal, 1)])), ("vintage", unit([(.otherStyle, 1)]))]
@@ -179,6 +183,18 @@ struct ZeroShotTests {
         #expect(images.map { $0["source"]?["url"]?.string } == urls.map(\.absoluteString))
         // Nought is none.
         #expect(try await provider.readProductPhotos(imageURLs: urls, title: "Chore Coat").value.productShot == nil)
+    }
+
+    @Test("The bars are the model's: a model with none is refused, not read against another's")
+    func barsAreTheModels() async throws {
+        await #expect(throws: ZeroShot.Unmeasured.self) {
+            try await ZeroShot.prompts(using: ReadingFakeProvider())
+        }
+        let given = try await ZeroShot.prompts(using: ReadingFakeProvider(), bars: fakeBars)
+        #expect(given.bars == fakeBars && given.model == "reading-fake")
+        // The models the sidecar can be built with (`Embeddings/download_model.py`), as it ids them.
+        #expect(ZeroShot.measuredBars["Marqo/marqo-fashionSigLIP@c56244cc94f9"] == ZeroShot.Bars(shotMargin: 0.02, styleBar: 0.01))
+        #expect(ZeroShot.measuredBars.keys.allSatisfy { ProductSearch.measuredThresholds[$0] != nil })
     }
 
     @Test("The method is SigLIP unless the owner names the model")
@@ -386,11 +402,17 @@ struct ProductReadingPostgresTests {
             app.embeddingProvider = fake
             app.styleCalibration = ZeroShot.Calibration(offsets: [:])
 
-            let readings = ProductReadingBackfill(app: app, method: .siglip, batch: 10, minimumCalibration: 0, pause: .zero)
+            let readings = ProductReadingBackfill(app: app, method: .siglip, batch: 10, minimumCalibration: 0, pause: .zero, bars: fakeBars)
             // Nothing is due before the lead photographs have been embedded.
             #expect(try await readings.runOnce().read == 0)
             #expect(try await EmbeddingBackfill(app: app, batch: 10).runOnce().embedded == 4)
             let leads = fake.asked.all.count
+
+            // A model nobody has measured bars for is waited on, and said — never read against
+            // another model's bars.
+            let unmeasured = try await ProductReadingBackfill(app: app, method: .siglip, batch: 10, minimumCalibration: 0, pause: .zero).runOnce()
+            #expect(unmeasured.read == 0 && unmeasured.waiting?.contains("no measured bars for reading-fake") == true)
+            #expect(fake.asked.all.count == leads)
 
             let start = Date(timeIntervalSince1970: 1_900_000_000)
             let pass = try await readings.runOnce(now: start)
@@ -443,7 +465,7 @@ struct ProductReadingPostgresTests {
             // Before the reading, both leads are people: the jacket's packshot is nobody's neighbour.
             let before = try await SemanticIndex.nearest(to: packshot, in: space, column: .image, scope: scope, limit: 2, on: sql)
             #expect(before.allSatisfy { $0.similarity < 0.5 })
-            _ = try await ProductReadingBackfill(app: app, method: .siglip, minimumCalibration: 0, pause: .zero).runOnce()
+            _ = try await ProductReadingBackfill(app: app, method: .siglip, minimumCalibration: 0, pause: .zero, bars: fakeBars).runOnce()
             let after = try await SemanticIndex.nearest(to: packshot, in: space, column: .image, scope: scope, limit: 2, on: sql)
             #expect(after.first?.id == b.id)
             #expect((after.first?.similarity ?? 0) > 0.99)

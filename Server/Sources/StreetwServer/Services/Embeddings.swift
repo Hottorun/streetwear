@@ -533,9 +533,22 @@ enum SemanticIndex {
         "[" + vector.map { String($0) }.joined(separator: ",") + "]"
     }
 
+    /// pgvector's default for `hnsw.ef_search`: how many candidates an HNSW scan keeps, and so
+    /// the most rows one can return, whatever the `LIMIT` says.
+    static let defaultEfSearch = 40
+
     /// The products nearest `vector` among those `allowed` says, closest first, with the
     /// cosine similarity — the model's vectors only, in one column. A product with no vector
     /// in that column (no photograph read) is not a neighbour.
+    ///
+    /// **An HNSW scan returns at most `hnsw.ef_search` rows — forty by default — however many
+    /// the `LIMIT` asks for**, so `ProductSearch.semanticPool`'s hundred came back as forty on
+    /// every search (measured on the eval catalogue: 40 rows at `LIMIT 100`, 100 once the
+    /// setting is raised, at a millisecond). The setting lives on the session, and a pooled
+    /// database hands each statement its own connection, so the `SET LOCAL` and the `SELECT`
+    /// share one transaction here. A narrowing in `scope` is still applied *after* the scan,
+    /// so a tight one can return fewer; pgvector 0.8's `hnsw.iterative_scan` is the answer to
+    /// that, and is not set because an older extension refuses the name outright.
     static func nearest(
         to vector: [Float],
         in space: EmbeddingSpace,
@@ -548,13 +561,23 @@ enum SemanticIndex {
         let cast = SQLQueryString("::vector(\(literal: space.dimension))")
         let stored = SQLQueryString("(\(column.expression("e")))")
         let exclusion: SQLQueryString = product.map { "AND p.id <> \(bind: $0)" } ?? ""
-        let rows = try await sql.raw("""
+        let query: SQLQueryString = """
             SELECT p.id AS id, 1 - ((\(stored)\(cast)) <=> (\(bind: literal(vector))\(cast))) AS similarity
             FROM product_embeddings e JOIN products p ON p.id = e.product_id
             WHERE e.model = \(bind: space.model) AND \(stored) IS NOT NULL AND \(scope) \(exclusion)
             ORDER BY (\(stored)\(cast)) <=> (\(bind: literal(vector))\(cast))
             LIMIT \(literal: limit)
-            """).all()
+            """
+        let rows: [any SQLRow]
+        if limit > defaultEfSearch, let database = sql as? any Database {
+            rows = try await database.transaction { transaction in
+                guard let sql = transaction as? any SQLDatabase else { throw Abort(.internalServerError) }
+                try await sql.raw("SET LOCAL hnsw.ef_search = \(literal: limit)").run()
+                return try await sql.raw(query).all()
+            }
+        } else {
+            rows = try await sql.raw(query).all()
+        }
         return try rows.map { (try $0.decode(column: "id", as: UUID.self), try $0.decode(column: "similarity", as: Double.self)) }
     }
 

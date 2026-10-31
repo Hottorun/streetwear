@@ -261,9 +261,10 @@ with **Root Directory** `Embeddings`, named `embeddings`, **no public domain**, 
 health check.
 
 **The model.** Leave `EMBEDDING_MODEL_REPO` and `EMBEDDING_MODEL_REVISION` unset for Marqo
-FashionSigLIP v1, the default. To start on the ZooClaw model instead, set both now, before the
-first build — *Choosing the model* in `Embeddings/README.md` has the values and what it costs.
-Choosing now is cheaper than switching later: a switch re-embeds everything.
+FashionCLIP, the default since 2026-10-30. To start on another model instead, set both now,
+before the first build — *Choosing the model* in `Embeddings/README.md` has the values and what
+each costs. Choosing now is cheaper than switching later: a switch re-embeds everything
+(*Switching the embedding model*, below).
 
 When it is deployed, from the **server** service's shell (*⋯ → Shell*, or `railway ssh`):
 
@@ -271,7 +272,7 @@ When it is deployed, from the **server** service's shell (*⋯ → Shell*, or `r
 curl -s http://embeddings.railway.internal:8080/health
 ```
 
-It must print the model id, `"dimension":768` and `"ready":true`.
+It must print the model id, `"dimension":512` (768 for the SigLIP models) and `"ready":true`.
 
 ## 14. Point the server at it
 
@@ -323,8 +324,43 @@ search in thirty seconds waiting 1.5 s — that is the designed behaviour, not a
 ## 17. Look at the volume again
 
 A day after the backfill finishes, read `databaseBytes` on `/admin/status` again (step 1). Expect about
-12.7 MB per 1,000 products more than before part 2. If it is past half of the plan's cap, this is
-the time to move to Pro, not when it is full.
+9 MB per 1,000 products more than before part 2 with FashionCLIP (12.7 MB with a 768-wide SigLIP
+model). If it is past half of the plan's cap, this is the time to move to Pro, not when it is full.
+
+## Switching the embedding model
+
+The owner's note for 2026-10-30, when the default moved from FashionSigLIP v1 to FashionCLIP,
+and for any later switch.
+
+**What to set.** Nothing, for the default: with `EMBEDDING_MODEL_REPO` and
+`EMBEDDING_MODEL_REVISION` unset, the next build of the `embeddings` service bakes in whatever
+`Embeddings/Dockerfile` names — so merging the change and redeploying that service *is* the
+switch. For any other model, set both variables on the `embeddings` service to the values in
+`Embeddings/README.md` (*Choosing the model*) and redeploy it; a restart without a rebuild refuses
+to start (`EMBEDDING_MODEL_REPO is … but the image holds …; rebuild the image`) and the old deploy
+keeps serving, which is the health check doing its job. The server needs no change and no
+restart.
+
+**What to expect.** The server's next backfill batch notices the new id and logs
+`embeddings: the sidecar now runs Marqo/marqo-fashionCLIP@44f4c655124e, not …, — re-embedding`.
+From then on every product is due again, newest first, 32 a batch, each row overwritten in place
+— **about an hour for 10,000 products** at the 3–4 images a second measured for this size of
+model on 2 vCPU, less for text-only products; `POST /admin/embed?batches=1` shows progress as in
+step 15. Nothing is down meanwhile: a search compares only the new model's vectors, so meaning
+matches and "more like this" by vector come from the products already re-embedded and
+full-text answers for the rest, as it did before part 2. The product readings follow behind —
+their key names the model — at the pace in `docs/server.md` (*The product photograph and style
+words*), about four hours for 10,000 products; until a product is re-read its stored shot and
+words stand. The new model's HNSW indexes are built by the first batch; the old model's can be
+dropped once `SELECT count(*) FROM product_embeddings WHERE model = '<old id>'` is zero
+(`DROP INDEX <name>`, the names in `pg_indexes` on `product_embeddings`). Expect the table to
+be briefly twice its size until autovacuum reclaims the rewritten rows.
+
+**What must already be true on the server.** The new model's id must have a row in both
+`ProductSearch.measuredThresholds` and `ZeroShot.measuredBars`. Without the first, search makes
+no meaning matches under it (the vectors still order candidates); without the second, the
+readings wait and the log says `readings: no measured bars for <model> …` once. FashionCLIP has
+both.
 
 ## Rolling back
 

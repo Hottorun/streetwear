@@ -172,7 +172,10 @@ func configure(_ app: Application) async throws {
     app.productReadingMethod = readingMethod
     switch readingMethod {
     case .siglip:
-        app.logger.notice("readings: FashionSigLIP zero-shot — \(app.semanticSearch == nil ? "idle until embeddings are on" : "on")")
+        // The model is the sidecar's to report, so which bars apply is only known once it has
+        // answered; the backfill says so if it meets a model that has none.
+        let measured = ZeroShot.measuredBars.keys.sorted().joined(separator: ", ")
+        app.logger.notice("readings: zero-shot through the embedding model (bars measured for \(measured)) — \(app.semanticSearch == nil ? "idle until embeddings are on" : "on")")
     case .haiku:
         app.logger.notice("readings: PRODUCT_READING=haiku — the fast model, owner-paid under the daily cap — \(app.ai == nil ? "idle until AI is on" : "on")")
     }

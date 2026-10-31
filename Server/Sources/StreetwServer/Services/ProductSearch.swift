@@ -62,6 +62,9 @@ enum ProductSearch {
     /// cannot start putting unmeasured guesses on the page.
     static let measuredThresholds: [String: Double] = [
         "Marqo/marqo-fashionSigLIP@c56244cc94f9": 0.66,
+        // CLIP puts every pair of texts closer together than SigLIP does, so its bar is lower:
+        // measured with `searcheval.py thresholds` on the same catalogue and judgements.
+        "Marqo/marqo-fashionCLIP@44f4c655124e": 0.45,
     ]
 
     /// The followed shops' lift, in the grammar's own score: a tag's weight for every search

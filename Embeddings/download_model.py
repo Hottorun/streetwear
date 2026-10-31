@@ -2,12 +2,12 @@
 at boot. Run at image build time.
 
     python download_model.py /models/embedding                     # the default
-    python download_model.py /models/embedding srpone/zooclaw-fashionsiglip2 \\
-        d2c0c98de9cd1e27c114267ddfbb584eb98b5ebf
+    python download_model.py /models/embedding Marqo/marqo-fashionSigLIP \\
+        c56244cc94f92419e8369fa71efdaf403b124ce8
 
-The default is Marqo FashionSigLIP v1. Marqo publishes FashionSigLIP 2 only commercially
-(the v1 card says "Contact Marqo"); v1 is Apache-2.0. The alternative is a third party's
-SigLIP2 fine-tune, Apache-2.0 too — see "Choosing the model" in README.md before switching.
+The default is Marqo FashionCLIP, chosen on the search eval over FashionSigLIP v1 and seven
+others (README.md, "Choosing the model"). FashionSigLIP v1 and a third party's SigLIP2
+fine-tune stay available, all three Apache-2.0 — read that section before switching.
 
 Only models listed in MODELS can be downloaded, each with the loader that reads it and the
 files it needs, and only at a full commit hash: a branch name is not a pin, and a revision
@@ -21,10 +21,17 @@ from pathlib import Path
 
 from huggingface_hub import snapshot_download
 
-DEFAULT_REPO = "Marqo/marqo-fashionSigLIP"
-DEFAULT_REVISION = "c56244cc94f92419e8369fa71efdaf403b124ce8"
+DEFAULT_REPO = "Marqo/marqo-fashionCLIP"
+DEFAULT_REVISION = "44f4c655124ed71e90cbf528d82f508d69d8a81b"
 
 MODELS = {
+    # open_clip checkpoint, ViT-B/16 CLIP, 512-d. Its config names no Hugging Face tokenizer,
+    # so open_clip reads it with the CLIP byte-pair tokenizer it ships with: nothing else to
+    # fetch. The repo's tokenizer.json and vocab.json serve its transformers loader, not this.
+    "Marqo/marqo-fashionCLIP": {
+        "loader": "open_clip",
+        "files": ["open_clip_config.json", "open_clip_model.safetensors"],
+    },
     # open_clip checkpoint. The tokenizer comes from the base SigLIP repo, because that is
     # the one the Marqo config names and so the one `hf-hub:Marqo/marqo-fashionSigLIP` loads:
     # using the copy in Marqo's own repo would be a second, unverified path to the same ids.

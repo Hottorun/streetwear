@@ -74,13 +74,48 @@ struct ProductPhotoVerdict: Sendable, Equatable {
 
 // MARK: - The zero-shot reader
 
-/// FashionSigLIP asked about a photograph by comparing it with sentences.
+/// The embedding model asked about a photograph by comparing it with sentences.
 ///
 /// Every number here was measured on `Server/ReadingEval` (203 products from seven shops,
-/// labelled by hand) and is the model's, not the idea's: a new model needs them measured again.
+/// labelled by hand). The prompts and the weights are the idea's; the two bars are the
+/// model's, because each model puts the same photograph and sentence at its own distance —
+/// so they are kept per model id (`measuredBars`), and **a model with none is not read**
+/// rather than read against another model's bars.
 enum ZeroShot {
     /// Bump when the prompts, the bars or the rules change: every product is read again.
     static let version = 1
+
+    /// The two numbers that belong to a model: how far the product side must lead for a
+    /// photograph to be a product shot, and how far above its catalogue mean a style word must
+    /// score to be given.
+    struct Bars: Sendable, Equatable {
+        var shotMargin: Double
+        var styleBar: Double
+    }
+
+    /// Per model id, as the sidecar reports it — the same key as
+    /// `ProductSearch.measuredThresholds`. Measured by running `ReadingEvalTests` against the
+    /// model with no entry here, which sweeps both bars and prints the table to choose from
+    /// (`docs/server.md`, *The reading eval*). `ProductReadingBackfill` waits, and says so, for
+    /// a model that is missing — the backfill would otherwise read ten thousand products
+    /// against bars that were never measured for them, and nothing on the wire would show it.
+    static let measuredBars: [String: Bars] = [
+        // 99.5 % of the labelled product shots clear 0.02, and it is what turned STAUD's
+        // on-model lead shots (0.01–0.016) from "product shot" into "look further".
+        "Marqo/marqo-fashionSigLIP@c56244cc94f9": Bars(shotMargin: 0.02, styleBar: 0.01),
+        // Swept on 2026-10-30: 0.03 reads 186 of the 203 shots right (0.916 — five points under
+        // SigLIP, which reads photographs better than it reads text); 0.035 gives words at
+        // SigLIP's precision (0.654 against 0.648) on a few fewer products (147 against 158).
+        "Marqo/marqo-fashionCLIP@44f4c655124e": Bars(shotMargin: 0.03, styleBar: 0.035),
+    ]
+
+    /// Said when a model has no bars.
+    struct Unmeasured: Error, CustomStringConvertible {
+        var model: String
+        var description: String {
+            "no measured bars for \(model) — the reading waits until ZeroShot.measuredBars has them (Server/ReadingEval)"
+        }
+    }
 
     /// What a clean product shot looks like. The best of these is compared with the best of
     /// `otherPrompts`, so a shoe or a bag on a plain ground is not mistaken for nothing.
@@ -101,11 +136,6 @@ enum ZeroShot {
         "a fashion model posing",
         "a close-up photo of fabric texture",
     ]
-    /// How far the product side must lead. Measured: 99.5 % of the labelled product shots clear
-    /// it, and it is what turned STAUD's on-model lead shots (scores of 0.01–0.016) from
-    /// "product shot" into "look further".
-    static let shotMargin = 0.02
-
     /// Each style word as a few phrases, averaged into one vector. Richer phrases than the bare
     /// word measured better (top-two precision 0.61 → 0.64).
     static let styleDescriptions: [String: [String]] = [
@@ -130,8 +160,6 @@ enum ZeroShot {
     /// The photograph's share of a style score; the product's text vector has the rest. Words
     /// alone and the picture alone both measured worse than the blend.
     static let imageWeight = 0.7
-    /// A word is given only this far above its catalogue mean.
-    static let styleBar = 0.01
 
     /// Photographs past the first worth embedding — the phone's `ProductShot.extraCandidates`.
     static let extraPhotographs = 5
@@ -144,9 +172,10 @@ enum ZeroShot {
     static let calibrationSample = 2_000
     static let minimumCalibration = 200
 
-    /// The prompts as vectors, for one model.
+    /// The prompts as vectors, for one model, with that model's bars.
     struct Prompts: Sendable {
         var model: String
+        var bars: Bars
         var product: [[Float]]
         var other: [[Float]]
         /// In `StyleWords.vocabulary` order.
@@ -158,8 +187,11 @@ enum ZeroShot {
         var offsets: [String: Double]
     }
 
-    static func prompts(using provider: any EmbeddingProvider) async throws -> Prompts {
+    /// The model's bars unless given others — the tests', or the eval's sweep. Throws
+    /// `Unmeasured` for a model with none, so nothing reads against another model's.
+    static func prompts(using provider: any EmbeddingProvider, bars: Bars? = nil) async throws -> Prompts {
         let model = try await provider.space.model
+        guard let bars = bars ?? measuredBars[model] else { throw Unmeasured(model: model) }
         let product = try await provider.embed(texts: productPrompts)
         let other = try await provider.embed(texts: otherPrompts)
         var styles: [(String, [Float])] = []
@@ -167,7 +199,7 @@ enum ZeroShot {
             let phrases = (styleDescriptions[word] ?? [word]).map(stylePrompt)
             styles.append((word, normalised(mean(try await provider.embed(texts: phrases)))))
         }
-        return Prompts(model: model, product: product, other: other, styles: styles)
+        return Prompts(model: model, bars: bars, product: product, other: other, styles: styles)
     }
 
     /// Offsets from the mean photograph and the mean text: the mean of a dot product is the dot
@@ -187,25 +219,29 @@ enum ZeroShot {
         return product - other
     }
 
-    static func isProductShot(_ score: Double) -> Bool { score > shotMargin }
+    static func isProductShot(_ score: Double, _ bars: Bars) -> Bool { score > bars.shotMargin }
 
     /// The best-scoring photograph that clears the bar, or nil.
-    static func best(_ scores: [(index: Int, score: Double)]) -> Int? {
-        scores.filter { isProductShot($0.score) }.max { $0.score < $1.score }?.index
+    static func best(_ scores: [(index: Int, score: Double)], _ bars: Bars) -> Int? {
+        scores.filter { isProductShot($0.score, bars) }.max { $0.score < $1.score }?.index
     }
 
-    /// At most `StyleWords.maximum` words, best first, each clearing the bar.
-    static func styleWords(photo: [Float], text: [Float]?, prompts: Prompts, calibration: Calibration) -> [String] {
-        let scored = prompts.styles.map { word, vector -> (String, Double) in
+    /// Every style word's score for one photograph, its catalogue mean taken off, best first.
+    static func styleScores(photo: [Float], text: [Float]?, prompts: Prompts, calibration: Calibration) -> [(word: String, score: Double)] {
+        prompts.styles.map { word, vector -> (word: String, score: Double) in
             let image = dot(vector, photo)
             let words = text.map { dot(vector, $0) } ?? image
             return (word, imageWeight * image + (1 - imageWeight) * words - (calibration.offsets[word] ?? 0))
         }
-        return scored
-            .filter { $0.1 >= styleBar }
-            .sorted { $0.1 > $1.1 }
+        .sorted { $0.score > $1.score }
+    }
+
+    /// At most `StyleWords.maximum` words, best first, each clearing the bar.
+    static func styleWords(photo: [Float], text: [Float]?, prompts: Prompts, calibration: Calibration) -> [String] {
+        styleScores(photo: photo, text: text, prompts: prompts, calibration: calibration)
+            .filter { $0.score >= prompts.bars.styleBar }
             .prefix(StyleWords.maximum)
-            .map(\.0)
+            .map(\.word)
     }
 
     /// What the sidecar is sent for a photograph — the embedding backfill's small rendition.
@@ -242,7 +278,7 @@ enum ZeroShot {
         calibration: Calibration,
         embed: ([URL]) async throws -> [ImageEmbedding]
     ) async throws -> Outcome {
-        if let first, isProductShot(shotScore(first, prompts)) {
+        if let first, isProductShot(shotScore(first, prompts), prompts.bars) {
             return Outcome(verdict: ProductPhotoVerdict(
                 shotIndex: 0,
                 styleWords: styleWords(photo: first, text: text, prompts: prompts, calibration: calibration)
@@ -276,9 +312,9 @@ enum ZeroShot {
                 }
             }
             // Found one: the rest of the gallery is not worth a request.
-            if best(scored) != nil { break }
+            if best(scored, prompts.bars) != nil { break }
         }
-        let shot = best(scored)
+        let shot = best(scored, prompts.bars)
         let measured = shot.flatMap { vectors[$0] } ?? first
         outcome.verdict = ProductPhotoVerdict(
             shotIndex: shot,
@@ -346,22 +382,28 @@ actor ProductReadingBackfill {
     private let method: ProductReadingMethod
     private let minimumCalibration: Int
     private let pause: Duration
+    /// Bars in place of the model's measured ones — for tests, whose provider is a fake.
+    private let bars: ZeroShot.Bars?
     private var task: Task<Void, Never>?
     private var prompts: ZeroShot.Prompts?
     private var calibration: (model: String, value: ZeroShot.Calibration, at: Date)?
+    /// Why the last pass read nothing, so the loop says it once rather than every minute.
+    private var saidWaiting: String?
 
     init(
         app: Application,
         method: ProductReadingMethod,
         batch: Int = 16,
         minimumCalibration: Int = ZeroShot.minimumCalibration,
-        pause: Duration = ZeroShot.extraPause
+        pause: Duration = ZeroShot.extraPause,
+        bars: ZeroShot.Bars? = nil
     ) {
         self.app = app
         self.method = method
         self.batch = batch
         self.minimumCalibration = minimumCalibration
         self.pause = pause
+        self.bars = bars
     }
 
     /// One batch. `read == 0` means nothing is due, or there is nothing to read with — `waiting`
@@ -382,7 +424,14 @@ actor ProductReadingBackfill {
     private func readBySigLIP(sql: any SQLDatabase, now: Date) async throws -> Pass {
         guard let provider = app.semanticSearch else { return Pass(waiting: "embeddings are off") }
         let space = try await provider.space
-        let prompts = try await prompts(for: space, provider: provider)
+        let prompts: ZeroShot.Prompts
+        do {
+            prompts = try await self.prompts(for: space, provider: provider)
+        } catch let unmeasured as ZeroShot.Unmeasured {
+            // Waiting, not failing: the sidecar was switched to a model nobody has measured the
+            // bars for, and reading against another model's would be wrong on every product.
+            return Pass(waiting: unmeasured.description)
+        }
         guard let calibration = try await calibration(for: space, prompts: prompts, sql: sql, now: now) else {
             return Pass(waiting: "fewer than \(minimumCalibration) photographs embedded under \(space.model) to calibrate on")
         }
@@ -439,7 +488,7 @@ actor ProductReadingBackfill {
 
     private func prompts(for space: EmbeddingSpace, provider: any EmbeddingProvider) async throws -> ZeroShot.Prompts {
         if let prompts, prompts.model == space.model { return prompts }
-        let made = try await ZeroShot.prompts(using: provider)
+        let made = try await ZeroShot.prompts(using: provider, bars: bars)
         prompts = made
         return made
     }
@@ -594,6 +643,10 @@ actor ProductReadingBackfill {
                         logger.info("\(pass)")
                         continue
                     }
+                    // Why nothing is read, once per reason — a model with no bars, above all.
+                    if let waiting = pass.waiting, await self.isNews(waiting) {
+                        logger.notice("\(pass)")
+                    }
                 } catch EmbeddingError.modelChanged {
                     continue
                 } catch {
@@ -607,6 +660,13 @@ actor ProductReadingBackfill {
     func stop() {
         task?.cancel()
         task = nil
+    }
+
+    /// True the first time a reason for waiting is seen, so the loop says it once.
+    private func isNews(_ waiting: String) -> Bool {
+        guard waiting != saidWaiting else { return false }
+        saidWaiting = waiting
+        return true
     }
 }
 
