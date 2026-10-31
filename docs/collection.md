@@ -216,29 +216,51 @@ Part of the streetw guidance set; see `CLAUDE.md` for the index and the build ru
   Discover and the product page show — but `FitPieceImage` falls back to the packshot, and
   **`FitRender.warm` has to ask for the same URL at the same width** or the renderer finds an
   empty cache and writes a fit with a hole in it.
-- **On the wall and on a save's own page, the packshot is the cover** (`SavedItem.coverURLString`).
-  This reverses the line above for exactly two surfaces, on purpose. A feed card is an
-  announcement and the styling is part of it, so the feed and Discover keep the brand's first
-  photograph. A wall of things somebody kept is a collection of *garments*, and Stüssy's
-  model-first galleries put a person in boots on the wall to stand for a shirt. The order is a
-  cover chosen by hand ("Set as cover", on the photograph in `SaveDetailView`), then **the
-  server's product shot** (`serverShotURLString`, Phase 5 — below), then Vision's packshot, then
-  the lead shot — so **where neither reading knows a product shot nothing changes**. Both stored
-  answers are honoured only while they are still one of the product's image strings, because
-  `SharedSaveImporter.repair` can replace a share's whole gallery. The page's gallery *leads*
-  with the cover and is never filtered (`SavedItem.galleryURLs`); a colourway's photograph is
-  found in it by URL, since the catalogue's index is into the brand's order. Choosing the
-  photograph the automatic rule would pick anyway **clears** the choice rather than pinning it,
-  which is the way back and means a better packshot found later still arrives. **The cover is a
-  display choice and nothing else**: the cutout, the colour and the silhouette are still
-  measured on the packshot, and a fit's piece still falls back to it — somebody choosing a
-  lookbook frame to *look at* has not said it is a better photograph to *measure*.
-- **The server reads the product shot first, and Vision is the fallback** (Phase 5,
+- **The shop's first photograph is the cover** (`SavedItem.coverURLString`,
+  `BrandUpdate.automaticCoverURLString`), on the wall and on a save's own page as everywhere
+  else — overridden by a cover chosen by hand ("Set as cover", on the photograph in
+  `SaveDetailView`), else by **the server's stand-in** (`BrandUpdate.serverShot`, Phase 5 —
+  below) and by nothing else. For most of Phase 5 the packshot was the cover: a wall of things
+  somebody kept is a collection of *garments*, and Stüssy's model-first galleries put a person in
+  boots on the wall to stand for a shirt, so the order ran hand-picked, the server's product
+  shot, Vision's packshot, the lead. **Both choosers were wrong in the same way, and the owner saw
+  it on Motel Rocks** (2026-10-31): nearly every gallery there carries a close-up of the fabric,
+  a swatch has nobody in it either, and so the cover of a dress became a square of cloth — on the
+  phone, where Vision's test is literally "no person", and on the server, where one close-up
+  sentence among the "not a product" prompts was not enough to outweigh "not a person". A
+  swatch on the wall is worse than a model. The rule now, the owner's:
+
+  > The shop's first photograph is the cover by default. It is overridden only when the
+  > server's reading is confident that the first photograph is on a person *and* that a later
+  > one is the whole garment on a plain background, with close-ups and detail shots ruled out.
+  > Anything uncertain keeps the shop's choice. The phone's own person check (`ProductShot`)
+  > no longer chooses covers; it goes back to what it was built for — choosing which photograph
+  > to measure. A hand-picked cover still beats everything.
+
+  So **where the server has nothing confident to say, nothing changes**, and Vision's
+  packshot is **not** in the order at all — a confident wrong cover is worse than the shop's,
+  and the phone cannot tell a swatch from a packshot. The server's stand-in is honoured only
+  while it is still one of the product's image strings, because `SharedSaveImporter.repair` can
+  replace a share's whole gallery, and only when it was adopted under the rule this build
+  trusts (`BrandUpdate.readingRule`, below). The page's gallery *leads* with the cover and is
+  never filtered (`SavedItem.galleryURLs`); a colourway's photograph is found in it by URL, since
+  the catalogue's index is into the brand's order. Choosing the photograph the automatic rule
+  would pick anyway **clears** the choice rather than pinning it, which is the way back and
+  means a stand-in the server reads later still arrives. **The cover is a display choice and
+  nothing else**: the cutout, the colour and the silhouette are still measured on the packshot
+  — the server's stand-in where there is one, else Vision's pick — and a fit's piece still
+  falls back to it. A swatch is a worse thing to measure than a model, but a far worse thing to
+  show.
+- **The server reads the stand-in, and Vision chooses only what is measured** (Phase 5,
   `docs/server.md`, *The product photograph and style words*). The server compares every
-  product's photographs with FashionSigLIP once — before anybody saves it, for every phone, and
-  in the Simulator, where Vision's detector does not run — and sends the answer as
-  `FeedItem.productShotIndex` / `DiscoverCard.productShotIndex`, stored as the photograph's URL
-  (`BrandUpdate.serverShotURLString`, nil when the server found none or has not read it).
+  product's photographs with the embedding model once — before anybody saves it, for every
+  phone, and in the Simulator, where Vision's detector does not run — against three classes of
+  sentence (a person wearing it, the whole garment on its own, a close-up or a swatch), and sends
+  a stand-in as `FeedItem.productShotIndex` / `DiscoverCard.productShotIndex` only when the
+  first photograph clearly reads as a person and a later one clearly reads as the whole garment
+  over *both* other classes. It is stored as the photograph's URL (`BrandUpdate.serverShotURLString`,
+  nil when the server keeps the shop's choice or has not read it) beside the rule it was read
+  under (`readingRuleVersion`).
   - **A feed row arrives before the server has read it** (the reading runs minutes behind a
     poll), and the merge never revisits a row it holds — so `RemoteSync.mergeReadings` asks
     `POST /v1/products/readings` for the newest **feed rows** with no reading, or one older than
@@ -249,20 +271,37 @@ Part of the streetw guidance set; see `CLAUDE.md` for the index and the build ru
     the catalogue answered carries one too, and asking about it sent the server a product saved
     from a shop it had never heard of. A save from Discover or a search takes the card's reading
     at once (`DiscoverSave`).
-  - **`adoptReading` makes the analysis due again** when the server's shot is not the frame the
-    phone measured: it clears `analyzedImageURL`, the trigger `ImageTagger` already honours, and
-    `ImageTagger` then measures the server's shot first (`serverShot`) and walks the gallery with
-    `ProductShot` only when there is none or it will not load. Until then
-    `coverAspectMeasured` says nothing rather than the shape of another photograph.
+  - **A reading from the old rule is not believed** (`BrandUpdate.readingRule`, 2). A stand-in
+    adopted before the close-up rule may be a swatch, and a stored answer from the older rule is
+    worse than none — the bargain every version field here makes. `serverShot` answers nil for
+    it, so the wall shows the shop's first photograph the moment this build runs, and
+    `mergeReadings` asks for the row again as if it had never been read. Until the server has
+    re-read the product (hours, `docs/server.md`) it answers "keep the shop's choice", which is
+    then held for the usual two weeks; the stand-ins the new rule does find reach rows a phone
+    already holds on the re-ask after that, and new saves at once. **Deploy the server before
+    the app build is released**: its migration clears every old stand-in, so a new app never
+    adopts one as current.
+  - **`adoptReading` makes the analysis due again** when it changes the cover — a stand-in
+    arrives and is not the frame the phone measured, or one is withdrawn: it clears
+    `analyzedImageURL`, the trigger `ImageTagger` already honours, and `ImageTagger` then
+    measures the server's stand-in first (`serverShot`) and walks the gallery with `ProductShot`
+    only when there is none or it will not load. Until then `coverAspectMeasured` says nothing
+    rather than the shape of another photograph.
   - **The style words travel with it** (`BrandUpdate.styleWords`), are matched by Shop's
     search like a tag (`ShopCatalogue`), and are printed on the save's page as "STYLE · …",
     because a word that finds a garment should be visible on it.
-- **The wall's tile shape is the cover's shape.** `imageAspect` is measured on the photograph
-  `ImageTagger` analysed, which is the packshot — so until this the wall drew the lead shot in
-  a tile shaped for the packshot, letterboxing every model-first gallery. It is now written
-  whenever the packshot is chosen, not only when the tags are due, so a pass that re-picks it
-  for the cutout alone keeps the tile honest. A cover chosen by hand carries its own
-  `coverAspect`, read off the copy the gallery has just drawn. The wall still never crops.
+- **The wall's tile shape is the cover's shape, and the shape says whose it is.** `imageAspect`
+  is measured by `ImageTagger` off the decoded cover — the server's stand-in, else the lead —
+  whenever the pass runs, not only when the tags are due, so a pass that re-picks the packshot
+  for the cutout alone keeps the tile honest. **`imageAspectURL` names the photograph it is the
+  shape of**, the same bargain `analyzedImageURL` makes: the cover can change under a measured
+  row (a stand-in arrives or is withdrawn, a share's gallery is replaced), and
+  `coverAspectMeasured` answers only while the stamp names the cover, a guess otherwise. A row
+  the build before the close-up rule measured holds the Vision packshot's shape and no stamp;
+  `needsCoverShape` gives it one more pass, which stamps the lead's. A photograph written off
+  has no shape at all, or an unstamped one would keep the row due for ever. A cover chosen by
+  hand carries its own `coverAspect`, read off the copy the gallery has just drawn. The wall
+  still never crops.
 - **`Seamless` cannot lift a light garment off a light sweep, by construction**, and that is
   a correct refusal rather than a bug. Measured against real catalogues: it lifts 10/10 of
   Kith's photography (border spread 0.000, erasing ~90%), and refuses a white BAPE crewneck

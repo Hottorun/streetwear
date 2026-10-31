@@ -131,11 +131,16 @@ struct FakeAIProvider: AIProvider {
         ), costs: cost(.pageReading))
     }
 
-    /// The first photograph whose address does not say `person`, and whichever of the title's
-    /// words are style words.
+    /// The first later photograph whose address says neither `person` nor `detail`, when the
+    /// first says `person`; and whichever of the title's words are style words.
     func readProductPhotos(imageURLs: [URL], title: String) async throws -> AIAnswer<AIPhotoReading> {
-        AIAnswer(value: AIPhotoReading(
-            productShot: imageURLs.firstIndex { !$0.lastPathComponent.contains("person") },
+        let leadIsAPerson = imageURLs.first?.lastPathComponent.contains("person") == true
+        let standIn = imageURLs.indices.dropFirst().first { index in
+            let name = imageURLs[index].lastPathComponent
+            return !name.contains("person") && !name.contains("detail")
+        }
+        return AIAnswer(value: AIPhotoReading(
+            productShot: leadIsAPerson ? standIn : nil,
             styleWords: StyleWords.clean(ShopText.tokens(title))
         ), costs: cost(.productReading))
     }

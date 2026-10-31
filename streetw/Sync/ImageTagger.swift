@@ -215,11 +215,9 @@ enum ImageTagger {
         saves.count { $0.update.map(isDue) == true }
     }
 
-    /// The server's product shot, loaded — the lead itself when that is the shot — or nil when
-    /// there is none to use.
+    /// The server's stand-in for the lead, loaded, or nil when there is none to use.
     private static func serverShot(of update: BrandUpdate, lead: ProductShot.Choice) async -> ProductShot.Choice? {
-        guard let string = update.serverShotURLString, update.imageURLStrings.contains(string),
-              let url = URL(string: string) else { return nil }
+        guard let string = update.serverShot, let url = URL(string: string) else { return nil }
         if url == lead.url { return lead }
         guard case .image(let image) = await load(url) else { return nil }
         return ProductShot.Choice(url: url, image: image)
@@ -247,6 +245,10 @@ enum ImageTagger {
                     update.analyzedImageURL = stored
                     update.cutoutVersion = Cutout.version
                     update.visionVersion = VisualReading.version
+                    // No photograph, no shape: a stale one would be another picture's, and
+                    // an unstamped one would keep the row due for a cover it cannot measure.
+                    update.imageAspect = nil
+                    update.imageAspectURL = nil
                     resolved += 1
                 }
                 continue
@@ -284,6 +286,8 @@ enum ImageTagger {
                     update.analyzedImageURL = url.absoluteString
                     update.cutoutVersion = Cutout.version
                     update.visionVersion = VisualReading.version
+                    update.imageAspect = nil
+                    update.imageAspectURL = nil
                     resolved += 1
                 } else {
                     // Inconclusive: still due, but not worth asking again in a minute. In
@@ -304,11 +308,14 @@ enum ImageTagger {
             // `ProductShot`. `analyzedImageURL` is still stamped with the **lead** URL
             // below, because that field's job is to notice the gallery being replaced.
             //
-            // **The server's product shot first**, when it read one (`serverShotURLString`):
-            // it looked at every phone's photographs once, before anybody saved this, and it
-            // answers in the Simulator where Vision does not. Vision's walk is the fallback —
-            // for a product the server has not read, found no shot in, or whose shot will not
-            // load here.
+            // **The server's stand-in first**, when it read one (`BrandUpdate.serverShot`): it
+            // looked at every phone's photographs once, before anybody saved this, with
+            // close-ups ruled out, and it answers in the Simulator where Vision does not.
+            // Vision's walk is the fallback — for a product the server has not read, kept the
+            // shop's choice on, or whose stand-in will not load here — and it chooses only
+            // what is measured, never the cover: "nobody in it" is a fabric swatch as readily
+            // as a packshot, and a swatch is a worse thing to measure than a model but a far
+            // worse thing to show.
             let serverShot = await serverShot(of: update, lead: ProductShot.Choice(url: url, image: lead))
             let shot: ProductShot.Choice
             if let serverShot {
@@ -325,14 +332,17 @@ enum ImageTagger {
             let image = shot.image
             update.packshotURLString = shot.url.absoluteString
 
-            // The shape of the photograph just chosen, every time one is — not only when the
-            // tags are due. The packshot is the collection wall's cover (see
-            // `SavedItem.coverURLString`), the wall lays each tile out at its cover's measured
-            // shape, and a pass that re-picks the packshot for the cutout alone (a version
-            // bump, a detector that answers on this phone and did not on the last) would
-            // otherwise leave the tile shaped for the previous picture. Free: it is decoded.
-            if image.size.height > 0 {
-                update.imageAspect = Double(image.size.width / image.size.height)
+            // The shape of the **cover**, every time this runs — not only when the tags are
+            // due. The cover is the server's stand-in, else the lead (`SavedItem.coverURLString`),
+            // both decoded here; the wall lays each tile out at its cover's measured shape,
+            // and a pass that re-picks the packshot for the cutout alone (a version bump, a
+            // detector that answers on this phone and did not on the last) would otherwise
+            // leave the tile shaped for the previous picture. Stamped with the photograph it
+            // is the shape of, so a cover that changes afterwards is not drawn to it.
+            let cover = serverShot ?? ProductShot.Choice(url: url, image: lead)
+            if cover.image.size.height > 0 {
+                update.imageAspect = Double(cover.image.size.width / cover.image.size.height)
+                update.imageAspectURL = cover.url.absoluteString
             }
 
             if needsTags {
