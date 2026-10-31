@@ -436,7 +436,7 @@ nobody here follows, which is where it is worth the most.
 - **There is no navigation bar.** It is the one page in the app that is a photograph first, and
   a serif title eating the top seventh of the screen to say "Discover" — on the tab already
   labelled Discover — was paying for the layout bug twice.
-- **An exploration card prints `NEW TO YOU` and never a pairing.** It was not placed for one, and
+- **An exploration card prints "New to you" and never a pairing.** It was not placed for one, and
   a composite with somebody's clothes in it under a card chosen at random would be the card
   telling a story the ranking never told. Same rule as `sharedTraits`.
 - **A discovery card is never persisted with `isSeen == false`, and mostly never persisted at
@@ -611,7 +611,7 @@ nobody here follows, which is where it is worth the most.
   and `chromeTop` came down with it.
 - **Follow leads the action row, and is not demoted by leaving the top.** It is still the only
   filled control on the card and it is first in reading order, which is more prominence than it
-  had while competing with a picture. The row is `[FOLLOW] [bookmark] … NOT FOR ME · VIEW`.
+  had while competing with a picture. The row is `[FOLLOW] [bookmark] … Not for me · VIEW`.
 - **Save is a button as well as a double tap, and it is the app's button.** The gesture stays —
   it is the fast one — but a gesture with nothing on screen to announce it is a feature only its
   author knows about, and keeping a garment is the second most likely thing anybody wants to do

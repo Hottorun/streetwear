@@ -439,7 +439,7 @@ bought it. The short form of the load-bearing ones:
   `UpdateKind` case needs nothing on the wire — and nothing in `legacy`, which is frozen.
 - The buy bar opens a Shopify cart permalink only when **exactly one available variant is
   yours** by `SizeProfile.claims` (never `matches`) in the colourway on screen, and says
-  "CHECK OUT", not "bag"; everything else gets the exact product page (`Checkout`).
+  "Check out", not "bag"; everything else gets the exact product page (`Checkout`).
 
 ### Push, and why it was silent for months
 
@@ -665,7 +665,7 @@ never been asked, and the copy claimed the former.
 ### Dates you know and the app cannot
 
 The drop calendar is the one screen about the future. `PlannedDrop` is a hand-entered date — the
-fourth kind of claim, labelled "ADDED BY YOU", never blended with one a storefront stated — and it
+fourth kind of claim, labelled "Added by you", never blended with one a storefront stated — and it
 is **local only**, like `StyleStatement`. Two alerts (09:00 and the release), `DropReminders.refresh`
 rewrites the whole set rather than diffing it, and clears only its own `drop-` prefixed requests.
 

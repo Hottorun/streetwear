@@ -389,7 +389,7 @@ snapping**, because a grid turns a collage back into a form.
   pushed the editor immediately afterwards, so closing that without saving left the blank square
   behind anyway — a fit somebody had explicitly *not* kept, sitting in the collection with
   nothing in it. **Trying a suggestion now opens it on the canvas, arranged by this table, and
-  Save keeps it** — the row says "TAP ONE TO TRY IT". A one-tap keep had nowhere to show what it
+  Save keeps it** — the row says "Tap one to try it.". A one-tap keep had nowhere to show what it
   was keeping, and kept any garment the proposal borrowed from the catalogue in the same tap. A
   selection on the wall, a proposal around one garment and a suggestion all open through
   `FitCanvas.Opening` and lay out through here. The layout is a **flat-lay**

@@ -200,7 +200,7 @@ credits — an unlimited account and a free follow-up are still calls.
   (`similar`, else `GET /v1/products/search` over your shops and then every shop), or the
   host's own field when it passed `onFind` — unless `similar` came back, which is shown in the
   sheet wherever the scan was opened, because the field would reduce it to the reading's words.
-  The line above it says which it was ("… LOOK LIKE YOUR PHOTOGRAPH", "… LIKE ITS DESCRIPTION").
+  The line above it says which it was ("… look like your photograph.", "… like its description.").
   A reading that is not a garment offers none of the three.
 - **The scan and the fit canvas call through `AIStore`**, the same store Shop's search does —
   `isAvailable` draws the camera and the Ask menu at all, `costLabel(for:)` puts the price on the

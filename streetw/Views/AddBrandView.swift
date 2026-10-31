@@ -473,10 +473,10 @@ struct NewBrandView: View {
 
                 VStack(alignment: .leading, spacing: 8) {
                     HStack(spacing: 2) {
-                        DataLabel(text: "INSTAGRAM · OPTIONAL")
+                        DataLabel(text: "INSTAGRAM")
                         InfoButton(note: Self.instagramInfo)
                     }
-                    TextField("@handle", text: $instagram)
+                    TextField("@handle, if it has one", text: $instagram)
                         .font(.editorial(17))
                         .foregroundStyle(Color.ink)
                         .textInputAutocapitalization(.never)
