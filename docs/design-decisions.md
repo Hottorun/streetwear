@@ -38,8 +38,9 @@ Changing these silently will break intended behavior:
     "All brands" opens `BrandsView` and "Add a brand" the add flow. Somebody following forty shops
     would otherwise scroll past forty rows to reach their alerts, and a shop that had quietly
     stopped answering read exactly like one that had stopped publishing until somebody opened its
-    page. On `BrandsView` the failing source is said on its row — `CATALOG FAILING · COLLECTIONS`,
-    vermilion on the failing word alone — and the per-brand UNREAD count is gone: unread is "since
+    page. On `BrandsView` the failing source is said on its row as a sentence — "Catalog isn't
+    answering.", in vermilion, where a healthy brand reads "Watched from 3 sources." (the names are
+    on its page) — and the per-brand UNREAD count is gone: unread is "since
     you were last here" on the feed, and a second tally of it on a list of follows is a number to
     reconcile against a screen that no longer keeps one per brand.
   - **Nothing that is not built.** Sign-in, profiles, location and credits are Phase 2, and a row

@@ -210,11 +210,11 @@ struct AnalysisLine: View {
             ProgressView()
                 .controlSize(.mini)
                 .tint(.muted)
-            DataLabel(
+            NoteLine(
                 text: remaining == 1
-                    ? "READING 1 PHOTOGRAPH"
-                    : "READING \(remaining) PHOTOGRAPHS",
-                size: 10
+                    ? "Reading 1 photograph."
+                    : "Reading \(remaining) photographs.",
+                size: 13
             )
             Spacer()
         }

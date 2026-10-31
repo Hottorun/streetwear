@@ -49,10 +49,7 @@ struct BrandsView: View {
                         // recommendations sat on two other screens. Below the list rather
                         // than above it — this page is your brands first.
                         Section {
-                            BrandRecommendations(
-                                title: "More worth watching",
-                                blurb: "Picked from what you keep."
-                            )
+                            BrandRecommendations(title: "More worth watching")
                             .listRowInsets(EdgeInsets())
                             .listRowBackground(Color.paper)
                             .listRowSeparator(.hidden)
@@ -129,28 +126,28 @@ struct BrandRow: View {
     ///
     /// **The accent on the failing source alone**, where the feed would raise its voice and
     /// where the brand page already does: a failing source is drops going unseen, and in muted
-    /// ink it read exactly like a list of source names. Only that word, though — the healthy
-    /// source beside it is not news, and a whole line in vermilion says the brand is broken.
+    /// ink it read exactly like a list of source names. Only that clause, though — the healthy
+    /// sources are not news, and a whole line in vermilion says the brand is broken.
+    ///
+    /// A sentence, not the source names joined with dots: which sources they are is on the
+    /// brand page, and here a count says the same thing in a few words.
     private var status: Text {
         var parts: [Text] = []
-        if let mode = brand.followMode.listLabel { parts.append(Text(mode)) }
+        if let mode = brand.followMode.listLabel { parts.append(Text("\(mode).")) }
+        let sources = brand.watchedSources
         if brand.isLockedForDrop {
             parts.append(
-                Text("Locked, a drop is close")
+                Text("Locked, a drop is close.")
                     .foregroundStyle(brand.isAnnouncingLock ? Color.signal : Color.muted)
             )
-        } else if brand.watchedSources.isEmpty {
-            parts.append(Text("Not watched"))
+        } else if sources.isEmpty {
+            parts.append(Text("Not watched."))
+        } else if sources.contains(where: \.isFailing) {
+            parts.append(Text("\(brand.failingSources).").foregroundStyle(Color.signal))
         } else {
-            for source in brand.watchedSources {
-                parts.append(
-                    source.isFailing
-                        ? Text("\(source.label) FAILING").foregroundStyle(Color.signal)
-                        : Text(source.label)
-                )
-            }
+            parts.append(Text(sources.count == 1 ? "Watched from 1 source." : "Watched from \(sources.count) sources."))
         }
-        return parts.dropFirst().reduce(parts[0]) { line, part in line + Text(" · ") + part }
+        return parts.dropFirst().reduce(parts[0]) { line, part in line + Text(" ") + part }
     }
 
     var body: some View {
@@ -160,8 +157,7 @@ struct BrandRow: View {
             VStack(alignment: .leading, spacing: 5) {
                 Wordmark(name: brand.name, size: 14)
                 status
-                    .font(.data(10))
-                    .tracking(0.4)
+                    .font(.editorial(13))
                     .foregroundStyle(Color.muted)
                     .lineLimit(1)
             }

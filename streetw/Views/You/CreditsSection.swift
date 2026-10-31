@@ -78,24 +78,33 @@ struct CreditsSection: View {
             lines.append("\(allowance) are free each month you use them.")
         }
         lines.append("Every action says its price before you press it, and what it took after.")
+        // What the price rows used to say beside the price, joined with a dot.
+        if ai.isAvailable {
+            if ai.credits(for: .search).map({ $0 > 0 }) == true {
+                lines.append("Replies to Ask Dropwall are free.")
+            }
+            if ai.credits(for: .webSearch).map({ $0 > 0 }) == true {
+                lines.append("Show me more searches the open web.")
+            }
+        }
         return InfoNote(title: "Credits", lines: lines)
     }
 
     /// Each paid action this build offers, by the name its button uses, and what it costs.
-    /// Only those the server prices: an action with no price is never printed as free.
+    /// Only those the server prices: an action with no price is never printed as free. The
+    /// price alone — that replies are free and what Show me more reaches are in the ⓘ.
     private var prices: [(title: String, detail: String)] {
         guard ai.isAvailable else { return [] }
-        let named: [(CreditAction, String, String?)] = [
-            (.search, "Ask Dropwall", "replies free"),
-            (.webSearch, "Show me more", "the open web"),
-            (.scan, "Scan a garment", nil),
-            (.fitJudge, "Judge a fit", nil),
-            (.fitSuggest, "Suggest for a fit", nil)
+        let named: [(CreditAction, String)] = [
+            (.search, "Ask Dropwall"),
+            (.webSearch, "Show me more"),
+            (.scan, "Scan a garment"),
+            (.fitJudge, "Judge a fit"),
+            (.fitSuggest, "Suggest for a fit")
         ]
-        return named.compactMap { action, title, note in
+        return named.compactMap { action, title in
             guard let cost = ai.credits(for: action), cost > 0 else { return nil }
-            let price = AIStore.creditsLabel(cost)
-            return (title, note.map { "\(price) · \($0)" } ?? price)
+            return (title, AIStore.creditsLabel(cost))
         }
     }
 
