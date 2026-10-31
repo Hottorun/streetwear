@@ -81,8 +81,8 @@ struct DropCalendarView: View {
                     EditorialEmptyState(
                         title: "Nothing on the horizon",
                         action: brands.isEmpty
-                            ? "Follow a few brands and their rhythm appears here."
-                            : "No pattern is clear enough to call yet. Add a date with +."
+                            ? "Follow a brand to see its rhythm."
+                            : "Nothing to call yet. Add a date with +."
                     )
                 } else {
                     list
@@ -93,7 +93,7 @@ struct DropCalendarView: View {
                 entries = build()
                 hasBuilt = true
             }
-            .navigationTitle("Upcoming")
+            .navigationTitle("Drop calendar")
             .toolbarTitleDisplayMode(.inlineLarge)
             // This sheet has its own stack, so it needs its own registration — a
             // destination declared on the feed's stack is not visible from inside a
