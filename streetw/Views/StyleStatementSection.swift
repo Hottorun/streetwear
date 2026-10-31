@@ -34,7 +34,14 @@ struct StyleStatementSection: View {
         VStack(alignment: .leading, spacing: 18) {
             SettingsHeader(
                 title: "In your words",
-                note: "Say how you actually dress and Dropwall will lean that way when it suggests fits, pairings and brands. It never hides anything you'd otherwise see."
+                info: InfoNote(
+                    title: "In your words",
+                    lines: [
+                        "Say how you actually dress, and Dropwall leans that way when it suggests fits, pairings and brands.",
+                        "It never hides anything you'd otherwise see.",
+                        "It stays on this phone."
+                    ]
+                )
             )
 
             VStack(alignment: .leading, spacing: 10) {
@@ -66,12 +73,11 @@ struct StyleStatementSection: View {
         let understood = store.statement.reading
         if !understood.isEmpty {
             VStack(alignment: .leading, spacing: 8) {
-                DataLabel(text: "READING")
+                NoteLine(text: "Dropwall read:")
                 FlowRow(spacing: 8) {
                     ForEach(understood, id: \.self) { term in
-                        Text(term.uppercased())
-                            .font(.data(10, .medium))
-                            .tracking(0.8)
+                        Text(term)
+                            .font(.data(11, .medium))
                             .foregroundStyle(Color.ink)
                             .padding(.horizontal, 10)
                             .padding(.vertical, 7)
@@ -82,7 +88,7 @@ struct StyleStatementSection: View {
         } else if !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             // Written something, understood nothing. Saying so is better than an empty
             // space that reads as the field having been ignored — which it has.
-            DataLabel(text: "NOTHING RECOGNISED YET — TRY NAMING COLOURS AND GARMENTS")
+            NoteLine(text: "Nothing recognised yet. Try naming colours and garments.")
         }
     }
 

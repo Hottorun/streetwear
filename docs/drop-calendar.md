@@ -12,7 +12,7 @@ gone. The countdown was doing a notification's job, and only while you were look
 - **A hand-entered date is a fourth kind of claim, labelled as such.** The other three are
   *observed* — a storefront locked right now, a product with a future publication date, a rhythm
   read from history — and that is the correct bar for anything the app asserts on its own.
-  `PlannedDrop` is the one that isn't, so the row says "ADDED BY YOU" and it is never blended with a
+  `PlannedDrop` is the one that isn't, so the row says "Added by you, with a reminder" (or "with no reminder") and it is never blended with a
   date a storefront stated. It exists because two cases hurt: a locked storefront with no stated
   time is the strongest signal in the app arriving with no countdown, and a brand that never locks
   and never publishes a date gives no machine-readable sign until the products are already up.

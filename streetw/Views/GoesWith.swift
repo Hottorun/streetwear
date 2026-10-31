@@ -107,7 +107,7 @@ struct GoesWith: View {
                             Text("Wear it with")
                                 .font(.editorial(19))
                                 .foregroundStyle(Color.ink)
-                            DataLabel(text: "TAP TO BUILD THE WHOLE FIT")
+                            NoteLine(text: "Tap to build the whole fit.")
                         }
                         Spacer(minLength: 0)
                         Image(systemName: "chevron.right")
@@ -177,7 +177,7 @@ private struct PairingTile: View {
                 .fixedSize(horizontal: false, vertical: true)
 
             if let reason {
-                DataLabel(text: reason.uppercased(), size: 10)
+                NoteLine(text: reason, size: 13)
                     .frame(width: 132, alignment: .leading)
             }
         }

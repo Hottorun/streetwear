@@ -48,7 +48,7 @@ struct DropPiecesView: View {
     private func masthead(_ pieces: [BrandUpdate]) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             if let newest = pieces.first {
-                DataLabel(text: "\(FeedLabel.group(kind).text) · \(Stamp.short(newest.publishedAt).uppercased())")
+                NoteLine(text: "\(FeedLabel.group(kind).text.capitalized), \(Stamp.short(newest.publishedAt)).")
             }
             // What happened, in the words the 1.0 spread used for it — "24 new products" —
             // because this page is that story at full size.

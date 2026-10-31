@@ -151,7 +151,7 @@ struct ProductDetailView: View {
     private var heading: some View {
         VStack(alignment: .leading, spacing: 9) {
             if let state = FeedState(update: update, profile: sizes.profile) {
-                DataLabel(text: state.text, size: 11, color: state.color)
+                NoteLine(text: state.text, size: 15, color: state.color)
             }
             Text(update.title)
                 .font(.editorial(25))
@@ -178,7 +178,7 @@ struct ProductDetailView: View {
                     }
                 }
                 Spacer(minLength: 0)
-                DataLabel(text: Stamp.short(update.publishedAt).uppercased())
+                NoteLine(text: Stamp.short(update.publishedAt))
             }
         }
     }
@@ -189,7 +189,7 @@ struct ProductDetailView: View {
                 DataLabel(text: "SIZES")
                 Spacer()
                 if !sizes.profile.isEmpty {
-                    DataLabel(text: "YOURS: \(sizes.profile.summary.uppercased())", size: 9)
+                    NoteLine(text: "Yours: \(sizes.profile.summary)", size: 13)
                 }
             }
             // No `limit` here, unlike the feed card. A sneaker's full run is 5–13 in half
@@ -225,7 +225,7 @@ struct ProductDetailView: View {
                 HStack {
                     DataLabel(text: label, size: 9)
                     Spacer()
-                    DataLabel(text: value.uppercased(), size: 9, color: .ink)
+                    NoteLine(text: value, size: 13, color: .ink)
                 }
             }
         }
@@ -354,18 +354,18 @@ struct StorefrontBar: View {
         let size = link.size?.uppercased()
         switch link.action {
         case .checkout:
-            return size.map { "CHECK OUT IN \($0) · \(host)" } ?? "CHECK OUT ON \(host)"
+            return size.map { "Check out in \($0) on \(host)" } ?? "Check out on \(host)"
         case .productPage:
             // A page opened on your size, which is sold out — the shop's own page then
             // says so, and the label is about that size rather than the product.
             if let size { return "VIEW \(size) ON \(host)" }
-            return isSoldOut ? "VIEW ON SITE" : "OPEN ON \(host)"
+            return isSoldOut ? "View on the site" : "Open on \(host)"
         }
     }
 
     /// "KITH.COM" — naming the destination, so the button says where it goes.
     private var host: String {
-        (link.url.host() ?? "site").replacingOccurrences(of: "www.", with: "").uppercased()
+        (link.url.host() ?? "the site").replacingOccurrences(of: "www.", with: "")
     }
 }
 
@@ -521,14 +521,14 @@ struct WatchRow: View {
                 .foregroundStyle(watch.isActive ? Color.signal : Color.muted)
 
             VStack(alignment: .leading, spacing: 2) {
-                Text(watch.summary.uppercased())
+                Text(watch.summary)
                     .font(.data(11, .medium))
                     .foregroundStyle(Color.ink)
                 if !watch.isActive {
                     DataLabel(
                         text: watch.firedSizes.isEmpty
-                            ? "CAME BACK"
-                            : "CAME BACK IN \(watch.firedSizes.joined(separator: ", ").uppercased())",
+                            ? "Came back"
+                            : "Came back in \(watch.firedSizes.joined(separator: ", "))",
                         size: 9
                     )
                 }
@@ -626,7 +626,7 @@ struct WatchEditor: View {
             .toolbarTitleDisplayMode(.inline)
             .safeAreaInset(edge: .bottom) {
                 Button(action: create) {
-                    Text("START WATCHING")
+                    Text("Start watching")
                         .font(.data(12, .semibold))
                         .tracking(1.1)
                         .foregroundStyle(Color.paper)

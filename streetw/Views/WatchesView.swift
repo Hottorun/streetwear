@@ -37,13 +37,13 @@ struct WatchesView: View {
                         // made a watch settable on something in stock, which was the whole
                         // point of it — wanting to know your size went and came back is not
                         // conditional on it being gone right now.
-                        action: "OPEN ANYTHING AND ASK TO BE TOLD WHEN YOUR SIZE IS IN STOCK"
+                        action: "Open anything and ask to be told when your size is back."
                     )
                 } else {
                     ScrollView {
                         LazyVStack(alignment: .leading, spacing: 0) {
-                            section("WAITING", watches: pending)
-                            section("CAME BACK", watches: fired)
+                            section("Waiting", watches: pending)
+                            section("Came back", watches: fired)
                         }
                         .padding(.vertical, 8)
                     }
@@ -66,7 +66,7 @@ struct WatchesView: View {
     @ViewBuilder
     private func section(_ title: String, watches: [StockWatch]) -> some View {
         if !watches.isEmpty {
-            DataLabel(text: title)
+            NoteLine(text: title, size: 15, color: .ink)
                 .padding(.horizontal, 20)
                 .padding(.top, 14)
                 .padding(.bottom, 8)
@@ -90,7 +90,7 @@ struct WatchesView: View {
                         .buttonStyle(.plain)
 
                         Button { remove(watch) } label: {
-                            DataLabel(text: "STOP", color: .signal)
+                            NoteLine(text: "Stop", size: 15, color: .signal)
                                 // 44pt of target under a small label, which is Apple's
                                 // minimum and roughly twice what the text occupies.
                                 .frame(minWidth: 44, minHeight: 44)
@@ -149,17 +149,17 @@ struct WatchListRow: View {
                     .multilineTextAlignment(.leading)
 
                 HStack(spacing: 8) {
-                    DataLabel(
-                        text: watch.summary.uppercased(),
-                        size: 10,
+                    NoteLine(
+                        text: watch.summary,
+                        size: 13,
                         color: watch.isActive ? .ink : .muted
                     )
                     if !watch.isActive {
-                        DataLabel(
+                        NoteLine(
                             text: watch.firedSizes.isEmpty
-                                ? "BACK"
-                                : "BACK IN \(watch.firedSizes.joined(separator: ", ").uppercased())",
-                            size: 10,
+                                ? "Back"
+                                : "Back in \(watch.firedSizes.joined(separator: ", "))",
+                            size: 13,
                             color: .signal
                         )
                     }

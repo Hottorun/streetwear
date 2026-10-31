@@ -94,14 +94,14 @@ struct UpcomingDrop: Identifiable {
         case .scheduled:
             "Date set by the brand"
         case .expected(let cadence):
-            "Pattern · \(Int(cadence.confidence * 100))% of \(cadence.sampleSize) recent drops"
+            "A pattern in \(Int(cadence.confidence * 100))% of \(cadence.sampleSize) recent drops"
         case .planned(let drop):
             // Named as yours, and it says whether it will actually reach you. A reminder
             // silently not scheduled is the worst outcome here: you would find out by
             // missing the drop.
             drop.remindsAtRelease || drop.remindsOnTheDay
-                ? "Added by you · reminder set"
-                : "Added by you · no reminder"
+                ? "Added by you, with a reminder"
+                : "Added by you, with no reminder"
         }
     }
 
@@ -122,14 +122,14 @@ struct UpcomingDrop: Identifiable {
     /// "TUESDAY 10:00", "TOMORROW 18:00", "LOCKED NOW" — how the line above the feed says
     /// when, which is the one question it is there to answer at a glance.
     func soon(now: Date = Date(), calendar: Calendar = .current) -> String {
-        guard let date else { return "LOCKED NOW" }
+        guard let date else { return "Locked now" }
         let time = Self.time.string(from: date)
-        if calendar.isDate(date, inSameDayAs: now) { return "TODAY \(time)" }
+        if calendar.isDate(date, inSameDayAs: now) { return "Today \(time)" }
         if let tomorrow = calendar.date(byAdding: .day, value: 1, to: now),
            calendar.isDate(date, inSameDayAs: tomorrow) {
-            return "TOMORROW \(time)"
+            return "Tomorrow \(time)"
         }
-        return "\(Self.weekday.string(from: date).uppercased()) \(time)"
+        return "\(Self.weekday.string(from: date)) \(time)"
     }
 
     /// Built once. A `DateFormatter` is expensive to construct — it resolves a locale
@@ -344,13 +344,13 @@ struct UpcomingDropRow: View {
                 Text(entry.headline)
                     .font(.editorial(14))
                     .foregroundStyle(Color.ink)
-                DataLabel(text: entry.qualifier.uppercased(), size: 10, color: entry.isLocked ? .signal : .muted)
+                NoteLine(text: entry.qualifier + ".", size: 13, color: entry.isLocked ? .signal : .muted)
                 watchLine
             }
             Spacer(minLength: 8)
             VStack(alignment: .trailing, spacing: 5) {
                 if let when = entry.when {
-                    DataLabel(text: when.uppercased(), size: 11, color: entry.isLocked ? .signal : .ink)
+                    NoteLine(text: when, size: 14, color: entry.isLocked ? .signal : .ink)
                 }
                 countdown
             }
@@ -384,11 +384,7 @@ struct UpcomingDropRow: View {
         if let drop = entry.plannedDrop {
             let state = hints.state(brandID: drop.brand?.remoteID, releaseAt: drop.releaseAt)
             if let label = state.label {
-                DataLabel(
-                    text: label.uppercased(),
-                    size: 10,
-                    color: state.isWarning ? .signal : .muted
-                )
+                NoteLine(text: label + ".", size: 13, color: state.isWarning ? .signal : .muted)
             }
         }
     }
@@ -439,12 +435,11 @@ struct UpcomingLine: View {
                     .fill(isImminent ? Color.signal : Color.muted)
                     .frame(width: 6, height: 6)
                     .alignmentGuide(.firstTextBaseline) { $0[.bottom] }
-                Text("\(entry.soon()) · \(entry.brandName.uppercased())")
-                    .font(.data(10.5, .medium))
-                    .tracking(0.5)
+                Text("\(entry.brandName): \(entry.soon())")
+                    .font(.editorial(14, .semibold))
                     .foregroundStyle(colour)
                     .fixedSize()
-                Text("· \(entry.isLocked ? "Drop imminent" : entry.headline)")
+                Text("— \(entry.isLocked ? "a drop is close" : entry.headline)")
                     .font(.editorial(14))
                     .foregroundStyle(colour)
                     .lineLimit(1)

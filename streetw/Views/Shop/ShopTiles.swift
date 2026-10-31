@@ -48,9 +48,9 @@ struct ShopPick: Identifiable {
     /// The small line under it: the pairing's own reason, or which of your sizes came back.
     var detail: String? {
         if case .fact(.backInYourSize(let sizes)) = pick.reason {
-            return "BACK IN " + sizes.joined(separator: ", ").uppercased()
+            return "Back in " + sizes.joined(separator: ", ") + "."
         }
-        return pick.detail?.uppercased()
+        return pick.detail.map { $0.prefix(1).uppercased() + $0.dropFirst() }
     }
 
     /// Vermilion only for the restock, which is the one reason that is about now.
@@ -128,7 +128,7 @@ struct ShopPickCard: View {
                     // Quiet and last: turning something down is the rare act, and it must not
                     // be the thing a thumb lands on by accident on its way to the photograph.
                     Button(action: onRefuse) {
-                        DataLabel(text: "NOT FOR ME", size: 9)
+                        NoteLine(text: "Not for me", size: 13)
                             .padding(.vertical, 8)
                             .contentShape(.rect)
                     }
@@ -180,17 +180,17 @@ struct ShopPickCard: View {
                     .multilineTextAlignment(.leading)
                     .fixedSize(horizontal: false, vertical: true)
                 if let detail = pick.detail {
-                    DataLabel(text: detail, size: 9.5, color: pick.isTimely ? .signal : .muted)
+                    NoteLine(text: detail, size: 13, color: pick.isTimely ? .signal : .muted)
                 }
                 // Said, quietly: the sentence is the model's, even though the choice is not.
                 if worded != nil {
-                    DataLabel(text: "WORDED BY AI", size: 8.5)
+                    NoteLine(text: "Worded by AI.", size: 12)
                 }
             }
             Spacer(minLength: 0)
             if pick.partner != nil {
                 HStack(spacing: 4) {
-                    DataLabel(text: "SEE THE FIT", size: 9)
+                    NoteLine(text: "See the fit", size: 13, color: .ink)
                     Image(systemName: "chevron.right")
                         .font(.system(size: 9, weight: .semibold))
                         .foregroundStyle(Color.muted)
@@ -257,11 +257,11 @@ struct ShopResultTile: View {
                     wraps: true
                 )
             } else {
-                DataLabel(text: "SOLD OUT", size: 9)
+                NoteLine(text: "Sold out", size: 13)
             }
 
             if let matched, !matched.isEmpty {
-                DataLabel(text: "MATCHED " + matched.joined(separator: " · ").uppercased(), size: 8.5)
+                NoteLine(text: "Matched " + matched.map { "“\($0)”" }.joined(separator: ", "), size: 12)
                     .lineLimit(1)
             }
         }
@@ -347,15 +347,15 @@ struct ShopCardTile: View {
                     wraps: true
                 )
             } else {
-                DataLabel(text: "SOLD OUT", size: 9)
+                NoteLine(text: "Sold out", size: 13)
             }
 
             if byMeaning {
                 // Its whole reason for being here, since it may carry none of the words.
-                DataLabel(text: "MATCHED BY MEANING", size: 8.5, color: .ink)
+                NoteLine(text: "Matched by meaning", size: 12, color: .ink)
                     .lineLimit(1)
             } else if let matched, !matched.isEmpty {
-                DataLabel(text: "MATCHED " + matched.joined(separator: " · ").uppercased(), size: 8.5)
+                NoteLine(text: "Matched " + matched.map { "“\($0)”" }.joined(separator: ", "), size: 12)
                     .lineLimit(1)
             }
         }
@@ -399,9 +399,8 @@ struct ShopChip: View {
                     Image(systemName: "checkmark")
                         .font(.system(size: 9, weight: .bold))
                 }
-                Text(title.uppercased())
-                    .font(.data(10, .medium))
-                    .tracking(0.6)
+                Text(title)
+                    .font(.data(11, .medium))
             }
             .foregroundStyle(isOn ? Color.paper : Color.ink)
             .padding(.horizontal, 12)

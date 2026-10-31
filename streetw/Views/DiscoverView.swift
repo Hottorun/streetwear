@@ -26,7 +26,7 @@ struct DiscoverView: View {
                     // Reachable by following the last suggestion while this is open.
                     EditorialEmptyState(
                         title: "Nothing left to suggest",
-                        action: "YOU'RE FOLLOWING EVERYTHING DROPWALL KNOWS ABOUT — ADD ONE BY ITS WEBSITE"
+                        action: "You follow everything Dropwall knows. Add one by its website."
                     )
                 } else {
                     ScrollView {

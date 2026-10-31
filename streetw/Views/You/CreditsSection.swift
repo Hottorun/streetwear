@@ -31,12 +31,16 @@ struct CreditsSection: View {
     private func content(_ summary: CreditsSummary) -> some View {
         let unlimited = summary.unlimited == true
         return VStack(alignment: .leading, spacing: 12) {
-            SettingsHeader(title: "Credits", note: note(summary, unlimited: unlimited))
+            SettingsHeader(
+                title: "Credits",
+                note: unlimited ? "This account is never charged; usage is still counted." : nil,
+                info: info(summary)
+            )
 
             VStack(spacing: 0) {
                 YouRow(
                     title: "Balance",
-                    detail: unlimited ? "UNLIMITED" : balance(summary.balance ?? 0),
+                    detail: unlimited ? "Unlimited" : balance(summary.balance ?? 0),
                     detailColor: (summary.balance ?? 0) < 0 && !unlimited ? .signal : .ink
                 )
                 YouRow(title: "This month", detail: usage(summary.thisMonth ?? []), detailColor: .ink)
@@ -57,18 +61,24 @@ struct CreditsSection: View {
             }
 
             if let message = credits.message {
-                DataLabel(text: message.uppercased(), size: 10)
+                NoteLine(text: message)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
     }
 
-    private func note(_ summary: CreditsSummary, unlimited: Bool) -> String {
-        if unlimited {
-            return "This account is never charged. Usage is still counted, so you can see what it does."
+    /// The whole pricing policy, a tap from the balance — nothing about it is small print, so
+    /// it is said at full size in the sheet rather than in grey under the title.
+    private func info(_ summary: CreditsSummary) -> InfoNote {
+        var lines = [
+            "Credits never expire.",
+            "Each AI action costs a fixed number of them, set from what it measurably costs to run."
+        ]
+        if let allowance = summary.monthlyAllowance {
+            lines.append("\(allowance) are free each month you use them.")
         }
-        let allowance = summary.monthlyAllowance.map { " \($0) are free each month you use them." } ?? ""
-        return "Credits never expire. Each AI action costs a fixed number of them, set from what it measurably costs to run.\(allowance)"
+        lines.append("Every action says its price before you press it, and what it took after.")
+        return InfoNote(title: "Credits", lines: lines)
     }
 
     /// Each paid action this build offers, by the name its button uses, and what it costs.
@@ -76,8 +86,8 @@ struct CreditsSection: View {
     private var prices: [(title: String, detail: String)] {
         guard ai.isAvailable else { return [] }
         let named: [(CreditAction, String, String?)] = [
-            (.search, "Ask Dropwall", "REPLIES INCLUDED"),
-            (.webSearch, "Show me more", "THE OPEN WEB"),
+            (.search, "Ask Dropwall", "replies free"),
+            (.webSearch, "Show me more", "the open web"),
             (.scan, "Scan a garment", nil),
             (.fitJudge, "Judge a fit", nil),
             (.fitSuggest, "Suggest for a fit", nil)
@@ -95,10 +105,10 @@ struct CreditsSection: View {
 
     /// "23 SEARCHES · 2 SCANS", most used first — the order the server sends.
     private func usage(_ rows: [CreditUsage]) -> String {
-        guard !rows.isEmpty else { return "NOTHING YET" }
+        guard !rows.isEmpty else { return "Nothing yet" }
         return rows
-            .map { "\($0.count) \(CreditAction($0.action).label(count: $0.count))".uppercased() }
-            .joined(separator: " · ")
+            .map { "\($0.count) \(CreditAction($0.action).label(count: $0.count))" }
+            .joined(separator: ", ")
     }
 }
 
@@ -121,7 +131,9 @@ private struct PackRow: View {
                 } else {
                     // No product means StoreKit has not answered — or does not sell this pack
                     // in this storefront — and a price we made up would be a promise.
-                    DataLabel(text: product?.displayPrice ?? "—", size: 10, color: product == nil ? .muted : .ink)
+                    Text(product?.displayPrice ?? "—")
+                        .font(.editorial(15))
+                        .foregroundStyle(product == nil ? Color.muted : Color.ink)
                 }
             }
             .padding(.vertical, 12)

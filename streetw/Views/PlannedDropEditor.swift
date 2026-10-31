@@ -183,10 +183,7 @@ struct PlannedDropEditor: View {
             .labelsHidden()
             .datePickerStyle(.compact)
 
-            Text("The time matters as much as the day — a release is decided in its first minute.")
-                .font(.editorial(13))
-                .foregroundStyle(Color.muted)
-                .fixedSize(horizontal: false, vertical: true)
+            NoteLine(text: "The time matters: a release is decided in its first minute.", size: 13)
         }
     }
 
@@ -215,7 +212,7 @@ struct PlannedDropEditor: View {
             if wantsAReminder && !canNotify {
                 VStack(alignment: .leading, spacing: 8) {
                     Text(authorization == .denied
-                        ? "Notifications are off for Dropwall, so these reminders can't reach you. Turn them on in iOS Settings."
+                        ? "Notifications are off, so these can't reach you. Turn them on in Settings."
                         : "Dropwall needs permission to send you these.")
                         .font(.editorial(13))
                         .foregroundStyle(Color.signal)
@@ -246,7 +243,7 @@ struct PlannedDropEditor: View {
             if canHint {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
                     Rule().frame(width: 14)
-                    Text("Dropwall will also watch \(brand?.name ?? "the brand")'s storefront every minute around this time, so the drop is in your feed when the alert arrives.")
+                    Text("Dropwall also checks \(brand?.name ?? "the brand") every minute around then.")
                         .font(.editorial(12))
                         .foregroundStyle(Color.muted)
                         .fixedSize(horizontal: false, vertical: true)
@@ -295,7 +292,7 @@ struct PlannedDropEditor: View {
             Button("Delete", role: .destructive) { performDelete() }
             Button("Keep", role: .cancel) {}
         } message: {
-            Text("The date, the note and both reminders go with it. Nothing else changes.")
+            Text("The date, its note and both reminders go.")
         }
     }
 

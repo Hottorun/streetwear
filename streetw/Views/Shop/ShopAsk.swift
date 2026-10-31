@@ -184,13 +184,15 @@ final class ShopAsk {
 
 // MARK: - Pieces
 
-/// The row that offers to ask — or, signed out, says what asking needs.
+/// The offer to ask, as the first chip in Shop's one row — or, signed out, what asking needs.
 ///
 /// **It says AI and it says the price**, before anything is spent: a sparkle, because this is
-/// the one place in Shop where a model is behind the answer, and "1 CREDIT" in the same line.
-/// Signed out it is still drawn, as "Sign in to use", and takes you to sign-in — a feature that
-/// silently does not exist for somebody is indistinguishable from one that is broken.
-struct AskOffer: View {
+/// the one place in Shop where a model is behind the answer, and the price on the chip itself.
+/// Signed out it is still drawn, as "Ask AI — sign in", and takes you to sign-in — a feature
+/// that silently does not exist for somebody is indistinguishable from one that is broken.
+/// It was a bordered row of its own with a three-line caption; a chip beside the filters says
+/// the same two facts in one place.
+struct AskChip: View {
     @Environment(AIStore.self) private var ai: AIStore
     @Environment(YouRoute.self) private var you: YouRoute
 
@@ -200,57 +202,42 @@ struct AskOffer: View {
         Button {
             if ai.isSignedIn { ask() } else { you.open() }
         } label: {
-            HStack(alignment: .firstTextBaseline, spacing: 10) {
+            HStack(spacing: 5) {
                 Image(systemName: "sparkles")
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(Color.ink)
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Ask Dropwall")
-                        .font(.editorial(17))
-                        .foregroundStyle(Color.ink)
-                    DataLabel(text: note, size: 9.5)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                Spacer(minLength: 8)
-                DataLabel(
-                    text: ai.isSignedIn ? (ai.costLabel(for: .search) ?? "CREDITS") : "SIGN IN TO USE",
-                    size: 10,
-                    color: .ink
-                )
-                .fixedSize()
+                    .font(.system(size: 10, weight: .semibold))
+                Text(label)
+                    .font(.data(11, .medium))
             }
-            // A `Button` centres a wrapped label; this page reads from the left edge.
-            .multilineTextAlignment(.leading)
-            .padding(.horizontal, 14)
-            .padding(.vertical, 12)
-            .overlay(Rectangle().stroke(Color.hairline, lineWidth: 1))
-            .contentShape(.rect)
+            .foregroundStyle(Color.paper)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(Color.ink, in: Capsule())
+            .contentShape(Capsule())
         }
         .buttonStyle(.borderless)
-        .accessibilityHint(ai.isSignedIn ? "Uses AI to read your description, then searches your shops" : "Opens sign-in")
+        .accessibilityHint(ai.isSignedIn ? "Uses AI to read your description, then searches every shop" : "Opens sign-in")
     }
 
-    private var note: String {
-        ai.isSignedIn
-            ? "AI READS YOUR DESCRIPTION, THEN SEARCHES EVERY SHOP WE WATCH · REPLIES IN THE SAME SEARCH ARE FREE"
-            : "AI READS YOUR DESCRIPTION — CREDITS NEED AN ACCOUNT"
+    private var label: String {
+        guard ai.isSignedIn else { return "Ask AI — sign in" }
+        return "Ask AI — " + (ai.costLabel(for: .search) ?? "credits")
     }
 }
 
-/// What an action took, said once it has taken it.
+/// What an action took, said once it has taken it, as a short sentence.
 struct ChargeLine: View {
     let charge: AICharge
 
     var body: some View {
-        DataLabel(text: Self.text(charge), size: 9.5)
+        NoteLine(text: Self.text(charge), size: 13)
     }
 
     static func text(_ charge: AICharge) -> String {
-        let left = charge.balance.map { " · \($0) LEFT" } ?? " · UNLIMITED ACCOUNT"
         if charge.credits == 0 {
-            return charge.balance == nil ? "NO CHARGE · UNLIMITED ACCOUNT" : "NO CHARGE — PART OF THIS SEARCH\(left)"
+            return charge.balance == nil ? "No charge — unlimited account." : "No charge — part of this search."
         }
-        return AIStore.creditsLabel(charge.credits) + left
+        let used = AIStore.creditsLabel(charge.credits) + " used"
+        return charge.balance.map { "\(used), \($0) left." } ?? "\(used)."
     }
 }
 
@@ -266,12 +253,17 @@ struct AIRefusalNotice: View {
     var retry: (() -> Void)?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(refusal.title)
-                .font(.editorial(19))
-                .foregroundStyle(Color.ink)
-            DataLabel(text: refusal.detail, size: 9.5)
-                .fixedSize(horizontal: false, vertical: true)
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .firstTextBaseline, spacing: 4) {
+                Text(refusal.title)
+                    .font(.editorial(17))
+                    .foregroundStyle(Color.ink)
+                    .fixedSize(horizontal: false, vertical: true)
+                if let info = refusal.info {
+                    InfoButton(note: info)
+                }
+            }
+            NoteLine(text: refusal.detail, size: 13)
             HStack(spacing: 22) {
                 if let remedy = refusal.remedy {
                     Button { you.open() } label: {
@@ -287,121 +279,65 @@ struct AIRefusalNotice: View {
                     .buttonStyle(.borderless)
                 }
             }
-            .padding(.top, 4)
+            .padding(.top, 2)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
-/// The model's side of the conversation: what it said, what it offers next, and the field
-/// that continues the thread.
-struct AskThreadHeader: View {
+/// The field that continues a thread: one compact line, under the chips.
+///
+/// **The price changes on a reply, so it is said in the field before one is sent**: while the
+/// thread's token is good the prompt invites a reply, and says how many are left only once two
+/// or fewer remain; once it is spent, the prompt says a reply is a new search and its price.
+struct AskReplyField: View {
     @Environment(AIStore.self) private var ai: AIStore
 
     let ask: ShopAsk
     let reply: (String) -> Void
-    /// Sends the refused turn again.
-    let retry: () -> Void
-    let end: () -> Void
 
     @State private var draft = ""
     @FocusState private var isReplying: Bool
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .firstTextBaseline, spacing: 6) {
-                Image(systemName: "sparkles")
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundStyle(Color.ink)
-                DataLabel(text: "ASKED DROPWALL · AI", size: 10, color: .ink)
-                Spacer(minLength: 8)
-                Button(action: end) {
-                    DataLabel(text: "BACK TO SEARCH", size: 9.5)
-                        .padding(.vertical, 6)
-                        .contentShape(.rect)
-                }
-                .buttonStyle(.borderless)
-            }
-
-            if let reply = ask.reading?.reply, !reply.isEmpty {
-                Text(reply)
-                    .font(.editorial(18))
-                    .foregroundStyle(Color.ink)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            if let charge = ask.charge, !ask.isAsking {
-                ChargeLine(charge: charge)
-            }
-
-            if ask.isAsking {
-                HStack(spacing: 8) {
-                    ProgressView().controlSize(.mini).tint(.muted)
-                    DataLabel(text: "DROPWALL IS READING IT", size: 10)
-                }
-            } else if let refusal = ask.refusal {
-                AIRefusalNotice(refusal: refusal, retry: retry)
-            }
-
-            if let suggestions = ask.reading?.suggestions, !suggestions.isEmpty {
-                ScrollView(.horizontal) {
-                    HStack(spacing: 8) {
-                        ForEach(suggestions, id: \.self) { suggestion in
-                            SuggestionChip(title: suggestion) { send(suggestion) }
-                                .disabled(ask.isAsking)
-                        }
-                    }
-                }
-                .scrollIndicators(.hidden)
-            }
-
-            if ask.reading != nil { replyField }
-        }
-    }
-
-    private var replyField: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 10) {
-                TextField(
-                    "",
-                    text: $draft,
-                    prompt: Text("Reply — “no wool”, “in navy”").foregroundStyle(Color.muted)
-                )
-                .font(.editorial(16))
+        HStack(spacing: 10) {
+            TextField("", text: $draft, prompt: Text(prompt).foregroundStyle(Color.muted))
+                .font(.editorial(15))
                 .foregroundStyle(Color.ink)
                 .focused($isReplying)
                 .submitLabel(.send)
                 .autocorrectionDisabled()
-                .onSubmit { send(draft) }
-                Button { send(draft) } label: {
-                    Image(systemName: "arrow.up.circle.fill")
-                        .font(.system(size: 22))
-                        .foregroundStyle(trimmed.isEmpty ? Color.muted : Color.ink)
-                }
-                .buttonStyle(.borderless)
-                .disabled(trimmed.isEmpty || ask.isAsking)
-                .accessibilityLabel("Send reply")
+                .onSubmit { send() }
+            Button(action: send) {
+                Image(systemName: "arrow.up.circle.fill")
+                    .font(.system(size: 20))
+                    .foregroundStyle(trimmed.isEmpty ? Color.muted : Color.ink)
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 10)
-            .overlay(Rectangle().stroke(isReplying ? Color.ink : Color.hairline, lineWidth: 1))
-            DataLabel(text: replyNote, size: 9.5)
+            .buttonStyle(.borderless)
+            .disabled(trimmed.isEmpty || ask.isAsking)
+            .accessibilityLabel("Send reply")
         }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 7)
+        .overlay(Rectangle().stroke(isReplying ? Color.ink : Color.hairline, lineWidth: 1))
     }
 
-    /// Said before the reply is sent, because it is the moment the price changes.
-    private var replyNote: String {
-        if ask.continues {
-            let left = ask.turnsLeft
-            return left == 1 ? "1 MORE REPLY IN THIS SEARCH · FREE" : "\(left) MORE REPLIES IN THIS SEARCH · FREE"
+    private var prompt: String {
+        guard ask.continues else {
+            let price = ai.costLabel(for: .search) ?? "credits"
+            return "Reply as a new search — \(price)"
         }
-        let price = ai.costLabel(for: .search) ?? "CREDITS"
-        return "THIS SEARCH IS USED UP — A REPLY STARTS A NEW ONE · \(price)"
+        switch ask.turnsLeft {
+        case 1: return "Reply — 1 left, free"
+        case 2: return "Reply — 2 left, free"
+        default: return "Reply — “no wool”, “in navy”"
+        }
     }
 
     private var trimmed: String { draft.trimmingCharacters(in: .whitespacesAndNewlines) }
 
-    private func send(_ text: String) {
-        let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
+    private func send() {
+        let text = trimmed
         guard !text.isEmpty else { return }
         draft = ""
         isReplying = false
@@ -409,25 +345,25 @@ struct AskThreadHeader: View {
     }
 }
 
-/// A short reply the model offered, sent as the next turn when tapped. Outlined like the
-/// grammar's chips, with an arrow rather than a check: it is a thing to say, not a switch.
-private struct SuggestionChip: View {
+/// A short reply the model offered, sent as the next turn when tapped. Outlined and dashed,
+/// with an arrow rather than a check: it is a thing to say, not a switch. It shares Shop's one
+/// chip row with the filters, so the dash is what tells the two apart.
+struct SuggestionChip: View {
     let title: String
     let action: () -> Void
 
     var body: some View {
         Button(action: action) {
             HStack(spacing: 5) {
-                Text(title.uppercased())
-                    .font(.data(10, .medium))
-                    .tracking(0.6)
+                Text(title.prefix(1).uppercased() + title.dropFirst())
+                    .font(.data(11, .medium))
                 Image(systemName: "arrow.turn.down.right")
                     .font(.system(size: 8, weight: .bold))
             }
             .foregroundStyle(Color.ink)
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
-            .overlay(Capsule().stroke(Color.ink.opacity(0.35), style: StrokeStyle(lineWidth: 1, dash: [3, 2])))
+            .overlay(Capsule().stroke(Color.ink.opacity(0.45), style: StrokeStyle(lineWidth: 1, dash: [3, 2])))
             .contentShape(Capsule())
         }
         .buttonStyle(.borderless)
@@ -462,7 +398,7 @@ struct ShowMoreSection: View {
             case .looking:
                 HStack(spacing: 8) {
                     ProgressView().controlSize(.mini).tint(.muted)
-                    DataLabel(text: "LOOKING ON THE WEB", size: 10)
+                    NoteLine(text: "Looking on the web…")
                 }
             case .refused(let why):
                 AIRefusalNotice(refusal: why) {
@@ -489,12 +425,11 @@ struct ShowMoreSection: View {
                             .font(.editorial(17))
                     }
                     .foregroundStyle(Color.ink)
-                    DataLabel(text: scopeNote, size: 10)
+                    NoteLine(text: scopeNote)
                         .multilineTextAlignment(.leading)
-                        .fixedSize(horizontal: false, vertical: true)
                 }
                 Spacer(minLength: 8)
-                DataLabel(text: ai.costLabel(for: .webSearch) ?? "CREDITS", size: 10, color: .ink)
+                NoteLine(text: ai.costLabel(for: .webSearch) ?? "credits", color: .ink)
                     .fixedSize()
             }
             .contentShape(.rect)
@@ -502,10 +437,10 @@ struct ShowMoreSection: View {
         .buttonStyle(.borderless)
     }
 
-    /// Which web, said before it is asked.
+    /// Which web, said before it is asked — and that it is AI.
     private var scopeNote: String {
-        let country = location.country.map { " THAT SELL IN \(LocationSetting.inSentence($0).uppercased())" } ?? ""
-        return "AI SEARCHES THE OPEN WEB FOR SHOPS\(country) — BEYOND THE SHOPS WE WATCH"
+        let country = location.country.map { " selling in \(LocationSetting.inSentence($0))" } ?? ""
+        return "AI searches the open web for shops\(country)."
     }
 
     @ViewBuilder
@@ -515,14 +450,14 @@ struct ShowMoreSection: View {
                 Image(systemName: "sparkles")
                     .font(.system(size: 10, weight: .medium))
                     .foregroundStyle(Color.ink)
-                DataLabel(text: "ON THE WEB · FOUND BY AI", size: 10, color: .ink)
+                NoteLine(text: "Found on the web by AI.", color: .ink)
             }
             ChargeLine(charge: charge)
         }
         .padding(.bottom, 14)
 
         if items.isEmpty {
-            Text("Nothing on the web that the search could stand behind")
+            Text("Nothing on the web it could vouch for")
                 .font(.editorial(16))
                 .foregroundStyle(Color.muted)
         } else {
@@ -570,7 +505,7 @@ private struct WebResultRow: View {
                                     .font(.data(11, .medium))
                                     .foregroundStyle(Color.ink)
                             }
-                            DataLabel(text: (item.url.host() ?? "").uppercased(), size: 9)
+                            DataLabel(text: item.url.host() ?? "", size: 10)
                                 .lineLimit(1)
                         }
                     }
@@ -587,7 +522,7 @@ private struct WebResultRow: View {
             HStack(spacing: 8) {
                 if let followed {
                     NavigationLink(value: BrandRoute(brand: followed)) {
-                        DataLabel(text: "YOU FOLLOW \(followed.name.uppercased()) · OPEN", size: 9.5, color: .ink)
+                        NoteLine(text: "You follow \(followed.name) — open it", size: 13, color: .ink)
                             .frame(minHeight: 32)
                             .contentShape(.rect)
                     }
@@ -596,7 +531,7 @@ private struct WebResultRow: View {
                     Button { follow() } label: {
                         HStack(spacing: 6) {
                             if isFollowing { ProgressView().controlSize(.mini).tint(.muted) }
-                            DataLabel(text: "DROPWALL WATCHES THIS SHOP · FOLLOW IT", size: 9.5, color: .ink)
+                            NoteLine(text: "Dropwall watches this shop — follow it", size: 13, color: .ink)
                         }
                         .frame(minHeight: 32)
                         .contentShape(.rect)
@@ -605,7 +540,7 @@ private struct WebResultRow: View {
                     .disabled(isFollowing)
                 } else {
                     Button(action: followShop) {
-                        DataLabel(text: "FOLLOW THIS SHOP", size: 9.5, color: .ink)
+                        NoteLine(text: "Follow this shop", size: 13, color: .ink)
                             .frame(minHeight: 32)
                             .contentShape(.rect)
                     }
@@ -613,7 +548,7 @@ private struct WebResultRow: View {
                 }
             }
             if let failure {
-                DataLabel(text: failure.uppercased(), size: 9, color: .signal)
+                NoteLine(text: failure, size: 13, color: .signal)
             }
         }
         .padding(.vertical, 12)

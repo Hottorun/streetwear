@@ -460,7 +460,7 @@ bought it. The short form of the load-bearing ones:
   `UpdateKind` case needs nothing on the wire — and nothing in `legacy`, which is frozen.
 - The buy bar opens a Shopify cart permalink only when **exactly one available variant is
   yours** by `SizeProfile.claims` (never `matches`) in the colourway on screen, and says
-  "CHECK OUT", not "bag"; everything else gets the exact product page (`Checkout`).
+  "Check out", not "bag"; everything else gets the exact product page (`Checkout`).
 
 ### Push, and why it was silent for months
 
@@ -686,7 +686,7 @@ never been asked, and the copy claimed the former.
 ### Dates you know and the app cannot
 
 The drop calendar is the one screen about the future. `PlannedDrop` is a hand-entered date — the
-fourth kind of claim, labelled "ADDED BY YOU", never blended with one a storefront stated — and it
+fourth kind of claim, labelled "Added by you", never blended with one a storefront stated — and it
 is **local only**, like `StyleStatement`. Two alerts (09:00 and the release), `DropReminders.refresh`
 rewrites the whole set rather than diffing it, and clears only its own `drop-` prefixed requests.
 
@@ -795,24 +795,25 @@ while it is empty, and the deck one row below. **Read `docs/discover.md` (*Shop*
 
 - **One list over every shop, and it says where** (Phase 5) — in server mode every product the
   server holds for every shop it watches, ranked once, your own shops lifted by a fixed amount of
-  score (`GET /v1/products/search?scope=all&boost=standard&meaning=true`, "IN EVERY SHOP WE WATCH
-  · N PRODUCTS"); chips **More from my brands** (`boost=more`) and **Only my brands**
-  (`scope=followed`, "IN YOUR SHOPS"); standalone the products from your shops on this phone
-  ("… ON THIS PHONE"). The line is printed from the answer, never from the chips. 1.2 and 1.3
+  score (`GET /v1/products/search?scope=all&boost=standard&meaning=true`, "18 matches in every
+  shop we watch."); chips **More from my brands** (`boost=more`) and **Only my brands**
+  (`scope=followed`, "… in your shops."); standalone the products from your shops on this phone
+  ("… in your shops on this phone."). The line is printed from the answer, never from the chips. 1.2 and 1.3
   send `scope` alone and get exactly what they got. **The free field never says AI or the web** —
   a magnifying glass and not a sparkle. A request that failed says it failed, never "no results".
 - **Meaning counts, labelled, and never past the grammar** — with `meaning=true` a product whose
   text vector clears the model's measured threshold (`ProductSearch.measuredThresholds`, 0.66) is
-  a result without the words — only when the words found fewer than twelve — MATCHED BY MEANING
+  a result without the words — only when the words found fewer than twelve — "Matched by meaning"
   on its tile; price bounds, "no …", in my size and
   gender still apply to it. A model with no measured threshold makes no meaning matches. The
   search eval (`Server/SearchEval`, `docs/server.md`) is run before and after every ranking
-  change. **How we sort** (`HowWeSortNote`) is beside the count: match, followed shops, taste,
-  size — never commission — each sentence about the answer on screen.
+  change. **How we sort** (`HowWeSortNote`) is the ⓘ ending the status sentence: what was searched,
+  match, followed shops, taste, size — never commission — each sentence about the answer on screen.
 - **Asking Dropwall is a second, explicit act, and it says it is AI and what it costs** (`ShopAsk`,
-  Phase 4): a sparkle row with the server's price, drawn only where `AIStore.isAvailable` (server
-  mode and `GET /v1/ai` available) — signed out it says "SIGN IN TO USE" and opens You, never a
-  dead button. The model's `reading.query` is printed through the phone's own `ShopQuery` line and
+  Phase 4): the first chip of the one row, "Ask AI — 1 credit" with a sparkle, drawn only where
+  `AIStore.isAvailable` (server mode and `GET /v1/ai` available) — signed out it says "Ask AI —
+  sign in" and opens You, never a dead button. The model's `reading.query` is said where it differs
+  from what was typed and
   is what the page searches, over the same one list as the field (the turn carries the chips'
   reach); replies continue the thread with its signed token, free, and the reply field says when
   the next one starts a new, paid search. A thread's answer is re-ordered by taste on the phone
@@ -1082,6 +1083,7 @@ the local path in the `else`. Adding a new one means adding both halves:
 | country (You › Location) | `PATCH /v1/devices/me` (`country`; also sent at registration) — standalone stores it and changes nothing |
 | APNs token / environment | `PATCH /v1/devices/me` |
 | Sign in with Apple (optional; hidden standalone and when the server says it cannot verify) | `GET /v1/account`, `POST /v1/account/apple` — the first sign-in adopts this device's user, a later one merges it into the account's |
+| sign out | `POST /v1/account/sign-out` — the device moves to a fresh anonymous user and keeps its token; the phone lands on an empty signed-out store and the account's stores are hidden (`docs/profiles.md`) |
 | delete the account | `DELETE /v1/account`, then a fresh `POST /v1/devices` and a re-follow of this phone's brands; other profiles' local stores are deleted |
 | profiles (signed in only) | `GET` / `POST /v1/account/profiles`, `PATCH` / `DELETE /v1/account/profiles/:id`; every other route acts for the current profile through `X-Profile-ID` (none for the holder) |
 | stock watches | `POST` / `GET` / `DELETE /v1/watches` — `GET` also restores watches this store does not have (a reinstall, a profile on a second phone) |
@@ -1379,6 +1381,34 @@ button in `.topBarTrailing` is not collapsed. Worth checking on any screen that 
 one built out of grouped sections, `.bordered` buttons and `LabeledContent`, and opening a brand
 fell out of the app into Settings.app for a moment. New screens compose `Color.paper`,
 `.editorial()`, `Wordmark`, `DataLabel` and `Rule()` in a `ScrollView`.
+
+### Copy: a few words on the page, the rest a tap away
+
+The owner's verdict on 1.4 was that the app read like code with comments in it — essays in small
+grey type nobody reads. Four rules since (Q40, Q41):
+
+1. **Where text is needed, it is one short plain sentence in sentence case** — "18 matches in
+   every shop we watch.", "1 credit used, 49 left.", "Nothing saved yet." — set in the serif
+   (`NoteLine`). **Never keywords**: no ALL-CAPS mono strings joined with " · " ("IN EVERY SHOP WE
+   WATCH · 3.470 PRODUCTS", "NOTHING SAVED YET"). Short labels on buttons, chips and rows are fine
+   ("Cheaper", "In my size", "Balance"); `DataLabel` is for those and for sizes and counts only.
+2. **Explanations go.** A how-to is an onboarding card (`TourCards`) or a one-time tip at the
+   point of use (`Tips.swift`: TipKit, drawn by `PaperTip`, one line, never shown again).
+3. **What must stay true stays reachable by a tap, not printed**: an ⓘ or WHY? opening a short
+   sheet (`InfoNote`, `InfoButton`, `InfoSheet`; `SettingsHeader(info:)`) — refusal reasons, how
+   ranking works (`HowWeSortNote`), what goes to the AI, credits, privacy, permission dead ends.
+   Account deletion stays clear, the ranking factors stay disclosed, and an AI action's price is
+   still printed **before** it is spent.
+4. **No grey body paragraphs anywhere.** Secondary text is one line at most.
+
+The honesty rules in the docs are unchanged — say what was searched, say why it failed, never
+show a failure as "no results", say AI and its price — in a few words. **Fewer rows, not only
+fewer words**: Shop's search is the field, one status sentence (what was searched, and in a thread
+that it was AI and what it cost, with How we sort as its ⓘ and a × to leave), one chip row
+(the AI offer, its suggestions and the filters, de-duplicated) and, in a thread, one reply line.
+What the grammar understood is said only where it differs from what was typed. Tips replay by moving
+`TipEpoch` on (You › Help), not by resetting the datastore, which only works before
+`Tips.configure`.
 
 ### Keeping it fast
 

@@ -29,9 +29,9 @@ final class ShareDraft {
 
         var detail: String {
             switch self {
-            case .noLink: "THIS DOESN'T CONTAIN A LINK"
-            case .noContainer: "REINSTALL THE APP TO FIX IT"
-            case .failed: "TRY AGAIN"
+            case .noLink: "There's no link in this."
+            case .noContainer: "Reinstalling the app fixes it."
+            case .failed: "Try again."
             }
         }
     }
@@ -225,9 +225,8 @@ struct ShareSheet: View {
             .scrollIndicators(.hidden)
 
             Button(action: onDone) {
-                Text("DONE")
-                    .font(ShareStyle.data(12, .semibold))
-                    .tracking(1.1)
+                Text("Done")
+                    .font(ShareStyle.data(13, .semibold))
                     .foregroundStyle(ShareStyle.paper)
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 17)
@@ -243,12 +242,12 @@ struct ShareSheet: View {
     private var content: some View {
         if draft.role == .shop {
             header(
-                label: draft.follows ? "NOTHING SAVED" : "SAVED AS A LINK",
+                label: draft.follows ? "Nothing saved." : "Saved as a link.",
                 title: draft.shopName
             )
             followSection
         } else {
-            header(label: "SAVED TO DROPWALL", title: draft.heading)
+            header(label: "Saved to Dropwall.", title: draft.heading)
         }
 
         if draft.savesPage {
@@ -285,11 +284,10 @@ struct ShareSheet: View {
                     systemImage: draft.follows ? "checkmark" : "plus"
                 ) { draft.toggleFollow() }
                 Text(draft.follows
-                     ? "Dropwall will ask what you want to see when you next open it."
+                     ? "Dropwall asks what you want to see next time you open it."
                      : "This looks like a shop rather than one product.")
-                    .font(ShareStyle.data(11))
+                    .font(ShareStyle.editorial(14))
                     .foregroundStyle(ShareStyle.muted)
-                    .lineSpacing(2)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -299,7 +297,7 @@ struct ShareSheet: View {
 
     private var boardSection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            ShareLabel(text: "BOARD")
+            ShareLabel(text: "Board")
             ShareFlow(spacing: 8) {
                 ForEach(draft.boards) { board in
                     ShareChip(label: board.name, isOn: draft.chosenBoards.contains(board.id)) {
@@ -328,7 +326,7 @@ struct ShareSheet: View {
                         .padding(.horizontal, 12)
                         .padding(.vertical, 9)
                         .background(ShareStyle.wash)
-                    Button("ADD", action: addBoard)
+                    Button("Add", action: addBoard)
                         .font(ShareStyle.data(11, .semibold))
                         .foregroundStyle(ShareStyle.ink)
                         .buttonStyle(.borderless)
@@ -355,10 +353,10 @@ struct ShareSheet: View {
 
             if draft.notifies {
                 if draft.sizes.isEmpty {
-                    note("This page lists no sizes. Dropwall will ask which one when you next open it.")
+                    note("This page lists no sizes, so Dropwall asks which one later.")
                 } else {
                     VStack(alignment: .leading, spacing: 10) {
-                        ShareLabel(text: "SIZE")
+                        ShareLabel(text: "Size")
                         ShareFlow(spacing: 8) {
                             ShareChip(label: "Any size", isOn: draft.chosenSizes.isEmpty) {
                                 draft.toggleSize(nil)
@@ -373,7 +371,7 @@ struct ShareSheet: View {
                 }
                 if !draft.colors.isEmpty {
                     VStack(alignment: .leading, spacing: 10) {
-                        ShareLabel(text: "COLOUR")
+                        ShareLabel(text: "Colour")
                         ShareFlow(spacing: 8) {
                             ShareChip(label: "Any colour", isOn: draft.chosenColor == nil) {
                                 draft.chooseColor(nil)
@@ -398,9 +396,8 @@ struct ShareSheet: View {
 
     private func note(_ text: String) -> some View {
         Text(text)
-            .font(ShareStyle.data(11))
+            .font(ShareStyle.editorial(14))
             .foregroundStyle(ShareStyle.muted)
-            .lineSpacing(2)
             .fixedSize(horizontal: false, vertical: true)
     }
 }
@@ -442,13 +439,12 @@ private struct ShareLabel: View {
 
     var body: some View {
         Text(text)
-            .font(ShareStyle.data(11))
-            .tracking(0.4)
+            .font(ShareStyle.editorial(14))
             .foregroundStyle(ShareStyle.muted)
     }
 }
 
-/// The app's chip: ink when on, wash when off, mono caps.
+/// The app's chip: ink when on, wash when off, a short label.
 private struct ShareChip: View {
     let label: String
     let isOn: Bool
@@ -461,8 +457,8 @@ private struct ShareChip: View {
                 if let systemImage {
                     Image(systemName: systemImage).font(.system(size: 10, weight: .semibold))
                 }
-                Text(label.uppercased())
-                    .font(ShareStyle.data(11, isOn ? .semibold : .regular))
+                Text(label)
+                    .font(ShareStyle.data(12, isOn ? .semibold : .regular))
                     .lineLimit(1)
             }
             .foregroundStyle(isOn ? ShareStyle.paper : ShareStyle.ink)

@@ -215,7 +215,7 @@ struct SimilarItems: View {
                     Text("More like this")
                         .font(.editorial(19))
                         .foregroundStyle(Color.ink)
-                    DataLabel(text: "FROM BRANDS YOU FOLLOW")
+                    NoteLine(text: "From brands you follow.")
                 }
                 .padding(.horizontal, 20)
 
@@ -242,7 +242,7 @@ struct SimilarItems: View {
                     Text("More like this")
                         .font(.editorial(19))
                         .foregroundStyle(Color.ink)
-                    DataLabel(text: "FROM BRANDS YOU FOLLOW")
+                    NoteLine(text: "From brands you follow.")
                 }
                 .padding(.horizontal, 20)
 

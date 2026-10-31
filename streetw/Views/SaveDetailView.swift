@@ -256,8 +256,6 @@ struct SaveDetailView: View {
                 TextField("Name", text: $newBoardName)
                 Button("Cancel", role: .cancel) {}
                 Button("Create") { createBoard() }
-            } message: {
-                Text("Boards are private. Nothing is shared anywhere.")
             }
             .confirmationDialog(
                 "Remove this from your collection?",
@@ -270,8 +268,8 @@ struct SaveDetailView: View {
                 // list of things you own, and un-saving does not rewrite the fits it was in.
                 Text(
                     save.fits.isEmpty
-                        ? "Your note and where you filed it go too."
-                        : "Your note and where you filed it go too. Fits it appears in are left alone."
+                        ? "Its note and boards go too."
+                        : "Its note and boards go too. Its fits stay."
                 )
             }
         }
@@ -305,9 +303,9 @@ struct SaveDetailView: View {
     private func heading(isSoldOut: Bool) -> some View {
         VStack(alignment: .leading, spacing: 9) {
             HStack(spacing: 8) {
-                DataLabel(text: "KEPT \(Stamp.short(save.savedAt).uppercased())")
+                NoteLine(text: "Kept \(Stamp.short(save.savedAt))" + (isSoldOut && update?.variants.isEmpty == false ? "," : "."))
                 if isSoldOut, update?.variants.isEmpty == false {
-                    DataLabel(text: "· SOLD OUT", size: 11, color: .signal)
+                    NoteLine(text: "sold out.", color: .signal)
                 }
                 Spacer(minLength: 0)
             }
@@ -344,7 +342,7 @@ struct SaveDetailView: View {
             // The server's style words for it, read off its photographs — printed because Shop's
             // search matches them, and a word that finds a garment should be visible on it.
             if let words = update?.styleWords, !words.isEmpty {
-                DataLabel(text: (["STYLE"] + words).joined(separator: " · ").uppercased(), size: 10)
+                NoteLine(text: "Style: " + words.joined(separator: ", ") + ".")
             }
         }
     }
@@ -396,17 +394,17 @@ struct SaveDetailView: View {
     /// reading was paid for when the photograph was read.
     private var ownReading: some View {
         VStack(alignment: .leading, spacing: 12) {
-            DataLabel(text: "YOUR PHOTO · READ BY THE SCAN")
+            NoteLine(text: "Your photo, read by the scan.")
             let facts = [save.ownType] + save.ownColours.map(Optional.some) + [save.ownMaterial, save.ownPattern]
             let line = facts.compactMap { $0?.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
             if !line.isEmpty {
-                Text(line.joined(separator: " · ").uppercased())
-                    .font(.data(12))
+                Text(line.joined(separator: ", "))
+                    .font(.editorial(16))
                     .foregroundStyle(Color.ink)
                     .fixedSize(horizontal: false, vertical: true)
             }
             if !save.ownStyle.isEmpty {
-                DataLabel(text: save.ownStyle.joined(separator: " · ").uppercased(), size: 10)
+                NoteLine(text: "Style: " + save.ownStyle.joined(separator: ", ") + ".")
             }
             if settings.isConfigured, save.ownSearchText?.isEmpty == false {
                 Button { isFinding = true } label: {
@@ -434,7 +432,7 @@ struct SaveDetailView: View {
     private var wornIn: some View {
         if !save.fits.isEmpty {
             VStack(alignment: .leading, spacing: 12) {
-                DataLabel(text: save.fits.count == 1 ? "IN ONE FIT" : "IN \(save.fits.count) FITS")
+                NoteLine(text: save.fits.count == 1 ? "In one fit" : "In \(save.fits.count) fits")
                 ScrollView(.horizontal) {
                     HStack(alignment: .top, spacing: 14) {
                         ForEach(save.fits.sorted { $0.createdAt > $1.createdAt }) { fit in
@@ -461,7 +459,7 @@ struct SaveDetailView: View {
                     .font(.editorial(19))
                     .foregroundStyle(Color.ink)
                 Spacer(minLength: 8)
-                DataLabel(text: "PRIVATE", size: 9)
+                NoteLine(text: "Private", size: 13)
             }
         }
     }
@@ -472,7 +470,7 @@ struct SaveDetailView: View {
                 DataLabel(text: "SIZES")
                 Spacer()
                 if !sizes.profile.isEmpty {
-                    DataLabel(text: "YOURS: \(sizes.profile.summary.uppercased())", size: 9)
+                    NoteLine(text: "Yours: \(sizes.profile.summary)", size: 13)
                 }
             }
             // Wrapped, for the same reason as `ProductDetailView`: an unlimited run is
@@ -547,7 +545,7 @@ struct SaveDetailView: View {
                 }
             }
             if let line = boardTasteLine {
-                DataLabel(text: line, size: 9)
+                NoteLine(text: line, size: 13)
             }
         }
     }
@@ -560,10 +558,10 @@ struct SaveDetailView: View {
         switch TasteRule.role(isExcluded: save.isExcludedFromTaste, boards: modes) {
         case .mood:
             let mood = save.boards.first { $0.tasteMode == .mood }?.name ?? ""
-            return "PART OF YOUR MOOD · \(mood.uppercased())"
+            return "Part of your mood, \(mood)."
         case .ignored where !save.isExcludedFromTaste:
             let board = save.boards.first { $0.tasteMode == .ignored }?.name ?? ""
-            return "LEFT OUT — \(board.uppercased()) DOESN'T COUNT"
+            return "Left out: \(board) doesn't count."
         default:
             return nil
         }
@@ -582,10 +580,10 @@ struct SaveDetailView: View {
             let position = min(max(imageIndex, 0), gallery.count - 1)
             Group {
                 if position == 0 {
-                    DataLabel(text: "COVER", size: 10, color: .ink)
+                    NoteLine(text: "Cover", size: 13, color: .ink)
                 } else {
                     Button { setCover(gallery[position]) } label: {
-                        DataLabel(text: "SET AS COVER", size: 10, color: .ink)
+                        NoteLine(text: "Set as cover", size: 13, color: .ink)
                     }
                     .buttonStyle(.borderless)
                 }

@@ -489,7 +489,7 @@ struct DiscoverFeedView: View {
         if deck.isLoading {
             VStack(spacing: 12) {
                 ProgressView().tint(.sweepInk)
-                DataLabel(text: "LOOKING FOR CLOTHES", color: .sweepInk.opacity(0.55))
+                NoteLine(text: "Looking for clothes…", color: .sweepInk.opacity(0.6))
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if !settings.isConfigured {
@@ -497,14 +497,14 @@ struct DiscoverFeedView: View {
             // of the question this tab asks. Saying so beats an empty page.
             EditorialEmptyState(
                 title: "Discover needs the server",
-                action: "THIS DEVICE IS RUNNING STANDALONE, SO IT ONLY KNOWS THE BRANDS YOU ADDED",
+                action: "Standalone, this phone only knows the brands you added.",
                 ink: .sweepInk,
                 detail: .sweepInk.opacity(0.55)
             )
         } else if slot != nil {
             EditorialEmptyState(
                 title: "Nothing in that category",
-                action: "CLEAR THE FILTER TO SEE THE REST",
+                action: "Clear the filter to see the rest.",
                 ink: .sweepInk,
                 detail: .sweepInk.opacity(0.55)
             )
@@ -517,7 +517,7 @@ struct DiscoverFeedView: View {
             } label: {
                 EditorialEmptyState(
                     title: "Couldn't load Discover",
-                    action: "\(trouble.uppercased()) — TAP TO TRY AGAIN",
+                    action: "\(trouble). Tap to try again.",
                     ink: .sweepInk,
                     detail: .sweepInk.opacity(0.55)
                 )
@@ -529,14 +529,14 @@ struct DiscoverFeedView: View {
             // worst of the three readings, and it is the one a first run actually hits.
             EditorialEmptyState(
                 title: "Setting up",
-                action: "THIS TAKES A MOMENT ON A NEW INSTALL",
+                action: "This takes a moment on a new install.",
                 ink: .sweepInk,
                 detail: .sweepInk.opacity(0.55)
             )
         } else {
             EditorialEmptyState(
                 title: "Nothing left to show you",
-                action: "YOU'VE SEEN EVERYTHING DROPWALL KNOWS ABOUT — ADD A BRAND BY ITS WEBSITE",
+                action: "You've seen everything Dropwall knows. Add a brand by its website.",
                 ink: .sweepInk,
                 detail: .sweepInk.opacity(0.55)
             )
@@ -547,7 +547,7 @@ struct DiscoverFeedView: View {
     private var ending: some View {
         EditorialEmptyState(
             title: "That's everything, for now",
-            action: "MORE ARRIVES AS BRANDS PUBLISH — AND AS YOUR WARDROBE CHANGES WHAT FITS",
+            action: "More arrives as brands publish, and as your wardrobe changes.",
             ink: .sweepInk,
             detail: .sweepInk.opacity(0.55)
         )

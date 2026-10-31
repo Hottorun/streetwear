@@ -26,7 +26,7 @@ struct BrandsView: View {
                 if brands.isEmpty {
                     EditorialEmptyState(
                         title: "No brands on watch",
-                        action: "PASTE A BRAND'S WEBSITE AND DROPWALL WORKS OUT WHAT IT CAN WATCH"
+                        action: "Paste a brand's website and Dropwall works out what it can watch."
                     )
                 } else {
                     List {
@@ -51,7 +51,7 @@ struct BrandsView: View {
                         Section {
                             BrandRecommendations(
                                 title: "More worth watching",
-                                blurb: "PICKED FROM WHAT YOU KEEP"
+                                blurb: "Picked from what you keep."
                             )
                             .listRowInsets(EdgeInsets())
                             .listRowBackground(Color.paper)
@@ -136,11 +136,11 @@ struct BrandRow: View {
         if let mode = brand.followMode.listLabel { parts.append(Text(mode)) }
         if brand.isLockedForDrop {
             parts.append(
-                Text("LOCKED · DROP IMMINENT")
+                Text("Locked, a drop is close")
                     .foregroundStyle(brand.isAnnouncingLock ? Color.signal : Color.muted)
             )
         } else if brand.watchedSources.isEmpty {
-            parts.append(Text("NOT WATCHED"))
+            parts.append(Text("Not watched"))
         } else {
             for source in brand.watchedSources {
                 parts.append(
@@ -183,12 +183,13 @@ extension Brand {
     /// Each source the brand is watched with, by name, and whether its last check failed. The
     /// brand page carries the error itself.
     var watchedSources: [(label: String, isFailing: Bool)] {
-        sources.filter(\.enabled).map { ($0.kind.label.uppercased(), $0.lastError != nil) }
+        sources.filter(\.enabled).map { ($0.kind.label, $0.lastError != nil) }
     }
 
     /// Only the sources that are failing — what a row about a brand that needs attention says.
     var failingSources: String {
-        watchedSources.filter(\.isFailing).map(\.label).joined(separator: " · ") + " FAILING"
+        let failing = watchedSources.filter(\.isFailing).map(\.label)
+        return ListFormatter.localizedString(byJoining: failing) + (failing.count == 1 ? " isn't answering" : " aren't answering")
     }
 }
 

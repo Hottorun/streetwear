@@ -309,8 +309,6 @@ struct FitCanvas: View {
                 TextField("Name", text: $newBoardName)
                 Button("Cancel", role: .cancel) {}
                 Button("Create") { createBoard() }
-            } message: {
-                Text("Boards are private. Nothing is shared anywhere.")
             }
             // **The stickers are lifted here too.** The pass runs where its results are about
             // to be used, and this is the screen built out of them — reachable from a product
@@ -398,11 +396,10 @@ struct FitCanvas: View {
                 // The ground's own ink, not the app's: `Color.ink` inverts and this ground
                 // does not, so on a dark phone the invitation was white on bone.
                 .foregroundStyle(background.ink)
-            Text("Drag anything below onto the canvas, or tap to drop it in. Move it with a finger, size it with the corner handle or a pinch.")
+            // How to move and size a piece is the tray's one-time tip (`FitCanvasTip`).
+            Text("Drag or tap a piece below")
                 .font(.editorial(14))
-                .foregroundStyle(background.ink.opacity(0.55))
-                .multilineTextAlignment(.center)
-                .fixedSize(horizontal: false, vertical: true)
+                .foregroundStyle(background.ink.opacity(0.7))
         }
         .padding(.horizontal, 44)
         .allowsHitTesting(false)
@@ -412,6 +409,8 @@ struct FitCanvas: View {
 
     private func trayRow(_ tray: Tray) -> some View {
         VStack(alignment: .leading, spacing: 10) {
+            PaperTip(tip: FitCanvasTip())
+                .padding(.horizontal, 20)
             FitGroundPicker(selection: $background)
                 .padding(.horizontal, 20)
 
@@ -446,7 +445,7 @@ struct FitCanvas: View {
             } else if shelf == .asked {
                 askedShelf
             } else if tray.wearable.isEmpty {
-                Text("Save a few things first — a fit is made from your collection.")
+                Text("Save a few things first; a fit is made from them.")
                     .font(.editorial(14))
                     .foregroundStyle(Color.muted)
                     .padding(.horizontal, 20)
@@ -532,7 +531,7 @@ struct FitCanvas: View {
                 .foregroundStyle(Color.muted)
                 .padding(.horizontal, 20)
         } else if hasNothingToAsk {
-            Text("Nothing in your collection goes with this by the rules, so there was nothing to ask about.")
+            Text("Nothing you've saved goes with this, so there was nothing to ask.")
                 .font(.editorial(14))
                 .foregroundStyle(Color.muted)
                 .fixedSize(horizontal: false, vertical: true)
@@ -544,7 +543,7 @@ struct FitCanvas: View {
                 Text(askFailure.refusal.title)
                     .font(.editorial(15))
                     .foregroundStyle(Color.ink)
-                DataLabel(text: askFailure.refusal.detail, size: 9)
+                NoteLine(text: askFailure.refusal.detail, size: 13)
                     .lineLimit(3)
             }
             .padding(.horizontal, 20)
@@ -1539,7 +1538,7 @@ private struct ShelfTile: View {
             )
             .lineLimit(1)
             if let reason = option.reason {
-                DataLabel(text: reason.uppercased(), size: 8)
+                NoteLine(text: reason, size: 11)
                     .lineLimit(1)
             }
         }
