@@ -239,10 +239,10 @@ actor Poller {
     static let recheckCandidates = 200
 
     /// The product kinds whose stock only their own page can say again: a sitemap lists a
-    /// URL and nothing else, and a UCP search pages a bounded window with no order, so a
-    /// watched product outside it would never be read again. A Shopify product is the poll's
-    /// and the daily scan's.
-    static let recheckedPrefixes = ["sitemap:", "ucp:"]
+    /// URL and nothing else, a feed of new products a name and a link, and a UCP search pages
+    /// a bounded window with no order, so a watched product outside it would never be read
+    /// again. A Shopify product is the poll's and the daily scan's.
+    static let recheckedPrefixes = ["sitemap:", "feed:", "ucp:"]
 
     /// A UCP product the protocol has read this recently is still in its window, and is left
     /// to it: those reads carry prices and live stock already, and a page that prints the
@@ -326,8 +326,10 @@ actor Poller {
 
         guard queue.count < limit else { return queue }
         let held = Set(queue.compactMap(\.id))
+        // A feed's posts are `.post`, so the kind keeps this to the products a feed of new
+        // products named — which, like a sitemap's, have no price until their page is read.
         let unread = try await ProductModel.query(on: db)
-            .filter(\.$externalID =~ "sitemap:")
+            .group(.or) { $0.filter(\.$externalID =~ "sitemap:").filter(\.$externalID =~ "feed:") }
             .group(.or) { shops in Self.readable(shops, wanted: wanted) }
             .filter(\.$enrichedAt == nil)
             .filter(\.$kind == UpdateKind.product.rawValue)
@@ -963,7 +965,6 @@ actor Poller {
         // overwrites the stored price, which is the "previous" half of a cut. See
         // `CatalogueSale`.
         var reading = CatalogueSale.Reading()
-        let holdsAnnouncements = kind == .sitemap && !isBaseline
 
         let existing = try await ProductModel.query(on: db)
             .filter(\.$source.$id == sourceID)
@@ -983,6 +984,7 @@ actor Poller {
             } else {
                 reading.count(now: item.priceAmount, original: item.originalPriceAmount, previous: nil)
                 let product = ProductModel(brandID: brandID, sourceID: sourceID, storefrontID: storefrontID, item: item)
+                let holdsAnnouncements = !isBaseline && Self.isAnnouncedFromItsPage(item, kind: kind)
                 if holdsAnnouncements {
                     product.pendingAnnouncement = (item.isTentative
                         ? PendingAnnouncement.confirm
@@ -1023,6 +1025,13 @@ actor Poller {
             producedEvent = true
         }
         return producedEvent
+    }
+
+    /// Whether a new item's event waits for its own page: a sitemap's, which is a URL and at
+    /// best a photograph, and a feed of new products' — a name, a link and a thumbnail, with no
+    /// stock and no sizes (`FeedSource.announcesProducts`). A blog's posts are said as they are.
+    static func isAnnouncedFromItsPage(_ item: FetchedItem, kind: BrandSource.Kind) -> Bool {
+        kind == .sitemap || (kind == .feed && item.kind == .product)
     }
 
     /// Whether this pass put the brand on sale, and if it did, the one event that says so.

@@ -13,8 +13,24 @@ public struct DiscoveredSources: Sendable {
     /// attached for a country is checked against (`ShopifySource.ShopInfo.shipsTo`).
     public var currency: String?
     public var shipsTo: [String] = []
+    /// The copies of the site its homepage names for each language and country (`hreflang`),
+    /// read out of the homepage fetch the name and the mark already need. What the server
+    /// finds a brand's country shops in (`CountryShops`).
+    public var alternates: [LanguageAlternate] = []
+    /// Whether the feed found announces the shop's new products rather than posts.
+    public var feedAnnouncesProducts = false
 
     public init() {}
+
+    /// Whether anything found reads the shop's *products* — a Shopify catalogue, UCP, a
+    /// sitemap, or a feed of new products — rather than only posts or a page's hash.
+    public var readsProducts: Bool {
+        sources.contains { source in
+            source.kind == .feed
+                ? feedAnnouncesProducts || FeedSource.announcesProducts(url: source.url)
+                : BrandDiscovery.readsProducts(kind: source.kind, url: source.url)
+        }
+    }
 
     public var summary: String {
         guard !sources.isEmpty else { return "No automatic sources found" }
@@ -55,6 +71,20 @@ public enum BrandDiscovery {
 
         if let base = normalizedURL(raw) {
             var shopName: String?
+            let hint = storefrontHint(raw)
+
+            // The homepage, once, first: the name and the mark come out of it, and so do the
+            // feeds it declares and the country shops it names (`hreflang`). It used to be
+            // fetched last, for the name alone; reading it first costs nothing more. A typed
+            // store view (`/de_en`) is its own homepage: its feeds are the ones it declares.
+            let page = storeViewPage(base, hint: hint)
+            let home = await SiteIdentityProbe.homepage(at: page, http: http)
+            if let home {
+                result.alternates = SiteAlternates.languages(in: home.html, base: home.url)
+            }
+            let declaredFeeds = home.map { home in
+                SiteAlternates.feeds(in: home.html, base: home.url).filter { isSameBrandHost($0, base) }
+            } ?? []
 
             // The catalog is not always on the host that was typed: a storefront moved to
             // Hydrogen answers on the apex and 404s `/products.json`, while the classic
@@ -76,9 +106,13 @@ public enum BrandDiscovery {
                 result.currency = shop?.currency
                 result.shipsTo = shop?.shipsTo ?? []
             }
-            if let feed = await FeedSource.detect(at: base, http: http) {
-                result.sources.append(BrandSource(kind: .feed, url: feed))
+            // Declared feeds first, then the conventional paths, following a page that lists
+            // feeds — Magento's `/rss` — to the one of new products. See `FeedSource.find`.
+            if let feed = await FeedSource.find(at: base, declared: declaredFeeds, preferring: hint, http: http) {
+                result.sources.append(BrandSource(kind: .feed, url: feed.url))
+                result.feedAnnouncesProducts = feed.announcesProducts
             }
+            let hasShopify = result.sources.contains { $0.kind == .shopify }
             // The interface a storefront advertises for machines, tried before the sitemap
             // and after everything conventional.
             //
@@ -95,7 +129,14 @@ public enum BrandDiscovery {
             // us. This is the only source whose success depends on **our** deployment being
             // reachable — the merchant fetches `UCPAgent.profileURL` before answering — so
             // when a storefront offers something that works without us, it wins.
-            if result.sources.isEmpty, let ucp = await UCPSource.detect(at: base, http: http) {
+            //
+            // **Tried whenever there is no Shopify catalogue — a feed does not stand in for
+            // one.** It used to need *nothing* found, so a store whose `/products.json`
+            // answered 429 but whose blog answered 200 was watched by its blog alone, and a
+            // shop's news posts are not its products. A Shopify store rate-limiting the
+            // catalogue (us.subdued.com, measured) falls through to here, never to a page
+            // watch; nothing retries it another way.
+            if !hasShopify, let ucp = await UCPSource.detect(at: base, http: http) {
                 result.sources.append(BrandSource(kind: .ucp, url: ucp))
             }
 
@@ -103,8 +144,12 @@ public enum BrandDiscovery {
             // products, where a page watch can only say "something changed". What was typed
             // goes along whole, because its path can say which storefront was meant —
             // `subdued.com/eu_en/` — and `base` has had the path stripped.
-            if result.sources.isEmpty,
-               let sitemap = await SitemapSource.detect(at: base, preferring: storefrontHint(raw), http: http) {
+            //
+            // Not beside anything else that reads the products — Shopify, UCP, a feed of new
+            // products — because both would name the same garments under different ids, and
+            // every one would be on screen twice. A blog's feed is not that, and blocks nothing.
+            if !result.readsProducts,
+               let sitemap = await SitemapSource.detect(at: base, preferring: hint, http: http) {
                 result.sources.append(BrandSource(kind: .sitemap, url: sitemap))
             }
 
@@ -118,17 +163,24 @@ public enum BrandDiscovery {
             // that reported no error and delivered nothing forever. `isLocked` is
             // deliberately allowed through: a storefront behind a password page is not
             // unreadable, it is *about to drop*, and that is the strongest signal here.
-            if result.sources.isEmpty,
+            //
+            // **A feed does not replace it.** Nothing but a page watch sees a storefront lock
+            // (`StorefrontLock`), and a feed — of posts or of new products — says nothing
+            // about one, so the page is watched beside a feed as it was beside nothing. Only
+            // a catalogue — Shopify, UCP, a sitemap — makes it a banner-swap alarm with
+            // nothing to add. A typed store view (`subdued.com/de_en`) is watched at that
+            // view, so a country's shop on one host is a page of its own.
+            let catalogued = result.sources.contains { [.shopify, .ucp, .sitemap].contains($0.kind) }
+            if !catalogued,
                let watch = try? await PageWatchSource(http: http)
-                   .fetch(BrandSource(kind: .page, url: base), since: nil),
+                   .fetch(BrandSource(kind: .page, url: page), since: nil),
                watch.isLocked || watch.fingerprint != nil {
-                result.sources.append(BrandSource(kind: .page, url: base))
+                result.sources.append(BrandSource(kind: .page, url: page))
             }
 
-            // One extra request, once, when a brand is added — never on a poll. It answers
-            // two questions at once: the mark the site publishes for home screens, and the
-            // name it publishes for link previews.
-            let identity = await SiteIdentityProbe.discover(at: base, http: http)
+            // The homepage read at the start answers two more questions: the mark the site
+            // publishes for home screens, and the name it publishes for link previews.
+            let identity = SiteIdentityProbe.identity(of: home, base: base)
             result.logoURL = identity.logoURL
             result.suggestedName = BrandNaming.pick(
                 shopName: shopName,
@@ -171,6 +223,27 @@ public enum BrandDiscovery {
     static func storefrontHint(_ raw: String) -> URL? {
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         return URL(string: trimmed.contains("://") ? trimmed : "https://\(trimmed)")
+    }
+
+    /// The page to watch: the store view the typed URL names (`/de_en`), else the homepage.
+    /// Any other path is dropped, as it always was — "kith.com/collections/new" watches Kith.
+    static func storeViewPage(_ base: URL, hint: URL?) -> URL {
+        guard let view = FeedSource.storeView(of: hint),
+              var components = URLComponents(url: base, resolvingAgainstBaseURL: false)
+        else { return base }
+        components.path = view
+        return components.url ?? base
+    }
+
+    /// Whether a source of this kind, at this URL, reads the shop's products — what a brand's
+    /// catalogue is made of, as against a blog's posts or a page's hash. A feed only when it
+    /// is plainly one of new products (`FeedSource.announcesProducts`).
+    public static func readsProducts(kind: BrandSource.Kind, url: URL) -> Bool {
+        switch kind {
+        case .shopify, .ucp, .sitemap: true
+        case .feed: FeedSource.announcesProducts(url: url)
+        case .collections, .page, .instagram: false
+        }
     }
 
     /// The part of a host that identifies the *brand* rather than the storefront.

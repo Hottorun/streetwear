@@ -79,7 +79,11 @@ gives the discovery URL. The door was moved, not closed, and `UCPSource` walks t
   the product was first seen. UCP carries prices, the size run and live stock on every
   poll — which is what a restock, a watch and the size filter run on. Shopify and a feed
   stay above it because they are cheaper and need nothing from us. Above a page watch the
-  argument was always unanswerable.
+  argument was always unanswerable. **A feed above it no longer keeps it out**: UCP is tried
+  whenever there is no Shopify catalogue, because a blog's posts are not a shop's products —
+  us.subdued.com answers `/products.json` and its blog with 429 `local_rate_limited` from some
+  networks, and its UCP catalogue (`subdued-pos.myshopify.com`, version `2026-04-08` among its
+  supported ones) answered `admin/ucp-test` with 250 products on 2026-10-31.
 - **`POST /admin/ucp-test?url=` reports per stage**, for the same reason `push-test` does:
   "0 products" is equally true when a store has no UCP, when our profile 404s, and when the
   season is simply over, and those have three different fixes.

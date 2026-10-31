@@ -196,6 +196,17 @@ func configure(_ app: Application) async throws {
         }
         // Background work, so it runs where the poller does — never in a test app.
         Task { await checks.resumeOrphans() }
+        // Every brand looked at again, once per version of discovery's rules, a brand a minute
+        // through the shared fetcher. Its own switch; see `Rediscovery`.
+        if Environment.get("DISABLE_REDISCOVERY") != "true" {
+            let interval = Environment.get("REDISCOVERY_INTERVAL").flatMap(Double.init) ?? Rediscovery.interval
+            let startAfter = Environment.get("REDISCOVERY_START_AFTER").flatMap(Double.init) ?? Rediscovery.startAfter
+            let rediscovery = RediscoveryLoop(app: app, http: fetcher, interval: interval, startAfter: startAfter)
+            app.storage[RediscoveryLoopKey.self] = rediscovery
+            await rediscovery.start()
+        } else {
+            app.logger.notice("rediscovery: DISABLE_REDISCOVERY set — brands are not looked at again")
+        }
         // Only where there is a provider and a pgvector to write to. `POST /admin/embed` runs
         // a batch by hand, which is how a server with the poller off embeds anything.
         if app.semanticSearch != nil {
@@ -336,4 +347,5 @@ func addMigrations(to app: Application) {
     app.migrations.add(AddCatalogueOnlyCheck())
     app.migrations.add(AddProductReading())
     app.migrations.add(ClearProductShots())
+    app.migrations.add(AddRediscovery())
 }

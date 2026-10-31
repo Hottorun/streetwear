@@ -123,6 +123,9 @@ actor BrandChecks {
     /// this process, which a restart makes false, and that is exactly the question it answers.
     private var running: Set<UUID> = []
 
+    /// Country shops being looked for, per brand a check made (`discovered`).
+    private var countryShops: [UUID: Task<Void, Never>] = [:]
+
     init(app: Application) {
         self.app = app
     }
@@ -337,6 +340,11 @@ actor BrandChecks {
                 }
             ))
             check.logoURL = found.logoURL?.absoluteString
+            // Kept for the brand this check makes, whose country shops are found from them
+            // (`CountryShops`) — the homepage is not fetched a second time to read them again.
+            if !found.alternates.isEmpty {
+                check.alternates = String(decoding: try JSONEncoder().encode(found.alternates), as: UTF8.self)
+            }
             check.finishedAt = Date()
             try await check.save(on: app.db)
             if check.catalogueOnly == true { try await addToCatalogueIfReal(checkID) }
@@ -431,8 +439,8 @@ actor BrandChecks {
     // MARK: Catalogue-only
 
     /// Whether a finished check found a shop worth adding to the catalogue with nobody
-    /// following it: ready, and readable for its *products* — a Shopify catalogue, a sitemap or
-    /// UCP. A page watch counts for a follow, where "something changed" is worth a push (see
+    /// following it: ready, and readable for its *products* — a Shopify catalogue, a sitemap,
+    /// UCP or a feed of new products (`BrandDiscovery.readsProducts`). A page watch counts for a follow, where "something changed" is worth a push (see
     /// CLAUDE.md, *Who may call what*), and is refused here: search recommends products, and a
     /// page watch has none to give. A refused check — readers blocked, no clothes sold, nothing
     /// answered (`ShopRefusal`) — adds nothing.
@@ -440,10 +448,12 @@ actor BrandChecks {
         guard status(of: check, isRunning: isRunning) == .ready,
               let probe = check.probe.flatMap(decode)
         else { return false }
-        let productKinds: Set<String> = [
-            BrandSource.Kind.shopify.rawValue, BrandSource.Kind.sitemap.rawValue, BrandSource.Kind.ucp.rawValue
-        ]
-        return probe.sources.contains { $0.isAutomatic && productKinds.contains($0.kind) }
+        return probe.sources.contains { source in
+            guard source.isAutomatic, let kind = BrandSource.Kind(rawValue: source.kind),
+                  let url = URL(string: source.url)
+            else { return false }
+            return BrandDiscovery.readsProducts(kind: kind, url: url)
+        }
     }
 
     /// Adds a catalogue-only check's shop to the catalogue, once, and follows nobody. Through
@@ -489,10 +499,51 @@ actor BrandChecks {
                 },
                 on: db
             ).brand
+            try await discovered(brand, alternates: check.alternates)
         }
         check.$brand.id = try brand.requireID()
         try await check.save(on: db)
         return brand
+    }
+
+    /// A brand this check has just made: discovered under the current rules, so the
+    /// rediscovery pass leaves it be — and its country shops, from the `hreflang` the check
+    /// read, are looked for in the background. Through the shared fetcher, after the settle,
+    /// because verifying a shop is a discovery of its own and nobody should wait on it.
+    private func discovered(_ brand: BrandModel, alternates raw: String?) async throws {
+        let brandID = try brand.requireID()
+        let line = "\(brand.slug): added by a check"
+        let enabled = app.storefrontCountries
+        try await Rediscovery.record(brandID: brandID, line: line, countries: enabled, on: app.db)
+
+        guard !enabled.isEmpty,
+              let raw,
+              let alternates = try? JSONDecoder().decode([LanguageAlternate].self, from: Data(raw.utf8)),
+              !alternates.isEmpty
+        else { return }
+        let app = self.app
+        countryShops[brandID] = Task {
+            do {
+                let results = try await CountryShops.attach(
+                    brandID: brandID, alternates: alternates, enabled: enabled, http: app.fetcher, on: app.db
+                )
+                guard !results.isEmpty else { return }
+                let said = ([line] + results.map(\.line)).joined(separator: ", ")
+                try await Rediscovery.record(brandID: brandID, line: said, countries: enabled, on: app.db)
+                if let row = try await Rediscovery.row(brandID: brandID, countries: enabled, on: app.db) {
+                    row.storefronts = results.filter(\.isAttached).count
+                    try await row.save(on: app.db)
+                }
+                app.logger.notice("checks: \(said)")
+            } catch {
+                app.logger.error("checks: country shops for \(brand.slug) failed: \(error)")
+            }
+        }
+    }
+
+    /// Waits for the country-shop looks this process has started. For tests.
+    func countryShopsSettled() async {
+        for task in countryShops.values { await task.value }
     }
 
     // MARK: Encoding

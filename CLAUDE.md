@@ -272,6 +272,15 @@ Adapters live in `streetw/Sources/` and are resolved through `SourceAdapters.ada
   `Release.isAnnouncement` — a collection list is mostly navigation, and only the stock in
   one can tell a drop from a rail. See `docs/design-decisions.md`.
 - `FeedSource` — one `XMLParser` delegate handling both RSS `<item>` and Atom `<entry>`.
+  Discovery tries the feeds the homepage declares (`<link rel="alternate" type="…rss+xml">`, never
+  a collection's or comments' Atom), then the conventional paths — under a typed store view
+  (`/de_en/rss`) first — and **follows a page that lists feeds** (`FeedIndex`): Magento's `/rss`
+  is HTML linking one feed of new products and one per category, and the new-products feed is
+  taken (then one named New Arrivals, never another category), in the store view
+  `LocalePreference` likes, passing over empty ones. **A feed of new products is `.product`, not
+  `.post`** (`FeedSource.announcesProducts`, by URL or title): its items have no price or sizes,
+  so the server announces each from its page like a sitemap's (`Poller.isAnnouncedFromItsPage`).
+  That is Subdued's catalogue since its sitemap went.
 - `UCPSource` — the Universal Commerce Protocol endpoint a storefront advertises **for
   machines**, when it has switched its JSON catalogue off. See *Reading a storefront that
   has closed its catalogue* below. Above the sitemap because it carries prices, sizes and
@@ -309,10 +318,22 @@ Adapters live in `streetw/Sources/` and are resolved through `SourceAdapters.ada
   printed, and both merge paths upgrade a provisional title when a real one arrives later
   (`isProvisional`) — dedupe is on `externalID`, so nothing else would ever revisit it. Since the
   memory, a seen URL is never re-offered, so in practice the real name arrives with the page read.
-- `PageWatchSource` — last resort, only when nothing structured was found.
+- `PageWatchSource` — last resort, only when no *catalogue* (Shopify, UCP, sitemap) was found.
+  A feed does not replace it: nothing else sees a `StorefrontLock`.
 
 Discovery prefers them in that order, so a page watch is now genuinely a fallback rather
-than the common case for non-Shopify brands.
+than the common case for non-Shopify brands. **A feed blocks nothing above the page watch**:
+UCP is tried whenever there is no Shopify catalogue (a store whose `/products.json` answers 429
+falls through to UCP, never to a page watch, and nothing retries it another way), and a sitemap
+whenever nothing reads the products yet — beside Shopify, UCP or a feed of new products it would
+name the same garments under a second id. The homepage is fetched once, first, for the name, the
+mark, the declared feeds and its `hreflang` country shops (`DiscoveredSources.alternates`).
+
+**Every brand is rediscovered once per pass** — `Rediscovery.version` plus the countries switched
+on — in the background, a brand a minute
+through `PoliteFetcher`: it gains sources it lacks (a source that reads products only if it reads
+none), never loses one, never gains a page watch, baselines whatever it gains, and attaches country
+shops. `GET /admin/rediscovery` shows it; `DISABLE_REDISCOVERY=true` stops it. See `docs/server.md`.
 
 **On the server the catalogue is read at two speeds.** The poll above is the fast half and the
 only thing that may call a product new. Once a day every Shopify source is also read to the end
@@ -1185,9 +1206,13 @@ baselined, otherwise the main shop exactly as before. Every stored price
 carries its currency (`FetchedItem.currency`, `products.currency`, `FeedItem.currency`), nothing
 converts, and the app prints a row in its own currency in the reader's locale
 (`PriceFormat`, `BrandUpdate.priceLabel`) — **never with the brand's currency**, which names the
-serving shop, not the one an older row came from. Shops are attached by hand
-(`POST /admin/brands/:id/storefronts?url=&countries=`; no countries is an offer and writes nothing),
-and `…/storefronts/:country/add` and `…/remove` change a shop's set. **Read the storefront rules in
+serving shop, not the one an older row came from. Shops are attached from the brand's own
+homepage `hreflang` (`CountryShops`, during a brand check and the rediscovery pass): a switched-on
+country only, never `x-default` or a language-only code, never a Shopify market subfolder (the
+main catalogue again), and only once the shop verifies with a source that reads products — or by
+hand (`POST /admin/brands/:id/storefronts?url=&countries=`; no countries is an offer and writes
+nothing). Both write through `Storefronts.attach`. `…/storefronts/:country/add` and `…/remove`
+change a shop's set. **Read the storefront rules in
 `docs/server.md` and the location rules in `docs/design-decisions.md` before touching
 `Storefronts`, `StorefrontModel`, the claim query, `LocationSetting` or a price print.**
 

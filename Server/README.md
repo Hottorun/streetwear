@@ -60,6 +60,7 @@ and created again.
 | `SQLITE_PATH` | `streetw.sqlite` | `:memory:` supported |
 | `AUTO_MIGRATE` | on | `false` to skip migrations at boot |
 | `DISABLE_POLLER` | off | `true` to run the API without polling (and without the daily scan) |
+| `DISABLE_REDISCOVERY` | off | `true` to stop the background pass that looks at every brand again once per pass (`Rediscovery.version` and the countries switched on) — adding sources it lacks and country shops from `hreflang`. `REDISCOVERY_INTERVAL` (seconds between brands, 60) and `REDISCOVERY_START_AFTER` (seconds after boot, 300) pace it. See `docs/server.md` |
 | `DISABLE_CATALOGUE_SCAN` | off | `true` to keep polling but stop the daily full scan of Shopify catalogues — its cost is mostly storage. See `docs/server.md` |
 | `POLITE_INTERVAL` | `2.0` | Minimum seconds between requests to one host |
 | `CREDITS_ALLOW_SANDBOX` | off | `true` to credit sandbox purchases on a production server — App Review and TestFlight need it. `Xcode` purchases are never credited on production. See `docs/credits.md` |
