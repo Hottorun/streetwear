@@ -40,7 +40,26 @@ def test_the_download_records_repo_revision_and_loader(tmp_path, monkeypatch):
     assert model.model_id(model.read_meta(tmp_path)) == "srpone/zooclaw-fashionsiglip2@d2c0c98de9cd"
 
 
-def test_the_default_still_fetches_the_base_tokenizer(tmp_path, monkeypatch):
+def test_the_default_is_fashionclip_and_needs_only_its_own_files(tmp_path, monkeypatch):
+    fetched = []
+
+    def fake_snapshot(repo, revision, local_dir, allow_patterns):
+        fetched.append((repo, revision, sorted(allow_patterns)))
+        for name in allow_patterns:
+            (local_dir / name).write_bytes(b"")
+
+    monkeypatch.setattr(download_model, "snapshot_download", fake_snapshot)
+    download_model.main(tmp_path)
+    # Its config names no Hugging Face tokenizer, so open_clip's own CLIP tokenizer reads it
+    # and nothing comes from a second repository.
+    assert fetched == [("Marqo/marqo-fashionCLIP", "44f4c655124ed71e90cbf528d82f508d69d8a81b",
+                        ["open_clip_config.json", "open_clip_model.safetensors"])]
+    assert json.loads((tmp_path / "model.json").read_text())["loader"] == "open_clip"
+    # The id the server keys thresholds and bars by: the repo and twelve characters of the hash.
+    assert model.model_id(model.read_meta(tmp_path)) == "Marqo/marqo-fashionCLIP@44f4c655124e"
+
+
+def test_fashionsiglip_still_fetches_the_base_tokenizer(tmp_path, monkeypatch):
     fetched = []
 
     def fake_snapshot(repo, revision, local_dir, allow_patterns):
@@ -49,7 +68,7 @@ def test_the_default_still_fetches_the_base_tokenizer(tmp_path, monkeypatch):
             (local_dir / name).write_bytes(b"")
 
     monkeypatch.setattr(download_model, "snapshot_download", fake_snapshot)
-    download_model.main(tmp_path)
+    download_model.main(tmp_path, "Marqo/marqo-fashionSigLIP", "c56244cc94f92419e8369fa71efdaf403b124ce8")
     assert fetched == ["Marqo/marqo-fashionSigLIP", "timm/ViT-B-16-SigLIP"]
     assert model.model_id(model.read_meta(tmp_path)) == "Marqo/marqo-fashionSigLIP@c56244cc94f9"
 

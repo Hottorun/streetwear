@@ -15,8 +15,7 @@
       "right" : true,
       "shot" : 0,
       "words" : [
-        "preppy",
-        "graphic"
+        "preppy"
       ]
     },
     {
@@ -34,7 +33,7 @@
       "right" : true,
       "shot" : 0,
       "words" : [
-
+        "preppy"
       ]
     },
     {
@@ -43,7 +42,8 @@
       "right" : true,
       "shot" : 0,
       "words" : [
-        "workwear"
+        "workwear",
+        "grunge"
       ]
     },
     {
@@ -61,7 +61,8 @@
       "right" : true,
       "shot" : 0,
       "words" : [
-        "preppy"
+        "preppy",
+        "streetwear"
       ]
     },
     {
@@ -107,8 +108,7 @@
       "right" : true,
       "shot" : 0,
       "words" : [
-        "western",
-        "romantic"
+
       ]
     },
     {
@@ -126,8 +126,7 @@
       "right" : true,
       "shot" : 0,
       "words" : [
-        "vintage",
-        "graphic"
+        "skate"
       ]
     },
     {
@@ -154,7 +153,7 @@
       "right" : true,
       "shot" : 0,
       "words" : [
-        "skate"
+
       ]
     },
     {
@@ -182,6 +181,7 @@
       "right" : true,
       "shot" : 0,
       "words" : [
+        "romantic",
         "graphic"
       ]
     },
@@ -191,7 +191,8 @@
       "right" : true,
       "shot" : 0,
       "words" : [
-        "preppy"
+        "preppy",
+        "skate"
       ]
     },
     {
@@ -210,7 +211,7 @@
       "shot" : 0,
       "words" : [
         "sporty",
-        "minimal"
+        "streetwear"
       ]
     },
     {
@@ -230,7 +231,7 @@
       "shot" : 0,
       "words" : [
         "graphic",
-        "minimal"
+        "streetwear"
       ]
     },
     {
@@ -249,7 +250,8 @@
       "right" : true,
       "shot" : 0,
       "words" : [
-
+        "preppy",
+        "graphic"
       ]
     },
     {
@@ -267,7 +269,8 @@
       "right" : true,
       "shot" : 0,
       "words" : [
-        "outdoor"
+        "outdoor",
+        "streetwear"
       ]
     },
     {
@@ -276,15 +279,14 @@
       "right" : true,
       "shot" : 0,
       "words" : [
-        "streetwear",
-        "graphic"
+        "graphic",
+        "streetwear"
       ]
     },
     {
-      "asked" : 0,
+      "asked" : 2,
       "externalID" : "shopify:8176867606575",
-      "right" : true,
-      "shot" : 0,
+      "right" : false,
       "words" : [
         "graphic",
         "streetwear"
@@ -310,13 +312,13 @@
       ]
     },
     {
-      "asked" : 0,
+      "asked" : 4,
       "externalID" : "shopify:8085317648431",
       "right" : true,
-      "shot" : 0,
+      "shot" : 1,
       "words" : [
-        "outdoor",
-        "sporty"
+        "workwear",
+        "boho"
       ]
     },
     {
@@ -335,8 +337,7 @@
       "right" : true,
       "shot" : 0,
       "words" : [
-        "sporty",
-        "grunge"
+        "graphic"
       ]
     },
     {
@@ -346,7 +347,7 @@
       "shot" : 0,
       "words" : [
         "outdoor",
-        "workwear"
+        "streetwear"
       ]
     },
     {
@@ -375,7 +376,8 @@
       "right" : true,
       "shot" : 0,
       "words" : [
-
+        "sporty",
+        "outdoor"
       ]
     },
     {
@@ -385,7 +387,7 @@
       "shot" : 0,
       "words" : [
         "workwear",
-        "y2k"
+        "streetwear"
       ]
     },
     {
@@ -394,7 +396,8 @@
       "right" : true,
       "shot" : 0,
       "words" : [
-
+        "grunge",
+        "streetwear"
       ]
     },
     {
@@ -403,18 +406,17 @@
       "right" : true,
       "shot" : 0,
       "words" : [
-        "y2k",
-        "skate"
+
       ]
     },
     {
-      "asked" : 0,
+      "asked" : 1,
       "externalID" : "shopify:8034881110063",
       "right" : true,
-      "shot" : 0,
+      "shot" : 1,
       "words" : [
-        "graphic",
-        "streetwear"
+        "streetwear",
+        "graphic"
       ]
     },
     {
@@ -423,28 +425,27 @@
       "right" : true,
       "shot" : 0,
       "words" : [
-        "graphic",
-        "y2k"
+        "y2k",
+        "graphic"
       ]
     },
     {
-      "asked" : 0,
+      "asked" : 3,
       "externalID" : "shopify:8153815449647",
       "right" : true,
-      "shot" : 0,
+      "shot" : 1,
       "words" : [
         "preppy",
         "streetwear"
       ]
     },
     {
-      "asked" : 0,
+      "asked" : 1,
       "externalID" : "shopify:7891934052399",
       "right" : true,
-      "shot" : 0,
+      "shot" : 1,
       "words" : [
-        "streetwear",
-        "graphic"
+        "streetwear"
       ]
     },
     {
@@ -463,8 +464,7 @@
       "right" : true,
       "shot" : 0,
       "words" : [
-        "skate",
-        "workwear"
+
       ]
     },
     {
@@ -503,15 +503,14 @@
       "right" : true,
       "shot" : 0,
       "words" : [
-        "outdoor",
-        "y2k"
+
       ]
     },
     {
-      "asked" : 0,
+      "asked" : 2,
       "externalID" : "shopify:7883865718831",
       "right" : true,
-      "shot" : 0,
+      "shot" : 1,
       "words" : [
         "streetwear",
         "graphic"
@@ -523,15 +522,14 @@
       "right" : true,
       "shot" : 0,
       "words" : [
-        "western",
-        "grunge"
+
       ]
     },
     {
-      "asked" : 0,
+      "asked" : 1,
       "externalID" : "shopify:8034881404975",
       "right" : true,
-      "shot" : 0,
+      "shot" : 1,
       "words" : [
         "graphic",
         "streetwear"
@@ -544,7 +542,7 @@
       "shot" : 0,
       "words" : [
         "grunge",
-        "y2k"
+        "western"
       ]
     },
     {
@@ -553,8 +551,8 @@
       "right" : true,
       "shot" : 0,
       "words" : [
-        "sporty",
-        "graphic"
+        "graphic",
+        "sporty"
       ]
     },
     {
@@ -581,18 +579,16 @@
       "right" : true,
       "shot" : 0,
       "words" : [
-        "sporty",
-        "outdoor"
+        "sporty"
       ]
     },
     {
-      "asked" : 0,
+      "asked" : 5,
       "externalID" : "shopify:15338412704069",
-      "right" : true,
-      "shot" : 0,
+      "right" : false,
+      "shot" : 5,
       "words" : [
-        "sporty",
-        "minimal"
+        "sporty"
       ]
     },
     {
@@ -610,8 +606,7 @@
       "right" : true,
       "shot" : 0,
       "words" : [
-        "streetwear",
-        "minimal"
+        "streetwear"
       ]
     },
     {
@@ -620,8 +615,7 @@
       "right" : true,
       "shot" : 0,
       "words" : [
-        "minimal",
-        "preppy"
+
       ]
     },
     {
@@ -630,8 +624,7 @@
       "right" : true,
       "shot" : 0,
       "words" : [
-        "romantic",
-        "minimal"
+
       ]
     },
     {
@@ -649,8 +642,7 @@
       "right" : true,
       "shot" : 0,
       "words" : [
-        "sporty",
-        "minimal"
+
       ]
     },
     {
@@ -659,8 +651,7 @@
       "right" : true,
       "shot" : 0,
       "words" : [
-        "sporty",
-        "minimal"
+        "sporty"
       ]
     },
     {
@@ -669,8 +660,7 @@
       "right" : true,
       "shot" : 0,
       "words" : [
-        "boho",
-        "y2k"
+
       ]
     },
     {
@@ -683,13 +673,12 @@
       ]
     },
     {
-      "asked" : 0,
+      "asked" : 4,
       "externalID" : "shopify:15338669572421",
-      "right" : true,
-      "shot" : 0,
+      "right" : false,
+      "shot" : 1,
       "words" : [
-        "sporty",
-        "minimal"
+
       ]
     },
     {
@@ -698,8 +687,7 @@
       "right" : true,
       "shot" : 0,
       "words" : [
-        "preppy",
-        "minimal"
+
       ]
     },
     {
@@ -708,8 +696,7 @@
       "right" : true,
       "shot" : 0,
       "words" : [
-        "streetwear",
-        "minimal"
+        "streetwear"
       ]
     },
     {
@@ -718,8 +705,7 @@
       "right" : true,
       "shot" : 0,
       "words" : [
-        "sporty",
-        "grunge"
+        "sporty"
       ]
     },
     {
@@ -728,8 +714,7 @@
       "right" : true,
       "shot" : 0,
       "words" : [
-        "streetwear",
-        "minimal"
+        "streetwear"
       ]
     },
     {
@@ -747,8 +732,7 @@
       "right" : true,
       "shot" : 0,
       "words" : [
-        "minimal",
-        "streetwear"
+
       ]
     },
     {
@@ -757,7 +741,7 @@
       "right" : true,
       "shot" : 0,
       "words" : [
-        "minimal"
+
       ]
     },
     {
@@ -775,8 +759,7 @@
       "right" : true,
       "shot" : 0,
       "words" : [
-        "streetwear",
-        "minimal"
+        "streetwear"
       ]
     },
     {
@@ -785,8 +768,7 @@
       "right" : true,
       "shot" : 0,
       "words" : [
-        "minimal",
-        "romantic"
+
       ]
     },
     {
@@ -804,8 +786,7 @@
       "right" : true,
       "shot" : 0,
       "words" : [
-        "workwear",
-        "outdoor"
+
       ]
     },
     {
@@ -814,8 +795,7 @@
       "right" : true,
       "shot" : 0,
       "words" : [
-        "sporty",
-        "outdoor"
+        "sporty"
       ]
     },
     {
@@ -824,7 +804,7 @@
       "right" : true,
       "shot" : 0,
       "words" : [
-        "minimal"
+
       ]
     },
     {
@@ -833,8 +813,7 @@
       "right" : true,
       "shot" : 0,
       "words" : [
-        "streetwear",
-        "grunge"
+        "streetwear"
       ]
     },
     {
@@ -843,16 +822,16 @@
       "right" : true,
       "shot" : 0,
       "words" : [
+        "minimal",
         "preppy"
       ]
     },
     {
-      "asked" : 0,
+      "asked" : 4,
       "externalID" : "shopify:9236863123669",
-      "right" : false,
-      "shot" : 0,
+      "right" : true,
+      "shot" : 1,
       "words" : [
-        "western",
         "tailoring"
       ]
     },
@@ -862,7 +841,7 @@
       "right" : true,
       "shot" : 0,
       "words" : [
-
+        "preppy"
       ]
     },
     {
@@ -871,8 +850,7 @@
       "right" : true,
       "shot" : 0,
       "words" : [
-        "preppy",
-        "workwear"
+        "preppy"
       ]
     },
     {
@@ -907,7 +885,7 @@
       "asked" : 4,
       "externalID" : "shopify:9524757725397",
       "right" : true,
-      "shot" : 4,
+      "shot" : 1,
       "words" : [
 
       ]
@@ -918,7 +896,8 @@
       "right" : true,
       "shot" : 0,
       "words" : [
-        "workwear"
+        "workwear",
+        "preppy"
       ]
     },
     {
@@ -927,6 +906,7 @@
       "right" : true,
       "shot" : 0,
       "words" : [
+        "workwear",
         "tailoring"
       ]
     },
@@ -936,7 +916,8 @@
       "right" : true,
       "shot" : 1,
       "words" : [
-
+        "workwear",
+        "western"
       ]
     },
     {
@@ -945,7 +926,7 @@
       "right" : true,
       "shot" : 0,
       "words" : [
-
+        "tailoring"
       ]
     },
     {
@@ -963,7 +944,8 @@
       "right" : true,
       "shot" : 0,
       "words" : [
-        "preppy"
+        "preppy",
+        "tailoring"
       ]
     },
     {
@@ -972,16 +954,18 @@
       "right" : true,
       "shot" : 0,
       "words" : [
-        "preppy"
+        "preppy",
+        "minimal"
       ]
     },
     {
-      "asked" : 4,
+      "asked" : 0,
       "externalID" : "shopify:8872265842901",
-      "right" : false,
-      "shot" : 4,
+      "right" : true,
+      "shot" : 0,
       "words" : [
-
+        "boho",
+        "romantic"
       ]
     },
     {
@@ -990,7 +974,7 @@
       "right" : true,
       "shot" : 0,
       "words" : [
-
+        "graphic"
       ]
     },
     {
@@ -1018,7 +1002,8 @@
       "right" : true,
       "shot" : 0,
       "words" : [
-        "workwear"
+        "workwear",
+        "western"
       ]
     },
     {
@@ -1036,8 +1021,8 @@
       "right" : true,
       "shot" : 0,
       "words" : [
-        "romantic",
-        "tailoring"
+        "tailoring",
+        "romantic"
       ]
     },
     {
@@ -1065,7 +1050,8 @@
       "right" : true,
       "shot" : 0,
       "words" : [
-        "tailoring"
+        "tailoring",
+        "workwear"
       ]
     },
     {
@@ -1083,7 +1069,7 @@
       "right" : true,
       "shot" : 0,
       "words" : [
-
+        "workwear"
       ]
     },
     {
@@ -1092,7 +1078,7 @@
       "right" : true,
       "shot" : 0,
       "words" : [
-
+        "preppy"
       ]
     },
     {
@@ -1101,7 +1087,7 @@
       "right" : true,
       "shot" : 0,
       "words" : [
-
+        "tailoring"
       ]
     },
     {
@@ -1110,7 +1096,7 @@
       "right" : true,
       "shot" : 0,
       "words" : [
-        "skate"
+
       ]
     },
     {
@@ -1119,7 +1105,8 @@
       "right" : true,
       "shot" : 0,
       "words" : [
-        "preppy"
+        "preppy",
+        "tailoring"
       ]
     },
     {
@@ -1133,37 +1120,18 @@
       ]
     },
     {
-      "asked" : 0,
+      "asked" : 4,
       "externalID" : "shopify:7132444000395",
-      "right" : true,
-      "shot" : 0,
+      "right" : false,
+      "shot" : 3,
       "words" : [
         "skate",
-        "boho"
+        "outdoor"
       ]
     },
     {
       "asked" : 0,
       "externalID" : "shopify:7794667290763",
-      "right" : true,
-      "shot" : 0,
-      "words" : [
-        "workwear"
-      ]
-    },
-    {
-      "asked" : 0,
-      "externalID" : "shopify:6553362038923",
-      "right" : true,
-      "shot" : 0,
-      "words" : [
-        "skate",
-        "boho"
-      ]
-    },
-    {
-      "asked" : 0,
-      "externalID" : "shopify:7593724641419",
       "right" : true,
       "shot" : 0,
       "words" : [
@@ -1173,12 +1141,32 @@
     },
     {
       "asked" : 0,
+      "externalID" : "shopify:6553362038923",
+      "right" : true,
+      "shot" : 0,
+      "words" : [
+        "skate",
+        "graphic"
+      ]
+    },
+    {
+      "asked" : 0,
+      "externalID" : "shopify:7593724641419",
+      "right" : true,
+      "shot" : 0,
+      "words" : [
+        "workwear",
+        "sporty"
+      ]
+    },
+    {
+      "asked" : 0,
       "externalID" : "shopify:7880344043659",
       "right" : true,
       "shot" : 0,
       "words" : [
         "tailoring",
-        "minimal"
+        "workwear"
       ]
     },
     {
@@ -1187,17 +1175,17 @@
       "right" : true,
       "shot" : 0,
       "words" : [
-        "preppy"
+        "preppy",
+        "sporty"
       ]
     },
     {
-      "asked" : 0,
+      "asked" : 5,
       "externalID" : "shopify:6438342468",
-      "right" : false,
-      "shot" : 0,
+      "right" : true,
       "words" : [
         "boho",
-        "romantic"
+        "grunge"
       ]
     },
     {
@@ -1206,7 +1194,8 @@
       "right" : true,
       "shot" : 0,
       "words" : [
-        "workwear"
+        "grunge",
+        "boho"
       ]
     },
     {
@@ -1226,17 +1215,17 @@
       "shot" : 0,
       "words" : [
         "skate",
-        "romantic"
+        "graphic"
       ]
     },
     {
-      "asked" : 0,
+      "asked" : 4,
       "externalID" : "shopify:7593721725067",
-      "right" : true,
-      "shot" : 0,
+      "right" : false,
+      "shot" : 2,
       "words" : [
         "workwear",
-        "outdoor"
+        "tailoring"
       ]
     },
     {
@@ -1245,8 +1234,8 @@
       "right" : true,
       "shot" : 0,
       "words" : [
-        "preppy",
-        "romantic"
+        "romantic",
+        "tailoring"
       ]
     },
     {
@@ -1255,7 +1244,7 @@
       "right" : true,
       "shot" : 0,
       "words" : [
-
+        "romantic"
       ]
     },
     {
@@ -1268,12 +1257,13 @@
       ]
     },
     {
-      "asked" : 5,
+      "asked" : 0,
       "externalID" : "shopify:5094185468043",
-      "right" : true,
+      "right" : false,
+      "shot" : 0,
       "words" : [
-        "streetwear",
-        "graphic"
+        "graphic",
+        "streetwear"
       ]
     },
     {
@@ -1282,8 +1272,8 @@
       "right" : true,
       "shot" : 0,
       "words" : [
-        "graphic",
-        "vintage"
+        "vintage",
+        "tailoring"
       ]
     },
     {
@@ -1301,8 +1291,8 @@
       "externalID" : "shopify:4500839596171",
       "right" : true,
       "words" : [
-        "preppy",
-        "tailoring"
+        "streetwear",
+        "graphic"
       ]
     },
     {
@@ -1311,8 +1301,8 @@
       "right" : true,
       "shot" : 0,
       "words" : [
-        "workwear",
-        "graphic"
+        "tailoring",
+        "minimal"
       ]
     },
     {
@@ -1321,7 +1311,8 @@
       "right" : true,
       "shot" : 0,
       "words" : [
-
+        "preppy",
+        "skate"
       ]
     },
     {
@@ -1329,8 +1320,8 @@
       "externalID" : "shopify:7839151718539",
       "right" : false,
       "words" : [
-        "graphic",
-        "grunge"
+        "grunge",
+        "graphic"
       ]
     },
     {
@@ -1348,7 +1339,8 @@
       "right" : true,
       "shot" : 0,
       "words" : [
-
+        "skate",
+        "workwear"
       ]
     },
     {
@@ -1358,7 +1350,7 @@
       "shot" : 0,
       "words" : [
         "preppy",
-        "sporty"
+        "graphic"
       ]
     },
     {
@@ -1367,7 +1359,8 @@
       "right" : true,
       "shot" : 0,
       "words" : [
-        "skate"
+        "skate",
+        "graphic"
       ]
     },
     {
@@ -1376,8 +1369,7 @@
       "right" : true,
       "shot" : 0,
       "words" : [
-        "tailoring",
-        "western"
+
       ]
     },
     {
@@ -1386,26 +1378,26 @@
       "right" : true,
       "shot" : 0,
       "words" : [
-
+        "romantic",
+        "boho"
       ]
     },
     {
-      "asked" : 5,
+      "asked" : 4,
       "externalID" : "shopify:8112539041965",
-      "right" : true,
-      "shot" : 5,
+      "right" : false,
+      "shot" : 4,
       "words" : [
         "western"
       ]
     },
     {
-      "asked" : 4,
+      "asked" : 0,
       "externalID" : "shopify:8085137227949",
-      "right" : true,
-      "shot" : 4,
+      "right" : false,
+      "shot" : 0,
       "words" : [
-        "boho",
-        "romantic"
+        "boho"
       ]
     },
     {
@@ -1414,16 +1406,17 @@
       "right" : true,
       "shot" : 0,
       "words" : [
-
+        "boho",
+        "romantic"
       ]
     },
     {
       "asked" : 3,
       "externalID" : "shopify:8766062657709",
-      "right" : true,
+      "right" : false,
+      "shot" : 2,
       "words" : [
-        "western",
-        "tailoring"
+        "grunge"
       ]
     },
     {
@@ -1432,7 +1425,8 @@
       "right" : true,
       "shot" : 0,
       "words" : [
-        "western"
+        "western",
+        "boho"
       ]
     },
     {
@@ -1450,24 +1444,23 @@
       "right" : true,
       "shot" : 0,
       "words" : [
-        "boho"
+
       ]
     },
     {
       "asked" : 2,
       "externalID" : "shopify:8764990718125",
-      "right" : false,
-      "shot" : 2,
+      "right" : true,
       "words" : [
-        "tailoring",
-        "romantic"
+        "romantic",
+        "tailoring"
       ]
     },
     {
-      "asked" : 5,
+      "asked" : 4,
       "externalID" : "shopify:8232281145517",
-      "right" : true,
-      "shot" : 5,
+      "right" : false,
+      "shot" : 1,
       "words" : [
         "romantic",
         "tailoring"
@@ -1479,17 +1472,17 @@
       "right" : true,
       "shot" : 0,
       "words" : [
-        "minimal",
-        "romantic"
+
       ]
     },
     {
       "asked" : 3,
       "externalID" : "shopify:8651715739821",
-      "right" : true,
+      "right" : false,
+      "shot" : 2,
       "words" : [
         "romantic",
-        "minimal"
+        "preppy"
       ]
     },
     {
@@ -1507,17 +1500,16 @@
       "right" : true,
       "shot" : 0,
       "words" : [
-        "romantic",
-        "tailoring"
+
       ]
     },
     {
       "asked" : 4,
       "externalID" : "shopify:8535481876653",
-      "right" : true,
+      "right" : false,
+      "shot" : 3,
       "words" : [
-        "y2k",
-        "boho"
+
       ]
     },
     {
@@ -1526,8 +1518,7 @@
       "right" : true,
       "shot" : 5,
       "words" : [
-        "romantic",
-        "tailoring"
+        "romantic"
       ]
     },
     {
@@ -1551,16 +1542,18 @@
     {
       "asked" : 4,
       "externalID" : "shopify:8764990095533",
-      "right" : true,
+      "right" : false,
+      "shot" : 4,
       "words" : [
         "romantic",
-        "tailoring"
+        "y2k"
       ]
     },
     {
       "asked" : 4,
       "externalID" : "shopify:8306616500397",
-      "right" : true,
+      "right" : false,
+      "shot" : 3,
       "words" : [
 
       ]
@@ -1571,7 +1564,7 @@
       "right" : true,
       "shot" : 0,
       "words" : [
-        "boho",
+        "tailoring",
         "romantic"
       ]
     },
@@ -1581,7 +1574,7 @@
       "right" : true,
       "shot" : 0,
       "words" : [
-        "western"
+
       ]
     },
     {
@@ -1589,8 +1582,7 @@
       "externalID" : "shopify:8435244794029",
       "right" : true,
       "words" : [
-        "romantic",
-        "tailoring"
+        "romantic"
       ]
     },
     {
@@ -1608,8 +1600,7 @@
       "right" : true,
       "shot" : 0,
       "words" : [
-        "romantic",
-        "boho"
+
       ]
     },
     {
@@ -1635,7 +1626,7 @@
       "right" : true,
       "shot" : 4,
       "words" : [
-        "y2k",
+        "preppy",
         "romantic"
       ]
     },
@@ -1654,8 +1645,8 @@
       "right" : true,
       "shot" : 0,
       "words" : [
-        "vintage",
-        "graphic"
+        "grunge",
+        "streetwear"
       ]
     },
     {
@@ -1664,8 +1655,7 @@
       "right" : true,
       "shot" : 5,
       "words" : [
-        "skate",
-        "outdoor"
+        "skate"
       ]
     },
     {
@@ -1674,8 +1664,8 @@
       "right" : true,
       "shot" : 0,
       "words" : [
-        "skate",
-        "workwear"
+        "grunge",
+        "skate"
       ]
     },
     {
@@ -1685,7 +1675,7 @@
       "shot" : 0,
       "words" : [
         "sporty",
-        "y2k"
+        "skate"
       ]
     },
     {
@@ -1694,18 +1684,18 @@
       "right" : true,
       "shot" : 0,
       "words" : [
-        "grunge",
-        "skate"
+        "skate",
+        "grunge"
       ]
     },
     {
       "asked" : 4,
       "externalID" : "shopify:7627414372448",
       "right" : true,
-      "shot" : 3,
+      "shot" : 4,
       "words" : [
-        "skate",
-        "grunge"
+        "grunge",
+        "y2k"
       ]
     },
     {
@@ -1715,7 +1705,7 @@
       "shot" : 0,
       "words" : [
         "grunge",
-        "skate"
+        "graphic"
       ]
     },
     {
@@ -1725,7 +1715,7 @@
       "shot" : 0,
       "words" : [
         "outdoor",
-        "sporty"
+        "graphic"
       ]
     },
     {
@@ -1734,8 +1724,8 @@
       "right" : true,
       "shot" : 4,
       "words" : [
-        "skate",
-        "sporty"
+        "sporty",
+        "skate"
       ]
     },
     {
@@ -1745,17 +1735,17 @@
       "shot" : 0,
       "words" : [
         "streetwear",
-        "graphic"
+        "y2k"
       ]
     },
     {
-      "asked" : 5,
+      "asked" : 4,
       "externalID" : "shopify:7677807624288",
-      "right" : true,
-      "shot" : 5,
+      "right" : false,
+      "shot" : 4,
       "words" : [
         "streetwear",
-        "skate"
+        "sporty"
       ]
     },
     {
@@ -1772,9 +1762,10 @@
       "asked" : 4,
       "externalID" : "shopify:7677809950816",
       "right" : true,
-      "shot" : 3,
+      "shot" : 4,
       "words" : [
-        "western"
+        "workwear",
+        "minimal"
       ]
     },
     {
@@ -1783,7 +1774,8 @@
       "right" : true,
       "shot" : 0,
       "words" : [
-        "streetwear"
+        "streetwear",
+        "grunge"
       ]
     },
     {
@@ -1792,8 +1784,7 @@
       "right" : true,
       "shot" : 0,
       "words" : [
-        "y2k",
-        "skate"
+
       ]
     },
     {
@@ -1803,17 +1794,17 @@
       "shot" : 0,
       "words" : [
         "skate",
-        "grunge"
+        "streetwear"
       ]
     },
     {
-      "asked" : 4,
+      "asked" : 5,
       "externalID" : "shopify:7693808042080",
-      "right" : false,
-      "shot" : 4,
+      "right" : true,
+      "shot" : 5,
       "words" : [
         "skate",
-        "y2k"
+        "graphic"
       ]
     },
     {
@@ -1823,14 +1814,13 @@
       "shot" : 0,
       "words" : [
         "outdoor",
-        "skate"
+        "streetwear"
       ]
     },
     {
       "asked" : 5,
       "externalID" : "shopify:7354905722976",
-      "right" : false,
-      "shot" : 5,
+      "right" : true,
       "words" : [
         "outdoor",
         "workwear"
@@ -1842,8 +1832,8 @@
       "right" : true,
       "shot" : 5,
       "words" : [
-        "preppy",
-        "skate"
+        "skate",
+        "minimal"
       ]
     },
     {
@@ -1852,8 +1842,7 @@
       "right" : true,
       "shot" : 0,
       "words" : [
-        "y2k",
-        "skate"
+
       ]
     },
     {
@@ -1863,7 +1852,7 @@
       "shot" : 5,
       "words" : [
         "workwear",
-        "skate"
+        "streetwear"
       ]
     },
     {
@@ -1872,8 +1861,7 @@
       "right" : true,
       "shot" : 0,
       "words" : [
-        "streetwear",
-        "grunge"
+        "streetwear"
       ]
     },
     {
@@ -1882,8 +1870,8 @@
       "right" : true,
       "shot" : 0,
       "words" : [
-        "skate",
-        "outdoor"
+        "sporty",
+        "skate"
       ]
     },
     {
@@ -1892,8 +1880,7 @@
       "right" : true,
       "shot" : 0,
       "words" : [
-        "preppy",
-        "graphic"
+        "skate"
       ]
     },
     {
@@ -1902,8 +1889,7 @@
       "right" : true,
       "shot" : 0,
       "words" : [
-        "western",
-        "grunge"
+
       ]
     },
     {
@@ -1913,14 +1899,14 @@
       "shot" : 0,
       "words" : [
         "graphic",
-        "streetwear"
+        "skate"
       ]
     },
     {
-      "asked" : 5,
+      "asked" : 4,
       "externalID" : "shopify:7461175296096",
-      "right" : true,
-      "shot" : 5,
+      "right" : false,
+      "shot" : 3,
       "words" : [
         "workwear",
         "outdoor"
@@ -1941,18 +1927,18 @@
     "costMicros" : 0,
     "labelledForWords" : 199,
     "leadIsNotAShot" : 33,
-    "leadIsNotAShotRight" : 28,
-    "leadVerdictRight" : 199,
+    "leadIsNotAShotRight" : 22,
+    "leadVerdictRight" : 189,
     "method" : "siglip",
-    "model" : "Marqo\/marqo-fashionSigLIP@c56244cc94f9",
-    "photographsBeyondTheLead" : 136,
+    "model" : "Marqo\/marqo-fashionCLIP@44f4c655124e",
+    "photographsBeyondTheLead" : 160,
     "products" : 203,
-    "productsWithARightWord" : 129,
-    "productsWithWords" : 158,
-    "recall" : 79.83333333333333,
-    "seconds" : 52.606085896492004,
-    "shotsRight" : 196,
-    "wordsGiven" : 273,
-    "wordsRight" : 177
+    "productsWithARightWord" : 120,
+    "productsWithWords" : 147,
+    "recall" : 69.08333333333333,
+    "seconds" : 1904.5597780942917,
+    "shotsRight" : 186,
+    "wordsGiven" : 246,
+    "wordsRight" : 161
   }
 }

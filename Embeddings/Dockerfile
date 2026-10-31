@@ -5,18 +5,18 @@
 # Weights are downloaded here, at build time, and the service runs with Hugging Face
 # offline, so a boot never depends on huggingface.co being up or the repo still existing.
 #
-# The model is a build argument, pinned by commit. The default is Marqo FashionSigLIP v1;
-# "Choosing the model" in README.md has the alternative and what switching costs:
+# The model is a build argument, pinned by commit. The default is Marqo FashionCLIP;
+# "Choosing the model" in README.md has the alternatives and what switching costs:
 #
 #   docker build -t dropwall-embeddings \
-#     --build-arg EMBEDDING_MODEL_REPO=srpone/zooclaw-fashionsiglip2 \
-#     --build-arg EMBEDDING_MODEL_REVISION=d2c0c98de9cd1e27c114267ddfbb584eb98b5ebf Embeddings/
+#     --build-arg EMBEDDING_MODEL_REPO=Marqo/marqo-fashionSigLIP \
+#     --build-arg EMBEDDING_MODEL_REVISION=c56244cc94f92419e8369fa71efdaf403b124ce8 Embeddings/
 #
 # Railway passes a service variable of the same name as a build argument, so setting both
 # there selects the model for the next build.
 
-ARG EMBEDDING_MODEL_REPO=Marqo/marqo-fashionSigLIP
-ARG EMBEDDING_MODEL_REVISION=c56244cc94f92419e8369fa71efdaf403b124ce8
+ARG EMBEDDING_MODEL_REPO=Marqo/marqo-fashionCLIP
+ARG EMBEDDING_MODEL_REVISION=44f4c655124ed71e90cbf528d82f508d69d8a81b
 
 FROM python:3.12-slim-bookworm AS build
 

@@ -141,7 +141,19 @@ struct ReadingEvalTests {
         try await app.asyncShutdown()
     }
 
-    @Test("SigLIP zero-shot, through the sidecar")
+    /// One photograph's raw scores, for the sweep that chooses a new model's bars.
+    private struct Scored {
+        var index: Int
+        var shot: Double
+        /// Calibrated style scores, every word.
+        var styles: [(word: String, score: Double)]
+    }
+
+    /// Zero-shot through the sidecar. **A model with measured bars is scored; one without is
+    /// measured**: every photograph is embedded and the two bars are swept, printing the table
+    /// `ZeroShot.measuredBars` is chosen from — nothing is written, because a run against
+    /// unchosen bars is not a result.
+    @Test("Zero-shot through the embedding model, via the sidecar")
     func siglip() async throws {
         let environment = ProcessInfo.processInfo.environment
         guard environment["STREETW_READING_EVAL"] == "siglip" else { return }
@@ -153,7 +165,14 @@ struct ReadingEvalTests {
         try await withClient { client in
             let provider = SidecarEmbeddingProvider(configuration: configuration, client: client)
             let started = Date()
-            let prompts = try await ZeroShot.prompts(using: provider)
+            let model = try await provider.space.model
+            let calibrating = ZeroShot.measuredBars[model] == nil
+            // Infinite bars make the reader look at every photograph and give nothing, which is
+            // what a sweep needs; the shipped bars read as the backfill would.
+            let prompts = try await ZeroShot.prompts(
+                using: provider, bars: calibrating ? ZeroShot.Bars(shotMargin: .infinity, styleBar: .infinity) : nil
+            )
+            if calibrating { print("\(model) has no measured bars: measuring, not scoring") }
             // What the backfill finds stored: the text vector, and the lead photograph's.
             let texts = try await provider.embed(texts: products.map {
                 SemanticIndex.text(title: $0.title, productType: $0.productType, tags: $0.tags, brand: $0.brand, colours: [])
@@ -166,18 +185,93 @@ struct ReadingEvalTests {
             )
             var summary = Summary(method: "siglip", model: prompts.model)
             var answers: [Answer] = []
+            var scored: [[Scored]] = []
             for (index, product) in products.enumerated() {
+                let others = product.photos.enumerated().dropFirst().map { (index: $0.offset, url: $0.element) }
+                var seen: [URL: [Float]] = [:]
                 let outcome = try await ZeroShot.read(
-                    first: firsts[index], text: texts[index],
-                    others: product.photos.enumerated().dropFirst().map { (index: $0.offset, url: $0.element) },
-                    prompts: prompts, calibration: calibration
-                ) { try await provider.embed(imageURLs: $0) }
+                    first: firsts[index], text: texts[index], others: others, prompts: prompts, calibration: calibration
+                ) { urls in
+                    let answers = try await provider.embed(imageURLs: urls)
+                    for (url, answer) in zip(urls, answers) { if case .vector(let v) = answer { seen[url] = v } }
+                    return answers
+                }
                 let right = summary.add(product, shot: outcome.verdict.shotIndex, words: outcome.verdict.styleWords, asked: outcome.asked)
                 answers.append(Answer(externalID: product.externalID, shot: outcome.verdict.shotIndex,
                                       words: outcome.verdict.styleWords, right: right, asked: outcome.asked))
+                func score(_ photo: Int, _ vector: [Float]) -> Scored {
+                    Scored(index: photo, shot: ZeroShot.shotScore(vector, prompts),
+                           styles: ZeroShot.styleScores(photo: vector, text: texts[index], prompts: prompts, calibration: calibration))
+                }
+                scored.append(
+                    (firsts[index].map { [score(0, $0)] } ?? [])
+                    + others.compactMap { entry in URL(string: entry.url).flatMap { seen[ZeroShot.rendition($0)] }.map { score(entry.index, $0) } }
+                )
             }
             summary.seconds = Date().timeIntervalSince(started)
-            try write(summary, answers)
+            if calibrating {
+                sweep(products, scored)
+            } else {
+                try write(summary, answers)
+            }
+        }
+    }
+
+    /// The reader run again at every bar, from the scores — exact, because every photograph
+    /// was looked at. The shot margin first; the style bar at the margin that read most right.
+    private func sweep(_ products: [Labelled.Product], _ scored: [[Scored]]) {
+        func shot(_ scores: [Scored], at margin: Double) -> Int? {
+            guard let lead = scores.first, lead.index == 0 else {
+                return best(scores, margin)
+            }
+            if lead.shot > margin { return 0 }
+            // As `ZeroShot.read` walks the gallery: a chunk at a time, stopping at the first with a shot.
+            let others = Array(scores.dropFirst().prefix(ZeroShot.extraPhotographs))
+            var seen: [Scored] = []
+            for start in stride(from: 0, to: others.count, by: ZeroShot.extraChunk) {
+                seen += others[start..<min(start + ZeroShot.extraChunk, others.count)]
+                if best(seen, margin) != nil { break }
+            }
+            return best(seen, margin)
+        }
+        func best(_ scores: [Scored], _ margin: Double) -> Int? {
+            scores.filter { $0.shot > margin }.max { $0.shot < $1.shot }?.index
+        }
+
+        print("shot margin → product shot right / where the lead is not one / lead judged right")
+        var choice = (margin: 0.0, right: -1)
+        for step in 0...40 {
+            let margin = Double(step) * 0.005
+            var right = 0, notLead = 0, notLeadRight = 0, leadRight = 0
+            for (product, scores) in zip(products, scored) {
+                let answer = shot(scores, at: margin)
+                let isRight = product.shots.map { answer.map($0.contains) ?? false } ?? (answer == nil)
+                if isRight { right += 1 }
+                let leadIsAShot = product.shots?.contains(0) ?? false
+                if !leadIsAShot { notLead += 1; if isRight { notLeadRight += 1 } }
+                if leadIsAShot == (answer == 0) { leadRight += 1 }
+            }
+            print(String(format: "  %.3f  %3d/%d   %2d/%d   %3d/%d", margin, right, products.count, notLeadRight, notLead, leadRight, products.count))
+            if right > choice.right { choice = (margin, right) }
+        }
+
+        print(String(format: "style bar at margin %.3f → words right (precision) / products with a right word / products given any word", choice.margin))
+        for step in -4...16 {
+            let bar = Double(step) * 0.005
+            var given = 0, right = 0, labelled = 0, withRight = 0, withAny = 0
+            for (product, scores) in zip(products, scored) {
+                let measured = shot(scores, at: choice.margin).flatMap { index in scores.first { $0.index == index } } ?? scores.first { $0.index == 0 }
+                guard let measured else { continue }
+                let words = measured.styles.filter { $0.score >= bar }.prefix(StyleWords.maximum).map(\.word)
+                if !words.isEmpty { withAny += 1 }
+                guard !product.words.isEmpty else { continue }
+                labelled += 1
+                let hits = words.filter(product.words.contains).count
+                given += words.count
+                right += hits
+                if hits > 0 { withRight += 1 }
+            }
+            print(String(format: "  %+.3f  %3d/%3d = %.3f   %3d/%d   %3d/%d", bar, right, given, given == 0 ? 0 : Double(right) / Double(given), withRight, labelled, withAny, products.count))
         }
     }
 

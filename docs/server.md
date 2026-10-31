@@ -784,7 +784,15 @@ Part of the streetw guidance set; see `CLAUDE.md` for the index and the build ru
   `meaningSearched` is true only when vectors answered and the model has a threshold; **a model
   with none makes no meaning matches**, so switching models cannot put unmeasured guesses on the
   page. Without `meaning=true` none of this happens and the candidates are read exactly as
-  before, which is what 1.2 and 1.3 ask for.
+  before, which is what 1.2 and 1.3 ask for. **The hundred were forty until 2026-10-30**:
+  pgvector's HNSW scan returns at most `hnsw.ef_search` rows, forty by default, whatever the
+  `LIMIT` says — measured on the eval catalogue, `LIMIT 100` through the index gave 40 rows —
+  so `SemanticIndex.nearest` now raises the setting to its limit with a `SET LOCAL` in a
+  transaction of its own (a pooled database gives each statement its own connection
+  otherwise), at about a millisecond instead of half of one. A tight narrowing is still applied
+  after the scan and can leave fewer; pgvector 0.8's `hnsw.iterative_scan` would finish the
+  count and is not set, because an older extension refuses the name and every search's
+  vectors with it.
 - **Parity is defined for the word path.** The phone has no vectors, so `parity` (and
   `parityWithTheLift`, the same over a followed and an unfollowed shop with the lift on) holds
   the route and `ShopSearch` to the same page for the same products when no vector speaks:
@@ -799,7 +807,7 @@ Part of the streetw guidance set; see `CLAUDE.md` for the index and the build ru
 ## Embeddings
 
 Search and "more like this" compare vectors, and the vectors come from one place: **`Embeddings/`,
-a Python service running FashionSigLIP, deployed as a second Railway service beside this one.** The
+a Python service running Marqo FashionCLIP, deployed as a second Railway service beside this one.** The
 server sends it text or image URLs and gets back unit vectors; it stores nothing. The server decides
 what to embed and when, stores each vector in pgvector beside the model id that produced it, and does
 the comparing in Postgres. Nothing in either Swift package imports anything from the sidecar, and the
@@ -822,17 +830,20 @@ set on this service.
 - **Python, in its own service.** torch has no Swift equivalent worth the port, and putting it
   in the server's image would put a 2 GB toolchain into every server deploy. A separate service
   also lets the model's memory be sized and restarted on its own.
-- **FashionSigLIP v1 by default, because Marqo's v2 is not public.** Marqo offers v2 only
-  commercially ("Contact Marqo"). v1 is Apache-2.0 and pinned by revision. On our catalogues it
-  beat the base SigLIP it was tuned from by only a few points, within the noise of a 100-query
-  eval (`Embeddings/eval/README.md`); the case for it is that it costs nothing over the base.
-  **The model is a build argument of the image** (`EMBEDDING_MODEL_REPO`, `_REVISION`), so the
-  owner can switch to the third-party `srpone/zooclaw-fashionsiglip2` — Apache-2.0, eleven points
-  better on text R@1 in the same eval, about four times slower per image — without a code change.
-  The owner has chosen it; it is not the default yet because its repository carries no licence
-  file, only `license: apache-2.0` in the card's metadata, and the eval never measured text
-  against text, which is what the server compares. `Embeddings/README.md` (*Choosing the model*)
-  has the switch, its cost and both caveats.
+- **Marqo FashionCLIP by default, chosen on the search eval.** FashionSigLIP v1 was the first
+  model — Marqo offers SigLIP 2 only commercially, and v1 beat the base SigLIP by only a few points
+  on `Embeddings/eval` — and the switch was made on 2026-10-30 after nine models were run through
+  *The search eval* below, which measures what the server compares (text with text): P@10 0.836 →
+  0.862, nDCG@10 0.861 → 0.883, seven right meaning matches added where SigLIP added two, and
+  512-wide vectors instead of 768. Both are Apache-2.0 and pinned by revision. **The model is a
+  build argument of the image** (`EMBEDDING_MODEL_REPO`, `_REVISION`), so switching back, or to
+  the third-party `srpone/zooclaw-fashionsiglip2` — Apache-2.0 with a `LICENSE` file since
+  2026-10-28, eleven points better than v1 on `Embeddings/eval`'s text R@1, four times slower per
+  image, never run through the search eval — is two variables and no code. **A model needs its
+  own numbers on this side, keyed by the id the sidecar reports**: a search threshold in
+  `ProductSearch.measuredThresholds` and reading bars in `ZeroShot.measuredBars`; a model
+  missing from either makes no meaning matches and reads no photographs, rather than running
+  another model's. `Embeddings/README.md` (*Choosing the model*) has the switch and its cost.
 - **The model id names the repository and the revision**, and is stored beside every vector. Two
   models, or two revisions of one, do not share a space: a vector from one compared with a query
   from the other still produces a ranking, and the ranking is noise. If an answer names a
@@ -849,7 +860,8 @@ set on this service.
 - **One protocol, `EmbeddingProvider`** (`Services/Embeddings.swift`): `space` (the model id and
   the dimension, as the provider reports them — asynchronous, because the sidecar learns them from
   its own `/health`), `embedsImages`, `embed(texts:)` → `[[Float]]` and `embed(imageURLs:)` → one
-  `ImageEmbedding` per URL. The dimension is never hard-coded — SigLIP-base is 768.
+  `ImageEmbedding` per URL. The dimension is never hard-coded — FashionCLIP is 512, the SigLIP
+  models 768.
   `SidecarEmbeddingProvider` is the production conformer, `FakeEmbeddingProvider` the tests'.
 - **Unset is off, and off is a supported state.** With `EMBEDDING_URL` or `EMBEDDING_TOKEN` unset,
   `SidecarEmbeddingProvider.make` returns nil, logs `embeddings: off — …` (a warning when only one
@@ -871,14 +883,19 @@ set on this service.
   nearest-neighbour query names the model, so two models' vectors are never compared. The column is
   a bare `vector`; the HNSW index is built per model on `text_embedding::vector(n)`, partial on the
   model (`SemanticIndex.ensureIndex`), so another dimension is another index. A half-finished
-  re-embed answers from fewer products, never from a mix.
+  re-embed answers from fewer products, never from a mix — a search compares the current
+  model's vectors only, and full-text answers for the rest, so nothing is down while it runs.
+  Expect about an hour per 10,000 products on Railway's 2 vCPU for a 224 px ViT-B/16 (FashionCLIP,
+  FashionSigLIP), and the product readings to follow behind; `docs/pgvector-migration.md`
+  (*Switching the embedding model*) is the owner's note.
 - **A separate table, not a column on `products`**: the poller and the scan rewrite product rows,
   and a few kilobytes of floats would ride along on every rewrite — the volume problem above.
   **Measured on Postgres 17 with pgvector 0.8.7**, 565 real products embedded by FashionSigLIP:
   7.2 MB after `VACUUM FULL`, **about 12.7 MB per 1,000 products** — 3,076 bytes per 768-wide
   vector, two per product, out of line in TOAST, and 4.2 KB per product of HNSW index on the text
   vector. That is four times what the scan measured for the products themselves (3.2 MB), so a
-  catalogue's whole footprint is roughly 16 MB per 1,000 products before events. A re-embed
+  catalogue's whole footprint is roughly 16 MB per 1,000 products before events. FashionCLIP's
+  512-wide vectors are two thirds of that, about 9 MB per 1,000 products. A re-embed
   rewrites every row, so until autovacuum reuses the space the table is briefly twice that, and the
   old model's index stays until dropped.
 - **What is compared is text with text, and a photograph with photographs.** A search embeds its
@@ -993,6 +1010,18 @@ is mostly right, and the gate is what keeps the other 84 % off the page; the ung
 is what happens without it. Nine is a small sample — re-run `thresholds` on a bigger catalogue,
 and on any new model, before moving it.
 
+**FashionCLIP, measured the same way on 2026-10-30** (`searcheval.py meaning` scores a model's
+vectors alone, and `thresholds --bars` takes each model's own range, since CLIP puts every pair of
+texts closer than SigLIP does): over the same 53 searches and judgements, `after` went from P@10
+0.836 to **0.862** and nDCG@10 0.861 to **0.883**, German phrasing from 0.31 to 0.32, and under the
+searches the words found little for its gate admitted **seven** right results where SigLIP's
+admitted two — the best of nine models run, and why it is the default
+(`Embeddings/README.md`, *Choosing the model*). Its bar is **0.45**
+(`measuredThresholds["Marqo/marqo-fashionCLIP@44f4c655124e"]`). The two rows stay in the table:
+the sidecar reports which model answered, a search compares only that model's vectors and gates
+them by its bar — so while the catalogue is re-embedded, meaning matches come from the products
+already done — and switching the sidecar back finds the old vectors' bar still there.
+
 ## The product photograph and style words
 
 Phase 5, `ProductReading.swift`. Which of a product's photographs is the clean product shot —
@@ -1000,16 +1029,25 @@ the garment on its own, nobody wearing it — and up to two style words from a f
 read **once per product** on the server and sent on the wire. The phone's Vision check
 (`ProductShot`) is now the fallback; `docs/collection.md` (*The cover*) has the phone's half.
 
-- **FashionSigLIP zero-shot is the method** (`ZeroShot`), the owner's rule: Claude only if it
-  clearly reads the photographs better, which is the comparison below. A photograph's score is
-  its best similarity to five product-shot prompts ("a product photo of a garment on a plain
-  background", "a flat lay photo of clothing", …) minus its best to six others ("a person wearing
-  clothes", "a fashion model posing", … and "a close-up photo of fabric texture", without which a
-  model-first gallery handed its cover to the swatch). A product shot leads by more than
-  `shotMargin`, 0.02 — 99.5 % of the labelled product shots clear it, and it is what turned
-  STAUD's on-model leads (0.01–0.016) from "product shot" into "look further". The prompts are
-  embedded once per model through the sidecar's own `/embed/text`; **the sidecar is unchanged** —
-  every comparison is a dot product in Swift.
+- **Zero-shot through the embedding model is the method** (`ZeroShot`), the owner's rule: Claude
+  only if it clearly reads the photographs better, which is the comparison below. A photograph's
+  score is its best similarity to five product-shot prompts ("a product photo of a garment on a
+  plain background", "a flat lay photo of clothing", …) minus its best to six others ("a person
+  wearing clothes", "a fashion model posing", … and "a close-up photo of fabric texture", without
+  which a model-first gallery handed its cover to the swatch). A product shot leads by more than
+  the model's `shotMargin` — for FashionSigLIP 0.02: 99.5 % of the labelled product shots clear
+  it, and it is what turned STAUD's on-model leads (0.01–0.016) from "product shot" into "look
+  further". The prompts are embedded once per model through the sidecar's own `/embed/text`;
+  **the sidecar is unchanged** — every comparison is a dot product in Swift.
+- **The two bars are the model's, and are kept per model id** (`ZeroShot.Bars`,
+  `ZeroShot.measuredBars`, keyed like `ProductSearch.measuredThresholds`). Each model puts the
+  same photograph and sentence at its own distance — CLIP's margins and SigLIP's are not on one
+  scale — so the margin and the style bar tuned on one would be wrong on every product under
+  another, and nothing on the wire would show it: the shot index and the words would simply be
+  worse. **A model with no bars is not read.** `ZeroShot.prompts` throws `Unmeasured`, the
+  backfill answers `waiting` with the reason and logs it once (`POST /admin/readings` prints
+  it), and boot names the models that have bars. The reading eval below measures a new model's
+  bars; `ReadingEvalTests` run against a model with none sweeps both and prints the table.
 - **The other photographs are embedded only when the first looks like a person.** The lead's
   vector is the one `EmbeddingBackfill` already stored, so most products (170 of the eval's 203)
   are answered with no request at all. Otherwise up to five more, as 400 px renditions, **four
