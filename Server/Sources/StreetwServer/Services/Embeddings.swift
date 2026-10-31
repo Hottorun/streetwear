@@ -503,13 +503,30 @@ enum SemanticIndex {
     /// is used. Partial on the model and cast to its dimension, which is how a bare `vector`
     /// column can carry an index at all — and how two models' vectors stay apart. The image
     /// index skips the products with no photograph vector, as HNSW skips nulls.
+    ///
+    /// **Built without parallel workers.** pgvector's parallel HNSW build shares the graph with
+    /// its workers through a dynamic shared memory segment the size of `maintenance_work_mem`,
+    /// and Railway's Postgres container gives `/dev/shm` far less than that: the FashionCLIP
+    /// index failed every minute in production with `could not resize shared memory segment …
+    /// No space left on device`, and the backfill never got past it. A serial build keeps the
+    /// graph in the backend's own memory. It is slower — minutes, once per model — which is fine
+    /// for something built once; the setting is `SET LOCAL`, so nothing else is affected.
     static func ensureIndex(for space: EmbeddingSpace, on sql: any SQLDatabase) async throws {
         for column in [Column.text, .image] {
-            try await sql.raw("""
+            let create: SQLQueryString = """
                 CREATE INDEX IF NOT EXISTS \(ident: indexName(for: space, column: column)) ON product_embeddings \
                 USING hnsw (((\(column.expression()))::vector(\(literal: space.dimension))) vector_cosine_ops) \
                 WHERE model = \(literal: space.model)
-                """).run()
+                """
+            if let database = sql as? any Database {
+                try await database.transaction { transaction in
+                    guard let sql = transaction as? any SQLDatabase else { throw Abort(.internalServerError) }
+                    try await sql.raw("SET LOCAL max_parallel_maintenance_workers = 0").run()
+                    try await sql.raw(create).run()
+                }
+            } else {
+                try await sql.raw(create).run()
+            }
         }
     }
 
