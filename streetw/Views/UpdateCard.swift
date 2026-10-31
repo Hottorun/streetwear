@@ -146,7 +146,7 @@ struct CollectionTile: View {
                 // A garment you photographed has no maker to caption it with, and a blank
                 // where the wordmark goes reads as attribution that failed to load.
                 if save.isOwnGarment {
-                    DataLabel(text: "YOUR PHOTO", size: 9)
+                    NoteLine(text: "Your photo", size: 12)
                 }
                 // `brandLabel`, not `brand?.name`. A brand is only attached when the link
                 // matched something followed, so anything shared from a label nobody has
@@ -159,7 +159,7 @@ struct CollectionTile: View {
                 // you. A note stays private to the item's own page — the collection is
                 // meant to be looked at, not read.
                 if let size = save.sizeNote, !size.isEmpty {
-                    DataLabel(text: size.uppercased(), size: 9)
+                    DataLabel(text: size, size: 10)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -219,7 +219,7 @@ struct FeedState {
 
     init?(update: BrandUpdate, profile: SizeProfile) {
         if update.brand?.isLockedForDrop == true {
-            self.text = "LOCKED · DROP IMMINENT"
+            self.text = "Locked — a drop is close"
             self.isForMe = true
             return
         }
@@ -240,28 +240,28 @@ struct FeedState {
 
             self.isForMe = isMine
             self.text = shown.isEmpty
-                ? "BACK IN STOCK"
-                : "BACK IN \(shown.prefix(3).joined(separator: ", ").uppercased())"
+                ? "Back in stock"
+                : "Back in \(shown.prefix(3).joined(separator: ", "))"
         case .dropLock:
-            self.text = "LOCKED · DROP IMMINENT"
+            self.text = "Locked — a drop is close"
             self.isForMe = true
         case .priceDrop:
             // The cut first, measured from the brand's own tag where it published one —
             // "−33%" is the claim, and the "was" is how to check it.
-            let was = update.wasPriceLabel.map { "WAS \($0.uppercased())" }
-            self.text = [update.percentOffText ?? "PRICE DROP", was].compactMap { $0 }.joined(separator: " · ")
+            let was = update.wasPriceLabel.map { "was \($0)" }
+            self.text = [update.percentOffText ?? "Price drop", was].compactMap { $0 }.joined(separator: ", ")
             // A markdown on something you can't buy in your size isn't yours either.
             self.isForMe = profile.isEmpty || update.isInMySize(profile)
         case .collection:
-            self.text = "NEW COLLECTION"
+            self.text = "New collection"
             self.isForMe = false
         case .sale:
             // News about the brand, not about you: the words are on the row itself.
-            self.text = "SALE"
+            self.text = "Sale"
             self.isForMe = false
         default:
             guard update.isInMySize(profile) else { return nil }
-            self.text = "IN YOUR SIZE"
+            self.text = "In your size"
             self.isForMe = true
         }
     }

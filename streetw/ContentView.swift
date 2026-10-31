@@ -319,7 +319,7 @@ struct ContentView: View {
         } message: {
             // The same sentence `SaveDetailView` uses, because it is the same act and a
             // second wording of one promise is how the two stop agreeing.
-            Text("Your note and where you filed it go too. Fits it appears in are left alone.")
+            Text("Its note and boards go too. Its fits stay.")
         }
         .sheet(item: Bindable(confirmation).settingWatch) { update in
             WatchEditor(update: update)

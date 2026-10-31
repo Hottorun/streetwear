@@ -64,9 +64,8 @@ struct FitsPage: View {
                     if !shown.isEmpty {
                         keptFits(shown, card: card)
                     } else if searching {
-                        Text("NO FIT MATCHES \"\(query.uppercased())\"")
-                            .font(.data(12))
-                            .tracking(0.4)
+                        Text("No fit matches “\(query)”.")
+                            .font(.editorial(16))
                             .foregroundStyle(Color.muted)
                             .padding(.horizontal, 20)
                     }
@@ -121,7 +120,7 @@ struct FitsPage: View {
         } message: {
             // True, and the reassurance somebody hesitating actually needs: `Fit.items`
             // cascades in neither direction.
-            Text("The clothes in it stay in your collection.")
+            Text("Its clothes stay in your collection.")
         }
     }
 
@@ -139,7 +138,7 @@ struct FitsPage: View {
                     .font(.data(11, .semibold))
                     .tracking(0.8)
                 Spacer(minLength: 0)
-                DataLabel(text: "ARRANGE YOUR OWN", size: 9)
+                NoteLine(text: "Arrange your own", size: 13)
             }
             .foregroundStyle(Color.ink)
             .padding(.horizontal, 14)
@@ -178,7 +177,7 @@ struct FitsPage: View {
         VStack(alignment: .leading, spacing: 14) {
             header(
                 "From your wardrobe",
-                mood.map { "LEANING TOWARD \($0.uppercased()) · TAP ONE TO TRY IT" } ?? "TAP ONE TO TRY IT"
+                mood.map { "Leaning toward \($0). Tap one to try it." } ?? "Tap one to try it."
             )
 
             LazyVGrid(columns: columns(card), alignment: .leading, spacing: 22) {
@@ -210,19 +209,18 @@ struct FitsPage: View {
         let missing = gaps.intersection([.top, .bottom]).sorted { $0.stackOrder < $1.stackOrder }
         let detail: String
         if saves.isEmpty {
-            detail = "SAVE A FEW THINGS AND THE OUTFITS THEY MAKE START HERE"
+            detail = "Save a few things and outfits start here."
         } else if !missing.isEmpty {
             let names = missing.map { $0.label.lowercased() }.joined(separator: " or ")
-            detail = "A FIT NEEDS A TOP AND A BOTTOM — NOTHING YOU'VE SAVED READS AS \(names.uppercased()) YET"
+            detail = "A fit needs a top and a bottom, and nothing you've saved reads as \(names) yet."
         } else {
-            detail = "NOTHING YOU'VE SAVED GOES TOGETHER YET — OR START ONE ABOVE"
+            detail = "Nothing you've saved goes together yet. Start one above."
         }
         return VStack(alignment: .leading, spacing: 8) {
             Text("No fits yet")
                 .font(.editorial(22))
                 .foregroundStyle(Color.ink)
-            DataLabel(text: detail)
-                .fixedSize(horizontal: false, vertical: true)
+            NoteLine(text: detail, size: 15)
         }
         .padding(.horizontal, 20)
     }
@@ -276,7 +274,7 @@ struct FitsPage: View {
             Text(title)
                 .font(.editorial(19))
                 .foregroundStyle(Color.ink)
-            DataLabel(text: detail)
+            NoteLine(text: detail)
         }
         .padding(.horizontal, 20)
     }
@@ -480,12 +478,7 @@ struct SuggestedFitCard: View {
             // rationed to a restock, a size you wear, a storefront locking; a garment you
             // have not bought is a fact about the proposal, not an event.
             if !borrowed.isEmpty {
-                DataLabel(
-                    text: borrowed.count == 1
-                        ? "WITH 1 YOU DON'T OWN"
-                        : "WITH \(borrowed.count) YOU DON'T OWN",
-                    size: 9
-                )
+                NoteLine(text: borrowed.count == 1 ? "With 1 you don't own" : "With \(borrowed.count) you don't own", size: 12)
             }
         }
         .frame(width: width)

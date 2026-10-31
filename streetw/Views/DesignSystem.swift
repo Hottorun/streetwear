@@ -455,7 +455,7 @@ enum Stamp {
         default:
             let formatter = DateFormatter()
             formatter.dateFormat = "d MMM"
-            return formatter.string(from: date).uppercased()
+            return formatter.string(from: date)
         }
     }
 }

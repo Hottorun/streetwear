@@ -309,8 +309,6 @@ struct FitCanvas: View {
                 TextField("Name", text: $newBoardName)
                 Button("Cancel", role: .cancel) {}
                 Button("Create") { createBoard() }
-            } message: {
-                Text("Boards are private. Nothing is shared anywhere.")
             }
             // **The stickers are lifted here too.** The pass runs where its results are about
             // to be used, and this is the screen built out of them — reachable from a product

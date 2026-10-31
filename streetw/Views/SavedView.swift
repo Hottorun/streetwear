@@ -264,8 +264,6 @@ struct SavedView: View {
                 TextField("Name", text: $newBoardName)
                 Button("Cancel", role: .cancel) { renaming = nil }
                 Button("Save") { commitBoardName() }
-            } message: {
-                Text("Boards are private. Nothing is shared anywhere.")
             }
             .confirmationDialog(
                 "Delete \(deleting?.name ?? "this board")?",
@@ -280,7 +278,7 @@ struct SavedView: View {
             } message: {
                 // Says what survives, because that is the part somebody hesitating is
                 // actually worried about.
-                Text("The saves and fits filed here are kept — only the board goes.")
+                Text("Its saves and fits stay; only the board goes.")
             }
         }
         .tint(.ink)
@@ -373,8 +371,8 @@ struct SavedView: View {
     /// of one promise is how the two stop agreeing.
     private func deletionMessage(_ count: Int) -> String {
         count == 1
-            ? "Your note and where you filed it go too. Fits it appears in are left alone."
-            : "Their notes and where you filed them go too. Fits they appear in are left alone."
+            ? "Its note and boards go too. Its fits stay."
+            : "Their notes and boards go too. Their fits stay."
     }
 
     private func endSelecting() {
@@ -444,16 +442,16 @@ struct SavedView: View {
     }
 
     private var emptyAction: String {
-        if !query.isEmpty { return "NOTHING IN \(filterLabel.uppercased()) MATCHES \"\(query.uppercased())\"" }
+        if !query.isEmpty { return "Nothing in \(filterLabel) matches “\(query)”." }
         if let facet = collection.facet {
-            return "NOTHING IN \(filterLabel.uppercased()) THAT COUNTS TOWARD YOUR TASTE READS AS \(facet.value.uppercased())"
+            return "Nothing in \(filterLabel) that counts toward your taste reads as \(facet.value.lowercased())."
         }
         switch filter {
-        case .type(.inspiration): return "TAP THE BOOKMARK ON ANYTHING IN YOUR FEED"
-        case .type(.wardrobe): return "LONG-PRESS AN ITEM AND CHOOSE ADD TO WARDROBE"
-        case .fits: return "SAVE A FEW THINGS AND THE OUTFITS THEY MAKE START HERE"
+        case .type(.inspiration): return "Tap the bookmark on anything you like."
+        case .type(.wardrobe): return "Long-press a save and choose Add to Wardrobe."
+        case .fits: return "Save a few things and outfits start here."
         // Not a swipe: the feed's swipe to file went with the spreads in Phase 1.
-        case .board: return "LONG-PRESS ANYTHING AND CHOOSE ADD TO BOARD"
+        case .board: return "Long-press anything and choose Add to board."
         }
     }
 
@@ -470,8 +468,7 @@ struct SavedView: View {
                     // Fits and nothing else. The wall stays, so the line explains the
                     // absence of tiles rather than the whole page claiming to be empty.
                     Text(emptyAction)
-                        .font(.data(12))
-                        .tracking(0.4)
+                        .font(.editorial(16))
                         .foregroundStyle(Color.muted)
                         .padding(.horizontal, 20)
                 } else {
@@ -499,7 +496,7 @@ struct SavedView: View {
     private var boardFits: some View {
         if !visibleFits.isEmpty {
             VStack(alignment: .leading, spacing: 10) {
-                DataLabel(text: "\(visibleFits.count) \(visibleFits.count == 1 ? "FIT" : "FITS")")
+                NoteLine(text: visibleFits.count == 1 ? "1 fit" : "\(visibleFits.count) fits")
                     .padding(.horizontal, 20)
                 ScrollView(.horizontal) {
                     LazyHStack(alignment: .top, spacing: 14) {
@@ -592,7 +589,7 @@ struct SavedView: View {
             HStack(spacing: 6) {
                 Image(systemName: board.tasteMode == .mood ? "sparkles" : "eye.slash")
                     .font(.system(size: 9, weight: .semibold))
-                DataLabel(text: board.tasteMode.boardLine, size: 10, color: .ink)
+                NoteLine(text: board.tasteMode.boardLine, color: .ink)
             }
             .padding(.horizontal, 20)
             .padding(.bottom, 10)
@@ -813,7 +810,7 @@ struct BulkBoardSheet: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
-                    DataLabel(text: saves.count == 1 ? "1 THING SELECTED" : "\(saves.count) THINGS SELECTED")
+                    NoteLine(text: saves.count == 1 ? "1 thing selected" : "\(saves.count) things selected")
                         .padding(.horizontal, 20)
                         .padding(.bottom, 6)
 
@@ -853,8 +850,6 @@ struct BulkBoardSheet: View {
                     guard let board = CollectionEdit.newBoard(named: newName, after: boards, in: context) else { return }
                     CollectionEdit.file(saves, on: board, in: context)
                 }
-            } message: {
-                Text("Boards are private. Nothing is shared anywhere.")
             }
         }
         .tint(.ink)
@@ -874,9 +869,9 @@ extension TasteMode {
     /// What a board on this setting says under the strip.
     var boardLine: String {
         switch self {
-        case .counts: "COUNTS TOWARD YOUR TASTE"
-        case .ignored: "DOESN'T COUNT TOWARD YOUR TASTE"
-        case .mood: "YOUR MOOD · DISCOVER, BRANDS AND FITS LEAN THIS WAY"
+        case .counts: "Counts toward your taste."
+        case .ignored: "Doesn't count toward your taste."
+        case .mood: "Your mood: Discover, brands and fits lean this way."
         }
     }
 }

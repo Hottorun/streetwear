@@ -93,8 +93,6 @@ struct BoardPicker: View {
                 TextField("Name", text: $newName)
                 Button("Cancel", role: .cancel) {}
                 Button("Create") { createBoard() }
-            } message: {
-                Text("Boards are private. Nothing is shared anywhere.")
             }
         }
         .tint(.ink)
