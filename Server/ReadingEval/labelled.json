@@ -1,5 +1,5 @@
 {
- "about": "203 products from the seven shops of the search eval, read 2026-10-27 to 29: the first six photographs of each, labelled by hand on 2026-10-30. `shots` is every photograph that is a clean product shot (zero-based; null when none is); `words` every style word from StyleWords.vocabulary that plausibly fits. See docs/server.md, The product photograph and style words.",
+ "about": "203 products from the seven shops of the search eval, read 2026-10-27 to 29: the first six photographs of each, labelled by hand on 2026-10-30, plus 30 STAUD products with a swatch or detail photograph (group \"close-ups\", chosen by a hash of the id on 2026-10-31) for the close-up rule. `shots` is every photograph that is a clean product shot — the whole product on its own (zero-based; null when none is); `details` every photograph that is a close-up, a crop, a fabric swatch or a label rather than the whole product, labelled 2026-10-31; `words` every style word from StyleWords.vocabulary that plausibly fits (unlabelled on the close-up group). See docs/server.md, The product photograph and style words.",
  "products": [
   {
    "externalID": "shopify:7499387502689",
@@ -34,6 +34,10 @@
    ],
    "words": [
     "minimal"
+   ],
+   "details": [
+    3,
+    4
    ]
   },
   {
@@ -69,6 +73,10 @@
     "sporty",
     "vintage",
     "graphic"
+   ],
+   "details": [
+    2,
+    3
    ]
   },
   {
@@ -112,6 +120,9 @@
     "sporty",
     "vintage",
     "streetwear"
+   ],
+   "details": [
+    4
    ]
   },
   {
@@ -147,6 +158,12 @@
     "sporty",
     "preppy",
     "vintage"
+   ],
+   "details": [
+    2,
+    3,
+    4,
+    5
    ]
   },
   {
@@ -183,6 +200,10 @@
    "words": [
     "workwear",
     "vintage"
+   ],
+   "details": [
+    4,
+    5
    ]
   },
   {
@@ -215,6 +236,11 @@
    ],
    "words": [
     "minimal"
+   ],
+   "details": [
+    2,
+    3,
+    4
    ]
   },
   {
@@ -250,6 +276,11 @@
     "preppy",
     "sporty",
     "vintage"
+   ],
+   "details": [
+    3,
+    4,
+    5
    ]
   },
   {
@@ -285,6 +316,9 @@
    "words": [
     "sporty",
     "preppy"
+   ],
+   "details": [
+    4
    ]
   },
   {
@@ -318,6 +352,11 @@
    ],
    "words": [
     "minimal"
+   ],
+   "details": [
+    3,
+    4,
+    5
    ]
   },
   {
@@ -361,7 +400,8 @@
     "sporty",
     "vintage",
     "streetwear"
-   ]
+   ],
+   "details": []
   },
   {
    "externalID": "shopify:7487246729313",
@@ -394,6 +434,10 @@
    "words": [
     "minimal",
     "tailoring"
+   ],
+   "details": [
+    2,
+    3
    ]
   },
   {
@@ -443,7 +487,8 @@
    ],
    "words": [
     "minimal"
-   ]
+   ],
+   "details": []
   },
   {
    "externalID": "shopify:7277756874849",
@@ -478,6 +523,10 @@
    "words": [
     "preppy",
     "western"
+   ],
+   "details": [
+    2,
+    4
    ]
   },
   {
@@ -519,6 +568,9 @@
     "sporty",
     "vintage",
     "streetwear"
+   ],
+   "details": [
+    5
    ]
   },
   {
@@ -571,7 +623,8 @@
    ],
    "words": [
     "minimal"
-   ]
+   ],
+   "details": []
   },
   {
    "externalID": "shopify:9485003260001",
@@ -608,6 +661,9 @@
     "preppy",
     "sporty",
     "vintage"
+   ],
+   "details": [
+    5
    ]
   },
   {
@@ -654,6 +710,9 @@
    "words": [
     "minimal",
     "outdoor"
+   ],
+   "details": [
+    2
    ]
   },
   {
@@ -689,6 +748,10 @@
    "words": [
     "outdoor",
     "sporty"
+   ],
+   "details": [
+    4,
+    5
    ]
   },
   {
@@ -724,6 +787,9 @@
    "words": [
     "preppy",
     "sporty"
+   ],
+   "details": [
+    4
    ]
   },
   {
@@ -762,6 +828,11 @@
    ],
    "words": [
     "minimal"
+   ],
+   "details": [
+    2,
+    3,
+    4
    ]
   },
   {
@@ -796,6 +867,11 @@
     "preppy",
     "sporty",
     "vintage"
+   ],
+   "details": [
+    3,
+    4,
+    5
    ]
   },
   {
@@ -828,6 +904,10 @@
    "words": [
     "preppy",
     "minimal"
+   ],
+   "details": [
+    3,
+    4
    ]
   },
   {
@@ -869,6 +949,10 @@
    "words": [
     "sporty",
     "minimal"
+   ],
+   "details": [
+    4,
+    5
    ]
   },
   {
@@ -902,6 +986,9 @@
     "graphic",
     "streetwear",
     "vintage"
+   ],
+   "details": [
+    2
    ]
   },
   {
@@ -935,6 +1022,10 @@
    "words": [
     "minimal",
     "streetwear"
+   ],
+   "details": [
+    2,
+    3
    ]
   },
   {
@@ -978,6 +1069,10 @@
     "streetwear",
     "graphic",
     "sporty"
+   ],
+   "details": [
+    3,
+    4
    ]
   },
   {
@@ -1013,6 +1108,9 @@
    "words": [
     "preppy",
     "vintage"
+   ],
+   "details": [
+    4
    ]
   },
   {
@@ -1044,6 +1142,9 @@
    ],
    "words": [
     "minimal"
+   ],
+   "details": [
+    3
    ]
   },
   {
@@ -1080,6 +1181,10 @@
     "outdoor",
     "sporty",
     "streetwear"
+   ],
+   "details": [
+    4,
+    5
    ]
   },
   {
@@ -1106,7 +1211,8 @@
    "words": [
     "streetwear",
     "graphic"
-   ]
+   ],
+   "details": []
   },
   {
    "externalID": "shopify:8176867606575",
@@ -1132,7 +1238,8 @@
     "streetwear",
     "sporty",
     "graphic"
-   ]
+   ],
+   "details": []
   },
   {
    "externalID": "shopify:8042253058095",
@@ -1156,7 +1263,8 @@
    "words": [
     "streetwear",
     "graphic"
-   ]
+   ],
+   "details": []
   },
   {
    "externalID": "shopify:8176867278895",
@@ -1181,7 +1289,8 @@
    "words": [
     "streetwear",
     "graphic"
-   ]
+   ],
+   "details": []
   },
   {
    "externalID": "shopify:8085317648431",
@@ -1212,6 +1321,9 @@
     "streetwear",
     "sporty",
     "workwear"
+   ],
+   "details": [
+    4
    ]
   },
   {
@@ -1236,7 +1348,8 @@
    "words": [
     "streetwear",
     "graphic"
-   ]
+   ],
+   "details": []
   },
   {
    "externalID": "shopify:8049219371055",
@@ -1262,6 +1375,9 @@
     "streetwear",
     "sporty",
     "graphic"
+   ],
+   "details": [
+    2
    ]
   },
   {
@@ -1291,6 +1407,9 @@
    "words": [
     "streetwear",
     "outdoor"
+   ],
+   "details": [
+    4
    ]
   },
   {
@@ -1316,7 +1435,8 @@
    "words": [
     "streetwear",
     "sporty"
-   ]
+   ],
+   "details": []
   },
   {
    "externalID": "shopify:8100516692015",
@@ -1339,7 +1459,8 @@
    "words": [
     "streetwear",
     "graphic"
-   ]
+   ],
+   "details": []
   },
   {
    "externalID": "shopify:7987708330031",
@@ -1367,6 +1488,10 @@
    ],
    "words": [
     "sporty"
+   ],
+   "details": [
+    4,
+    5
    ]
   },
   {
@@ -1392,7 +1517,8 @@
     "sporty",
     "streetwear",
     "vintage"
-   ]
+   ],
+   "details": []
   },
   {
    "externalID": "shopify:8244849541167",
@@ -1417,7 +1543,8 @@
    ],
    "words": [
     "streetwear"
-   ]
+   ],
+   "details": []
   },
   {
    "externalID": "shopify:8155850571823",
@@ -1441,7 +1568,8 @@
    "words": [
     "streetwear",
     "y2k"
-   ]
+   ],
+   "details": []
   },
   {
    "externalID": "shopify:8034881110063",
@@ -1465,7 +1593,8 @@
     "sporty",
     "streetwear",
     "graphic"
-   ]
+   ],
+   "details": []
   },
   {
    "externalID": "shopify:8176868163631",
@@ -1492,7 +1621,8 @@
     "sporty",
     "streetwear",
     "y2k"
-   ]
+   ],
+   "details": []
   },
   {
    "externalID": "shopify:8153815449647",
@@ -1518,7 +1648,8 @@
    "words": [
     "preppy",
     "streetwear"
-   ]
+   ],
+   "details": []
   },
   {
    "externalID": "shopify:7891934052399",
@@ -1544,7 +1675,8 @@
    "words": [
     "streetwear",
     "sporty"
-   ]
+   ],
+   "details": []
   },
   {
    "externalID": "shopify:7971203350575",
@@ -1570,6 +1702,9 @@
    "words": [
     "streetwear",
     "graphic"
+   ],
+   "details": [
+    3
    ]
   },
   {
@@ -1595,7 +1730,8 @@
    "words": [
     "streetwear",
     "vintage"
-   ]
+   ],
+   "details": []
   },
   {
    "externalID": "shopify:8176868851759",
@@ -1619,6 +1755,10 @@
    ],
    "words": [
     "streetwear"
+   ],
+   "details": [
+    2,
+    3
    ]
   },
   {
@@ -1648,6 +1788,10 @@
     "sporty",
     "vintage",
     "streetwear"
+   ],
+   "details": [
+    4,
+    5
    ]
   },
   {
@@ -1671,6 +1815,9 @@
    "words": [
     "streetwear",
     "graphic"
+   ],
+   "details": [
+    2
    ]
   },
   {
@@ -1693,7 +1840,8 @@
    "words": [
     "streetwear",
     "outdoor"
-   ]
+   ],
+   "details": []
   },
   {
    "externalID": "shopify:7883865718831",
@@ -1717,7 +1865,8 @@
    "words": [
     "streetwear",
     "graphic"
-   ]
+   ],
+   "details": []
   },
   {
    "externalID": "shopify:8037546491951",
@@ -1742,6 +1891,9 @@
    "words": [
     "sporty",
     "streetwear"
+   ],
+   "details": [
+    2
    ]
   },
   {
@@ -1767,7 +1919,8 @@
    "words": [
     "streetwear",
     "graphic"
-   ]
+   ],
+   "details": []
   },
   {
    "externalID": "shopify:7688504016943",
@@ -1796,6 +1949,9 @@
     "streetwear",
     "vintage",
     "grunge"
+   ],
+   "details": [
+    4
    ]
   },
   {
@@ -1820,7 +1976,8 @@
     "streetwear",
     "sporty",
     "graphic"
-   ]
+   ],
+   "details": []
   },
   {
    "externalID": "shopify:7053496254653",
@@ -1866,6 +2023,9 @@
    "words": [
     "minimal",
     "sporty"
+   ],
+   "details": [
+    5
    ]
   },
   {
@@ -1891,7 +2051,8 @@
    ],
    "words": [
     "minimal"
-   ]
+   ],
+   "details": []
   },
   {
    "externalID": "shopify:7053491142845",
@@ -1937,7 +2098,8 @@
    "words": [
     "minimal",
     "sporty"
-   ]
+   ],
+   "details": []
   },
   {
    "externalID": "shopify:15338412704069",
@@ -1961,7 +2123,8 @@
    "words": [
     "minimal",
     "sporty"
-   ]
+   ],
+   "details": []
   },
   {
    "externalID": "shopify:14824868643141",
@@ -2014,7 +2177,8 @@
    "words": [
     "minimal",
     "sporty"
-   ]
+   ],
+   "details": []
   },
   {
    "externalID": "shopify:7274851139773",
@@ -2059,6 +2223,9 @@
    "words": [
     "minimal",
     "streetwear"
+   ],
+   "details": [
+    5
    ]
   },
   {
@@ -2109,7 +2276,8 @@
    "words": [
     "minimal",
     "preppy"
-   ]
+   ],
+   "details": []
   },
   {
    "externalID": "shopify:7447808475325",
@@ -2153,7 +2321,8 @@
    ],
    "words": [
     "minimal"
-   ]
+   ],
+   "details": []
   },
   {
    "externalID": "shopify:4353733296216",
@@ -2209,6 +2378,9 @@
    ],
    "words": [
     "minimal"
+   ],
+   "details": [
+    5
    ]
   },
   {
@@ -2264,7 +2436,8 @@
    "words": [
     "minimal",
     "sporty"
-   ]
+   ],
+   "details": []
   },
   {
    "externalID": "shopify:14824845246789",
@@ -2319,7 +2492,8 @@
    "words": [
     "minimal",
     "sporty"
-   ]
+   ],
+   "details": []
   },
   {
    "externalID": "shopify:15746961211717",
@@ -2355,6 +2529,9 @@
     "minimal",
     "sporty",
     "streetwear"
+   ],
+   "details": [
+    5
    ]
   },
   {
@@ -2395,7 +2572,8 @@
    "words": [
     "minimal",
     "sporty"
-   ]
+   ],
+   "details": []
   },
   {
    "externalID": "shopify:15338669572421",
@@ -2420,7 +2598,8 @@
    "words": [
     "minimal",
     "sporty"
-   ]
+   ],
+   "details": []
   },
   {
    "externalID": "shopify:8591464005957",
@@ -2457,6 +2636,9 @@
    "words": [
     "minimal",
     "preppy"
+   ],
+   "details": [
+    5
    ]
   },
   {
@@ -2499,7 +2681,8 @@
    "words": [
     "minimal",
     "streetwear"
-   ]
+   ],
+   "details": []
   },
   {
    "externalID": "shopify:15664236429637",
@@ -2534,7 +2717,8 @@
    "words": [
     "minimal",
     "sporty"
-   ]
+   ],
+   "details": []
   },
   {
    "externalID": "shopify:8745610051909",
@@ -2578,6 +2762,9 @@
    "words": [
     "minimal",
     "streetwear"
+   ],
+   "details": [
+    5
    ]
   },
   {
@@ -2600,7 +2787,8 @@
    ],
    "words": [
     "minimal"
-   ]
+   ],
+   "details": []
   },
   {
    "externalID": "shopify:15594524246341",
@@ -2623,7 +2811,8 @@
    ],
    "words": [
     "minimal"
-   ]
+   ],
+   "details": []
   },
   {
    "externalID": "shopify:15175355990341",
@@ -2670,7 +2859,8 @@
    ],
    "words": [
     "minimal"
-   ]
+   ],
+   "details": []
   },
   {
    "externalID": "shopify:15318403023173",
@@ -2693,7 +2883,8 @@
    "words": [
     "minimal",
     "sporty"
-   ]
+   ],
+   "details": []
   },
   {
    "externalID": "shopify:7274849042621",
@@ -2737,6 +2928,9 @@
    "words": [
     "minimal",
     "streetwear"
+   ],
+   "details": [
+    5
    ]
   },
   {
@@ -2788,6 +2982,9 @@
    ],
    "words": [
     "minimal"
+   ],
+   "details": [
+    3
    ]
   },
   {
@@ -2819,6 +3016,9 @@
    ],
    "words": [
     "minimal"
+   ],
+   "details": [
+    4
    ]
   },
   {
@@ -2854,6 +3054,9 @@
    "words": [
     "minimal",
     "sporty"
+   ],
+   "details": [
+    5
    ]
   },
   {
@@ -2909,7 +3112,8 @@
    "words": [
     "minimal",
     "sporty"
-   ]
+   ],
+   "details": []
   },
   {
    "externalID": "shopify:14824227701061",
@@ -2948,7 +3152,8 @@
    ],
    "words": [
     "minimal"
-   ]
+   ],
+   "details": []
   },
   {
    "externalID": "shopify:15664182329669",
@@ -2984,6 +3189,9 @@
    "words": [
     "minimal",
     "streetwear"
+   ],
+   "details": [
+    5
    ]
   },
   {
@@ -3017,6 +3225,12 @@
     "preppy",
     "minimal",
     "tailoring"
+   ],
+   "details": [
+    1,
+    2,
+    3,
+    4
    ]
   },
   {
@@ -3051,6 +3265,10 @@
     "preppy",
     "tailoring",
     "vintage"
+   ],
+   "details": [
+    3,
+    5
    ]
   },
   {
@@ -3079,6 +3297,10 @@
     "preppy",
     "sporty",
     "vintage"
+   ],
+   "details": [
+    1,
+    2
    ]
   },
   {
@@ -3114,6 +3336,12 @@
    "words": [
     "preppy",
     "tailoring"
+   ],
+   "details": [
+    1,
+    2,
+    3,
+    4
    ]
   },
   {
@@ -3148,6 +3376,12 @@
    "words": [
     "preppy",
     "tailoring"
+   ],
+   "details": [
+    1,
+    3,
+    4,
+    5
    ]
   },
   {
@@ -3179,6 +3413,13 @@
     "tailoring",
     "preppy",
     "vintage"
+   ],
+   "details": [
+    1,
+    2,
+    3,
+    4,
+    5
    ]
   },
   {
@@ -3211,6 +3452,11 @@
    "words": [
     "preppy",
     "vintage"
+   ],
+   "details": [
+    1,
+    2,
+    3
    ]
   },
   {
@@ -3243,6 +3489,11 @@
     "preppy",
     "vintage",
     "minimal"
+   ],
+   "details": [
+    2,
+    3,
+    5
    ]
   },
   {
@@ -3275,6 +3526,12 @@
    "words": [
     "workwear",
     "preppy"
+   ],
+   "details": [
+    1,
+    2,
+    3,
+    4
    ]
   },
   {
@@ -3309,6 +3566,11 @@
    "words": [
     "tailoring",
     "preppy"
+   ],
+   "details": [
+    1,
+    2,
+    3
    ]
   },
   {
@@ -3341,6 +3603,12 @@
    "words": [
     "workwear",
     "vintage"
+   ],
+   "details": [
+    2,
+    3,
+    4,
+    5
    ]
   },
   {
@@ -3370,7 +3638,8 @@
    "words": [
     "tailoring",
     "preppy"
-   ]
+   ],
+   "details": []
   },
   {
    "externalID": "shopify:9524737409237",
@@ -3403,7 +3672,8 @@
    "words": [
     "tailoring",
     "preppy"
-   ]
+   ],
+   "details": []
   },
   {
    "externalID": "shopify:9524759757013",
@@ -3437,6 +3707,11 @@
    "words": [
     "preppy",
     "vintage"
+   ],
+   "details": [
+    2,
+    3,
+    4
    ]
   },
   {
@@ -3467,6 +3742,10 @@
    "words": [
     "preppy",
     "sporty"
+   ],
+   "details": [
+    2,
+    3
    ]
   },
   {
@@ -3497,6 +3776,11 @@
    "words": [
     "vintage",
     "preppy"
+   ],
+   "details": [
+    3,
+    4,
+    5
    ]
   },
   {
@@ -3523,6 +3807,10 @@
     "preppy",
     "vintage",
     "sporty"
+   ],
+   "details": [
+    1,
+    2
    ]
   },
   {
@@ -3553,6 +3841,13 @@
     "preppy",
     "vintage",
     "workwear"
+   ],
+   "details": [
+    1,
+    2,
+    3,
+    4,
+    5
    ]
   },
   {
@@ -3583,6 +3878,12 @@
     "preppy",
     "sporty",
     "vintage"
+   ],
+   "details": [
+    1,
+    2,
+    3,
+    4
    ]
   },
   {
@@ -3617,6 +3918,12 @@
     "workwear",
     "western",
     "vintage"
+   ],
+   "details": [
+    1,
+    2,
+    3,
+    4
    ]
   },
   {
@@ -3646,6 +3953,11 @@
    "words": [
     "preppy",
     "vintage"
+   ],
+   "details": [
+    1,
+    2,
+    3
    ]
   },
   {
@@ -3672,7 +3984,8 @@
    "words": [
     "tailoring",
     "preppy"
-   ]
+   ],
+   "details": []
   },
   {
    "externalID": "shopify:8872264466645",
@@ -3708,6 +4021,9 @@
     "preppy",
     "tailoring",
     "vintage"
+   ],
+   "details": [
+    2
    ]
   },
   {
@@ -3739,6 +4055,12 @@
     "western",
     "workwear",
     "vintage"
+   ],
+   "details": [
+    2,
+    3,
+    4,
+    5
    ]
   },
   {
@@ -3768,6 +4090,13 @@
    "words": [
     "tailoring",
     "preppy"
+   ],
+   "details": [
+    1,
+    2,
+    3,
+    4,
+    5
    ]
   },
   {
@@ -3796,6 +4125,11 @@
    "words": [
     "minimal",
     "preppy"
+   ],
+   "details": [
+    1,
+    2,
+    3
    ]
   },
   {
@@ -3830,6 +4164,12 @@
     "workwear",
     "preppy",
     "vintage"
+   ],
+   "details": [
+    1,
+    2,
+    3,
+    4
    ]
   },
   {
@@ -3858,6 +4198,11 @@
    "words": [
     "preppy",
     "vintage"
+   ],
+   "details": [
+    1,
+    2,
+    3
    ]
   },
   {
@@ -3890,6 +4235,10 @@
     "preppy",
     "workwear",
     "vintage"
+   ],
+   "details": [
+    3,
+    5
    ]
   },
   {
@@ -3916,6 +4265,9 @@
     "preppy",
     "sporty",
     "vintage"
+   ],
+   "details": [
+    1
    ]
   },
   {
@@ -3948,6 +4300,11 @@
    "words": [
     "preppy",
     "vintage"
+   ],
+   "details": [
+    1,
+    2,
+    4
    ]
   },
   {
@@ -3979,6 +4336,12 @@
     "outdoor",
     "preppy",
     "workwear"
+   ],
+   "details": [
+    2,
+    3,
+    4,
+    5
    ]
   },
   {
@@ -4016,6 +4379,12 @@
    "words": [
     "sporty",
     "outdoor"
+   ],
+   "details": [
+    2,
+    3,
+    4,
+    5
    ]
   },
   {
@@ -4046,6 +4415,12 @@
     "outdoor",
     "preppy",
     "vintage"
+   ],
+   "details": [
+    2,
+    3,
+    4,
+    5
    ]
   },
   {
@@ -4075,7 +4450,8 @@
    "words": [
     "sporty",
     "outdoor"
-   ]
+   ],
+   "details": []
   },
   {
    "externalID": "shopify:7593724641419",
@@ -4115,6 +4491,10 @@
    "words": [
     "workwear",
     "sporty"
+   ],
+   "details": [
+    2,
+    3
    ]
   },
   {
@@ -4147,6 +4527,10 @@
    "words": [
     "tailoring",
     "preppy"
+   ],
+   "details": [
+    1,
+    2
    ]
   },
   {
@@ -4179,6 +4563,10 @@
    "words": [
     "preppy",
     "minimal"
+   ],
+   "details": [
+    1,
+    2
    ]
   },
   {
@@ -4199,7 +4587,8 @@
     "https://cdn.shopify.com/s/files/1/1007/8070/products/slide5.jpg?v=1571438826"
    ],
    "shots": null,
-   "words": []
+   "words": [],
+   "details": []
   },
   {
    "externalID": "shopify:8366512406667",
@@ -4229,6 +4618,11 @@
    "words": [
     "minimal",
     "workwear"
+   ],
+   "details": [
+    1,
+    3,
+    5
    ]
   },
   {
@@ -4256,6 +4650,9 @@
    "words": [
     "preppy",
     "vintage"
+   ],
+   "details": [
+    1
    ]
   },
   {
@@ -4291,6 +4688,12 @@
     "sporty",
     "outdoor",
     "graphic"
+   ],
+   "details": [
+    2,
+    3,
+    4,
+    5
    ]
   },
   {
@@ -4331,6 +4734,10 @@
     "preppy",
     "streetwear",
     "romantic"
+   ],
+   "details": [
+    2,
+    3
    ]
   },
   {
@@ -4359,6 +4766,12 @@
    ],
    "words": [
     "preppy"
+   ],
+   "details": [
+    1,
+    2,
+    4,
+    5
    ]
   },
   {
@@ -4400,6 +4813,10 @@
     "preppy",
     "vintage",
     "tailoring"
+   ],
+   "details": [
+    1,
+    2
    ]
   },
   {
@@ -4427,7 +4844,8 @@
    "words": [
     "preppy",
     "vintage"
-   ]
+   ],
+   "details": []
   },
   {
    "externalID": "shopify:5094185468043",
@@ -4448,7 +4866,8 @@
     "https://cdn.shopify.com/s/files/1/1007/8070/products/SS21-LB-06.jpg?v=1612753698"
    ],
    "shots": null,
-   "words": []
+   "words": [],
+   "details": []
   },
   {
    "externalID": "shopify:7079068467339",
@@ -4479,6 +4898,9 @@
     "preppy",
     "graphic",
     "vintage"
+   ],
+   "details": [
+    1
    ]
   },
   {
@@ -4533,7 +4955,8 @@
    ],
    "words": [
     "workwear"
-   ]
+   ],
+   "details": []
   },
   {
    "externalID": "shopify:4500839596171",
@@ -4555,7 +4978,8 @@
     "https://cdn.shopify.com/s/files/1/1007/8070/products/SS20_lookbook_FINAL-DIGITAL7.jpg?v=1580412558"
    ],
    "shots": null,
-   "words": []
+   "words": [],
+   "details": []
   },
   {
    "externalID": "shopify:4499511607435",
@@ -4581,7 +5005,8 @@
    "words": [
     "preppy",
     "workwear"
-   ]
+   ],
+   "details": []
   },
   {
    "externalID": "shopify:6575616524427",
@@ -4611,7 +5036,8 @@
    "words": [
     "preppy",
     "vintage"
-   ]
+   ],
+   "details": []
   },
   {
    "externalID": "shopify:7839151718539",
@@ -4638,6 +5064,9 @@
     "graphic",
     "streetwear",
     "grunge"
+   ],
+   "details": [
+    1
    ]
   },
   {
@@ -4660,7 +5089,8 @@
     "https://cdn.shopify.com/s/files/1/1007/8070/products/LOOKS_II_CROP6.jpg?v=1603730432"
    ],
    "shots": null,
-   "words": []
+   "words": [],
+   "details": []
   },
   {
    "externalID": "shopify:7505017241739",
@@ -4706,7 +5136,8 @@
    "words": [
     "preppy",
     "sporty"
-   ]
+   ],
+   "details": []
   },
   {
    "externalID": "shopify:7066764083339",
@@ -4760,6 +5191,11 @@
     "minimal",
     "preppy",
     "sporty"
+   ],
+   "details": [
+    1,
+    3,
+    5
    ]
   },
   {
@@ -4796,6 +5232,12 @@
    "words": [
     "sporty",
     "outdoor"
+   ],
+   "details": [
+    2,
+    3,
+    4,
+    5
    ]
   },
   {
@@ -4833,6 +5275,10 @@
    "words": [
     "western",
     "vintage"
+   ],
+   "details": [
+    1,
+    3
    ]
   },
   {
@@ -4868,7 +5314,8 @@
     "romantic",
     "vintage",
     "boho"
-   ]
+   ],
+   "details": []
   },
   {
    "externalID": "shopify:8112539041965",
@@ -4903,7 +5350,8 @@
     "vintage",
     "western",
     "boho"
-   ]
+   ],
+   "details": []
   },
   {
    "externalID": "shopify:8085137227949",
@@ -4935,6 +5383,9 @@
    "words": [
     "minimal",
     "romantic"
+   ],
+   "details": [
+    5
    ]
   },
   {
@@ -4973,7 +5424,8 @@
    "words": [
     "boho",
     "vintage"
-   ]
+   ],
+   "details": []
   },
   {
    "externalID": "shopify:8766062657709",
@@ -5006,6 +5458,9 @@
    "words": [
     "minimal",
     "vintage"
+   ],
+   "details": [
+    3
    ]
   },
   {
@@ -5042,6 +5497,10 @@
     "western",
     "boho",
     "vintage"
+   ],
+   "details": [
+    3,
+    4
    ]
   },
   {
@@ -5078,6 +5537,9 @@
    "words": [
     "romantic",
     "minimal"
+   ],
+   "details": [
+    5
    ]
   },
   {
@@ -5115,6 +5577,11 @@
     "minimal",
     "vintage",
     "boho"
+   ],
+   "details": [
+    3,
+    4,
+    5
    ]
   },
   {
@@ -5148,6 +5615,9 @@
     "romantic",
     "tailoring",
     "minimal"
+   ],
+   "details": [
+    2
    ]
   },
   {
@@ -5188,7 +5658,8 @@
    "words": [
     "minimal",
     "romantic"
-   ]
+   ],
+   "details": []
   },
   {
    "externalID": "shopify:8435464241325",
@@ -5225,6 +5696,10 @@
    ],
    "words": [
     "minimal"
+   ],
+   "details": [
+    3,
+    4
    ]
   },
   {
@@ -5257,6 +5732,10 @@
    "words": [
     "minimal",
     "romantic"
+   ],
+   "details": [
+    2,
+    3
    ]
   },
   {
@@ -5293,6 +5772,10 @@
    ],
    "words": [
     "minimal"
+   ],
+   "details": [
+    2,
+    3
    ]
   },
   {
@@ -5329,7 +5812,8 @@
     "minimal",
     "romantic",
     "tailoring"
-   ]
+   ],
+   "details": []
   },
   {
    "externalID": "shopify:8535481876653",
@@ -5365,6 +5849,11 @@
     "y2k",
     "graphic",
     "romantic"
+   ],
+   "details": [
+    2,
+    3,
+    4
    ]
   },
   {
@@ -5400,7 +5889,8 @@
    "words": [
     "romantic",
     "minimal"
-   ]
+   ],
+   "details": []
   },
   {
    "externalID": "shopify:8651723145389",
@@ -5438,6 +5928,10 @@
    "words": [
     "minimal",
     "western"
+   ],
+   "details": [
+    3,
+    4
    ]
   },
   {
@@ -5475,6 +5969,10 @@
     "vintage",
     "minimal",
     "boho"
+   ],
+   "details": [
+    2,
+    3
    ]
   },
   {
@@ -5510,6 +6008,9 @@
    "words": [
     "minimal",
     "romantic"
+   ],
+   "details": [
+    4
    ]
   },
   {
@@ -5542,6 +6043,9 @@
    "words": [
     "minimal",
     "grunge"
+   ],
+   "details": [
+    4
    ]
   },
   {
@@ -5576,6 +6080,11 @@
    ],
    "words": [
     "minimal"
+   ],
+   "details": [
+    1,
+    4,
+    5
    ]
   },
   {
@@ -5614,6 +6123,10 @@
     "minimal",
     "vintage",
     "western"
+   ],
+   "details": [
+    3,
+    4
    ]
   },
   {
@@ -5646,7 +6159,8 @@
    "words": [
     "minimal",
     "romantic"
-   ]
+   ],
+   "details": []
   },
   {
    "externalID": "shopify:8232280522925",
@@ -5683,7 +6197,8 @@
    "shots": null,
    "words": [
     "romantic"
-   ]
+   ],
+   "details": []
   },
   {
    "externalID": "shopify:7989689811117",
@@ -5716,6 +6231,10 @@
     "boho",
     "romantic",
     "vintage"
+   ],
+   "details": [
+    3,
+    4
    ]
   },
   {
@@ -5750,6 +6269,10 @@
    "words": [
     "vintage",
     "y2k"
+   ],
+   "details": [
+    3,
+    4
    ]
   },
   {
@@ -5785,6 +6308,9 @@
    "shots": null,
    "words": [
     "minimal"
+   ],
+   "details": [
+    3
    ]
   },
   {
@@ -5815,6 +6341,9 @@
    "words": [
     "preppy",
     "sporty"
+   ],
+   "details": [
+    5
    ]
   },
   {
@@ -5850,6 +6379,9 @@
     "romantic",
     "boho",
     "vintage"
+   ],
+   "details": [
+    1
    ]
   },
   {
@@ -5880,7 +6412,8 @@
    "words": [
     "streetwear",
     "sporty"
-   ]
+   ],
+   "details": []
   },
   {
    "externalID": "shopify:7461161402464",
@@ -5913,6 +6446,9 @@
     "sporty",
     "streetwear",
     "outdoor"
+   ],
+   "details": [
+    4
    ]
   },
   {
@@ -5961,7 +6497,8 @@
     "workwear",
     "vintage",
     "streetwear"
-   ]
+   ],
+   "details": []
   },
   {
    "externalID": "shopify:7627494490208",
@@ -5993,7 +6530,8 @@
     "sporty",
     "streetwear",
     "y2k"
-   ]
+   ],
+   "details": []
   },
   {
    "externalID": "shopify:7278222737504",
@@ -6027,7 +6565,8 @@
     "vintage",
     "grunge",
     "skate"
-   ]
+   ],
+   "details": []
   },
   {
    "externalID": "shopify:7627414372448",
@@ -6057,6 +6596,9 @@
     "streetwear",
     "skate",
     "y2k"
+   ],
+   "details": [
+    1
    ]
   },
   {
@@ -6092,7 +6634,8 @@
     "streetwear",
     "skate",
     "sporty"
-   ]
+   ],
+   "details": []
   },
   {
    "externalID": "shopify:6628204806240",
@@ -6135,7 +6678,8 @@
    "words": [
     "outdoor",
     "sporty"
-   ]
+   ],
+   "details": []
   },
   {
    "externalID": "shopify:7461101371488",
@@ -6171,7 +6715,8 @@
     "streetwear",
     "skate",
     "sporty"
-   ]
+   ],
+   "details": []
   },
   {
    "externalID": "shopify:7749871632480",
@@ -6201,7 +6746,8 @@
     "streetwear",
     "graphic",
     "skate"
-   ]
+   ],
+   "details": []
   },
   {
    "externalID": "shopify:7677807624288",
@@ -6233,6 +6779,9 @@
     "streetwear",
     "sporty",
     "y2k"
+   ],
+   "details": [
+    4
    ]
   },
   {
@@ -6270,7 +6819,8 @@
     "streetwear",
     "minimal",
     "skate"
-   ]
+   ],
+   "details": []
   },
   {
    "externalID": "shopify:7677809950816",
@@ -6303,6 +6853,9 @@
     "workwear",
     "western",
     "streetwear"
+   ],
+   "details": [
+    1
    ]
   },
   {
@@ -6331,7 +6884,8 @@
     "streetwear",
     "graphic",
     "grunge"
-   ]
+   ],
+   "details": []
   },
   {
    "externalID": "shopify:7627500322912",
@@ -6361,7 +6915,8 @@
     "streetwear",
     "y2k",
     "outdoor"
-   ]
+   ],
+   "details": []
   },
   {
    "externalID": "shopify:7627400020064",
@@ -6389,7 +6944,8 @@
     "streetwear",
     "skate",
     "grunge"
-   ]
+   ],
+   "details": []
   },
   {
    "externalID": "shopify:7693808042080",
@@ -6421,6 +6977,9 @@
     "streetwear",
     "skate",
     "graphic"
+   ],
+   "details": [
+    4
    ]
   },
   {
@@ -6457,7 +7016,8 @@
     "outdoor",
     "streetwear",
     "sporty"
-   ]
+   ],
+   "details": []
   },
   {
    "externalID": "shopify:7354905722976",
@@ -6491,6 +7051,10 @@
     "outdoor",
     "workwear",
     "streetwear"
+   ],
+   "details": [
+    1,
+    5
    ]
   },
   {
@@ -6522,6 +7086,9 @@
     "streetwear",
     "minimal",
     "preppy"
+   ],
+   "details": [
+    3
    ]
   },
   {
@@ -6550,7 +7117,8 @@
    "words": [
     "streetwear",
     "y2k"
-   ]
+   ],
+   "details": []
   },
   {
    "externalID": "shopify:7627406639200",
@@ -6582,6 +7150,9 @@
     "outdoor",
     "streetwear",
     "sporty"
+   ],
+   "details": [
+    1
    ]
   },
   {
@@ -6610,7 +7181,8 @@
     "streetwear",
     "grunge",
     "outdoor"
-   ]
+   ],
+   "details": []
   },
   {
    "externalID": "shopify:7164232269920",
@@ -6656,7 +7228,8 @@
     "sporty",
     "streetwear",
     "skate"
-   ]
+   ],
+   "details": []
   },
   {
    "externalID": "shopify:7354932592736",
@@ -6687,7 +7260,8 @@
     "streetwear",
     "skate",
     "vintage"
-   ]
+   ],
+   "details": []
   },
   {
    "externalID": "shopify:7515838185568",
@@ -6716,7 +7290,8 @@
     "streetwear",
     "skate",
     "y2k"
-   ]
+   ],
+   "details": []
   },
   {
    "externalID": "shopify:7753343762528",
@@ -6745,7 +7320,8 @@
     "streetwear",
     "graphic",
     "skate"
-   ]
+   ],
+   "details": []
   },
   {
    "externalID": "shopify:7461175296096",
@@ -6777,6 +7353,9 @@
     "streetwear",
     "skate",
     "sporty"
+   ],
+   "details": [
+    3
    ]
   },
   {
@@ -6813,7 +7392,1119 @@
     "streetwear",
     "minimal",
     "skate"
-   ]
+   ],
+   "details": []
+  },
+  {
+   "externalID": "shopify:8112528916653",
+   "brand": "STAUD",
+   "title": "Wally Boot | Espresso",
+   "productType": "SHOES",
+   "tags": [
+    "boot-heeled",
+    "boot-knee",
+    "category-shoes",
+    "colorgroup-brown",
+    "colorway-group-core",
+    "fabric-leather",
+    "kiwi-size-guide",
+    "Online",
+    "parent-type-boots",
+    "pattern-solid",
+    "PREFALL25BOOTLAUNCH",
+    "PREFALL25LAUNCH"
+   ],
+   "photos": [
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/STAUD_WALLYBOOT_ESPRESSO_ECOM_1_edit.jpg?v=1757435741",
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/STAUD_WALLYBOOT_ESPRESSO_ECOM_2_edit.jpg?v=1755735554",
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/66-WALLY_BOOT_ESPRESSO_1270_webSHOEHOVER.jpg?v=1757435741",
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/72-WALLY_BOOT_ESPRESSO_1214_web.jpg?v=1757435751",
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/67-WALLY_BOOT_ESPRESSO_1268_web.jpg?v=1755735554",
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/69-WALLY_BOOT_ESPRESSO_1251_edit.jpg?v=1757435751"
+   ],
+   "shots": [
+    0,
+    1
+   ],
+   "words": [],
+   "details": [
+    3,
+    5
+   ],
+   "group": "close-ups"
+  },
+  {
+   "externalID": "shopify:8232287633581",
+   "brand": "STAUD",
+   "title": "Kyle Stretch Flare Jean | Indigo",
+   "productType": "DENIM",
+   "tags": [
+    "badge: exclusive",
+    "category-clothing",
+    "collection-flare-leg",
+    "colorgroup-blue",
+    "DENIM25LAUNCH",
+    "DENIM25LAUNCHCOLLECTION",
+    "fabric-denim",
+    "FALL 2025",
+    "kiwi-size-guide",
+    "Online",
+    "parent-type-bottoms",
+    "pattern-solid",
+    "STAUDDENIMLAUNCH"
+   ],
+   "photos": [
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/8232287633581_kyle-stretch-flare-jean-indigo_d0cb82ac-7a4d-427d-b31b-7fcfe87d0331.jpg?v=1790031032",
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/212-KYLE_INDIGO_0659_web.jpg?v=1770174187",
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/214-KYLE_INDIGO_0626_web.jpg?v=1770174195",
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/210-KYLE_INDIGO_0665_web.jpg?v=1770174270",
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/215-KYLE_INDIGO_0605_web.jpg?v=1770174171",
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/213-KYLE_INDIGO_0649_web.jpg?v=1770174217"
+   ],
+   "shots": null,
+   "words": [],
+   "details": [
+    1,
+    3,
+    5
+   ],
+   "group": "close-ups"
+  },
+  {
+   "externalID": "shopify:8553214214317",
+   "brand": "STAUD",
+   "title": "Emsley Bikini Bottom | Espresso Dark Chocolate",
+   "productType": "SWIM",
+   "tags": [
+    "category-swim",
+    "colorgroup-brown",
+    "core-instock",
+    "fabric-nylon",
+    "Online",
+    "parent-type-swim-bottom",
+    "pattern-solid",
+    "STAUDSWIM2024",
+    "SU26",
+    "SU26DROP1"
+   ],
+   "photos": [
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/15-S26P3007SM-ESDC-XS_2005_web.jpg?v=1777420472",
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/20-S26P3007SM-ESDC-XS_1984_web_edited.jpg?v=1777981687",
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/17-S26P3007SM-ESDC-XS_1995_web.jpg?v=1777420000",
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/22-S26P3007SM-ESDC-XS_1973_web.jpg?v=1777420317",
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/STAUD_S26P3007SM-ESDC-XS_ECOM_1.jpg?v=1777420190",
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/STAUD_swatch_S26P3007SM-ESDC-XS_ECOM_1_6b8d4a44-cb1a-4a39-aa83-6ae97832406e.jpg?v=1778378821"
+   ],
+   "shots": [
+    4
+   ],
+   "words": [],
+   "details": [
+    0,
+    5
+   ],
+   "group": "close-ups"
+  },
+  {
+   "externalID": "shopify:8232278229165",
+   "brand": "STAUD",
+   "title": "Alba Ballet Slingback | Cherry Blossom",
+   "productType": "SHOES",
+   "tags": [
+    "category-shoes",
+    "colorgroup-pink",
+    "DENIM25LAUNCH",
+    "fabric-leather",
+    "FALL 2025",
+    "Online",
+    "parent-type-heels",
+    "pattern-solid"
+   ],
+   "photos": [
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/STAUD_ALBABALLETSLINGBACK_CHERRYBLOSSOM_ECOM_1.jpg?v=1752545162",
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/STAUD_ALBABALLETSLINGBACK_CHERRYBLOSSOM_ECOM_2.jpg?v=1752545159",
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/STAUD_ALBABALLETSLINGBACK_CHERRYBLOSSOM_ECOM_4.jpg?v=1752545227",
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/STAUD_ALBABALLETSLINGBACK_CHERRYBLOSSOM_ECOM_5.jpg?v=1752545239",
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/STAUD_ALBABALLETSLINGBACK_CHERRYBLOSSOM_ECOM_3.jpg?v=1752545187",
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/STAUD_swatch_ALBABALLETSLINGBACK_CHERRYBLOSSOM_ECOM_4_30814cc9-fff9-4884-8c7c-1c48e61ce973.jpg?v=1752545183"
+   ],
+   "shots": [
+    0,
+    1,
+    2,
+    3,
+    4
+   ],
+   "words": [],
+   "details": [
+    5
+   ],
+   "group": "close-ups"
+  },
+  {
+   "externalID": "shopify:8112538878125",
+   "brand": "STAUD",
+   "title": "Brigitte Heel | Espresso",
+   "productType": "SHOES",
+   "tags": [
+    "category-shoes",
+    "colorgroup-brown",
+    "fabric-leather",
+    "Online",
+    "parent-type-heels",
+    "pattern-solid",
+    "PREFALL25LAUNCH"
+   ],
+   "photos": [
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/STAUD_BRIGITTEHEEL_ESPRESSO_ECOM_1_edit.jpg?v=1749781458",
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/STAUD_BRIGITTEHEEL_ESPRESSO_ECOM_2_edit.jpg?v=1754070314",
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/9-F25P6009BN-ESPR-36_1822_web.jpg?v=1785442333",
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/STAUD_BRIGITTEHEEL_ESPRESSO_ECOM_4_edit_4b8aa27b-1cec-42fd-9b80-6dd69b97dfa5.jpg?v=1754070314",
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/STAUD_BRIGITTEHEEL_ESPRESSO_ECOM_3_edit.jpg?v=1754070314",
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/STAUD_BRIGITTEHEEL_ESPRESSO_ECOM_5_edit_5208cb1c-b2d1-459e-a044-adb959474a99.jpg?v=1754070314"
+   ],
+   "shots": [
+    0,
+    1,
+    3,
+    4,
+    5
+   ],
+   "words": [],
+   "details": [],
+   "group": "close-ups"
+  },
+  {
+   "externalID": "shopify:8112528195757",
+   "brand": "STAUD",
+   "title": "Ollie Bag | Tan Suede",
+   "productType": "FASHION HANDBAGS",
+   "tags": [
+    "category-bags",
+    "collection-bags",
+    "colorgroup-brown",
+    "colorgroup-tan",
+    "colorway-group-seasonal",
+    "DENIM25LAUNCH",
+    "fabric-suede",
+    "GIFTGUIDE2025",
+    "kiwi-size-guide",
+    "mothersday2026",
+    "Online",
+    "parent-type-shoulder",
+    "pattern-solid",
+    "PREFALL25LAUNCH"
+   ],
+   "photos": [
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/STAUD_OLLIEBAG_TAN_ECOM_1_edit.jpg?v=1748398477",
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/OLLIE_BAG_TAN_3919_web.jpg?v=1752084251",
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/STAUD_OLLIEBAG_TAN_ECOM_2_edit.jpg?v=1752080087",
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/OLLIE_BAG_TAN_3923_web.jpg?v=1752084249",
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/STAUD_OLLIEBAG_TAN_ECOM_3_edit.jpg?v=1752080087",
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/STAUD_OLLIEBAG_TAN_ECOM_4_edit.jpg?v=1752080087"
+   ],
+   "shots": [
+    0,
+    2
+   ],
+   "words": [],
+   "details": [
+    3,
+    4,
+    5
+   ],
+   "group": "close-ups"
+  },
+  {
+   "externalID": "shopify:8306615615661",
+   "brand": "STAUD",
+   "title": "Ollie Bag | Black Croco",
+   "productType": "FASHION CORE HANDBAGS",
+   "tags": [
+    "category-bags",
+    "collection-bags",
+    "colorgroup-black",
+    "colorway-group-seasonal",
+    "fabric-leather",
+    "GIFTGUIDE2025",
+    "HOL25",
+    "HOL25DROP1",
+    "HOL25EXOTICS",
+    "HOLIDAY 2025",
+    "HOLIDAY25DRESSCAPSULE",
+    "kiwi-size-guide",
+    "parent-type-shoulder",
+    "pattern-animal",
+    "RE26",
+    "RESORT 2026"
+   ],
+   "photos": [
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/STAUD_OLLIEBAG_BLACKCROCO_ECOMM_WHOLESALE_1.jpg?v=1760406374",
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/STAUD_OLLIEBAG_BLACKCROCO_ECOMM_WHOLESALE_2.jpg?v=1760406376",
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/STAUD_OLLIEBAG_BLACKCROCO_ECOMM_WHOLESALE_3.jpg?v=1760406360",
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/STAUD_OLLIEBAG_BLACKCROCO_ECOMM_WHOLESALE_4.jpg?v=1760406357",
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/STAUD_swatchOLLIEBAG_BLACKCROCO_ECOMM_WHOLESALE_1_7fd9bda0-3f6e-4985-8e82-c5c94b142128.jpg?v=1760406338"
+   ],
+   "shots": [
+    0,
+    1
+   ],
+   "words": [],
+   "details": [
+    2,
+    3,
+    4
+   ],
+   "group": "close-ups"
+  },
+  {
+   "externalID": "shopify:8232275771565",
+   "brand": "STAUD",
+   "title": "Maude Shoulder Bag | Truffle",
+   "productType": "FASHION HANDBAGS",
+   "tags": [
+    "category-bags",
+    "collection-bags",
+    "colorgroup-brown",
+    "fabric-leather",
+    "FALL 2025",
+    "FALL25LAUNCH",
+    "GIFTGUIDE2025",
+    "kiwi-size-guide",
+    "Online",
+    "parent-type-shoulder",
+    "pattern-solid"
+   ],
+   "photos": [
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/STAUD_MAUDESHOULDERBAG_TRUFFLE_ECOM_1.jpg?v=1754009519",
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/297-MAUDE_SHOULDER_BAG_TRUF_0172_web.jpg?v=1754005111",
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/301-JEANETT_TOP_WDLF_0128_web_34c9910a-8d3a-460d-86f3-fc3e9b3c96f5.jpg?v=1754005188",
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/298-MAUDE_SHOULDER_BAG_TRUF_0158_web.jpg?v=1754005111",
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/STAUD_MAUDESHOULDERBAG_TRUFFLE_ECOM_2.jpg?v=1754009516",
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/STAUD_MAUDESHOULDERBAG_TRUFFLE_ECOM_3.jpg?v=1754009382"
+   ],
+   "shots": [
+    0,
+    4
+   ],
+   "words": [],
+   "details": [
+    3,
+    5
+   ],
+   "group": "close-ups"
+  },
+  {
+   "externalID": "shopify:8112529014957",
+   "brand": "STAUD",
+   "title": "Wally Flat Boot | Espresso",
+   "productType": "SHOES",
+   "tags": [
+    "boot-flat",
+    "boot-knee",
+    "category-shoes",
+    "colorgroup-brown",
+    "fabric-leather",
+    "kiwi-size-guide",
+    "Online",
+    "parent-type-boots",
+    "pattern-solid",
+    "PREFALL25BOOTLAUNCH",
+    "PREFALL25LAUNCH"
+   ],
+   "photos": [
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/STAUD_WALLYFLATBOOT_ESPRESSO_ECOM_1_edit.jpg?v=1748978860",
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/STAUD_WALLYFLATBOOT_ESPRESSO_ECOM_2_edit.jpg?v=1753983349",
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/80-WALLY_FLAT_BOOT_ESPR_0409_webSHOEHOVER.jpg?v=1753988959",
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/STAUD_WALLYFLATBOOT_ESPRESSO_ECOM_3_edit.jpg?v=1753983349",
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/STAUD_WALLYFLATBOOT_ESPRESSO_ECOM_4_edit.jpg?v=1753983349",
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/STAUD_WALLYFLATBOOT_ESPRESSO_ECOM_5_edit.jpg?v=1753983349"
+   ],
+   "shots": [
+    0,
+    1,
+    3
+   ],
+   "words": [],
+   "details": [
+    4,
+    5
+   ],
+   "group": "close-ups"
+  },
+  {
+   "externalID": "shopify:8220308734125",
+   "brand": "STAUD",
+   "title": "Wally Boot | Black",
+   "productType": "SHOES",
+   "tags": [
+    "boot-heeled",
+    "boot-knee",
+    "category-shoes",
+    "colorgroup-black",
+    "colorway-group-core",
+    "fabric-leather",
+    "GIFTGUIDE2025",
+    "kiwi-size-guide",
+    "Online",
+    "parent-type-boots",
+    "pattern-solid",
+    "PREFALL25BOOTLAUNCH",
+    "PREFALL25LAUNCH"
+   ],
+   "photos": [
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/STAUD_WALLY_BOOT_BLACK_FALL_22_ECOM_1_74daf201-555d-48bd-a9b1-37a6e6e91451_1.jpg?v=1751934817",
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/STAUD_WALLY_BOOT_BLACK_FALL_22_ECOM_2_f1af414f-f01b-4429-8d4a-0f3ef8455c18.jpg?v=1753981601",
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/37-WALLY_BOOT_BLACK_1435_web.jpg?v=1753981601",
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/33-WALLY_BOOT_BLACK_1448_web_1_SHOEHOVER.jpg?v=1753988945",
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/35-WALLY_BOOT_BLACK_1440_web.jpg?v=1753981601",
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/STAUD_WALLY_BOOT_BLACK_FALL_22_ECOM_3_fa589bad-8543-4ec3-8d58-2d9c9925d4b1.jpg?v=1753981601"
+   ],
+   "shots": [
+    0,
+    1,
+    5
+   ],
+   "words": [],
+   "details": [
+    3,
+    4
+   ],
+   "group": "close-ups"
+  },
+  {
+   "externalID": "shopify:8306610602157",
+   "brand": "STAUD",
+   "title": "Mini Ilana Dress | Stardust Onyx",
+   "productType": "DRESSES",
+   "tags": [
+    "category-clothing",
+    "colorgroup-black",
+    "core-instock",
+    "fabric-tulle",
+    "FEB26MARKDOWN",
+    "HOL25",
+    "HOL25DROP1",
+    "HOLIDAY 2025",
+    "HOLIDAY25DRESSCAPSULE",
+    "kiwi-size-guide",
+    "length-mini",
+    "NOV25SALE",
+    "OCT26SAMPLESALE",
+    "OCT26SS40OFF",
+    "parent-type-dresses",
+    "pattern-solid",
+    "RE26",
+    "RESORT 2026",
+    "SALE",
+    "sleeve-short-sleeve"
+   ],
+   "photos": [
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/63-ILANA_MINI_DRESS_SDOX_0957_web_edit.jpg?v=1766001535",
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/60-ILANA_MINI_DRESS_SDOX_0976_web_edit.jpg?v=1766001542",
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/61-ILANA_MINI_DRESS_SDOX_0969_web_edit.jpg?v=1766001545",
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/59-ILANA_MINI_DRESS_SDOX_0983_web_edit.jpg?v=1766001547",
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/58-ILANA_MINI_DRESS_SDOX_0985_web_edit.jpg?v=1766001540",
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/62-ILANA_MINI_DRESS_SDOX_0963_web_edit.jpg?v=1766001537"
+   ],
+   "shots": null,
+   "words": [],
+   "details": [
+    4
+   ],
+   "group": "close-ups"
+  },
+  {
+   "externalID": "shopify:8535478567085",
+   "brand": "STAUD",
+   "title": "Karla Bag | Sea Glass Multi",
+   "productType": "FASHION HANDBAGS",
+   "tags": [
+    "category-bags",
+    "collection-bags",
+    "colorgroup-multi",
+    "fabric-beaded",
+    "kiwi-size-guide",
+    "Online",
+    "pattern-multi",
+    "SU26",
+    "SU26DROP1",
+    "SU26DROP1PREORDER2",
+    "SUMMER 2026",
+    "SUPF26"
+   ],
+   "photos": [
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/STAUD_H26P4020GM-SEAM-OS_ECOM_1.jpg?v=1777088735",
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/70-H26P4020GM-SEAM-OS_1679_web.jpg?v=1777420364",
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/73-H26P4020GM-SEAM-OS_1615_web.jpg?v=1777420336",
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/71-H26P4020GM-SEAM-OS_1677_web.jpg?v=1777420319",
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/72-H26P4020GM-SEAM-OS_1619_web.jpg?v=1777419957",
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/STAUD_H26P4020GM-SEAM-OS_ECOM_2.jpg?v=1777088789"
+   ],
+   "shots": [
+    0,
+    5
+   ],
+   "words": [],
+   "details": [
+    3
+   ],
+   "group": "close-ups"
+  },
+  {
+   "externalID": "shopify:8306605031597",
+   "brand": "STAUD",
+   "title": "Jewel Bucket Bag | Multi Color Beads",
+   "productType": "FASHION HANDBAGS",
+   "tags": [
+    "colorgroup-multi",
+    "fabric-beaded",
+    "kiwi-size-guide",
+    "Online",
+    "parent-type-bucket",
+    "pattern-multi",
+    "RE26",
+    "RE26DROP3",
+    "RE26VACATION",
+    "RE26VACATIONOCCASION",
+    "RESORT 2026"
+   ],
+   "photos": [
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/STAUD_JEWELBUCKETBAG_MULTICOLORBEADS_ECOMM_WHOLESALE_2.jpg?v=1763517935",
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/15-JEWEL_BUCKET_MTCB_1789_web.jpg?v=1769728771",
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/STAUD_JEWELBUCKETBAG_MULTICOLORBEADS_ECOMM_WHOLESALE_1.jpg?v=1769728771",
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/21-AKARI_DRESS_EART_1764_web_1dada3ef-cdb7-4eb8-85b6-197339fde76a.jpg?v=1769728771",
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/STAUD_JEWELBUCKETBAG_MULTICOLORBEADS_ECOMM_WHOLESALE_3.jpg?v=1769728771",
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/22-JEWEL_BUCKET_MTCB_1759_web_e91302a6-87d5-42eb-895b-b67b4a4e0e50.jpg?v=1769728771"
+   ],
+   "shots": [
+    0,
+    2,
+    4
+   ],
+   "words": [],
+   "details": [],
+   "group": "close-ups"
+  },
+  {
+   "externalID": "shopify:8306607882413",
+   "brand": "STAUD",
+   "title": "Miles Zip Ankle Boot | Espresso",
+   "productType": "SHOES",
+   "tags": [
+    "boot-ankle",
+    "boot-lug-sole",
+    "category-shoes",
+    "colorgroup-brown",
+    "fabric-leather",
+    "GIFTGUIDE2025",
+    "HOL25",
+    "HOL25DROP1",
+    "HOL25EXOTICS",
+    "Online",
+    "parent-type-boots",
+    "pattern-solid",
+    "RE26",
+    "RE26WINTERCAPSULE",
+    "RESORT 2026"
+   ],
+   "photos": [
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/STAUD_MILESZIPANKLEBOOT_ESPRESSO_ECOMM_1.jpg?v=1758762016",
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/STAUD_MILESZIPANKLEBOOT_ESPRESSO_ECOMM_2.jpg?v=1761335698",
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/149-MILES_ZIP_ANKLE_BOOT_ESPRESSO_1009_web_1_SHOEHOVER.jpg?v=1761342324",
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/156-MILES_ZIP_ANKLE_BOOT_ESPRESSO_1045_web.jpg?v=1761335698",
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/157-MILES_ZIP_ANKLE_BOOT_ESPRESSO_1055_web_f48304e8-31ef-4d79-b816-d3065bb8d207.jpg?v=1761335698",
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/STAUD_MILESZIPANKLEBOOT_ESPRESSO_ECOMM_3.jpg?v=1761335698"
+   ],
+   "shots": [
+    0,
+    1,
+    5
+   ],
+   "words": [],
+   "details": [
+    3,
+    4
+   ],
+   "group": "close-ups"
+  },
+  {
+   "externalID": "shopify:8232277770413",
+   "brand": "STAUD",
+   "title": "Wally Flat Ankle Boot | Espresso",
+   "productType": "SHOES",
+   "tags": [
+    "boot-ankle",
+    "boot-flat",
+    "category-shoes",
+    "colorgroup-brown",
+    "fabric-leather",
+    "FALL 2025",
+    "FALL25LAUNCH",
+    "GIFTGUIDE2025",
+    "kiwi-size-guide",
+    "Online",
+    "parent-type-boots",
+    "pattern-solid"
+   ],
+   "photos": [
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/STAUD_WALLYFLATANKLEBOOT_ESPRESSO_ECOM_1.jpg?v=1754938384",
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/STAUD_WALLYFLATANKLEBOOT_ESPRESSO_ECOM_2.jpg?v=1754938422",
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/15-WALLY_FLAT_ANKLE_BOOT_ESPR_retouch_dirt_1573_webSHOEHOVER.jpg?v=1754938366",
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/12-WALLY_FLAT_ANKLE_BOOT_ESPR_retouch_dirt_1596_web.jpg?v=1754938366",
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/13-WALLY_FLAT_ANKLE_BOOT_ESPR_retouch_dirt_1583_web.jpg?v=1754938366",
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/STAUD_WALLYFLATANKLEBOOT_ESPRESSO_ECOM_3.jpg?v=1754938419"
+   ],
+   "shots": [
+    0,
+    1,
+    5
+   ],
+   "words": [],
+   "details": [
+    3,
+    4
+   ],
+   "group": "close-ups"
+  },
+  {
+   "externalID": "shopify:8398509015213",
+   "brand": "STAUD",
+   "title": "Brigitte Leather Mule | Espresso",
+   "productType": "SHOES",
+   "tags": [
+    "category-shoes",
+    "colorgroup-brown",
+    "colorway-group-core",
+    "fabric-leather",
+    "Online",
+    "parent-type-heels",
+    "pattern-solid",
+    "PREFALL25LAUNCH"
+   ],
+   "photos": [
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/STAUD_BRIGITTEMULE_ESPRESSO_ECOM_1_edit.jpg?v=1762547839",
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/STAUD_BRIGITTEMULE_ESPRESSO_ECOM_2_edit.jpg?v=1751996048",
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/22-F25R6001LN-ESPR-36_0892_web.jpg?v=1786578271",
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/20-F25R6001LN-ESPR-36_0920_web.jpg?v=1786578324",
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/16-F25R6001LN-ESPR-36_0951_web.jpg?v=1786578297",
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/15-F25R6001LN-ESPR-36_0956_web.jpg?v=1786578338"
+   ],
+   "shots": [
+    0,
+    1
+   ],
+   "words": [],
+   "details": [
+    4,
+    5
+   ],
+   "group": "close-ups"
+  },
+  {
+   "externalID": "shopify:8535473619117",
+   "brand": "STAUD",
+   "title": "Giada Sweater | Nantucket Hydrangea",
+   "productType": "SWEATERS",
+   "tags": [
+    "colorgroup-white",
+    "core-instock",
+    "in-store-only",
+    "Online",
+    "parent-type-sweaters",
+    "pattern-floral",
+    "sleeve-long-sleeve",
+    "SU26",
+    "SU26NANTUCKET",
+    "SUMMER 2026",
+    "SUPF26"
+   ],
+   "photos": [
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/Giada-sweater-nantucket-hydrangea_waist_up_crop.jpg?v=1790700631",
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/163-R26P3113CA-HYD-XS_0682_web.jpg?v=1774499315",
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/162-R26P3113CA-HYD-XS_0710_web.jpg?v=1774499223",
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/162-swatch_R26P3113CA-HYD-XS_0710_web_a8fb45f7-0337-456e-b8d4-85d7511f4fc7.jpg?v=1778530135"
+   ],
+   "shots": null,
+   "words": [],
+   "details": [
+    3
+   ],
+   "group": "close-ups"
+  },
+  {
+   "externalID": "shopify:8232275181741",
+   "brand": "STAUD",
+   "title": "Maude Mini Carryall | Espresso",
+   "productType": "FASHION HANDBAGS",
+   "tags": [
+    "category-bags",
+    "collection-bags",
+    "colorgroup-brown",
+    "fabric-leather",
+    "FALL 2025",
+    "FALL25LAUNCH",
+    "GIFTGUIDE2025",
+    "kiwi-size-guide",
+    "Online",
+    "parent-type-crossbody",
+    "pattern-solid"
+   ],
+   "photos": [
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/STAUD_MAUDEMINICARRYALL_ESPRESSO_ECOM_1-v2_4c17b371-7f1c-47f5-9289-a11461031d56.jpg?v=1755550235",
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/H25F4034VR-ESPR-OS_1294_web_51e89626-2a13-45fd-bf96-22904c9281eb.jpg?v=1792456382",
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/H25F4034VR-ESPR-OS_1289_web_c5427761-70c4-4502-8e74-d40027ad9340.jpg?v=1792456850",
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/H25F4034VR-ESPR-OS_1277_web_5af654c2-7514-4618-ad74-0c858a01a21b.jpg?v=1792456479",
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/STAUD_MAUDEMINICARRYALL_ESPRESSO_ECOM_2-v2.jpg?v=1755550239",
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/STAUD_MAUDEMINICARRYALL_ESPRESSO_ECOM_4.jpg?v=1755545082"
+   ],
+   "shots": [
+    0,
+    4
+   ],
+   "words": [],
+   "details": [
+    5
+   ],
+   "group": "close-ups"
+  },
+  {
+   "externalID": "shopify:8435254034605",
+   "brand": "STAUD",
+   "title": "Gus Distressed Relaxed Jean | Salt Wash",
+   "productType": "DENIM",
+   "tags": [
+    "badge: exclusive",
+    "category-clothing",
+    "colorgroup-blue",
+    "colorway-group-seasonal",
+    "DENIM25LAUNCHCOLLECTION",
+    "fabric-denim",
+    "kiwi-size-guide",
+    "Online",
+    "parent-type-bottoms",
+    "pattern-solid",
+    "RE26DROP4",
+    "SP26",
+    "sp26drop1",
+    "SP26EXCL",
+    "SPRING 2026"
+   ],
+   "photos": [
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/8435254034605_gus-distressed-relaxed-jean-salt-wash_9251455d-acc6-4981-a3ef-fa739b2f8b04.jpg?v=1790030592",
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/410-GUS_VINTAGE_LIGHT_RIPS_colorcorrect_sandal_black_0097_web.jpg?v=1768506037",
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/409-GUS_VINTAGE_LIGHT_RIPS_colorcorrect_sandal_black_0103_web.jpg?v=1768506037",
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/398-GUS_VINTAGE_LIGHT_RIPS_colorcorrect_sandal_black_0160_web.jpg?v=1768506037",
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/416-GUS_VINTAGE_LIGHT_RIPS_colorcorrect_sandal_black_0036_web.jpg?v=1768506037",
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/399-GUS_VINTAGE_LIGHT_RIPS_colorcorrect_sandal_black_0152_web.jpg?v=1767723018"
+   ],
+   "shots": null,
+   "words": [],
+   "details": [
+    3,
+    5
+   ],
+   "group": "close-ups"
+  },
+  {
+   "externalID": "shopify:8358001279149",
+   "brand": "STAUD",
+   "title": "Custom STAUD x C.Bonz Serrano Cashmere Sweater | Black",
+   "productType": "CUSTOM PET SWEATERS",
+   "tags": [
+    "category-clothing",
+    "category-custom-pet",
+    "collection-pet-family",
+    "colorgroup-blue",
+    "dog sweater",
+    "fabric-cashmere",
+    "final-sale",
+    "GIFTGUIDE2025",
+    "hide_eta",
+    "kiwi-size-guide",
+    "oos-core",
+    "parent-type-custom-sweaters",
+    "pattern-animal",
+    "pet-portrait"
+   ],
+   "photos": [
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/8358001279149_custom-staud-x-c-bonz-serrano-cashmere-sweater-black_e3c5d31c-6615-4ccb-a447-5b5f2d8504b7.jpg?v=1790031346",
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/298-R24F3159CS_CASHMERE_OVERSIZED_NVY_0784_web_1.jpg?v=1761271525",
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/306-R24F3159CS_CASHMERE_OVERSIZED_NVY_0698_web_1.jpg?v=1761271522",
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/STAUD_CASHMEREOVERSIZEDCREWSWEATER_BLACK_WEBRES_1.jpg?v=1761271520",
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/swatch_Screenshot2024-07-23174020_86a562fa-30c6-47cd-aa9b-d1811ff5ec63.png?v=1761672661"
+   ],
+   "shots": [
+    3
+   ],
+   "words": [],
+   "details": [
+    4
+   ],
+   "group": "close-ups"
+  },
+  {
+   "externalID": "shopify:8435248595117",
+   "brand": "STAUD",
+   "title": "Halton Jacket | Botanica Ivory",
+   "productType": "JACKETS",
+   "tags": [
+    "category-clothing",
+    "collared",
+    "collection-bridal",
+    "colorgroup-white",
+    "core-instock",
+    "fabric-brocade",
+    "kiwi-size-guide",
+    "Online",
+    "parent-type-outerwear",
+    "pattern-solid",
+    "sleeve-long-sleeve",
+    "SP26",
+    "SP26DROP3",
+    "SPRING 2026"
+   ],
+   "photos": [
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/8435248595117_halton-jacket-botanica-ivory_c7b8f182-2739-451b-b79a-e5840fbd32d7.jpg?v=1790031250",
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/198-HALTON_JACKET_BTIV_0458_web.jpg?v=1773885085",
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/195-HALTON_JACKET_BTIV_0490_web.jpg?v=1773885068",
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/193-HALTON_JACKET_BTIV_0497_web.jpg?v=1773885083",
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/191-HALTON_JACKET_BTIV_0513_web.jpg?v=1773885079",
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/190-HALTON_JACKET_BTIV_0517_web.jpg?v=1773885093"
+   ],
+   "shots": null,
+   "words": [],
+   "details": [],
+   "group": "close-ups"
+  },
+  {
+   "externalID": "shopify:8220308701357",
+   "brand": "STAUD",
+   "title": "Wally Boot | Tan Suede",
+   "productType": "SHOES",
+   "tags": [
+    "boot-heeled",
+    "boot-knee",
+    "category-shoes",
+    "colorgroup-tan",
+    "colorway-group-core",
+    "fabric-suede",
+    "kiwi-size-guide",
+    "Online",
+    "parent-type-boots",
+    "pattern-solid",
+    "PREFALL25BOOTLAUNCH",
+    "PREFALL25LAUNCH"
+   ],
+   "photos": [
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/STAUD_WALLY_BOOT_TANSUEDE_FALL_22_ECOM_1_fd0d197a-ff8c-47d3-8123-f2d8d6f14032_3.jpg?v=1751934855",
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/STAUD_WALLY_BOOT_TANSUEDE_FALL_22_ECOM_2_aff062e5-c2af-42be-b980-bf46b9a575c1_1.jpg?v=1751934833",
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/STAUD_WALLY_BOOT_TANSUEDE_FALL_22_ECOM_3_05e5b781-0371-4d18-acad-24437d377a9f_1.jpg?v=1751934798",
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/STAUD_WALLY_BOOT_TANSUEDE_FALL_22_ECOM_4_1.jpg?v=1751934869",
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/STAUD_WALLY_BOOT_TANSUEDE_FALL_22_ECOM_5_1.jpg?v=1751934895",
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/STAUD_swatch_WALLY_BOOT_TANSUEDE_FALL_22_ECOM_1_3_7ae052fc-015b-4d5d-8645-9787e75efd9d.jpg?v=1751934937"
+   ],
+   "shots": [
+    0,
+    1,
+    2
+   ],
+   "words": [],
+   "details": [
+    3,
+    4,
+    5
+   ],
+   "group": "close-ups"
+  },
+  {
+   "externalID": "shopify:8232286847149",
+   "brand": "STAUD",
+   "title": "Teddy Straight Jean | Stone Blue Stretch",
+   "productType": "DENIM",
+   "tags": [
+    "badge: exclusive",
+    "category-clothing",
+    "collection-straight-leg",
+    "colorgroup-blue",
+    "DENIM25LAUNCH",
+    "DENIM25LAUNCHCOLLECTION",
+    "fabric-denim",
+    "FALL 2025",
+    "kiwi-size-guide",
+    "Online",
+    "parent-type-bottoms",
+    "pattern-solid",
+    "STAUDDENIMLAUNCH",
+    "straight"
+   ],
+   "photos": [
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/8232286847149_teddy-straight-jean-stone-blue-stretch_714a1cc9-e707-4e04-a616-61ba566308c0.jpg?v=1790030749",
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/16-TEDDY_STRETCH_02_1524_web.jpg?v=1753467891",
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/8-TEDDY_STRETCH_02_1582_web.jpg?v=1753467891",
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/4-TEDDY_STRETCH_02_1596_web.jpg?v=1753467891",
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/17-TEDDY_STRETCH_02_1518_web.jpg?v=1753467891",
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/TEDDY_STONEBLUE_3-BUTTONFLY_f966ecd6-2f50-4690-b0b3-9994d2519731.jpg?v=1753895554"
+   ],
+   "shots": null,
+   "words": [],
+   "details": [
+    3,
+    5
+   ],
+   "group": "close-ups"
+  },
+  {
+   "externalID": "shopify:8232287142061",
+   "brand": "STAUD",
+   "title": "Jackson Barrel Jean | Earth",
+   "productType": "DENIM",
+   "tags": [
+    "badge: exclusive",
+    "category-clothing",
+    "collection-barrel-leg",
+    "colorgroup-brown",
+    "DENIM25LAUNCH",
+    "DENIM25LAUNCHCOLLECTION",
+    "fabric-denim",
+    "FALL 2025",
+    "kiwi-size-guide",
+    "Online",
+    "parent-type-bottoms",
+    "pattern-solid",
+    "STAUDDENIMLAUNCH"
+   ],
+   "photos": [
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/8232287142061_jackson-barrel-jean-earth_b925fd7d-9416-4351-9cf5-8739ba9e6bd8.jpg?v=1790031121",
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/233-JACKSON_GLEN_VINTAGE_EARTH_0466_web.jpg?v=1770174255",
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/218-JACKSON_VINTAGE_EARTH_0581_web.jpg?v=1770174249",
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/217-JACKSON_VINTAGE_EARTH_0590_web.jpg?v=1770174253",
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/221-JACKSON_VINTAGE_EARTH_0558_web.jpg?v=1770174259",
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/225-JACKSON_VINTAGE_EARTH_0540_web.jpg?v=1770174232"
+   ],
+   "shots": null,
+   "words": [],
+   "details": [
+    5
+   ],
+   "group": "close-ups"
+  },
+  {
+   "externalID": "shopify:8232276459693",
+   "brand": "STAUD",
+   "title": "Large Maude Carryall | Black",
+   "productType": "FASHION HANDBAGS",
+   "tags": [
+    "badge: exclusive",
+    "category-bags",
+    "collection-bags",
+    "colorgroup-black",
+    "DENIM25LAUNCH",
+    "fabric-leather",
+    "FALL 2025",
+    "GIFTGUIDE2025",
+    "kiwi-size-guide",
+    "Online",
+    "parent-type-tote",
+    "pattern-solid"
+   ],
+   "photos": [
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/STAUD_LARGEMAUDECARRYALL_BLACK_ECOM_1.jpg?v=1752275961",
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/5-MIA_DRESS_WDFL_1377_web.jpg?v=1752704975",
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/4-MAUDE_XL_CARRYALL_BLK_1383_web.jpg?v=1752695852",
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/3-MAUDE_XL_CARRYALL_BLK_1391_web.jpg?v=1752695852",
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/STAUD_LARGEMAUDECARRYALL_BLACK_ECOM_2.jpg?v=1752695852",
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/STAUD_LARGEMAUDECARRYALL_BLACK_ECOM_3.jpg?v=1752695852"
+   ],
+   "shots": [
+    0,
+    4
+   ],
+   "words": [],
+   "details": [
+    2,
+    3,
+    5
+   ],
+   "group": "close-ups"
+  },
+  {
+   "externalID": "shopify:8306608767149",
+   "brand": "STAUD",
+   "title": "Brigitte Wedge | Tabac",
+   "productType": "SHOES",
+   "tags": [
+    "category-shoes",
+    "colorgroup-brown",
+    "fabric-leather",
+    "Online",
+    "parent-type-heels",
+    "parent-type-wedges",
+    "pattern-solid",
+    "RE26",
+    "RE26DROP3",
+    "RE26VACATIONOCCASION",
+    "RESORT 2026"
+   ],
+   "photos": [
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/STAUD_BRIGITTEWEDGE_TABAC_ECOMM_WHOLESALE_1.jpg?v=1758761963",
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/STAUD_BRIGITTEWEDGE_TABAC_ECOMM_WHOLESALE_2.jpg?v=1764180828",
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/BRIGITTE_WEDGE_TABAC_1460_web.jpg?v=1764184305",
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/BRIGITTE_WEDGE_TABAC_1463_web.jpg?v=1764184298",
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/STAUD_BRIGITTEWEDGE_TABAC_ECOMM_WHOLESALE_4.jpg?v=1764180069",
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/STAUD_BRIGITTEWEDGE_TABAC_ECOMM_WHOLESALE_5.jpg?v=1764180069"
+   ],
+   "shots": [
+    0,
+    1,
+    4,
+    5
+   ],
+   "words": [],
+   "details": [
+    2,
+    3
+   ],
+   "group": "close-ups"
+  },
+  {
+   "externalID": "shopify:8112536256685",
+   "brand": "STAUD",
+   "title": "Simone Jacket | Taupe",
+   "productType": "JACKETS",
+   "tags": [
+    "7.7COREPO",
+    "category-clothing",
+    "colorgroup-brown",
+    "colorgroup-tan",
+    "core-instock",
+    "fabric-cotton",
+    "kiwi-size-guide",
+    "parent-type-outerwear",
+    "pattern-solid",
+    "PREFALL25LAUNCH",
+    "sleeve-long-sleeve"
+   ],
+   "photos": [
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/2-SIMONE_JACKET_TAUPE_3571_web.jpg?v=1749075220",
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/5-SIMONE_JACKET_TAUPE_3598_web.jpg?v=1749075218",
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/7-SIMONE_JACKET_TAUPE_3634_web.jpg?v=1749075205",
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/6-SIMONE_JACKET_TAUPE_3620_web.jpg?v=1749075225",
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/8-SIMONE_JACKET_TAUPE_3610_web.jpg?v=1749075223",
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/1-SIMONE_JACKET_TAUPE_3631_web.jpg?v=1749075212"
+   ],
+   "shots": null,
+   "words": [],
+   "details": [],
+   "group": "close-ups"
+  },
+  {
+   "externalID": "shopify:8535482564781",
+   "brand": "STAUD",
+   "title": "Sunny Headscarf | Butter Studs",
+   "productType": "ACCESSORIES",
+   "tags": [
+    "category-accessories",
+    "colorgroup-yellow",
+    "fabric-linen",
+    "Online",
+    "pattern-solid",
+    "SU26",
+    "SU26DROP2",
+    "SUMMER 2026",
+    "SUPF26"
+   ],
+   "photos": [
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/R26P1168LN-BTRS-OS_0302_web.jpg?v=1776221307",
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/STAUD_HEADSCARF_BUTTERSTUDS_1.jpg?v=1778595996",
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/R26P1168LN-BTRS-OS_0300_web.jpg?v=1776221225",
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/R26P1168LN-BTRS-OS_0290_web.jpg?v=1776221113",
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/STAUD_swatch_HEADSCARF_BUTTERSTUDS_1_c440dd1c-8be3-416f-a75f-fc7f48ce4934.jpg?v=1778595998"
+   ],
+   "shots": [
+    1
+   ],
+   "words": [],
+   "details": [
+    4
+   ],
+   "group": "close-ups"
+  },
+  {
+   "externalID": "shopify:8232286748845",
+   "brand": "STAUD",
+   "title": "Teddy Straight Jean | Indigo",
+   "productType": "DENIM",
+   "tags": [
+    "badge: exclusive",
+    "category-clothing",
+    "collection-straight-leg",
+    "colorgroup-blue",
+    "DENIM25LAUNCH",
+    "DENIM25LAUNCHCOLLECTION",
+    "fabric-denim",
+    "FALL 2025",
+    "kiwi-size-guide",
+    "Online",
+    "parent-type-bottoms",
+    "pattern-solid",
+    "STAUDDENIMLAUNCH",
+    "straight"
+   ],
+   "photos": [
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/8232286748845_teddy-straight-jean-indigo_19b079e1-8aa6-40bc-a95a-43b348a605d9.jpg?v=1790031035",
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/94-D25F4129RD-IND-26_0447_web.jpg?v=1785201495",
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/96-D25F4129RD-IND-26_0439_web.jpg?v=1785201534",
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/97-D25F4129RD-IND-26_0431_web.jpg?v=1785201513",
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/95-D25F4129RD-IND-26_0444_web.jpg?v=1785201531",
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/98-D25F4129RD-IND-26_0426_web.jpg?v=1785201507"
+   ],
+   "shots": null,
+   "words": [],
+   "details": [
+    1,
+    4
+   ],
+   "group": "close-ups"
+  },
+  {
+   "externalID": "shopify:8112529080493",
+   "brand": "STAUD",
+   "title": "Wally Ankle Boot | Syrah Suede",
+   "productType": "SHOES",
+   "tags": [
+    "boot-ankle",
+    "boot-heeled",
+    "category-shoes",
+    "colorgroup-red",
+    "fabric-suede",
+    "kiwi-size-guide",
+    "Online",
+    "parent-type-boots",
+    "pattern-solid",
+    "PREFALL25BOOTLAUNCH",
+    "PREFALL25LAUNCH"
+   ],
+   "photos": [
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/STAUD_WALLYANKLEBOOT_SYRAH_ECOM_1_edit.jpg?v=1749781479",
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/STAUD_WALLYANKLEBOOT_SYRAH_ECOM_2_edit.jpg?v=1749781507",
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/STAUD_WALLYANKLEBOOT_SYRAH_ECOM_3_edit.jpg?v=1749781522",
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/STAUD_WALLYANKLEBOOT_SYRAH_ECOM_4_edit.jpg?v=1749781476",
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/STAUD_WALLYANKLEBOOT_SYRAH_ECOM_5_edit.jpg?v=1749781532",
+    "https://cdn.shopify.com/s/files/1/1689/2633/files/STAUD_WALLYANKLEBOOT_SYRAH_ECOM_1_swatch_edit_985d75a9-4ad7-4b5a-ba42-1479a1452195.jpg?v=1749781489"
+   ],
+   "shots": [
+    0,
+    1,
+    2
+   ],
+   "words": [],
+   "details": [
+    3,
+    4,
+    5
+   ],
+   "group": "close-ups"
   }
  ]
 }

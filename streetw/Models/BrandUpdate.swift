@@ -137,10 +137,16 @@ final class BrandUpdate {
     var visionColor: String?
     /// Wardrobe categories from Vision's on-device classifier.
     var visionCategories: [String] = []
-    /// Width ÷ height of the photograph `ImageTagger` measured — the packshot, which is the
-    /// collection wall's cover when nobody has chosen one. Lets the wall lay tiles out at the
-    /// shape of the actual photograph instead of guessing.
+    /// Width ÷ height of the automatic cover (`automaticCoverURLString`), measured by
+    /// `ImageTagger` off the decoded photograph. Lets the wall lay tiles out at the shape of
+    /// the actual photograph instead of guessing.
     var imageAspect: Double?
+    /// Which photograph `imageAspect` is the shape of — the same bargain `analyzedImageURL`
+    /// makes. The cover can change under a measured row (the server's stand-in arrives, or is
+    /// withdrawn; a share's gallery is replaced), and a tile drawn to another photograph's
+    /// shape is the letterboxing this field exists to end. Nil on rows measured before it
+    /// existed, which `needsCoverShape` gives one more look.
+    var imageAspectURL: String?
     /// When the image was last analysed. Nil means "not yet"; set even when analysis
     /// fails, so a dead image URL isn't retried on every launch forever.
     var analyzedAt: Date?
@@ -168,27 +174,28 @@ final class BrandUpdate {
         guard let current = imageURLStrings.first else { return false }
         return analyzedImageURL != current
     }
-    /// Which of this product's photographs is a photograph of the *product* — see
-    /// `ProductShot`. Nil until the item has been analysed, and nil forever for anything
-    /// whose gallery is models all the way down.
+    /// Which of this product's photographs is the one worth *measuring* — see `ProductShot`.
+    /// Nil until the item has been analysed, and nil forever for anything whose gallery is
+    /// models all the way down.
     ///
     /// Stored beside the images rather than replacing `primaryImageURL`, because the two
     /// answer different questions. The lead photograph is what the brand chose to sell the
-    /// thing with and is what the feed, Discover and the product page keep showing — there
-    /// the styling is part of the announcement. This is the one worth *measuring*, the one
-    /// the fit canvas falls back to when there is no cutout — a model in trousers and boots
-    /// is not a stand-in for a shirt — and, for something somebody kept, the cover on the
-    /// collection wall and on its own page. See `SavedItem.coverURLString`.
+    /// thing with and is what the feed, Discover, the product page and — since the close-up
+    /// rule — the collection wall keep showing. This is the one the cutout, the colours and
+    /// the silhouette are read off, and the one the fit canvas falls back to when there is no
+    /// cutout: a model in trousers and boots is not a stand-in for a shirt. It is **not** the
+    /// cover any more: Vision's "nobody in it" chose a fabric swatch as readily as a packshot,
+    /// and a swatch on the wall is worse than a model. See `SavedItem.coverURLString`.
     var packshotURLString: String?
 
     var packshotURL: URL? { packshotURLString.flatMap(URL.init(string:)) }
 
-    /// The clean product shot as the **server** read it, once per product, off the embeddings
-    /// (Phase 5, `FeedItem.productShotIndex`) — stored as the photograph's URL, so an older
-    /// gallery that no longer holds it simply does not use it. Nil until the server has read
-    /// the product, and when none of its photographs is one. Outranks `packshotURLString`,
-    /// which is the phone's own Vision answer and now its fallback: see
-    /// `SavedItem.coverURLString` and `ImageTagger`.
+    /// The photograph the **server** says should stand in for the shop's first, read once per
+    /// product off the embeddings (Phase 5, `FeedItem.productShotIndex`) — stored as the
+    /// photograph's URL, so an older gallery that no longer holds it simply does not use it.
+    /// Nil until the server has read the product, and whenever it keeps the shop's choice:
+    /// the lead is a product shot already, nothing later is clearly the whole garment, or
+    /// it is not sure. Read through `serverShot`, which also asks which rule said so.
     var serverShotURLString: String?
     /// The server's style words for this product (`StyleWords`), read off the same photographs —
     /// what Shop's search matches a style word against (`ShopCatalogue`).
@@ -196,23 +203,51 @@ final class BrandUpdate {
     /// When the server last said what it read of this product's photographs — nil until it has.
     /// A feed row arrives before the server reads it, so a save asks again (`RemoteSync.readings`).
     var readingCheckedAt: Date?
+    /// The rule `serverShotURLString` was read under, as this build understood it when the
+    /// reading was adopted (`readingRule`). A row from an older build decodes 0.
+    var readingRuleVersion: Int = 0
+
+    /// The server's reading rule this build trusts. **2 is the close-up rule** (the server's
+    /// `ZeroShot.version` 2, `docs/collection.md`): the first rule took "nobody in it" for
+    /// "product shot" and handed Motel Rocks' covers to fabric swatches. A stand-in adopted
+    /// under it is not believed — the shop's first photograph is the honest cover until the
+    /// server has read the product again — and `RemoteSync.mergeReadings` asks for it as if
+    /// it had never been read. Bump when the server's rule changes in a way a stored answer
+    /// should not survive.
+    static let readingRule = 2
+
+    /// The server's stand-in, when it is one this build believes and the gallery still holds.
+    var serverShot: String? {
+        guard readingRuleVersion == Self.readingRule, let shot = serverShotURLString,
+              imageURLStrings.contains(shot) else { return nil }
+        return shot
+    }
+
+    /// The collection wall's cover when nobody has chosen one: the server's stand-in, else
+    /// the shop's first photograph. `SavedItem.coverURLString` puts a chosen one ahead of it.
+    var automaticCoverURLString: String? {
+        serverShot ?? imageURLStrings.first { URL(string: $0) != nil }
+    }
 
     /// Takes the server's reading. Returns whether anything changed.
     ///
-    /// **A new product shot makes the photograph analysis due again** when the phone measured a
-    /// different frame: the cutout, the colours and the cover's aspect were all read off
-    /// `packshotURLString`, and a cover that is not the photograph they describe would be drawn
-    /// to the wrong shape. Clearing `analyzedImageURL` is the one-time trigger `ImageTagger`
-    /// already honours; it then measures the server's shot first.
+    /// **A reading that changes the cover makes the photograph analysis due again**: a
+    /// stand-in that arrives is the photograph worth measuring (the cutout, the colours and
+    /// the silhouette come off it rather than Vision's own pick), and whether it arrives or is
+    /// withdrawn the wall's tile is now shaped for the wrong photograph until `ImageTagger`
+    /// measures the new cover (`imageAspectURL`). Clearing `analyzedImageURL` is the one-time
+    /// trigger it already honours.
     @discardableResult
     func adoptReading(shotURL: String?, styleWords words: [String]?, at now: Date = Date()) -> Bool {
         guard let words else { return false }
         let shot = shotURL.flatMap { imageURLStrings.contains($0) ? $0 : nil }
         readingCheckedAt = now
-        guard shot != serverShotURLString || words != styleWords else { return false }
+        let rule = readingRuleVersion
+        readingRuleVersion = Self.readingRule
+        guard shot != serverShotURLString || words != styleWords || rule != Self.readingRule else { return false }
         serverShotURLString = shot
         styleWords = words
-        if let shot, analyzedAt != nil, packshotURLString != shot {
+        if analyzedAt != nil, (shot != nil && packshotURLString != shot) || imageAspectURL != automaticCoverURLString {
             analyzedImageURL = nil
         }
         return true
@@ -320,8 +355,14 @@ final class BrandUpdate {
     /// question about emptiness.
     var needsAnalysis: Bool {
         guard hasPhotograph else { return false }
-        return analyzedAt == nil || hasUnreadPhotograph || needsCutout || needsVisualReading
+        return analyzedAt == nil || hasUnreadPhotograph || needsCutout || needsVisualReading || needsCoverShape
     }
+
+    /// True for a row whose tile shape was measured before `imageAspectURL` said which
+    /// photograph it belongs to — every row the build before the close-up rule measured, where
+    /// the shape is the Vision packshot's and the cover is now the lead. One more pass stamps
+    /// it; a row with no shape at all (a photograph that never loaded) is not due for this.
+    var needsCoverShape: Bool { imageAspect != nil && imageAspectURL == nil }
 
     /// The product this row is about, as the catalogue keys it — `shopify:<id>`.
     ///

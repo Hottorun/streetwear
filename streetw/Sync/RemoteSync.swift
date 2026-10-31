@@ -832,6 +832,10 @@ final class RemoteSync {
     /// share the catalogue answered (`SharedSaveImporter.apply`) and a Discover save carry one
     /// too, and a shared save from a shop the catalogue lacks is the clearest case of a product
     /// the server was never told about.
+    ///
+    /// A reading adopted under an older rule (`BrandUpdate.readingRule`) is asked for as if it
+    /// had never been had: its stand-in is not believed, and the server has read the product
+    /// again under the rule this build trusts.
     private func mergeReadings(from api: StreetwAPI, now: Date = Date()) async {
         if let asked = readingsAskedAt, now.timeIntervalSince(asked) < 600 { return }
         let stale = now.addingTimeInterval(-14 * 86_400)
@@ -842,7 +846,8 @@ final class RemoteSync {
         recent.fetchLimit = ProductReadingsRequest.limit * 6
         let candidates = ((try? context.fetch(recent)) ?? []).filter { $0.externalID.hasPrefix("event:") }
         var rows: [ProductReadingsRequest.Item: [BrandUpdate]] = [:]
-        for update in candidates where update.hasPhotograph && (update.readingCheckedAt.map { $0 < stale } ?? true) {
+        for update in candidates where update.hasPhotograph
+            && (update.readingCheckedAt.map { $0 < stale } ?? true || update.readingRuleVersion != BrandUpdate.readingRule) {
             guard let key = update.productExternalID else { continue }
             rows[ProductReadingsRequest.Item(brandID: update.brand?.remoteID, externalID: key), default: []].append(update)
             if rows.count == ProductReadingsRequest.limit { break }

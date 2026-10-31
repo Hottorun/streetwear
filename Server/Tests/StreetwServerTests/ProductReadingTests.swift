@@ -14,7 +14,7 @@ import VaporTesting
 
 /// Eight directions, each standing for one thing the reader can be asked about.
 private enum Axis: Int {
-    case product = 0, person, workwear, minimal, otherStyle, neutral
+    case product = 0, person, detail, workwear, minimal, otherStyle, neutral
 }
 
 private func unit(_ parts: [(Axis, Float)]) -> [Float] {
@@ -25,10 +25,14 @@ private func unit(_ parts: [(Axis, Float)]) -> [Float] {
 
 private let packshot = unit([(.product, 1), (.workwear, 0.6)])
 private let person = unit([(.person, 1)])
+/// A fabric close-up: nobody in it, and not the garment either.
+private let detail = unit([(.detail, 1)])
+/// A lead that could be either: on a person, but not clearly.
+private let uncertain = unit([(.person, 1), (.product, 0.99)])
 private let neutral = unit([(.neutral, 1)])
 
 /// The fake model's bars: SigLIP's, which the vectors above were drawn to clear.
-private let fakeBars = ZeroShot.Bars(shotMargin: 0.02, styleBar: 0.01)
+private let fakeBars = ZeroShot.Bars(personMargin: 0.02, shotMargin: 0.02, styleBar: 0.01)
 
 /// Prompts as the reader would embed them, in the directions above.
 private func prompts() -> ZeroShot.Prompts {
@@ -36,14 +40,16 @@ private func prompts() -> ZeroShot.Prompts {
         model: "reading-fake",
         bars: fakeBars,
         product: [unit([(.product, 1)])],
-        other: [unit([(.person, 1)])],
+        person: [unit([(.person, 1)])],
+        detail: [unit([(.detail, 1)])],
         styles: [("workwear", unit([(.workwear, 1)])), ("minimal", unit([(.minimal, 1)])), ("vintage", unit([(.otherStyle, 1)]))]
     )
 }
 
 /// A provider that answers every prompt and photograph in those directions: a product prompt
-/// and a photograph named `packshot` point one way, a person prompt and one named `person` the
-/// other, and a product called a chore coat reads as workwear.
+/// and a photograph named `packshot` point one way, a person prompt and one named `person`
+/// another, a detail prompt and one named `detail` a third, and a product called a chore coat
+/// reads as workwear.
 private struct ReadingFakeProvider: EmbeddingProvider {
     var model = "reading-fake"
     var embedsImages: Bool { true }
@@ -64,7 +70,8 @@ private struct ReadingFakeProvider: EmbeddingProvider {
     func embed(texts: [String]) async throws -> [[Float]] {
         texts.map { text in
             if ZeroShot.productPrompts.contains(text) { return unit([(.product, 1)]) }
-            if ZeroShot.otherPrompts.contains(text) { return unit([(.person, 1)]) }
+            if ZeroShot.personPrompts.contains(text) { return unit([(.person, 1)]) }
+            if ZeroShot.detailPrompts.contains(text) { return unit([(.detail, 1)]) }
             for (word, phrases) in ZeroShot.styleDescriptions where phrases.map(ZeroShot.stylePrompt).contains(text) {
                 switch word {
                 case "workwear": return unit([(.workwear, 1)])
@@ -84,6 +91,7 @@ private struct ReadingFakeProvider: EmbeddingProvider {
             if name.contains("unavailable") { return .unavailable("timed out") }
             if name.contains("packshot") { return .vector(packshot) }
             if name.contains("person") { return .vector(person) }
+            if name.contains("detail") { return .vector(detail) }
             return .vector(neutral)
         }
     }
@@ -97,7 +105,7 @@ private struct ReadingFakeProvider: EmbeddingProvider {
 struct ZeroShotTests {
     private let calibration = ZeroShot.Calibration(offsets: [:])
 
-    @Test("A lead photograph that is a product shot answers alone, without a request")
+    @Test("A lead photograph that is a product shot keeps the shop's choice, without a request")
     func leadAnswers() async throws {
         var calls = 0
         let outcome = try await ZeroShot.read(
@@ -105,12 +113,31 @@ struct ZeroShotTests {
             others: [(1, "https://cdn.example.com/person.jpg")],
             prompts: prompts(), calibration: calibration
         ) { _ in calls += 1; return [] }
-        #expect(outcome.verdict == ProductPhotoVerdict(shotIndex: 0, styleWords: ["workwear"]))
+        #expect(outcome.verdict == ProductPhotoVerdict(shotIndex: nil, styleWords: ["workwear"]))
         #expect(calls == 0)
         #expect(outcome.shotVector == nil)
     }
 
-    @Test("A model first: the others are asked a few at a time, and the search stops at a shot")
+    @Test("A lead that is not clearly on a person keeps the shop's choice, without a request")
+    func uncertainLead() async throws {
+        var calls = 0
+        let outcome = try await ZeroShot.read(
+            first: uncertain, text: neutral,
+            others: [(1, "https://cdn.example.com/packshot.jpg")],
+            prompts: prompts(), calibration: calibration
+        ) { _ in calls += 1; return [] }
+        #expect(outcome.verdict.shotIndex == nil)
+        #expect(calls == 0)
+        // And one that was written off says nothing at all.
+        let unread = try await ZeroShot.read(
+            first: nil, text: neutral, others: [(1, "https://cdn.example.com/packshot.jpg")],
+            prompts: prompts(), calibration: calibration
+        ) { _ in calls += 1; return [] }
+        #expect(unread.verdict == ProductPhotoVerdict(shotIndex: nil, styleWords: []))
+        #expect(calls == 0)
+    }
+
+    @Test("A model first: the others are asked a few at a time, and the search stops at a whole garment")
     func looksPast() async throws {
         var asked: [[String]] = []
         let others = ["person-2", "gone-3", "packshot-4", "person-5", "packshot-6", "person-7"].enumerated()
@@ -131,7 +158,26 @@ struct ZeroShotTests {
         #expect(outcome.unavailable == 0)
     }
 
-    @Test("Models all the way down is no shot; a photograph that may answer later leaves it open")
+    @Test("A close-up is nobody and not the garment either: never a stand-in, and the walk goes past it")
+    func closeUps() async throws {
+        let fake = ReadingFakeProvider()
+        // The swatch comes before the packshot, as Motel Rocks orders them.
+        let found = try await ZeroShot.read(
+            first: person, text: neutral,
+            others: [(1, "https://cdn.example.com/detail.jpg"), (2, "https://cdn.example.com/person.jpg"), (3, "https://cdn.example.com/packshot.jpg")],
+            prompts: prompts(), calibration: calibration
+        ) { try await fake.embed(imageURLs: $0) }
+        #expect(found.verdict.shotIndex == 3)
+        // Models and swatches all the way down: the shop's choice stands.
+        let none = try await ZeroShot.read(
+            first: person, text: neutral,
+            others: [(1, "https://cdn.example.com/detail.jpg"), (2, "https://cdn.example.com/person.jpg")],
+            prompts: prompts(), calibration: calibration
+        ) { try await fake.embed(imageURLs: $0) }
+        #expect(none.verdict.shotIndex == nil && none.shotVector == nil)
+    }
+
+    @Test("Models all the way down is no stand-in; a photograph that may answer later leaves it open")
     func noShot() async throws {
         let fake = ReadingFakeProvider()
         let outcome = try await ZeroShot.read(
@@ -181,8 +227,11 @@ struct ZeroShotTests {
         #expect(sent["model"]?.string == "claude-haiku-4-5-20251001")
         let images = (sent["messages"]?.array?.first?["content"]?.array ?? []).filter { $0["type"]?.string == "image" }
         #expect(images.map { $0["source"]?["url"]?.string } == urls.map(\.absoluteString))
-        // Nought is none.
+        // Nought keeps the first, and so does naming the first: it is never its own stand-in.
         #expect(try await provider.readProductPhotos(imageURLs: urls, title: "Chore Coat").value.productShot == nil)
+        let first = ReplayTransport([(200, reply.replacingOccurrences(of: "\"product_shot\":2", with: "\"product_shot\":1"))])
+        let named = AnthropicProvider(transport: first, models: .init(main: "claude-sonnet-5-5", fast: "claude-haiku-4-5-20251001"))
+        #expect(try await named.readProductPhotos(imageURLs: urls, title: "Chore Coat").value.productShot == nil)
     }
 
     @Test("The bars are the model's: a model with none is refused, not read against another's")
@@ -193,7 +242,8 @@ struct ZeroShotTests {
         let given = try await ZeroShot.prompts(using: ReadingFakeProvider(), bars: fakeBars)
         #expect(given.bars == fakeBars && given.model == "reading-fake")
         // The models the sidecar can be built with (`Embeddings/download_model.py`), as it ids them.
-        #expect(ZeroShot.measuredBars["Marqo/marqo-fashionSigLIP@c56244cc94f9"] == ZeroShot.Bars(shotMargin: 0.02, styleBar: 0.01))
+        #expect(ZeroShot.measuredBars["Marqo/marqo-fashionSigLIP@c56244cc94f9"] != nil)
+        #expect(ZeroShot.measuredBars["Marqo/marqo-fashionCLIP@44f4c655124e"] != nil)
         #expect(ZeroShot.measuredBars.keys.allSatisfy { ProductSearch.measuredThresholds[$0] != nil })
     }
 
@@ -272,7 +322,7 @@ struct ProductReadingWireTests {
             try await garment(app, shop, "shopify:1", photos: ["person", "packshot"], shot: 1, words: ["workwear"])
             try await garment(app, shop, "shopify:2", photos: ["person"], shot: nil, words: [])
             try await garment(app, shop, "shopify:3", photos: ["packshot"])
-            try await garment(app, other, "shopify:4", photos: ["packshot"], shot: 0, words: ["minimal"])
+            try await garment(app, other, "shopify:4", photos: ["person", "packshot"], shot: 1, words: ["minimal"])
             let auth = try await deviceAuth(app)
             let ask = ProductReadingsRequest(items: [
                 .init(brandID: shop.brand, externalID: "shopify:1"),
@@ -416,13 +466,14 @@ struct ProductReadingPostgresTests {
 
             let start = Date(timeIntervalSince1970: 1_900_000_000)
             let pass = try await readings.runOnce(now: start)
-            #expect(pass.read == 4 && pass.movedShots == 1 && pass.noShot == 2 && pass.unsettled == 1)
-            // Only b's and c's later photographs were asked: a's lead answered alone.
+            #expect(pass.read == 4 && pass.movedShots == 1 && pass.noShot == 3 && pass.unsettled == 1)
+            // Only b's and c's later photographs were asked: a's lead is a product shot, so the
+            // shop's choice stands unasked.
             #expect(fake.asked.all.dropFirst(leads).map(\.lastPathComponent).sorted()
                     == ["gone-b.jpg", "packshot-b.jpg", "unavailable-c.jpg"])
 
             let a = try await row(app, "a")
-            #expect(a.shot == 0 && a.words == ["workwear"] && a.hasShotVector == false)
+            #expect(a.shot == nil && a.words == ["workwear"] && a.hasShotVector == false)
             let b = try await row(app, "b")
             #expect(b.shot == 2 && b.words == ["workwear"] && b.hasShotVector == true)
             #expect(b.gone == ["https://cdn.example.com/gone-b.jpg"] && b.retryAt == nil)
@@ -445,7 +496,7 @@ struct ProductReadingPostgresTests {
             #expect(try await EmbeddingBackfill(app: app, batch: 10).runOnce().embedded == 1)
             #expect(try await readings.runOnce(now: start.addingTimeInterval(3_700)).read == 1)
             let moved = try await row(app, "b")
-            #expect(moved.shot == 0 && moved.gone == [] && moved.hasShotVector == false)
+            #expect(moved.shot == nil && moved.gone == [] && moved.hasShotVector == false)
         }
     }
 

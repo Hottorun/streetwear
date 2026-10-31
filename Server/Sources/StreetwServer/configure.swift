@@ -335,4 +335,5 @@ func addMigrations(to app: Application) {
     app.migrations.add(AddBrandCheckRefusal())
     app.migrations.add(AddCatalogueOnlyCheck())
     app.migrations.add(AddProductReading())
+    app.migrations.add(ClearProductShots())
 }
