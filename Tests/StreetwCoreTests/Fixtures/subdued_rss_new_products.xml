@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:slash="http://purl.org/rss/1.0/modules/slash/">
+  <channel>
+    <language>en_US</language>
+    <title>New Products from Subdued</title>
+    <description>New Products from Subdued</description>
+    <generator>Laminas_Feed_Writer 2 (https://getlaminas.org)</generator>
+    <link>https://www.subdued.com/it_en/rss/feed/index/store_id/3/type/new_products/</link>
+    <item>
+      <title>High-neck tank top</title>
+      <description><![CDATA[
+                <table><tr>
+                <td><a href="https://www.subdued.com/it_en/high-neck-tank-top-tp0tg3t"><img src="https://www.subdued.com/media/catalog/product/t/p/tp0tg3tcol001-1_4.jpg?width=75&height=75&canvas=75,75&optimize=medium&fit=bounds" border="0" align="left" height="75" width="75"></a></td>
+                <td style="text-decoration:none;">High-neck tank top, sleeveless, button closure, regular length, slim fit. <div class="price-box price-final_price" data-role="priceBox" data-product-id="130341" data-price-box="product-id-130341"><span data-ge-price class="normal-price">
+    
+
+<span class="price-container price-final_price&#x20;tax&#x20;weee"
+        >
+        <span  id="product-price-130341"                data-price-amount="27"
+        data-price-type="finalPrice"
+        class="price-wrapper "
+    ><span class="price">€27.00</span></span>
+        </span>
+</span>
+
+
+</div></td>
+                </tr></table>
+            ]]></description>
+      <link>https://www.subdued.com/it_en/high-neck-tank-top-tp0tg3t</link>
+      <guid>https://www.subdued.com/it_en/high-neck-tank-top-tp0tg3t</guid>
+      <slash:comments>0</slash:comments>
+    </item>
+    <item>
+      <title>Star hoodie</title>
+      <description><![CDATA[
+                <table><tr>
+                <td><a href="https://www.subdued.com/it_en/star-hoodie-020exx4"><img src="https://www.subdued.com/media/catalog/product/0/2/020exx4col1fy-1_5.jpg?width=75&height=75&canvas=75,75&optimize=medium&fit=bounds" border="0" align="left" height="75" width="75"></a></td>
+                <td style="text-decoration:none;">Hoodie with Star patch, front pockets, long sleeves, long length, relaxed fit. <div class="price-box price-final_price" data-role="priceBox" data-product-id="118384" data-price-box="product-id-118384"><span data-ge-price class="normal-price">
+    
+
+<span class="price-container price-final_price&#x20;tax&#x20;weee"
+        >
+        <span  id="product-price-118384"                data-price-amount="55"
+        data-price-type="finalPrice"
+        class="price-wrapper "
+    ><span class="price">€55.00</span></span>
+        </span>
+</span>
+
+
+</div></td>
+                </tr></table>
+            ]]></description>
+      <link>https://www.subdued.com/it_en/star-hoodie-020exx4</link>
+      <guid>https://www.subdued.com/it_en/star-hoodie-020exx4</guid>
+      <slash:comments>0</slash:comments>
+    </item>
+  </channel>
+</rss>

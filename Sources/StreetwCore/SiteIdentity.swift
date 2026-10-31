@@ -31,20 +31,35 @@ public struct SiteIdentity: Sendable, Hashable {
 }
 
 public enum SiteIdentityProbe {
+    /// A homepage as fetched: its HTML, and the URL it was finally served from.
+    ///
+    /// `url` matters: a redirect to www. or to a regional domain makes every relative href
+    /// resolve against the wrong host.
+    public struct Homepage: Sendable {
+        public var html: String
+        public var url: URL
+    }
+
     /// One homepage fetch, both answers.
     public static func discover(at base: URL, http: any HTTPFetching = Net.live) async -> SiteIdentity {
+        identity(of: await homepage(at: base, http: http), base: base)
+    }
+
+    /// The homepage, once — discovery reads the name, the mark, the feeds it declares and its
+    /// country shops out of this one response.
+    public static func homepage(at base: URL, http: any HTTPFetching = Net.live) async -> Homepage? {
         guard let response = try? await http.get(base, etag: nil),
               response.status == 200,
               let html = String(data: response.data, encoding: .utf8)
-        else {
-            return SiteIdentity(logoURL: BrandMark.fallback(for: base))
-        }
-        // `finalURL` matters: a redirect to www. or to a regional domain makes every
-        // relative href resolve against the wrong host.
-        let resolved = response.finalURL ?? base
+        else { return nil }
+        return Homepage(html: html, url: response.finalURL ?? base)
+    }
+
+    public static func identity(of page: Homepage?, base: URL) -> SiteIdentity {
+        guard let page else { return SiteIdentity(logoURL: BrandMark.fallback(for: base)) }
         return SiteIdentity(
-            name: BrandNaming.declaredName(in: html, host: resolved.host() ?? base.host()),
-            logoURL: BrandMark.find(in: html, base: resolved) ?? BrandMark.fallback(for: resolved)
+            name: BrandNaming.declaredName(in: page.html, host: page.url.host() ?? base.host()),
+            logoURL: BrandMark.find(in: page.html, base: page.url) ?? BrandMark.fallback(for: page.url)
         )
     }
 }

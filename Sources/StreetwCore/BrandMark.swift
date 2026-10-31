@@ -114,8 +114,9 @@ public enum BrandMark {
 
     /// Pulls the attributes out of every `<link>` tag. Regex rather than a parser
     /// because this is one flat, well-formed tag shape and the alternative is a
-    /// dependency; the rest of the document is deliberately never touched.
-    private static func links(in html: String) -> [[String: String]] {
+    /// dependency; the rest of the document is deliberately never touched. Also read by
+    /// `SiteAlternates`, for the country shops and feeds the same homepage declares.
+    static func links(in html: String) -> [[String: String]] {
         guard let tagPattern = try? NSRegularExpression(pattern: "<link\\b[^>]*>", options: [.caseInsensitive]),
               let attrPattern = try? NSRegularExpression(
                 pattern: "([a-zA-Z-]+)\\s*=\\s*(\"([^\"]*)\"|'([^']*)'|([^\\s>]+))",
