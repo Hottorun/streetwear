@@ -139,7 +139,7 @@ struct ScanView: View {
                     .font(.editorial(26))
                     .foregroundStyle(Color.ink)
                 // How to take it, in one line; what the scan reads is the reading itself.
-                NoteLine(text: "Laid flat or on a hanger, against something plain.", size: 16)
+                NoteLine(text: "Flat or hung, on something plain.", size: 16)
             }
 
             VStack(spacing: 10) {
@@ -169,7 +169,7 @@ struct ScanView: View {
             // The price before anything is spent, and what leaves the phone — both kept, as
             // sentences; the rest of what goes to the AI is behind You › About.
             NoteLine(text: price.map { "Reading it costs \($0)." } ?? "Reading it uses credits.", color: .ink)
-            NoteLine(text: "Only this photograph is sent, read once, and never stored.")
+            NoteLine(text: "Sent once, and never stored.")
         }
     }
 

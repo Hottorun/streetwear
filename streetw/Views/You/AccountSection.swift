@@ -52,14 +52,17 @@ struct AccountSection: View {
         }
     }
 
+    /// What an account is for, a tap away on both sides of signing in.
+    static let keepsInfo = InfoNote(
+        title: "Your account",
+        lines: ["Signed in with Apple, your follows, sizes and watches come back if you reinstall."]
+    )
+
     // MARK: - Signed out
 
     private var signedOut: some View {
         VStack(alignment: .leading, spacing: 14) {
-            SettingsHeader(
-                title: "Account",
-                note: "Sign in with Apple to keep your follows, sizes and watches if you reinstall."
-            )
+            SettingsHeader(title: "Account", info: Self.keepsInfo)
             signInControl
                 .disabled(isWorking)
                 .opacity(isWorking ? 0.5 : 1)
@@ -135,10 +138,7 @@ struct AccountSection: View {
 
     private func signedIn(_ account: AccountDTO) -> some View {
         VStack(alignment: .leading, spacing: 12) {
-            SettingsHeader(
-                title: "Account",
-                note: "Your follows, sizes and watches come back if you reinstall."
-            )
+            SettingsHeader(title: "Account", info: Self.keepsInfo)
 
             VStack(alignment: .leading, spacing: 0) {
                 YouRow(title: "Signed in with Apple", detail: since(account), detailColor: .ink)

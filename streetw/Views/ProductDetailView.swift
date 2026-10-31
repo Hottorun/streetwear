@@ -587,6 +587,15 @@ struct WatchEditor: View {
 
     private var allColors: [String] { update.colorways.map(\.name) }
 
+    private var deliveryInfo: InfoNote {
+        InfoNote(
+            title: "How the alert reaches you",
+            lines: settings.isConfigured
+                ? ["Dropwall watches this on the server, so the alert arrives even when the app is closed."]
+                : ["Without a server this is checked when the app refreshes, so an alert can be late."]
+        )
+    }
+
     var body: some View {
         NavigationStack {
             ScrollView {
@@ -611,12 +620,10 @@ struct WatchEditor: View {
                         picker(title: "COLOUR", options: allColors, selection: $color, anyLabel: "ANY COLOUR")
                     }
 
-                    Text(settings.isConfigured
-                         ? "Dropwall watches this on the server, so the alert arrives even when the app is closed."
-                         : "Without a server this is checked when the app refreshes, so an alert can be late.")
-                        .font(.data(11))
-                        .foregroundStyle(Color.muted)
-                        .lineSpacing(2)
+                    HStack(spacing: 2) {
+                        NoteLine(text: "How the alert reaches you", size: 13)
+                        InfoButton(note: deliveryInfo)
+                    }
                 }
                 .padding(20)
             }

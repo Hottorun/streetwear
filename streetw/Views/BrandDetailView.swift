@@ -422,9 +422,10 @@ struct BrandDetailView: View {
                 .font(.editorial(19))
                 .foregroundStyle(Color.ink)
             Text(
+                // Which sources are watched is listed just below, so this says only what to expect.
                 automatic.isEmpty
-                    ? "Nothing on this site can be watched automatically — it's here as a link."
-                    : "Dropwall is watching \(automatic.map { $0.kind.label.lowercased() }.joined(separator: " and ")). New drops will appear here."
+                    ? "This site can't be watched, only linked."
+                    : "New drops will appear here."
             )
             .font(.editorial(14))
             .foregroundStyle(Color.muted)
@@ -719,7 +720,7 @@ extension FollowMode {
         switch self {
         case .everything: "Everything in your feed; an alert for drops and sales."
         case .salesOnly: "Only sales and price cuts; an alert when a sale starts."
-        case .quiet: "Nothing in your feed and no alerts; it still shapes your taste."
+        case .quiet: "No feed, no alerts; it still shapes your taste."
         }
     }
 

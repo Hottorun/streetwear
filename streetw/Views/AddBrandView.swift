@@ -177,7 +177,7 @@ struct AddBrandView: View {
         if unfollowed.isEmpty {
             EditorialEmptyState(
                 title: "Search for a brand",
-                action: "TYPE A NAME, OR PASTE A LINK TO ITS SITE"
+                action: "Type a name or paste a link."
             )
             .frame(minHeight: 260)
         } else {

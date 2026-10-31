@@ -339,7 +339,7 @@ struct FeedPage: View {
             if entries.isEmpty {
                 empty(
                     "Nothing ahead",
-                    "Locked shops, a brand's dates and dates you add land here."
+                    "Locked shops and set dates land here."
                 )
             } else {
                 UpcomingDropList(
@@ -364,7 +364,7 @@ struct FeedPage: View {
 
     private var nothingFollowed: some View {
         VStack(alignment: .leading, spacing: 0) {
-            empty("Nothing on watch yet", "Add a brand and Dropwall starts watching it.")
+            empty("Nothing on watch yet", "Add a brand to start watching.")
             underlined("Add a brand") { isAddingBrand = true }
                 .padding(.horizontal, 20)
                 .padding(.top, 14)
@@ -383,7 +383,7 @@ struct FeedPage: View {
             if let brand, brand.followMode == .quiet {
                 // Chosen from the menu, where it is labelled — and empty because that is what
                 // Quiet means, which is worth saying rather than looking broken.
-                empty("Nothing from \(brand.name) reaches the feed", "It's followed quietly. Its page still has everything.")
+                empty("Nothing from \(brand.name) reaches the feed", "Followed quietly. Its page has it all.")
                 NavigationLink(value: BrandRoute(brand: brand)) {
                     underlinedLabel("Open \(brand.name)")
                 }
@@ -418,13 +418,13 @@ struct FeedPage: View {
     private func emptyDetail(isHidingSome: Bool) -> String {
         if isHidingSome { return "You're seeing \(sizes.profile.gender.label.lowercased()) only." }
         if engine.lastSyncedAt == nil, remote.lastSyncedAt == nil {
-            return "Pull down to check your brands for the first time."
+            return "Pull down to check your brands."
         }
         return switch filter {
-        case .all, .upcoming: "Drops, restocks and sales from your brands land here."
+        case .all, .upcoming: "Drops, restocks and sales land here."
         case .drops: "New products and releases land here."
-        case .restocks: "When something sold out comes back, it lands here."
-        case .sales: "Markdowns and brand-wide sales land here."
+        case .restocks: "Things back in stock land here."
+        case .sales: "Markdowns and sales land here."
         }
     }
 

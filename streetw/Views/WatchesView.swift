@@ -37,7 +37,7 @@ struct WatchesView: View {
                         // made a watch settable on something in stock, which was the whole
                         // point of it — wanting to know your size went and came back is not
                         // conditional on it being gone right now.
-                        action: "Open anything and ask to be told when your size is back."
+                        action: "Tap Notify me on any product."
                     )
                 } else {
                     ScrollView {

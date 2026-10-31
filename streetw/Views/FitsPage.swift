@@ -209,12 +209,12 @@ struct FitsPage: View {
         let missing = gaps.intersection([.top, .bottom]).sorted { $0.stackOrder < $1.stackOrder }
         let detail: String
         if saves.isEmpty {
-            detail = "Save a few things and outfits start here."
+            detail = "Save a few things to start."
         } else if !missing.isEmpty {
-            let names = missing.map { $0.label.lowercased() }.joined(separator: " or ")
-            detail = "A fit needs a top and a bottom, and nothing you've saved reads as \(names) yet."
+            let names = missing.map { $0.label.lowercased() }.joined(separator: " and a ")
+            detail = "Save a \(names) to make one."
         } else {
-            detail = "Nothing you've saved goes together yet. Start one above."
+            detail = "Nothing pairs yet. Start one above."
         }
         return VStack(alignment: .leading, spacing: 8) {
             Text("No fits yet")
