@@ -707,6 +707,30 @@ struct ProductSearchPostgresTests {
         }
     }
 
+    /// The index is built inside a transaction that turns parallel maintenance off, because the
+    /// parallel build's shared-memory segment does not fit Railway's `/dev/shm`. This holds that
+    /// the build still happens through that path: the partial HNSW index exists for the model
+    /// after the first backfill batch, for both columns.
+    @Test("The HNSW indexes exist after the first batch, built serially")
+    func indexesAreBuilt() async throws {
+        try await withPostgres { app in
+            guard case .installed = app.semanticStatus else { return }
+            let sql = try #require(app.db as? any SQLDatabase)
+            let kith = try await shop(app, "Kith", slug: "kith.com")
+            try await product(app, kith, "Fleece hoodie", id: "g1", type: "Tees", daysAgo: 0, sizes: [])
+            let fake = FakeEmbeddingProvider(dimension: 256)
+            app.embeddingProvider = fake
+            try await EmbeddingBackfill(app: app, batch: 10).runOnce()
+            let space = EmbeddingSpace(model: fake.model, dimension: fake.dimension)
+            for column in [SemanticIndex.Column.text, .image] {
+                let name = SemanticIndex.indexName(for: space, column: column)
+                let row = try await sql.raw("SELECT indexdef FROM pg_indexes WHERE indexname = \(bind: name)").first()
+                let definition = try #require(try row?.decode(column: "indexdef", as: String.self))
+                #expect(definition.contains("hnsw"))
+            }
+        }
+    }
+
     /// pgvector's HNSW scan returns at most `hnsw.ef_search` rows — forty by default — so the
     /// hundred `semanticPool` asks for came back as forty. `nearest` raises the setting for its
     /// own transaction; this holds it to the whole limit on a catalogue the planner reads
