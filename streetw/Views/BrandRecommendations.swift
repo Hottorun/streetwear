@@ -140,7 +140,6 @@ struct BrandRecommendations: View {
     @State private var previewed: PopularBrand?
 
     var title: String = "Also worth watching"
-    var blurb: String = "Picked from what you keep."
     /// How many cards this block prints before deferring to the full list.
     ///
     /// Six, not the whole list. The block sits on the feed, the brands tab *and* the style
@@ -208,14 +207,15 @@ struct BrandRecommendations: View {
     /// weight: a mood board of three is not a taste of eight because it is leant on.
     /// - Parameter taste: the same scope the key was built from, so the ranking and the
     ///   decision to re-rank cannot disagree about who counts.
-    private func recommender(pool: [PopularBrand], taste scope: TasteScope) -> Recommender {
+    private func recommender(pool: [PopularBrand], taste scope: TasteScope) -> (Recommender, fromSaves: Bool) {
         let usable = scope.weighted(saves).compactMap { entry in
             entry.save.update.map { (product: $0.productSummary, weight: entry.weight) }
         }
         let vectors = pool.compactMap(\.vector)
 
         var taste = BrandVector()
-        if usable.count >= Self.minimumSavesToReRank, !vectors.isEmpty {
+        let fromSaves = usable.count >= Self.minimumSavesToReRank && !vectors.isEmpty
+        if fromSaves {
             taste = BrandVectorBuilder.taste(
                 from: usable.map(\.product),
                 weights: usable.map(\.weight),
@@ -228,7 +228,7 @@ struct BrandRecommendations: View {
             known: Set(vectors.flatMap(\.vocabulary.keys))
         )
 
-        return Recommender(taste: taste, dismissed: dismissals.compactMap(\.vector))
+        return (Recommender(taste: taste, dismissed: dismissals.compactMap(\.vector)), fromSaves)
     }
 
     /// Re-ranked against a taste profile built **on this device** from what has been
@@ -251,6 +251,10 @@ struct BrandRecommendations: View {
     private struct Ranked {
         var items: [PopularBrand] = []
         var reasons: [UUID: [String]] = [:]
+        /// What the order was built from, said under the title. "Picked from what you keep"
+        /// was printed to somebody who had kept nothing, which is the one thing it must not
+        /// claim: below the save threshold the order is the server's — follows and headcount.
+        var basis = "Popular on Dropwall."
 
         func reason(for item: PopularBrand) -> [String] {
             item.brand.id.flatMap { reasons[$0] } ?? []
@@ -259,9 +263,14 @@ struct BrandRecommendations: View {
 
     private func rank(taste: TasteScope) -> Ranked {
         let pool = candidates
-        let ranker = recommender(pool: pool, taste: taste)
+        let (ranker, fromSaves) = recommender(pool: pool, taste: taste)
 
         var result = Ranked()
+        if fromSaves {
+            result.basis = "Picked from what you keep."
+        } else if !followed.isEmpty {
+            result.basis = "Close to the brands you follow."
+        }
         if ranker.taste.isEmpty, ranker.dismissed.isEmpty {
             result.items = pool
         } else {
@@ -307,7 +316,7 @@ struct BrandRecommendations: View {
                     Text(title)
                         .font(.editorial(19))
                         .foregroundStyle(Color.ink)
-                    NoteLine(text: blurb)
+                    NoteLine(text: ranked.basis)
                 }
                 .padding(.horizontal, 20)
                 .padding(.bottom, 18)
