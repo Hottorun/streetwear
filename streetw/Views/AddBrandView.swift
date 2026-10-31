@@ -57,14 +57,14 @@ struct AddBrandView: View {
             Group {
                 if let newBrand {
                     NewBrandView(draft: newBrand) { brand in
-                        if let brand { askingAbout = brand } else { dismiss() }
+                        if let brand { askingAbout = brand } else { backToSearch() }
                     }
                 } else {
                     searchResults
                 }
             }
             .navigationDestination(item: $askingAbout) { brand in
-                FollowFilterView(brand: brand, isNewFollow: true) { dismiss() }
+                FollowFilterView(brand: brand, isNewFollow: true) { backToSearch() }
                     .navigationBarBackButtonHidden()
                     .toolbar(.hidden, for: .navigationBar)
             }
@@ -306,6 +306,14 @@ struct AddBrandView: View {
         }
     }
 
+    /// After a follow, back to the list rather than out of the sheet: people add brands a few
+    /// at a time, and closing after each one meant reopening the sheet and typing again. The
+    /// row they followed now says Following; the sheet closes with its own ×.
+    private func backToSearch() {
+        askingAbout = nil
+        newBrand = nil
+    }
+
     private func follow(_ dto: BrandDTO) async {
         pending = dto.id
         followError = nil
@@ -316,8 +324,6 @@ struct AddBrandView: View {
             await remote.sync(sizes: sizes.profile)
             if let id = dto.id, let brand = FollowFilterPrompt.brand(id, in: context) {
                 askingAbout = brand
-            } else {
-                dismiss()
             }
         } catch {
             // **Not `searchError`.** That one is rendered as a full-page "Couldn't search"
