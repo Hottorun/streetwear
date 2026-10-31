@@ -707,6 +707,33 @@ struct ProductSearchPostgresTests {
         }
     }
 
+    /// Switching models re-embeds in place, and the product shot's vector — written by the
+    /// reading under the old model, at its dimension — must go with it, or the image index's
+    /// cast to the new dimension refuses the row and the switch stalls on the first product.
+    @Test("Re-embedding under another model clears the old model's shot vector")
+    func modelChangeClearsTheShot() async throws {
+        try await withPostgres { app in
+            guard case .installed = app.semanticStatus else { return }
+            let sql = try #require(app.db as? any SQLDatabase)
+            let kith = try await shop(app, "Kith", slug: "kith.com")
+            try await product(app, kith, "Fleece hoodie", id: "g1", type: "Tees", daysAgo: 0, sizes: [])
+            let old = FakeEmbeddingProvider(dimension: 16)
+            app.embeddingProvider = old
+            try await EmbeddingBackfill(app: app, batch: 10).runOnce()
+            let shot = SemanticIndex.literal(Array(repeating: Float(0.25), count: 16))
+            try await sql.raw("UPDATE product_embeddings SET shot_embedding = \(bind: shot)::vector").run()
+
+            var new = FakeEmbeddingProvider(dimension: 8)
+            new.model = "fake-2"
+            app.embeddingProvider = new
+            let pass = try await EmbeddingBackfill(app: app, batch: 10).runOnce()
+            #expect(pass.embedded == 1)
+            let row = try #require(try await sql.raw("SELECT model, shot_embedding::text AS shot FROM product_embeddings").first())
+            #expect(try row.decode(column: "model", as: String.self) == "fake-2")
+            #expect(try row.decode(column: "shot", as: String?.self) == nil)
+        }
+    }
+
     /// The index is built inside a transaction that turns parallel maintenance off, because the
     /// parallel build's shared-memory segment does not fit Railway's `/dev/shm`. This holds that
     /// the build still happens through that path: the partial HNSW index exists for the model
