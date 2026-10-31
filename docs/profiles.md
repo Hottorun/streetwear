@@ -126,7 +126,8 @@ A store per profile makes partitioning a property of the container, which no que
   data simply *is* the holder's profile. Every other store is filed under its account —
   `Accounts/<account>/profile-<id>.store` — and its keys are `<key>.<home>`
   (`ProfileScope.key`, `ProfileScope.home`). See *Another Apple ID on the same phone* below for
-  the one holder that does not get `default.store`.
+  the one holder that does not get `default.store`, and for the signed-out store
+  (`ProfileScope.isSignedOut`), which a signed-out phone shows once `default.store` is owned.
 - **`ProfileSession` holds everything that is about one person** — the container, sizes, the
   style statement, `RemoteSync`, `SyncEngine`, the Discover deck, recommendations, the save
   confirmation, the collection route and the drop-hint status — and **a switch builds a new one
@@ -205,8 +206,9 @@ A store per profile makes partitioning a property of the container, which no que
   that store's `home` in `profileID`, and the app drains only the current store's items, so a
   share filed while Anna was current lands in Anna's wall whenever Anna is next current — and a
   share filed while another Apple ID was signed in waits for that account, never landing in a
-  hidden account's wall or in this one's. A share for a store this phone no longer has lands in
-  the current holder's, rather than waiting forever.
+  hidden account's wall or in this one's. One filed signed out waits for the signed-out store and
+  is discarded with it. A share for a store this phone no longer has lands in the current
+  holder's, rather than waiting forever.
 - **A profile's local store goes with the profile.** Deleting it on this phone deletes its store
   and its scoped keys; a list from the server that no longer names a profile (deleted on another
   phone) does the same — **only the signed-in account's list, and only in that account's
@@ -230,24 +232,62 @@ fits were gone from the phone for good because somebody else had signed in. Now:
   before, kept. **A later Apple ID gets an empty holder store of its own**,
   `Accounts/<account>/holder.store`, whose `home` is the account's id. It still sends no header:
   it is the holder.
-- **Signed out, the phone shows `default.store`, whoever owns it.** There is no sign-out in the
-  app: a phone is signed out by deleting the account (which releases `default.store`) or by a
-  token the server no longer knows, which re-registers as nobody. The latter is the owner's own
-  phone more often than not, and it keeps working on the phone's data as it did before accounts.
-  `ServerSettings.accountChanged` moves the app off any account's own store the moment that
-  happens, and `RemoteSync.sync` refuses to sync a store filed under an account that is not
-  signed in — before both, a lapsed token left the phone on the second account's store and
-  re-followed its brands on the new anonymous device.
+- **Signing out leaves an empty app, like a fresh install, and hides the account's stores**
+  (You › Account › Sign out, `ProfileStore.signOut`). It is how a phone is handed to somebody
+  or signed into another Apple ID, so the next person must not see the last one's saves.
+  Nothing is deleted, here or on the server, and nothing is revoked at Apple.
+  - **The server takes the device off the account** (`POST /v1/account/sign-out`,
+    `Accounts.signOut`): the device row moves to a fresh anonymous user with no sizes and the
+    phone's country, and **keeps its token and its APNs token**. The account keeps its users,
+    their follows, watches, hints and sizes, its credits and its other phones. Moving the device
+    is what stops the account's alerts reaching it (`Notifier.audience` walks the account's
+    users' devices) and what makes its next follow list empty; re-registering instead would
+    have left the old row holding the APNs token, still on the account. A device with no
+    account is left alone, so a retry is harmless. Signing in again is the reinstall case: the
+    anonymous user, with whatever it followed meanwhile, is folded into the account.
+  - **Every store of the account is held while the server is asked** (`RemoteSync.holding`),
+    so no sync is halfway through one when the device becomes nobody's; one waiting behind the
+    hold finds the store is not the signed-in account's and stops.
+  - **Then the phone settles onto the signed-out store** — below — with the profile list and
+    its cached copy cleared (no `X-Profile-ID` is sent again), every hidden home's drop
+    reminders cancelled and the pending picks alert withdrawn. Delivered notifications are
+    cleared too: they name the account's brands and watches, on the lock screen.
+- **Signed out, the phone shows `default.store` only while no account owns it; otherwise the
+  signed-out store** (`ProfileStores.signedOut`, `signed-out-<id>.store` beside
+  `default.store`, its keys `<key>.<id>` and its reminders `drop@<id>-`). It is **made empty
+  each time the phone leaves an account** — `ProfileStore.settle` deletes the last one, with
+  its keys and waiting shares, before switching — so what one signed-out person left is not
+  the next one's. It belongs to nobody: no list names it, Remove never offers it, it sends no
+  header, and it is never carried into an account (the server folds its follows into
+  whichever account signs in next; its saves stay behind and go with the next sign-out). It is
+  deleted when `default.store` stops being owned (account deletion, Remove), because signed
+  out is `default.store` again from then on. **One rule for every way of being signed out**:
+  a token the server no longer knows re-registers as nobody, and lands on the signed-out store
+  too. That used to leave the owner on `default.store`, re-following its brands on the new
+  anonymous device (the first *Known gap* below); now the phone simply reads as signed out
+  until the owner signs in, and everything is where they left it. Deleting the account
+  releases `default.store` before the phone reads as signed out (`RemoteSync.deleteAccount`'s
+  `deleted`), so it stays on the phone's own store as it always did.
+  `ServerSettings.accountChanged` moves the app off any account's store the moment the account
+  changes, and `RemoteSync.sync` refuses to sync a store filed under an account that is not
+  signed in — `default.store` counting as filed under its owner — before both, a lapsed token
+  left the phone on the second account's store and re-followed its brands on the new anonymous
+  device.
+- **Signing back in restores the hidden stores exactly**: the account's holder store
+  (`default.store` for its owner, `holder.store` otherwise), its profiles' stores once the
+  list arrives, and their reminders (`rescheduleReminders`). Another Apple ID gets its own,
+  empty `holder.store` if it has none here.
 - **Unowned again after Remove.** If Remove deletes `default.store`, the next account to sign in
   without a holder store of its own takes the empty one; an account that has one keeps it.
 - **Hidden accounts' drop reminders are cancelled** (`DropReminders.retain`), because "Supreme
   drops today" on somebody else's phone session is the first account's calendar read out to
-  them. They are a rewrite from each store, so `ProfileStore.signIn` reschedules every visible
+  them — and the pending picks alert of a store being left is withdrawn for the same reason. They are a rewrite from each store, so `ProfileStore.signIn` reschedules every visible
   profile's on the way back.
 - **Remove** is one quiet row on You, drawn only when another account's stores are on the phone
   (`OtherAccountsRow`, `ProfileStore.removeOtherAccounts`), and confirmed. It deletes every store
-  of every account but the one shown — signed out, the one shown is `default.store`'s owner —
-  with its scoped keys and its waiting shares. Profile stores written before stores were filed by
+  of every account but the one signed in, with its scoped keys and its waiting shares. **Never
+  while signed out**: a signed-out phone may be in somebody else's hands, and the hidden
+  accounts' data is not theirs to delete. Profile stores written before stores were filed by
   account, which no list has claimed, count as another account's: nothing says whose they are.
   Such a store is moved into an account's directory the first time that account's list names it
   (`ProfileStores.adoptLegacy`).
@@ -277,12 +317,12 @@ fits were gone from the phone for good because somebody else had signed in. Now:
 
 ### Known gaps
 
-- **A second Apple ID's follows can start with the phone's.** Signing in folds the anonymous
-  device's follows and empty size ladders into the account (`Accounts.merge`, the server's rule
-  for a reinstall). A phone signed out on the first account's `default.store` has re-followed
-  that store's brands on its anonymous device, so the second account's empty holder store fills
-  with those brands — never the saves, boards or fits — on its first sync. Fixing it is a
-  server change (a sign-in that does not merge) or a re-registration before signing in, which
-  orphans a device row holding the phone's APNs token.
+- **A second Apple ID's follows start with whatever the phone followed signed out.** Signing in
+  folds the anonymous device's follows and empty size ladders into the account (`Accounts.merge`,
+  the server's rule for a reinstall). Since sign-out leaves an empty store and an anonymous user
+  with no follows, that is only what was followed *after* signing out — no longer the first
+  account's brands — and never the saves, boards or fits, which stay in the signed-out store.
+- **A phone upgraded while signed out on an owned `default.store`** — a lapsed token, before
+  this build — opens on the empty signed-out store; signing in brings everything back.
 - A background pass reaches only the signed-in account's profiles; a hidden account's feeds and
   local alerts wait for it to sign in again. Standalone has one implicit profile and no pass.

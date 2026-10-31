@@ -1061,6 +1061,7 @@ the local path in the `else`. Adding a new one means adding both halves:
 | country (You › Location) | `PATCH /v1/devices/me` (`country`; also sent at registration) — standalone stores it and changes nothing |
 | APNs token / environment | `PATCH /v1/devices/me` |
 | Sign in with Apple (optional; hidden standalone and when the server says it cannot verify) | `GET /v1/account`, `POST /v1/account/apple` — the first sign-in adopts this device's user, a later one merges it into the account's |
+| sign out | `POST /v1/account/sign-out` — the device moves to a fresh anonymous user and keeps its token; the phone lands on an empty signed-out store and the account's stores are hidden (`docs/profiles.md`) |
 | delete the account | `DELETE /v1/account`, then a fresh `POST /v1/devices` and a re-follow of this phone's brands; other profiles' local stores are deleted |
 | profiles (signed in only) | `GET` / `POST /v1/account/profiles`, `PATCH` / `DELETE /v1/account/profiles/:id`; every other route acts for the current profile through `X-Profile-ID` (none for the holder) |
 | stock watches | `POST` / `GET` / `DELETE /v1/watches` — `GET` also restores watches this store does not have (a reinstall, a profile on a second phone) |

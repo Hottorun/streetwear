@@ -13,6 +13,7 @@ import OSLog
 import StreetwCore
 import SwiftData
 import SwiftUI
+import UserNotifications
 
 /// Who the app is acting for: the holder — and every install that never signed in — or one
 /// profile on the account.
@@ -27,8 +28,11 @@ struct ProfileScope: Hashable, Sendable {
     /// that does not own `default.store`, the account's id.
     let home: UUID?
     /// The account `home` is filed under. Nil with it: `default.store` is not in any account's
-    /// directory, whoever owns it.
+    /// directory, whoever owns it. Nil too for the signed-out store, which is nobody's.
     let account: UUID?
+    /// The store a signed-out phone shows once `default.store` is an account's — see
+    /// `ProfileStores.signedOut`. Its `home` is its own id; it sends no header.
+    var isSignedOut = false
 
     /// The phone's store: signed out, and the holder of the account that owns it.
     static let holder = ProfileScope(id: nil, name: nil, home: nil, account: nil)
@@ -44,6 +48,11 @@ struct ProfileScope: Hashable, Sendable {
         ProfileScope(id: nil, name: nil, home: account, account: account)
     }
 
+    /// The signed-out phone's store, when `default.store` belongs to an account.
+    static func signedOut(_ home: UUID) -> ProfileScope {
+        ProfileScope(id: nil, name: nil, home: home, account: nil, isSignedOut: true)
+    }
+
     var isHolder: Bool { id == nil }
 
     /// A `UserDefaults` key for this person: the key itself for the phone's store, so nothing
@@ -55,7 +64,8 @@ struct ProfileScope: Hashable, Sendable {
     /// The phone's store is the one 1.0 and 1.1 wrote, at the path `streetwApp` has always
     /// pinned; every other is in its account's directory. See `ProfileStores`.
     var storeURL: URL {
-        ProfileStores.url(home: home, account: account)
+        if isSignedOut, let home { return ProfileStores.signedOutURL(home) }
+        return ProfileStores.url(home: home, account: account)
     }
 
     /// A local alert's body as this profile's — "For Anna: …" — or as it was, for the holder.
@@ -106,6 +116,49 @@ enum ProfileStores {
     static var owner: UUID? {
         get { UserDefaults.standard.string(forKey: ownerKey).flatMap(UUID.init(uuidString:)) }
         set { UserDefaults.standard.set(newValue?.uuidString, forKey: ownerKey) }
+    }
+
+    private static let signedOutKey = "signedOutStore"
+
+    /// **What a signed-out phone shows once `default.store` is an account's: a store of its
+    /// own, empty when the phone left an account** (`ProfileStore.settle` makes a new one each
+    /// time). Signing out is how a phone is handed to somebody else, and showing them the
+    /// owner's saves would make it no sign-out at all; the owner's store waits hidden, like any
+    /// account's. It belongs to nobody: no account's list names it, Remove never offers it, and
+    /// it is never carried into an account — the server folds its follows into whichever
+    /// account signs in next, as it does a reinstall's.
+    static var signedOut: ProfileScope {
+        if let home = UserDefaults.standard.string(forKey: signedOutKey).flatMap(UUID.init(uuidString:)) {
+            return .signedOut(home)
+        }
+        let home = UUID()
+        UserDefaults.standard.set(home.uuidString, forKey: signedOutKey)
+        return .signedOut(home)
+    }
+
+    static func signedOutURL(_ home: UUID) -> URL {
+        root.appending(path: "signed-out-\(home.uuidString).store")
+    }
+
+    /// Every signed-out store on disk — one, unless a kill landed between deleting the last
+    /// one and opening the next.
+    static func signedOutStores() -> [ProfileScope] {
+        files(in: root)
+            .filter { $0.hasPrefix("signed-out-") && $0.hasSuffix(".store") }
+            .compactMap { UUID(uuidString: String($0.dropFirst("signed-out-".count).prefix(36))) }
+            .map(ProfileScope.signedOut)
+    }
+
+    /// Deletes every signed-out store, with its keys, and forgets which was current, so the
+    /// next `signedOut` is a new, empty one.
+    static func removeSignedOut() {
+        var stores = signedOutStores()
+        if let home = UserDefaults.standard.string(forKey: signedOutKey).flatMap(UUID.init(uuidString:)),
+           !stores.contains(.signedOut(home)) {
+            stores.append(.signedOut(home))
+        }
+        for scope in stores { remove(scope) }
+        UserDefaults.standard.removeObject(forKey: signedOutKey)
     }
 
     private static var root: URL { URL.applicationSupportDirectory }
@@ -161,7 +214,8 @@ enum ProfileStores {
     }
 
     static func allHomes() -> Set<UUID> {
-        accounts().reduce(into: legacyHomes()) { $0.formUnion(homes(in: $1)) }
+        let signedOut = Set(signedOutStores().compactMap(\.home))
+        return accounts().reduce(into: legacyHomes().union(signedOut)) { $0.formUnion(homes(in: $1)) }
     }
 
     private static func profileID(in file: String) -> UUID? {
@@ -403,10 +457,11 @@ final class ProfileStore {
 
     // MARK: - Whose store
 
-    /// The holder's store for `account`: the phone's own when the account owns it — and
-    /// signed out — and the account's own otherwise. See `ProfileStores.owner`.
+    /// The holder's store for `account`: the phone's own when the account owns it, and the
+    /// account's own otherwise. Signed out, the phone's own while no account owns it, else the
+    /// signed-out store. See `ProfileStores.owner` and `ProfileStores.signedOut`.
     static func holderScope(for account: UUID?) -> ProfileScope {
-        guard let account else { return .holder }
+        guard let account else { return ProfileStores.owner == nil ? .holder : ProfileStores.signedOut }
         if let owner = ProfileStores.owner { return owner == account ? .holder : .ownHolder(of: account) }
         // Unowned — Remove took the other account's — but this account already has its own.
         return ProfileStores.homes(in: account).contains(account) ? .ownHolder(of: account) : .holder
@@ -434,10 +489,10 @@ final class ProfileStore {
         return [current] + profiles.map(scope(for:)).filter { $0.home != current.home }
     }
 
-    /// The homes whose local alerts may be pending: the signed-in account's, or the phone's
-    /// own signed out. Every other account is hidden, and so are its drop reminders.
+    /// The homes whose local alerts may be pending: the signed-in account's, or the store a
+    /// signed-out phone shows. Every other account is hidden, and so are its drop reminders.
     private var visibleHomes: Set<UUID?> {
-        guard let account else { return [nil] }
+        guard let account else { return [Self.holderScope(for: nil).home] }
         var homes = Set(ProfileStores.homes(in: account).map(Optional.some))
         homes.insert(Self.holderScope(for: account).home)
         for profile in profiles where !profile.isHolder { homes.insert(profile.id) }
@@ -449,10 +504,20 @@ final class ProfileStore {
     private func settle() {
         let account = self.account
         if let account { Self.claimDefaultStore(for: account) }
-        let holder = Self.holderScope(for: account)
+        var holder = Self.holderScope(for: account)
         let isVisible = current == holder
             || (!current.isHolder && current.account == account && profiles.contains { $0.id == current.id })
-        if !isVisible { switchTo(holder) }
+        if !isVisible {
+            // **Leaving an account lands on an empty store**, whatever the last person to be
+            // signed out left in it — signing out is a fresh install, not a return to theirs.
+            if holder.isSignedOut {
+                dropSignedOutStores()
+                holder = ProfileStores.signedOut
+            }
+            // The one pending morning alert is the store being left's, and names its picks.
+            Task { await PicksNotice.withdrawAll() }
+            switchTo(holder)
+        }
         ProfileScope.known = ProfileStores.allHomes()
         noteOtherAccounts()
         let homes = visibleHomes
@@ -501,6 +566,15 @@ final class ProfileStore {
 
     func switchTo(_ profile: ProfileDTO) {
         switchTo(scope(for: profile))
+    }
+
+    /// Deletes every signed-out store and its waiting shares — nobody's data, and stale the
+    /// moment the phone leaves an account or no account owns `default.store` any more.
+    private func dropSignedOutStores() {
+        let stores = ProfileStores.signedOutStores()
+        for scope in stores { containers[scope.storeURL] = nil }
+        SharedInbox.discard(for: Set(stores.map(\.home)))
+        ProfileStores.removeSignedOut()
     }
 
     /// The profile a tapped alert was about, made current before anything opens. The holder's
@@ -582,6 +656,37 @@ final class ProfileStore {
         // which were cleared while the account was not the one signed in.
         await refresh()
         await rescheduleReminders()
+    }
+
+    // MARK: - Signing out
+
+    /// Signs out: the server takes this phone off the account, and the app lands on an empty
+    /// signed-out store with every store of the account hidden, to come back as they were at
+    /// the next sign-in. Nothing is deleted, here or on the server.
+    ///
+    /// **Every store of the account is held while the server is asked**, so no sync can be
+    /// halfway through one when the device becomes nobody's — a follow list read after that is
+    /// the new anonymous user's, and merged into the account's store it would read as
+    /// "unfollowed everything". Syncs waiting behind the hold then find the store is not the
+    /// signed-in account's and stop (`RemoteSync.sync`).
+    func signOut() async {
+        await run {
+            guard self.account != nil, let api = self.api else { return }
+            let stores = self.scopes.map(\.storeURL)
+            try await RemoteSync.holding(stores) {
+                try await api.signOut()
+                self.settings.account = nil
+            }
+            // Delivered alerts name the account's brands and watches; the next person to pick
+            // the phone up should not read them on the lock screen.
+            UNUserNotificationCenter.current().removeAllDeliveredNotifications()
+            self.forgetAll()
+            // The new session's own answer to "can this server sign in?" — You is still open
+            // on it, and without one it draws no Account section at all until it is reopened.
+            await self.session.remote.refreshAccount()
+            // The new anonymous device's sizes and country, and its empty feed.
+            await self.session.remote.sync(sizes: self.session.sizes.profile)
+        }
     }
 
     // MARK: - The list
@@ -701,13 +806,21 @@ final class ProfileStore {
             guard let account = self.account else { throw APIError.notConfigured }
             self.switchTo(Self.holderScope(for: account))
             let session = self.session
-            try await session.remote.deleteAccount(sizes: session.sizes.profile)
-            // Signed out now, so this is the phone's own store.
+            // `default.store` is released the moment the account is gone and before the phone
+            // reads as signed out, so the settle that follows keeps the phone on it rather than
+            // moving to a signed-out store.
+            try await session.remote.deleteAccount(sizes: session.sizes.profile) {
+                if ProfileStores.owner == account {
+                    ProfileStores.owner = nil
+                    self.dropSignedOutStores()
+                }
+            }
+            // Signed out now: the phone's own store, or — when the account had its own and
+            // `default.store` is somebody else's — an empty signed-out one.
             self.forgetAll()
             let directory = ProfileStores.directory(for: account).path(percentEncoded: false)
             self.containers = self.containers.filter { !$0.key.path(percentEncoded: false).hasPrefix(directory) }
             ProfileStores.removeAccount(account)
-            if ProfileStores.owner == account { ProfileStores.owner = nil }
             ProfileScope.known = ProfileStores.allHomes()
             self.noteOtherAccounts()
             // Puts this phone's brands back on the new anonymous device now, rather than at
@@ -747,11 +860,13 @@ final class ProfileStore {
 
     // MARK: - Another Apple ID's stores
 
-    /// The stores of every account but the one this phone is showing — signed in, that
-    /// account; signed out, whoever owns `default.store`. Profile stores from before stores
+    /// The stores of every account but the one signed in. Profile stores from before stores
     /// were filed by account, which no list has claimed, count too: nothing says whose they are.
+    ///
+    /// **None while signed out.** A signed-out phone shows nobody's account — it may be in
+    /// somebody else's hands — and the hidden accounts' data is not theirs to delete.
     private func otherAccountStores() -> [ProfileScope] {
-        let shown = account ?? (current.home == nil ? ProfileStores.owner : nil)
+        guard let shown = account else { return [] }
         var stores: [ProfileScope] = []
         for other in ProfileStores.accounts() where other != shown {
             stores += ProfileStores.homes(in: other).map { ProfileScope(id: nil, name: nil, home: $0, account: other) }
@@ -779,7 +894,11 @@ final class ProfileStore {
         SharedInbox.discard(for: Set(stores.map(\.home)))
         for account in Set(stores.compactMap(\.account)) { ProfileStores.removeAccount(account) }
         for scope in stores where scope.account == nil { ProfileStores.remove(scope) }
-        if stores.contains(.holder) { ProfileStores.owner = nil }
+        if stores.contains(.holder) {
+            ProfileStores.owner = nil
+            // Signed out from here on is `default.store` again, so the signed-out store is stale.
+            dropSignedOutStores()
+        }
         ProfileScope.known = ProfileStores.allHomes()
         noteOtherAccounts()
         await DropReminders.retain(visibleHomes)

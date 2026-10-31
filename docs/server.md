@@ -551,6 +551,12 @@ Part of the streetw guidance set; see `CLAUDE.md` for the index and the build ru
     registers a fresh anonymous device and re-follows the phone's own brands
     (`RemoteSync.deleteAccount`, then `didRegisterAfresh`, which is persisted so a kill between
     the two cannot strand it). The catalogue is never touched.
+- **Signing out moves the device, nothing else** (`POST /v1/account/sign-out`,
+  `Accounts.signOut`): onto a fresh anonymous user with no sizes and the old user's country,
+  keeping the token and the APNs token, so the account's alerts stop reaching it and its follow
+  list is empty. The account keeps its users, follows, watches, credits and other phones; a
+  device with no account is left alone, so a retry is harmless; nothing is revoked at Apple.
+  See `docs/profiles.md`.
 - **A first sign-in settles its account before it merges** (`Accounts.findOrCreate`). Two first
   sign-ins for one Apple ID both missed the lookup and both inserted, and the second hit the
   unique constraint on `apple_subject` — not an `AbortError`, so a 500. Inside the transaction

@@ -5,7 +5,8 @@
 // anonymous install cannot have: a reinstall that comes back with its follows, sizes and
 // watches, because the server keeps them under an identity Apple hands back. Credits and
 // profiles will need it; until then it is a quiet offer near the top of You, and once taken,
-// the account and the way to delete it, which Apple requires of an app that makes one.
+// the account, signing out — which hides this account's stores and leaves an empty app — and
+// the way to delete it, which Apple requires of an app that makes one.
 //
 // **Hidden where it cannot work.** Standalone mode has no server to keep anything on, and a
 // server that cannot verify Apple's tokens refuses every sign-in — so the button is drawn only
@@ -30,6 +31,7 @@ struct AccountSection: View {
     /// to the server, which hashes it again and compares — see `AppleSignIn`.
     @State private var nonce: String?
     @State private var isWorking = false
+    @State private var isConfirmingSignOut = false
     @State private var isConfirmingDelete = false
     @State private var failure: String?
 
@@ -143,12 +145,26 @@ struct AccountSection: View {
                 YouRow(title: "Signed in with Apple", detail: since(account), detailColor: .ink)
             }
 
+            Button { isConfirmingSignOut = true } label: {
+                NotificationsSection.SettingsAction(title: "Sign out")
+            }
+            .buttonStyle(.borderless)
+            .disabled(isWorking || profiles.isWorking)
+            .padding(.top, 4)
+            .confirmationDialog("Sign out?", isPresented: $isConfirmingSignOut, titleVisibility: .visible) {
+                // Through the profile store, which moves the app onto an empty store and
+                // hides this account's — see `ProfileStore.signOut`.
+                Button("Sign out", role: .destructive) { Task { await profiles.signOut() } }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("Your saves stay on this phone and come back when you sign in.")
+            }
+
             Button { isConfirmingDelete = true } label: {
                 NotificationsSection.SettingsAction(title: "Delete account")
             }
             .buttonStyle(.borderless)
-            .disabled(isWorking)
-            .padding(.top, 4)
+            .disabled(isWorking || profiles.isWorking)
             .confirmationDialog(
                 "Delete your account?",
                 isPresented: $isConfirmingDelete,
@@ -174,7 +190,7 @@ struct AccountSection: View {
                     Dropwall's server deletes your account and everything it keeps under it — \
                     follows, sizes, watches, drop dates and every profile — on every phone signed \
                     in, and any unused credits. Your saves, boards and fits go from this phone \
-                    too, and it goes back to what it held before you signed in.
+                    too.
                     """)
             }
         }
