@@ -349,6 +349,27 @@ public enum BrandNaming {
         return text
     }
 
+    /// A name as it is searched: lower case, accents off, the few letters that have no accent
+    /// to remove spelled out, and whitespace collapsed — so "stussy" finds "Stüssy".
+    ///
+    /// Typed names come off a keyboard and stored names off a storefront, and the two only
+    /// agree on spelling. The server stores this beside the name (`brands.search_name`) and
+    /// matches the folded query against it with a plain `LIKE`, which needs nothing from the
+    /// database — not `unaccent`, not a collation — and so means the same on Postgres and
+    /// SQLite.
+    public static func searchKey(_ name: String) -> String {
+        var text = name
+            .folding(options: [.caseInsensitive, .diacriticInsensitive, .widthInsensitive], locale: nil)
+            .lowercased()
+        // Letters that are their own letter, not a base with a mark, so folding leaves them.
+        for (letter, spelled) in [("ß", "ss"), ("æ", "ae"), ("œ", "oe"), ("ø", "o"), ("ł", "l"), ("đ", "d"), ("þ", "th")] {
+            text = text.replacingOccurrences(of: letter, with: spelled)
+        }
+        return text
+            .split(whereSeparator: \.isWhitespace)
+            .joined(separator: " ")
+    }
+
     private static func isGeneric(_ name: String) -> Bool {
         let lowered = name.lowercased()
         let generic: Set<String> = [

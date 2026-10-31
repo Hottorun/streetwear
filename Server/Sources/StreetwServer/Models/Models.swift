@@ -14,6 +14,9 @@ final class BrandModel: Model, @unchecked Sendable {
 
     @ID(key: .id) var id: UUID?
     @Field(key: "name") var name: String
+    /// `name` as it is searched — `BrandNaming.searchKey`, kept current by `BrandSearchName`.
+    /// Nil only on a row the column has not reached; see `BrandSearch`.
+    @OptionalField(key: "search_name") var searchName: String?
     @Field(key: "slug") var slug: String
     @OptionalField(key: "website") var website: String?
     @OptionalField(key: "instagram_handle") var instagramHandle: String?

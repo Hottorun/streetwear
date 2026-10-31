@@ -60,6 +60,7 @@ func configure(_ app: Application) async throws {
     }
 
     addMigrations(to: app)
+    app.databases.middleware.use(BrandSearchName(), on: nil)
     if Environment.get("AUTO_MIGRATE") != "false" {
         try await app.autoMigrate()
     }
@@ -348,4 +349,5 @@ func addMigrations(to app: Application) {
     app.migrations.add(AddProductReading())
     app.migrations.add(ClearProductShots())
     app.migrations.add(AddRediscovery())
+    app.migrations.add(AddBrandSearchName())
 }

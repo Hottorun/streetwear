@@ -246,6 +246,16 @@ Part of the streetw guidance set; see `CLAUDE.md` for the index and the build ru
   at every `await` and two settles could otherwise create the same brand twice. And **a refused
   check creates nothing**, the same rule the discover route holds. The two 1.0 routes stay, using
   the same `BrandCatalog` helpers, because the build in the App Store calls them and waits.
+- **Brand search ignores accents and case** (`BrandSearch`, `brands.search_name`,
+  `AddBrandSearchName`). "stussy" did not find "Stüssy", so Add a brand said the shop was not in
+  the catalogue and offered to add it again — the duplicate the search exists to prevent. The name
+  is stored folded beside itself (`BrandNaming.searchKey`: lower case, accents off, ß/æ/ø spelled
+  out) and the folded query is matched with a plain `LIKE`, because `unaccent` is an extension a
+  managed Postgres may not carry and SQLite has no equivalent; a column the server fills means the
+  same on both. **`BrandSearchName` fills it**, as database middleware on every create and update,
+  so no place that writes a name — a check, the poller's improved name, the admin override, the
+  next one — can forget it; and only when it would change, so it adds no rewrite. The migration backfills through SQL on two columns rather than through `BrandModel`, and
+  the name as written is still matched too, for any row the column has not reached.
 - **A save from a shop the catalogue lacks adds the shop, for search, and follows nobody**
   (`StartBrandCheck.catalogueOnly`, `brand_checks.catalogue_only`, `AddCatalogueOnlyCheck`; the
   app's half is `CatalogueSuggestions`). Search can only recommend from shops the server reads,
