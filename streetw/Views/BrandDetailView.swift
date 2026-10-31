@@ -582,6 +582,8 @@ struct BrandDetailView: View {
                         .foregroundStyle(isChosen ? Color.ink : Color.muted)
                     NoteLine(text: mode.detail, size: 13)
                 }
+                // A button centres its label's lines; a detail that wraps must not.
+                .multilineTextAlignment(.leading)
                 Spacer(minLength: 12)
                 if isChosen {
                     if pendingMode == mode {
@@ -617,6 +619,7 @@ struct BrandDetailView: View {
                         .foregroundStyle(isEmphasised ? Color.ink : Color.muted)
                     if let detail { NoteLine(text: detail, size: 13) }
                 }
+                .multilineTextAlignment(.leading)
                 Spacer()
                 Image(systemName: symbol)
                     .font(.system(size: 11))
