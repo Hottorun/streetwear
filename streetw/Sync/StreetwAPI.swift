@@ -191,6 +191,11 @@ struct StreetwAPI: Sendable {
         try await send(path: "v1/account/apple", method: "POST", body: body)
     }
 
+    /// Takes this device off its account onto a fresh anonymous user; the token keeps working.
+    func signOut() async throws {
+        try await sendVoid(path: "v1/account/sign-out", method: "POST", body: Optional<Never>.none)
+    }
+
     /// Deletes the account and every device on it, this one included — the token this was
     /// sent with stops working as it answers.
     func deleteAccount() async throws {

@@ -67,7 +67,7 @@ struct ScanView: View {
 
     /// The send button's words, with the price on it whenever there is one to state.
     private func sendLabel(_ verb: String) -> String {
-        price.map { "\(verb) · \($0)" } ?? verb
+        price.map { "\(verb) — \($0)" } ?? verb
     }
 
     var body: some View {
@@ -79,13 +79,13 @@ struct ScanView: View {
                         choosing
                     case .preparing(let image):
                         photograph(image)
-                        working("CUTTING IT OUT")
+                        working("Cutting it out…")
                     case .ready(let prepared):
                         photograph(prepared.cutout ?? prepared.photo)
                         ready(prepared)
                     case .reading(let prepared):
                         photograph(prepared.cutout ?? prepared.photo)
-                        working("READING THE PHOTOGRAPH")
+                        working("Reading the photograph…")
                     case .read(let scanned, let response):
                         photograph(scanned.cutout ?? scanned.photo)
                         read(scanned, response)
@@ -138,21 +138,19 @@ struct ScanView: View {
                 Text("Photograph one garment")
                     .font(.editorial(26))
                     .foregroundStyle(Color.ink)
-                Text("Laid flat or on a hanger, against something plain. One piece to a photograph — the scan reads what it is, its colours, what it's made of and how it's worn.")
-                    .font(.editorial(15))
-                    .foregroundStyle(Color.muted)
-                    .fixedSize(horizontal: false, vertical: true)
+                // How to take it, in one line; what the scan reads is the reading itself.
+                NoteLine(text: "Flat or hung, on something plain.", size: 16)
             }
 
             VStack(spacing: 10) {
                 if CameraPicker.isAvailable {
                     Button { isShowingCamera = true } label: {
-                        actionLabel("TAKE A PHOTO", systemImage: "camera", isPrimary: true)
+                        actionLabel("Take a photo", systemImage: "camera", isPrimary: true)
                     }
                     .buttonStyle(.borderless)
                 }
                 PhotosPicker(selection: $picked, matching: .images) {
-                    actionLabel("CHOOSE FROM PHOTOS", systemImage: "photo", isPrimary: !CameraPicker.isAvailable)
+                    actionLabel("Choose from Photos", systemImage: "photo", isPrimary: !CameraPicker.isAvailable)
                 }
                 .buttonStyle(.borderless)
             }
@@ -168,9 +166,10 @@ struct ScanView: View {
         VStack(alignment: .leading, spacing: 6) {
             Rule()
                 .padding(.bottom, 6)
-            DataLabel(text: price.map { "READING IT COSTS \($0)" } ?? "READING IT USES CREDITS", size: 10, color: .ink)
-            DataLabel(text: "ONLY THIS PHOTOGRAPH IS SENT, TO BE READ ONCE. DROPWALL NEVER STORES IT.", size: 10)
-                .fixedSize(horizontal: false, vertical: true)
+            // The price before anything is spent, and what leaves the phone — both kept, as
+            // sentences; the rest of what goes to the AI is behind You › About.
+            NoteLine(text: price.map { "Reading it costs \($0)." } ?? "Reading it uses credits.", color: .ink)
+            NoteLine(text: "Sent once, and never stored.")
         }
     }
 
@@ -195,12 +194,11 @@ struct ScanView: View {
             if prepared.cutout == nil {
                 // Said, because what is sent is then the whole frame, and somebody should know
                 // that before pressing the button rather than find out from the reading.
-                DataLabel(text: "NOTHING TO CUT OUT — THE WHOLE PHOTOGRAPH IS SENT", size: 10)
-                    .fixedSize(horizontal: false, vertical: true)
+                NoteLine(text: "Nothing to cut out, so the whole photograph is sent.")
             }
             if ai.isSignedIn {
                 Button { send(prepared) } label: {
-                    actionLabel(sendLabel("READ IT"), systemImage: "text.viewfinder", isPrimary: true)
+                    actionLabel(sendLabel("Read it"), systemImage: "text.viewfinder", isPrimary: true)
                 }
                 .buttonStyle(.borderless)
             } else {
@@ -209,7 +207,7 @@ struct ScanView: View {
                 AIRefusalNotice(refusal: .signedOut)
             }
             Button { stage = .choosing } label: {
-                actionLabel("CHOOSE ANOTHER", systemImage: "arrow.uturn.backward", isPrimary: false)
+                actionLabel("Choose another", systemImage: "arrow.uturn.backward", isPrimary: false)
             }
             .buttonStyle(.borderless)
             privacy
@@ -237,7 +235,7 @@ struct ScanView: View {
         VStack(alignment: .leading, spacing: 14) {
             AIRefusalNotice(refusal: refusal, retry: { send(prepared) })
             Button { stage = .choosing } label: {
-                actionLabel("CHOOSE ANOTHER", systemImage: "arrow.uturn.backward", isPrimary: false)
+                actionLabel("Choose another", systemImage: "arrow.uturn.backward", isPrimary: false)
             }
             .buttonStyle(.borderless)
         }
@@ -251,7 +249,7 @@ struct ScanView: View {
         let reading = scanned.reading
         return VStack(alignment: .leading, spacing: 0) {
             VStack(alignment: .leading, spacing: 10) {
-                DataLabel(text: "WHAT THE SCAN READ")
+                NoteLine(text: "The scan read:")
                 Text(reading.description)
                     .font(.editorial(24))
                     .foregroundStyle(Color.ink)
@@ -260,13 +258,13 @@ struct ScanView: View {
                     .map { $0.trimmingCharacters(in: .whitespaces) }
                     .filter { !$0.isEmpty }
                 if reading.isGarment, !facts.isEmpty {
-                    Text(facts.joined(separator: " · ").uppercased())
-                        .font(.data(12))
+                    Text(facts.joined(separator: ", "))
+                        .font(.editorial(16))
                         .foregroundStyle(Color.ink)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 if reading.isGarment, !reading.style.isEmpty {
-                    DataLabel(text: reading.style.joined(separator: " · ").uppercased(), size: 10)
+                    NoteLine(text: "Style: " + reading.style.joined(separator: ", ") + ".")
                 }
                 ChargeLine(charge: response.charge)
             }
@@ -281,12 +279,12 @@ struct ScanView: View {
                 // and offering the three buttons anyway would act on a reading of a doorway.
                 VStack(alignment: .leading, spacing: 14) {
                     Rule()
-                    Text("That doesn't look like one garment. Try a photograph of a single piece, on its own.")
+                    Text("That doesn't look like one garment. Try a single piece on its own.")
                         .font(.editorial(16))
                         .foregroundStyle(Color.ink)
                         .fixedSize(horizontal: false, vertical: true)
                     Button { stage = .choosing } label: {
-                        actionLabel("TRY ANOTHER PHOTOGRAPH", systemImage: "camera", isPrimary: true)
+                        actionLabel("Try another photograph", systemImage: "camera", isPrimary: true)
                     }
                     .buttonStyle(.borderless)
                 }
@@ -300,8 +298,8 @@ struct ScanView: View {
             choiceRow(
                 title: added == nil ? "Add to my wardrobe" : "In your wardrobe",
                 detail: added == nil
-                    ? "KEPT WITH YOUR PHOTOGRAPH. IT GOES INTO FITS LIKE ANYTHING YOU OWN."
-                    : "SAVED › WARDROBE, WITH YOUR PHOTOGRAPH.",
+                    ? "Kept with your photograph, and used in fits."
+                    : "In Saved › Wardrobe, with your photograph.",
                 systemImage: added == nil ? "tshirt" : "checkmark",
                 isOn: choice == .wardrobe
             ) {
@@ -310,14 +308,14 @@ struct ScanView: View {
             }
             .disabled(added != nil)
             if addFailed {
-                DataLabel(text: "THE PHOTOGRAPH COULDN'T BE SAVED ON THIS PHONE. NOTHING WAS KEPT.", size: 10, color: .signal)
+                NoteLine(text: "The photograph couldn't be saved, so nothing was kept.", color: .signal)
                     .padding(.horizontal, 20)
                     .padding(.bottom, 12)
             }
 
             choiceRow(
                 title: "Does it go with my wardrobe?",
-                detail: "WORKED OUT ON THIS PHONE. YOUR WARDROBE ISN'T SENT ANYWHERE.",
+                detail: "Worked out on this phone; your wardrobe isn't sent.",
                 systemImage: "hanger",
                 isOn: choice == .goesWith
             ) { choice = choice == .goesWith ? nil : .goesWith }
@@ -327,9 +325,9 @@ struct ScanView: View {
                 title: "Find this or something like it",
                 detail: response.similar?.isEmpty == false
                     ? (response.similarBasis == "photograph"
-                        ? "PRODUCTS THAT LOOK LIKE YOUR PHOTOGRAPH."
-                        : "PRODUCTS LIKE “\(scanned.reading.searchText.uppercased())”.")
-                    : "SEARCHES THE SHOPS DROPWALL WATCHES FOR “\(scanned.reading.searchText.uppercased())”.",
+                        ? "Products that look like your photograph."
+                        : "Products like “\(scanned.reading.searchText)”.")
+                    : "Searches the shops we watch for “\(scanned.reading.searchText)”.",
                 systemImage: "magnifyingglass",
                 isOn: choice == .find
             ) {
@@ -375,7 +373,7 @@ struct ScanView: View {
                 .foregroundStyle(Color.ink)
                 .fixedSize(horizontal: false, vertical: true)
             if let line = judged.line {
-                DataLabel(text: line.uppercased(), size: 10, color: .ink)
+                NoteLine(text: line, color: .ink)
             }
             if !judged.outfits.isEmpty {
                 ScrollView(.horizontal) {
@@ -393,8 +391,7 @@ struct ScanView: View {
                 .scrollIndicators(.hidden)
                 .padding(.horizontal, -20)
                 .contentMargins(.horizontal, 20, for: .scrollContent)
-                DataLabel(text: "TAP ONE TO ARRANGE IT · NOTHING IS KEPT UNTIL YOU SAVE THE FIT", size: 9)
-                    .fixedSize(horizontal: false, vertical: true)
+                NoteLine(text: "Tap one to arrange it. Nothing is kept until you save the fit.")
             }
         }
         .padding(.horizontal, 20)
@@ -416,7 +413,7 @@ struct ScanView: View {
     private func working(_ label: String) -> some View {
         HStack(spacing: 10) {
             ProgressView().controlSize(.small)
-            DataLabel(text: label)
+            NoteLine(text: label)
         }
         .padding(.horizontal, 20)
         .padding(.top, 20)
@@ -441,9 +438,8 @@ struct ScanView: View {
                         Text(title)
                             .font(.editorial(18))
                             .foregroundStyle(Color.ink)
-                        DataLabel(text: detail, size: 9)
+                        NoteLine(text: detail, size: 13)
                             .multilineTextAlignment(.leading)
-                            .fixedSize(horizontal: false, vertical: true)
                     }
                     Spacer(minLength: 0)
                     Image(systemName: isOn ? "chevron.down" : "chevron.right")
@@ -463,8 +459,7 @@ struct ScanView: View {
             Image(systemName: systemImage)
                 .font(.system(size: 12, weight: .semibold))
             Text(title)
-                .font(.data(12, .semibold))
-                .tracking(1.1)
+                .font(.data(13, .semibold))
         }
         .foregroundStyle(isPrimary ? Color.paper : Color.ink)
         .frame(maxWidth: .infinity)
@@ -544,11 +539,11 @@ private struct ScanOutfitCard: View {
             .background(Color.sweep)
 
             if let reason {
-                DataLabel(text: reason.uppercased(), size: 9, color: .ink)
+                NoteLine(text: reason, size: 12, color: .ink)
                     .lineLimit(2)
                     .frame(width: width, alignment: .leading)
             }
-            DataLabel(text: "\(pieces.count + 1) PIECES", size: 9)
+            NoteLine(text: "\(pieces.count + 1) pieces", size: 12)
         }
     }
 

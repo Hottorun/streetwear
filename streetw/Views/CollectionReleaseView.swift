@@ -88,7 +88,7 @@ struct CollectionReleaseView: View {
                     // builds the page days before the drop.
                     EditorialEmptyState(
                         title: "Nothing in it yet",
-                        action: "THE BRAND HAS ANNOUNCED THIS RELEASE BUT NOT PUT ANYTHING IN IT — OR IT HASN'T BEEN CHECKED SINCE"
+                        action: "The brand announced it but hasn't filled it, or it hasn't been checked since."
                     )
                     .frame(minHeight: 220)
                 } else {
@@ -144,7 +144,7 @@ struct CollectionReleaseView: View {
                                 // different actions: a watch is waiting on stock, a save is
                                 // waiting on you.
                                 DataLabel(
-                                    text: release.watched.contains(member.id) ? "WATCHING" : "SAVED",
+                                    text: release.watched.contains(member.id) ? "Watching" : "Saved",
                                     size: 9,
                                     color: release.watched.contains(member.id) ? .signal : .muted
                                 )
@@ -163,7 +163,7 @@ struct CollectionReleaseView: View {
 
     private func masthead(_ release: Release) -> some View {
         VStack(alignment: .leading, spacing: 12) {
-            DataLabel(text: "COLLECTION · \(Stamp.short(update.publishedAt).uppercased())")
+            NoteLine(text: "A collection, \(Stamp.short(update.publishedAt)).")
 
             Text(update.title)
                 .font(.editorial(30))
@@ -180,7 +180,7 @@ struct CollectionReleaseView: View {
 
             if !release.members.isEmpty {
                 let count = release.members.count
-                DataLabel(text: "\(count) \(count == 1 ? "PIECE" : "PIECES")")
+                NoteLine(text: count == 1 ? "1 piece" : "\(count) pieces")
                     .padding(.top, 2)
             }
 

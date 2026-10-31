@@ -38,8 +38,9 @@ Changing these silently will break intended behavior:
     "All brands" opens `BrandsView` and "Add a brand" the add flow. Somebody following forty shops
     would otherwise scroll past forty rows to reach their alerts, and a shop that had quietly
     stopped answering read exactly like one that had stopped publishing until somebody opened its
-    page. On `BrandsView` the failing source is said on its row — `CATALOG FAILING · COLLECTIONS`,
-    vermilion on the failing word alone — and the per-brand UNREAD count is gone: unread is "since
+    page. On `BrandsView` the failing source is said on its row as a sentence — "Catalog isn't
+    answering.", in vermilion, where a healthy brand reads "Watched from 3 sources." (the names are
+    on its page) — and the per-brand UNREAD count is gone: unread is "since
     you were last here" on the feed, and a second tally of it on a list of follows is a number to
     reconcile against a screen that no longer keeps one per brand.
   - **Nothing that is not built.** Sign-in, profiles, location and credits are Phase 2, and a row
@@ -131,8 +132,8 @@ Changing these silently will break intended behavior:
   allowing gaps shorter than five minutes** (`resumeWindow`): a trip to a storefront to buy the
   thing, or a look at Saved, is the same visit; coming back after lunch is a new one. The line is
   drawn where the previous visit ended — the last moment the feed was on screen — and does not move
-  during a visit. Above it, "↑ NEW SINCE YOU WERE LAST HERE · 5H AGO"; when nothing is new it heads
-  the page, "NOTHING NEW SINCE YOU WERE LAST HERE". With no visit recorded — a fresh install, a
+  during a visit. Above it, "↑ New since you were last here" with "5h ago" beside it; when nothing is
+  new it heads the page, "Nothing new since you were last here". With no visit recorded — a fresh install, a
   phone coming from 1.0 — everything is above it and no line is drawn. A crash records no end, and
   errs towards showing too much as new.
 - **What marks a row seen now: the feed going out of sight.** Whenever it does — another tab, the
@@ -160,12 +161,12 @@ Changing these silently will break intended behavior:
   `DropCalendarView` are no longer reached from here.
 - **The future is one line above the feed, never a pinned card** (`UpcomingLine`). The soonest of: a
   storefront locked now (`Brand.isAnnouncingLock`), a date somebody wrote down, a product the brand
-  dated ahead — inside two days (`UpcomingDrops.lineHorizon`): "● TOMORROW 10:00 · ONDO CLUB ·
+  dated ahead — inside two days (`UpcomingDrops.lineHorizon`): "● Ondo Club: Tomorrow 10:00 —
   Summer capsule", vermilion when locked or under a day away, the point at which the calendar's
   countdown starts counting seconds. Tapping it opens Upcoming. The prototype pinned these as grey
   tiles with a calendar glyph, the largest object on the screen saying the least. Upcoming lists the
   same rows the calendar does (`UpcomingDropList`, `UpcomingDropRow`) — locks, dates the brand set,
-  dates "ADDED BY YOU" — **without the rhythms** ("usually Fridays"), which are a guess and cost a
+  dates "Added by you" — **without the rhythms** ("usually Fridays"), which are a guess and cost a
   walk of every catalogue; those stay in the full calendar under You.
 - **There is no refresh button** (`FeedRefresh`). A feed that has to be *told* to check is quietly
   out of date until you tell it, so `scenePhase == .active` answers the question when you come back,
@@ -278,7 +279,7 @@ Changing these silently will break intended behavior:
   already knew, again, on the shop's own menu — five steps on the one page where a drop is won
   or lost. For a Shopify product (`shopify:` key, numeric variant ids) with **exactly one
   available variant you wear** in the colourway on screen, it now opens the cart permalink
-  `https://<product host>/cart/<variant>:1` and says "CHECK OUT IN M · KITH.COM". Four rules
+  `https://<product host>/cart/<variant>:1` and says "Check out in M on kith.com". Four rules
   hold it. **`claims`, never `matches`**: the filter's optimism turns "can't read 44" into
   "yours", which on a size run is a wrongly ruled token and here is money — so no profile, an
   unreadable size, two of your sizes in stock or four colourways with none chosen all open the
@@ -627,14 +628,15 @@ Changing these silently will break intended behavior:
   `docs/server.md` for the storefront model. It never converts a price, never hides a brand and
   never filters a feed: a brand with no shop for your country, or one in a country not yet
   switched on, is its main shop, exactly as before. The row says that in as many words — "Prices
-  and shops for the United Kingdom where a brand runs one; elsewhere the brand's main shop" —
+  and shops for the United Kingdom where a brand runs one; elsewhere the brand's main shop" (now
+  You › Location's ⓘ) —
   and there is no list of countries that are coming, because a setting that mostly says "not
   yet" is the app talking about itself. Standalone has no server and no storefronts; the setting
   is kept on the phone and changes nothing there. What it changes is visible where it changes
-  something: a brand page names the shop it is showing ("UNITED KINGDOM SHOP · GBP" against
-  "MAIN SHOP · USD"), under the host it is on. A shop serves a set of countries, so a regional
-  one is named for who it serves, never for the reader's country — "EUROPE SHOP · EUR" under
-  `EU.KITH.COM` when every country in its set is European, "SHOP FOR 48 COUNTRIES" when they are
+  something: a brand page names the shop it is showing ("The United Kingdom shop in GBP, checked 2h
+  ago." against "The main shop in USD, …"), under the host it is on. A shop serves a set of countries, so a regional
+  one is named for who it serves, never for the reader's country — "The Europe shop in EUR" under
+  `eu.kith.com` when every country in its set is European, "The shop for 48 countries" when they are
   not (`ShopReach`). Calling `eu.kith.com` "the German shop" to somebody in Berlin would be a
   claim about a shop that is not German.
 - **A switch is forward-only.** Rows a phone already holds were the main shop's when they arrived

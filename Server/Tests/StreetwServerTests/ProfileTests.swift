@@ -630,3 +630,130 @@ struct ProfileNotifierTests {
         }
     }
 }
+
+@Suite("Signing out")
+struct SignOutTests {
+    private func signOut(_ app: Application, headers: HTTPHeaders) async throws {
+        try await app.testing().test(.POST, "v1/account/sign-out", headers: headers) { res in
+            #expect(res.status == .noContent, "\(res.body.string)")
+        }
+    }
+
+    private func phone(_ app: Application, _ apnsToken: String) async throws -> DeviceModel {
+        try #require(try await DeviceModel.query(on: app.db).filter(\.$apnsToken == apnsToken).first())
+    }
+
+    /// The phone becomes a fresh install; the account loses nothing.
+    @Test("Signing out gives the device a fresh anonymous user and leaves the account whole")
+    func detachesTheDevice() async throws {
+        try await withServer { app in
+            let (headers, holder, anna) = try await household(app)
+            let accountID = try #require(try await UserModel.find(holder, on: app.db)?.$account.id)
+            let kith = try await brand(app, "kith.com", name: "Kith")
+            try await follow(app, kith, headers: headers)
+            try await follow(app, kith, headers: acting(as: anna.id, headers))
+            let holderUser = try #require(try await UserModel.find(holder, on: app.db))
+            holderUser.sizeProfile = SizePayload(apparel: ["M"], shoe: ["9"]).asProfile
+            holderUser.country = "GB"
+            try await holderUser.save(on: app.db)
+            try await CreditEntryModel(accountID: accountID, delta: 25, reason: .grant, at: Date()).save(on: app.db)
+            // A second phone on the account, which must stay on it.
+            let (otherHeaders, otherPhone) = try await register(app, apnsToken: "token-b")
+            try await signIn(app, as: "alice", headers: otherHeaders)
+
+            try await signOut(app, headers: headers)
+
+            // Same token, a new nobody: no account, no follows, no profiles, no credits.
+            let device = try await phone(app, "token-a")
+            #expect(device.$user.id != holder)
+            let fresh = try #require(try await UserModel.find(device.$user.id, on: app.db))
+            #expect(fresh.$account.id == nil)
+            #expect(fresh.sizeProfile.apparel.isEmpty && fresh.sizeProfile.shoe.isEmpty)
+            #expect(fresh.country == "GB")
+            try await app.testing().test(.GET, "v1/account", headers: headers) { res async throws in
+                #expect(res.status == .ok)
+                #expect(try res.content.decode(AccountStatus.self).account == nil)
+            }
+            #expect(try await followed(app, headers: headers).isEmpty)
+            try await app.testing().test(.GET, "v1/account/profiles", headers: headers) { res in
+                #expect(res.status == .notFound)
+            }
+            try await app.testing().test(.GET, "v1/credits", headers: headers) { res async throws in
+                #expect(try res.content.decode(CreditsSummary.self).signedIn == false)
+            }
+            // A profile header left over from before is refused rather than obeyed.
+            try await app.testing().test(.GET, "v1/follows", headers: acting(as: anna.id, headers)) { res in
+                #expect(res.status == .forbidden)
+            }
+
+            // The account kept its people, their follows and sizes, its credits and its other phone.
+            #expect(try await Accounts.profiles(of: accountID, on: app.db).map(\.id) == [holder, anna.id])
+            #expect(try await FollowModel.query(on: app.db).filter(\.$user.$id == holder).count() == 1)
+            #expect(try await FollowModel.query(on: app.db).filter(\.$user.$id == anna.id).count() == 1)
+            #expect(try await UserModel.find(holder, on: app.db)?.sizeProfile.apparel == ["M"])
+            #expect(try await CreditEntryModel.query(on: app.db).filter(\.$account.$id == accountID).count() == 1)
+            #expect(try await DeviceModel.find(otherPhone.id, on: app.db)?.$user.id == holder)
+            #expect(try await followed(app, headers: otherHeaders) == [kith])
+
+            // Signing out twice is not an error, and makes nobody else.
+            let users = try await UserModel.query(on: app.db).count()
+            try await signOut(app, headers: headers)
+            #expect(try await UserModel.query(on: app.db).count() == users)
+        }
+    }
+
+    /// The reason the server has to be told at all.
+    @Test("A signed-out phone hears nothing for the account's profiles")
+    func noAlertsAfterSigningOut() async throws {
+        try await withServer { app in
+            let (headers, holder, anna) = try await household(app)
+            let kith = try await brand(app, "kith.com", name: "Kith")
+            try await follow(app, kith, headers: headers)
+            try await follow(app, kith, headers: acting(as: anna.id, headers))
+            let (otherHeaders, _) = try await register(app, apnsToken: "token-b")
+            try await signIn(app, as: "alice", headers: otherHeaders)
+
+            try await signOut(app, headers: headers)
+
+            let audience = try await Notifier.audience(for: [holder, anna.id], on: app.db)
+            #expect(Set(audience[holder]?.devices.compactMap(\.apnsToken) ?? []) == ["token-b"])
+            #expect(Set(audience[anna.id]?.devices.compactMap(\.apnsToken) ?? []) == ["token-b"])
+
+            let jacket = try await product(app, brandID: kith, title: "Chore Jacket")
+            try await EventModel(brandID: kith, productID: try jacket.requireID(), kind: .product).save(on: app.db)
+            let sender = RecordingSender()
+            #expect(await Notifier(app: app, sender: sender).dispatch().sent == 2)
+            #expect(Set(sender.sent.map(\.deviceToken)) == ["token-b"])
+        }
+    }
+
+    /// Signing back in is the reinstall case: the phone's anonymous user folds into the account.
+    @Test("Signing in again puts the device back on the account's user")
+    func signingBackIn() async throws {
+        try await withServer { app in
+            let (headers, holder, _) = try await household(app)
+            let kith = try await brand(app, "kith.com", name: "Kith")
+            try await follow(app, kith, headers: headers)
+            try await signOut(app, headers: headers)
+            let anonymous = try await phone(app, "token-a").$user.id
+
+            let session = try await signIn(app, as: "alice", headers: headers)
+            #expect(session.merged)
+            #expect(try await phone(app, "token-a").$user.id == holder)
+            #expect(try await UserModel.find(anonymous, on: app.db) == nil)
+            #expect(try await followed(app, headers: headers) == [kith])
+        }
+    }
+
+    @Test("A device that never signed in can sign out, and nothing changes")
+    func anonymousIsANoOp() async throws {
+        try await withServer { app in
+            let (headers, device) = try await register(app)
+            try await signOut(app, headers: headers)
+            #expect(try await DeviceModel.find(device.id, on: app.db)?.$user.id == device.$user.id)
+            try await app.testing().test(.POST, "v1/account/sign-out") { res in
+                #expect(res.status == .unauthorized)
+            }
+        }
+    }
+}

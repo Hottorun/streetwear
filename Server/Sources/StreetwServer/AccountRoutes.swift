@@ -1,5 +1,5 @@
 // AccountRoutes.swift
-// Sign in with Apple, account deletion, and the operator's view of accounts.
+// Sign in with Apple, signing out, account deletion, and the operator's view of accounts.
 //
 // All of it is new surface: 1.0 and 1.1 never call these routes, and nothing about
 // registration or any existing route changes. An install that never signs in is exactly
@@ -78,6 +78,14 @@ func accountRoutes(authed: any RoutesBuilder, admin: any RoutesBuilder) {
             merged: result.merged,
             sizes: SizePayload(result.user.sizeProfile)
         )
+    }
+
+    /// Signs this device out: it leaves the account for a fresh anonymous user, keeping its
+    /// token, and the account keeps everything. See `Accounts.signOut`.
+    authed.post("account", "sign-out") { req async throws -> HTTPStatus in
+        let device = try await req.authenticatedDevice()
+        try await Accounts.signOut(device: device, on: req.db)
+        return .noContent
     }
 
     /// Deletes the caller's account and everything personal under it, which Apple requires

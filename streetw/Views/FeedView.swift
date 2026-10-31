@@ -318,13 +318,12 @@ struct FeedPage: View {
         VStack(alignment: .leading, spacing: 9) {
             Rectangle().fill(Color.ink).frame(height: 1)
             HStack(alignment: .firstTextBaseline) {
-                DataLabel(
-                    text: hasFresh ? "↑ NEW SINCE YOU WERE LAST HERE" : "NOTHING NEW SINCE YOU WERE LAST HERE",
-                    size: 10,
+                NoteLine(
+                    text: hasFresh ? "↑ New since you were last here" : "Nothing new since you were last here",
                     color: .ink
                 )
                 Spacer(minLength: 8)
-                DataLabel(text: Stamp.short(boundary).uppercased(), size: 10)
+                NoteLine(text: Stamp.short(boundary))
             }
         }
         .padding(.top, hasFresh ? 18 : 2)
@@ -340,7 +339,7 @@ struct FeedPage: View {
             if entries.isEmpty {
                 empty(
                     "Nothing ahead",
-                    "LOCKED SHOPS, DATES A BRAND HAS SET AND DATES YOU ADD LAND HERE"
+                    "Locked shops and set dates land here."
                 )
             } else {
                 UpcomingDropList(
@@ -354,7 +353,7 @@ struct FeedPage: View {
             // reminder on the day and at the minute, and the poller looks harder — see
             // `docs/drop-calendar.md`.
             if !brands.isEmpty {
-                underlined("ADD A DATE") { editingDrop = .new(chosenBrand) }
+                underlined("Add a date") { editingDrop = .new(chosenBrand) }
                     .padding(.horizontal, 20)
                     .padding(.top, 20)
             }
@@ -365,8 +364,8 @@ struct FeedPage: View {
 
     private var nothingFollowed: some View {
         VStack(alignment: .leading, spacing: 0) {
-            empty("Nothing on watch yet", "ADD A BRAND AND DROPWALL STARTS WATCHING ITS CATALOGUE")
-            underlined("ADD A BRAND") { isAddingBrand = true }
+            empty("Nothing on watch yet", "Add a brand to start watching.")
+            underlined("Add a brand") { isAddingBrand = true }
                 .padding(.horizontal, 20)
                 .padding(.top, 14)
                 .padding(.bottom, 36)
@@ -384,9 +383,9 @@ struct FeedPage: View {
             if let brand, brand.followMode == .quiet {
                 // Chosen from the menu, where it is labelled — and empty because that is what
                 // Quiet means, which is worth saying rather than looking broken.
-                empty("Nothing from \(brand.name) reaches the feed", "IT IS FOLLOWED QUIETLY. ITS PAGE STILL HAS EVERYTHING")
+                empty("Nothing from \(brand.name) reaches the feed", "Followed quietly. Its page has it all.")
                 NavigationLink(value: BrandRoute(brand: brand)) {
-                    underlinedLabel("OPEN \(brand.name.uppercased())")
+                    underlinedLabel("Open \(brand.name)")
                 }
                 .buttonStyle(.borderless)
                 .padding(.horizontal, 20)
@@ -394,7 +393,7 @@ struct FeedPage: View {
             } else {
                 empty(emptyTitle(brand: brand), emptyDetail(isHidingSome: isHidingSome))
                 if isHidingSome {
-                    underlined("CHANGE IT") { isShowingSizes = true }
+                    underlined("Change it") { isShowingSizes = true }
                         .padding(.horizontal, 20)
                         .padding(.top, 14)
                 }
@@ -417,15 +416,15 @@ struct FeedPage: View {
     }
 
     private func emptyDetail(isHidingSome: Bool) -> String {
-        if isHidingSome { return "SHOWING \(sizes.profile.gender.label.uppercased()) ONLY" }
+        if isHidingSome { return "You're seeing \(sizes.profile.gender.label.lowercased()) only." }
         if engine.lastSyncedAt == nil, remote.lastSyncedAt == nil {
-            return "PULL TO CHECK YOUR BRANDS FOR THE FIRST TIME"
+            return "Pull down to check your brands."
         }
         return switch filter {
-        case .all, .upcoming: "NEW DROPS, RESTOCKS AND SALES FROM YOUR BRANDS LAND HERE"
-        case .drops: "NEW PRODUCTS AND RELEASES LAND HERE"
-        case .restocks: "WHEN SOMETHING THAT SOLD OUT COMES BACK, IT LANDS HERE"
-        case .sales: "MARKDOWNS AND BRAND-WIDE SALES LAND HERE"
+        case .all, .upcoming: "Drops, restocks and sales land here."
+        case .drops: "New products and releases land here."
+        case .restocks: "Things back in stock land here."
+        case .sales: "Markdowns and sales land here."
         }
     }
 
@@ -435,8 +434,7 @@ struct FeedPage: View {
                 .font(.editorial(22))
                 .foregroundStyle(Color.ink)
                 .fixedSize(horizontal: false, vertical: true)
-            DataLabel(text: detail)
-                .fixedSize(horizontal: false, vertical: true)
+            NoteLine(text: detail, size: 16)
         }
         .padding(.horizontal, 20)
         .padding(.top, 18)
@@ -447,12 +445,9 @@ struct FeedPage: View {
             .buttonStyle(.borderless)
     }
 
-    /// A `DataLabel` underlined so it reads as a door rather than as a statement.
+    /// A line of type underlined so it reads as a door rather than as a statement.
     private func underlinedLabel(_ text: String) -> some View {
-        DataLabel(text: text, color: .ink)
-            .overlay(alignment: .bottom) {
-                Rectangle().fill(Color.ink).frame(height: 1).offset(y: 3)
-            }
+        NotificationsSection.SettingsAction(title: text)
     }
 
     /// The one mention of sizes on the feed, and only until they are set.
@@ -463,7 +458,7 @@ struct FeedPage: View {
     @ViewBuilder
     private var sizePrompt: some View {
         if sizes.profile.isEmpty {
-            underlined("SET YOUR SIZES AND THE FEED SAYS WHEN ONE COMES BACK") { isShowingSizes = true }
+            underlined("Set your sizes") { isShowingSizes = true }
                 .padding(.horizontal, 20)
                 .padding(.bottom, 18)
         }
@@ -488,12 +483,12 @@ struct FeedPage: View {
         let trouble = settings.isConfigured ? remote.lastError : engine.lastError
         if let trouble, !isSyncingNow {
             VStack(alignment: .leading, spacing: 6) {
-                DataLabel(text: "COULDN'T REACH DROPWALL", color: .signal)
+                NoteLine(text: "Couldn't reach Dropwall.", size: 15, color: .signal)
                 Text(trouble)
                     .font(.editorial(15))
                     .foregroundStyle(Color.ink)
                     .fixedSize(horizontal: false, vertical: true)
-                underlined("TRY AGAIN") {
+                underlined("Try again") {
                     Task {
                         await FeedRefresh.run(remote: remote, engine: engine, settings: settings, sizes: sizes)
                     }
@@ -520,7 +515,7 @@ struct FeedPage: View {
     private var syncStatus: some View {
         if isSyncingNow {
             DataLabel(
-                text: engine.progress.map { "CHECKING \($0.uppercased())" } ?? "CHECKING",
+                text: engine.progress.map { "Checking \($0)…" } ?? "Checking…",
                 color: .paper
             )
             .padding(.horizontal, 14)

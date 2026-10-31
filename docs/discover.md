@@ -13,12 +13,12 @@ this section is still the deck's, unchanged.
 
 - **The scope is the honesty.** In server mode the field searches every product the server
   holds for every shop it watches, as one list (`GET /v1/products/search`, below — Phase 5), and
-  says "IN EVERY SHOP WE WATCH · 9,947 PRODUCTS", or with *Only my brands* "IN YOUR SHOPS · 1,907
-  PRODUCTS" — the scope and the count the last answer gave, never what the chips asked for, and
-  never "on this phone". Standalone it
+  says "18 matches in every shop we watch.", or with *Only my brands* "… in your shops." — the scope
+  the last answer gave, never what the chips asked for, and never "on this phone"; how many products
+  that was is the first line of How we sort. Standalone it
   searches the products from your shops **that are on this phone** (`ShopCatalogue`) — the
-  newest few hundred per shop (`retentionPerBrand`) — and says "IN YOUR SHOPS · 398 PRODUCTS ON
-  THIS PHONE", exactly as before. **The free field never says AI and never says the web**, and it
+  newest few hundred per shop (`retentionPerBrand`) — and says "12 matches in your shops on this
+  phone.". **The free field never says AI and never says the web**, and it
   draws a magnifying glass rather than a sparkle, because a sparkle is the platform's promise of a
   model and no model reads what is typed there. The model is a second, explicit act beside it —
   *Asking Dropwall*, below — which says it is AI and what it costs. A narrow search presented as
@@ -46,9 +46,11 @@ this section is still the deck's, unchanged.
   in its own currency and nothing fetches rates; a guessed rate is a wrong answer presented as
   a right one. "UNDER 400" says what was compared; "UNDER €400" would claim a conversion that
   never happened. Region-aware prices are Phase 2.
-- **It prints what it understood** (`ShopQuery.reading`), in the data voice under the box —
-  the `StyleStatement` rule. The reading is printed from the query the results answer, not
-  from the text as it is typed, so the two always agree and it does not flicker word by word.
+- **It says what it understood where that differs from what was typed** (`ShopView.readingLines`):
+  a word set aside ("Ignored “wedding”: no product mentions it."), the CHEAPER bound, a size it
+  does not read, and in a thread the model's own reading ("Searched for “…”."). A reading that only
+  repeated the field in capitals was a row above the results saying nothing. It is built from the
+  query the results answer, not from the text as it is typed, so it does not flicker.
 - **A word no product carries is set aside and named, not required.** "a black suit for a
   wedding" would otherwise find nothing, because no title says "wedding". The word is struck
   through in the reading (struck, the way a size that is gone is struck in a run) and a line
@@ -106,7 +108,7 @@ this section is still the deck's, unchanged.
 - **Meaning counts** (`meaning=true`). Below the words, a product whose text vector is close
   enough to the query's (`ProductSearch.measuredThresholds`, per model) is a result even when it
   carries none of the words — "smart summer jacket" can find a linen blazer — and the tile says
-  MATCHED BY MEANING in place of the words it carried (`ProductSearchHit.byMeaning`). **Only
+  "Matched by meaning" in place of the words it carried (`ProductSearchHit.byMeaning`). **Only
   under a search the words found little for** (fewer than twelve word matches, the partial
   matches' rule): the eval measured that what meaning adds to a search the words already answer
   is mostly wrong. It is
@@ -155,10 +157,10 @@ this section is still the deck's, unchanged.
 
 - **The AI path says it is AI and what it costs; the free path still must not.** One row under
   the field, drawn only in server mode and only where `GET /v1/ai` answered `available: true`:
-  a sparkle, "Ask Dropwall", "AI READS YOUR DESCRIPTION, THEN SEARCHES EVERY SHOP WE WATCH", and the
-  price from the server's table ("1 CREDIT"). The field itself keeps its magnifying glass and its
+  the first chip of the one chip row, with a sparkle and the price from the server's table:
+  "Ask AI — 1 credit" (signed out, "Ask AI — sign in"). The field itself keeps its magnifying glass and its
   scope line; nothing typed there reaches a model until the row is pressed.
-- **Signed out it still draws, as "SIGN IN TO USE", and opens You** — where sign-in leads the
+- **Signed out it still draws, as "Ask AI — sign in", and opens You** — where sign-in leads the
   page. A feature that silently does not exist for somebody reads as broken; a dead button is
   worse. The same for every AI surface: `AIStore.isAvailable` decides whether to draw,
   `isSignedIn` whether pressing spends or routes to sign-in.
@@ -173,7 +175,8 @@ this section is still the deck's, unchanged.
 - **The thread is the phone's, and its price is said before a reply is sent.** A reply field
   under the reading continues the thread with `thread` and `threadToken`; "4 MORE REPLIES IN THIS
   SEARCH · FREE" while the token is good, and once it is spent — six turns, or thirty minutes
-  less a minute's margin — "THIS SEARCH IS USED UP — A REPLY STARTS A NEW ONE · 1 CREDIT". A new
+  less a minute's margin — the field's prompt says "Reply as a new search — 1 credit". While it is
+  good the prompt says how many replies are left only once two or fewer remain. A new
   thread opens on the last reading plus the reply, so "no wool" still means no wool suits.
   Editing the field, clearing it, or BACK TO SEARCH ends the thread.
 - **The same one list, ordered by taste on the phone** (`TasteOrder`, core, tested): a turn
@@ -184,17 +187,20 @@ this section is still the deck's, unchanged.
   Worked out in a `.task`, never per body, and **only appended to** within one query, so a MORE
   page never moves a card already read. The free search keeps the server's order — it is one
   answer on both ends.
-- **Every action says what it took**, from its own `AICharge`: "1 CREDIT · 48 LEFT", "NO CHARGE —
-  PART OF THIS SEARCH · 48 LEFT", "NO CHARGE · UNLIMITED ACCOUNT". The charge goes to
+- **Every action says what it took**, from its own `AICharge` — in Shop inside the status sentence
+  ("AI found 18 matches in every shop we watch, for 1 credit."), elsewhere as `ChargeLine`
+  ("1 credit used, 48 left.", "No charge — part of this search.", "No charge — unlimited account."). The charge goes to
   `CreditStore.apply`, so You's balance is right without asking again.
-- **A refusal is said in words, never as an empty list** (`AIRefusal`, `AIRefusalNotice`): 402
+- **A refusal is said in words, never as an empty list** (`AIRefusal`, `AIRefusalNotice`) — a
+  serif title, one sentence ("Nothing was charged. It resets on the 1st.") and, where there is more
+  to say, an ⓘ that opens it (`AIRefusal.info`, `InfoNote`): 402
   "Not enough credits" with *Get credits* (opens You's Credits); 403 "Sign in to use" with
   *Sign in*; 429 "This month's AI limit is reached" with no retry; 503 "Dropwall's AI isn't
   available right now", which also re-reads the status so every affordance goes. The free
   results stay under it.
 - **Show me more** is the open web, offered under everything the catalogue had, only when the
-  status says `webSearch`: a sparkle, "AI SEARCHES THE OPEN WEB FOR SHOPS THAT SELL IN GERMANY —
-  BEYOND THE SHOPS WE WATCH", and its own price. `POST /v1/ai/search/web` with the latest reading
+  status says `webSearch`: a sparkle, "AI searches the open web for shops selling in Germany.",
+  and its own price. `POST /v1/ai/search/web` with the latest reading
   and `LocationSetting.country`. Each result is a row that opens the shop's page in Safari; a
   result with a `brandID` you follow opens its brand page, one you do not follow is followed in
   place ("DROPWALL WATCHES THIS SHOP · FOLLOW IT", then a sync), and one with none offers
@@ -430,7 +436,7 @@ nobody here follows, which is where it is worth the most.
 - **There is no navigation bar.** It is the one page in the app that is a photograph first, and
   a serif title eating the top seventh of the screen to say "Discover" — on the tab already
   labelled Discover — was paying for the layout bug twice.
-- **An exploration card prints `NEW TO YOU` and never a pairing.** It was not placed for one, and
+- **An exploration card prints "New to you" and never a pairing.** It was not placed for one, and
   a composite with somebody's clothes in it under a card chosen at random would be the card
   telling a story the ranking never told. Same rule as `sharedTraits`.
 - **A discovery card is never persisted with `isSeen == false`, and mostly never persisted at
@@ -605,7 +611,7 @@ nobody here follows, which is where it is worth the most.
   and `chromeTop` came down with it.
 - **Follow leads the action row, and is not demoted by leaving the top.** It is still the only
   filled control on the card and it is first in reading order, which is more prominence than it
-  had while competing with a picture. The row is `[FOLLOW] [bookmark] … NOT FOR ME · VIEW`.
+  had while competing with a picture. The row is `[FOLLOW] [bookmark] … Not for me · VIEW`.
 - **Save is a button as well as a double tap, and it is the app's button.** The gesture stays —
   it is the fast one — but a gesture with nothing on screen to announce it is a feature only its
   author knows about, and keeping a garment is the second most likely thing anybody wants to do

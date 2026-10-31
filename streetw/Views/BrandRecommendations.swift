@@ -140,7 +140,6 @@ struct BrandRecommendations: View {
     @State private var previewed: PopularBrand?
 
     var title: String = "Also worth watching"
-    var blurb: String = "PICKED FROM WHAT YOU KEEP"
     /// How many cards this block prints before deferring to the full list.
     ///
     /// Six, not the whole list. The block sits on the feed, the brands tab *and* the style
@@ -208,14 +207,15 @@ struct BrandRecommendations: View {
     /// weight: a mood board of three is not a taste of eight because it is leant on.
     /// - Parameter taste: the same scope the key was built from, so the ranking and the
     ///   decision to re-rank cannot disagree about who counts.
-    private func recommender(pool: [PopularBrand], taste scope: TasteScope) -> Recommender {
+    private func recommender(pool: [PopularBrand], taste scope: TasteScope) -> (Recommender, fromSaves: Bool) {
         let usable = scope.weighted(saves).compactMap { entry in
             entry.save.update.map { (product: $0.productSummary, weight: entry.weight) }
         }
         let vectors = pool.compactMap(\.vector)
 
         var taste = BrandVector()
-        if usable.count >= Self.minimumSavesToReRank, !vectors.isEmpty {
+        let fromSaves = usable.count >= Self.minimumSavesToReRank && !vectors.isEmpty
+        if fromSaves {
             taste = BrandVectorBuilder.taste(
                 from: usable.map(\.product),
                 weights: usable.map(\.weight),
@@ -228,7 +228,7 @@ struct BrandRecommendations: View {
             known: Set(vectors.flatMap(\.vocabulary.keys))
         )
 
-        return Recommender(taste: taste, dismissed: dismissals.compactMap(\.vector))
+        return (Recommender(taste: taste, dismissed: dismissals.compactMap(\.vector)), fromSaves)
     }
 
     /// Re-ranked against a taste profile built **on this device** from what has been
@@ -251,6 +251,10 @@ struct BrandRecommendations: View {
     private struct Ranked {
         var items: [PopularBrand] = []
         var reasons: [UUID: [String]] = [:]
+        /// What the order was built from, said under the title. "Picked from what you keep"
+        /// was printed to somebody who had kept nothing, which is the one thing it must not
+        /// claim: below the save threshold the order is the server's — follows and headcount.
+        var basis = "Popular on Dropwall."
 
         func reason(for item: PopularBrand) -> [String] {
             item.brand.id.flatMap { reasons[$0] } ?? []
@@ -259,9 +263,14 @@ struct BrandRecommendations: View {
 
     private func rank(taste: TasteScope) -> Ranked {
         let pool = candidates
-        let ranker = recommender(pool: pool, taste: taste)
+        let (ranker, fromSaves) = recommender(pool: pool, taste: taste)
 
         var result = Ranked()
+        if fromSaves {
+            result.basis = "Picked from what you keep."
+        } else if !followed.isEmpty {
+            result.basis = "Close to the brands you follow."
+        }
         if ranker.taste.isEmpty, ranker.dismissed.isEmpty {
             result.items = pool
         } else {
@@ -307,7 +316,7 @@ struct BrandRecommendations: View {
                     Text(title)
                         .font(.editorial(19))
                         .foregroundStyle(Color.ink)
-                    DataLabel(text: blurb)
+                    NoteLine(text: ranked.basis)
                 }
                 .padding(.horizontal, 20)
                 .padding(.bottom, 18)
@@ -324,7 +333,7 @@ struct BrandRecommendations: View {
 
                 if visible.count > shown.count {
                     Button { isShowingAll = true } label: {
-                        DataLabel(text: "SEE ALL \(visible.count)", color: .ink)
+                        NoteLine(text: "See all \(visible.count)", size: 15, color: .ink)
                             .overlay(alignment: .bottom) {
                                 Rectangle().fill(Color.ink).frame(height: 1).offset(y: 3)
                             }
@@ -355,7 +364,7 @@ struct BrandRecommendations: View {
         } else if suggestions.isLoading {
             HStack(spacing: 10) {
                 ProgressView()
-                DataLabel(text: "LOOKING FOR BRANDS")
+                NoteLine(text: "Looking for brands…")
             }
             .padding(20)
         }
@@ -411,14 +420,14 @@ struct SuggestedBrandCard: View {
     /// The line under the wordmark, in order of how much it is worth saying.
     private var subtitle: String {
         if !reason.isEmpty {
-            return "LIKE YOUR " + reason.map { $0.uppercased() }.joined(separator: " · ")
+            return "Like your " + reason.joined(separator: ", ")
         }
         // Only once a headcount is evidence rather than an artefact of a tiny sample —
         // the same threshold the ranking uses.
         if Double(item.followers) >= Popularity.meaningfulFollowers {
             return "\(item.followers) PEOPLE WATCHING"
         }
-        return item.brand.website.flatMap { URL(string: $0)?.host() }?.uppercased() ?? "NEW TO DROPWALL"
+        return item.brand.website.flatMap { URL(string: $0)?.host() } ?? "New to Dropwall"
     }
 
     var body: some View {
@@ -429,7 +438,7 @@ struct SuggestedBrandCard: View {
 
                     VStack(alignment: .leading, spacing: 5) {
                         Wordmark(name: item.brand.name, size: 14)
-                        DataLabel(text: subtitle, size: 10)
+                        NoteLine(text: subtitle, size: 13)
                     }
 
                     Spacer(minLength: 8)

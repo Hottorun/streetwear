@@ -74,9 +74,9 @@ struct BrandDetailView: View {
 
         var label: String {
             switch self {
-            case .catalogue: "CATALOGUE"
-            case .unread: "UNREAD"
-            case .kept: "KEPT"
+            case .catalogue: "Catalogue"
+            case .unread: "Unread"
+            case .kept: "Kept"
             }
         }
     }
@@ -190,16 +190,10 @@ struct BrandDetailView: View {
             VStack(alignment: .leading, spacing: 6) {
                 Wordmark(name: brand.name, size: 17)
                 if let host = brand.shopURL?.host()?.replacingOccurrences(of: "www.", with: "") {
-                    DataLabel(text: host.uppercased(), size: 10)
+                    DataLabel(text: host, size: 11)
                 }
-                if let shop = shopLine {
-                    DataLabel(text: shop, size: 9)
-                }
-                DataLabel(
-                    text: brand.lastSyncedAt.map { "CHECKED \(Stamp.short($0).uppercased())" }
-                        ?? "NOT CHECKED YET",
-                    size: 9
-                )
+                // One sentence: which shop, what it prices in, and when it was last read.
+                NoteLine(text: shopSentence, size: 13)
             }
             Spacer(minLength: 0)
         }
@@ -212,17 +206,22 @@ struct BrandDetailView: View {
     /// site that is. The one place the location setting is visible, so it is said where it
     /// changes something rather than promised on the setting. See `LocationSetting`.
     private var shopLine: String? {
+        let currency = brand.currencyCode.map { " in \($0)" } ?? ""
         if let reach = brand.storefrontReach {
             let shop = switch reach {
-            case .country(let code): "\(LocationSetting.name(of: code).uppercased()) SHOP"
-            case .europe: "EUROPE SHOP"
-            case .countries(let count): "SHOP FOR \(count) COUNTRIES"
+            case .country(let code): "The \(LocationSetting.name(of: code)) shop"
+            case .europe: "The Europe shop"
+            case .countries(let count): "The shop for \(count) countries"
             }
-            return [shop, brand.currencyCode]
-                .compactMap { $0 }
-                .joined(separator: " · ")
+            return shop + currency
         }
-        return brand.currencyCode.map { "MAIN SHOP · \($0)" }
+        return brand.currencyCode.map { "The main shop in \($0)" }
+    }
+
+    private var shopSentence: String {
+        let checked = brand.lastSyncedAt.map { "checked \(Stamp.short($0))" } ?? "not checked yet"
+        guard let shop = shopLine else { return checked.prefix(1).uppercased() + checked.dropFirst() + "." }
+        return "\(shop), \(checked)."
     }
 
     /// The one thing on this page allowed to be loud. A storefront going dark usually means
@@ -232,7 +231,7 @@ struct BrandDetailView: View {
             Image(systemName: "lock.fill")
                 .font(.system(size: 11))
                 .foregroundStyle(Color.signal)
-            Text("Storefront is locked — usually a release is close.")
+            Text("The storefront is locked, so a release is usually close.")
                 .font(.editorial(14))
                 .foregroundStyle(Color.ink)
                 .fixedSize(horizontal: false, vertical: true)
@@ -292,7 +291,7 @@ struct BrandDetailView: View {
             Text("\(value)")
                 .font(.data(20, .medium))
                 .foregroundStyle(accent ? Color.signal : (isSelected ? Color.ink : Color.muted))
-            DataLabel(text: label, size: 9, color: isSelected ? .ink : .muted)
+            NoteLine(text: label, size: 13, color: isSelected ? .ink : .muted)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.vertical, 14)
@@ -347,12 +346,12 @@ struct BrandDetailView: View {
         case .unread:
             note(
                 shelves.catalogue.isEmpty ? "Nothing to read yet" : "You're up to date",
-                "EVERYTHING THIS BRAND HAS PUBLISHED IS IN THE CATALOGUE"
+                "Everything this brand has published is in the catalogue."
             )
         case .kept:
             note(
                 "Nothing kept from here",
-                "SAVE SOMETHING AND IT LANDS ON THIS SHELF AND IN YOUR COLLECTION"
+                "Save something and it lands here and in Saved."
             )
         }
     }
@@ -362,8 +361,7 @@ struct BrandDetailView: View {
             Text(title)
                 .font(.editorial(19))
                 .foregroundStyle(Color.ink)
-            DataLabel(text: detail, size: 10)
-                .fixedSize(horizontal: false, vertical: true)
+            NoteLine(text: detail, size: 15)
         }
         .padding(.horizontal, 20)
     }
@@ -390,8 +388,8 @@ struct BrandDetailView: View {
     @ViewBuilder
     private var links: some View {
         let destinations: [(label: String, symbol: String, url: URL)] = [
-            brand.shopURL.map { ("SHOP", "arrow.up.right", $0) },
-            brand.instagramURL.map { ("INSTAGRAM", "arrow.up.right", $0) }
+            brand.shopURL.map { ("Shop", "arrow.up.right", $0) },
+            brand.instagramURL.map { ("Instagram", "arrow.up.right", $0) }
         ].compactMap { $0 }
 
         if !destinations.isEmpty {
@@ -424,9 +422,10 @@ struct BrandDetailView: View {
                 .font(.editorial(19))
                 .foregroundStyle(Color.ink)
             Text(
+                // Which sources are watched is listed just below, so this says only what to expect.
                 automatic.isEmpty
-                    ? "Nothing on this site can be watched automatically — it's here as a link."
-                    : "Dropwall is watching \(automatic.map { $0.kind.label.lowercased() }.joined(separator: " and ")). New drops will appear here."
+                    ? "This site can't be watched, only linked."
+                    : "New drops will appear here."
             )
             .font(.editorial(14))
             .foregroundStyle(Color.muted)
@@ -438,20 +437,20 @@ struct BrandDetailView: View {
     /// Last, and deliberately dry. This is the only place a source's error is visible, so
     /// it has to be legible — but nobody opens a brand page to read about a sitemap.
     private var sources: some View {
-        section("How it's watched", "\(brand.sources.count) \(brand.sources.count == 1 ? "SOURCE" : "SOURCES")") {
+        section("How it's watched", brand.sources.count == 1 ? "From 1 source." : "From \(brand.sources.count) sources.") {
             VStack(alignment: .leading, spacing: 0) {
                 ForEach(brand.sources) { source in
                     VStack(alignment: .leading, spacing: 6) {
                         HStack(spacing: 10) {
-                            Text(source.kind.label.uppercased())
+                            Text(source.kind.label)
                                 .font(.data(11, .medium))
                                 .foregroundStyle(source.kind.isAutomatic ? Color.ink : Color.muted)
                             Spacer(minLength: 8)
-                            DataLabel(
+                            NoteLine(
                                 text: source.lastError != nil
-                                    ? "FAILING"
-                                    : (source.kind.isAutomatic ? "WATCHING" : "LINK ONLY"),
-                                size: 9,
+                                    ? "Not answering"
+                                    : (source.kind.isAutomatic ? "Watching" : "Link only"),
+                                size: 13,
                                 color: source.lastError != nil ? .signal : .muted
                             )
                         }
@@ -500,15 +499,14 @@ struct BrandDetailView: View {
     private var followingRow: some View {
         VStack(alignment: .leading, spacing: 0) {
             if brand.followed {
-                section("What reaches you", "WATCHED ITEMS ALWAYS ALERT, WHATEVER YOU PICK") {
+                section("What reaches you", "A watched item alerts whatever you pick.") {
                     VStack(alignment: .leading, spacing: 0) {
                         ForEach(FollowMode.allCases) { mode in
                             modeRow(mode)
                         }
                         filterRow
                         if let modeError {
-                            DataLabel(text: modeError, size: 9, color: .signal)
-                                .fixedSize(horizontal: false, vertical: true)
+                            NoteLine(text: modeError, size: 13, color: .signal)
                                 .padding(.horizontal, 20)
                                 .padding(.vertical, 10)
                         }
@@ -547,13 +545,12 @@ struct BrandDetailView: View {
                     Text("Which pieces")
                         .font(.data(12, .medium))
                         .foregroundStyle(Color.ink)
-                    DataLabel(
+                    NoteLine(
                         text: reading.isEmpty
-                            ? "ALL OF IT · OR ONLY SOME CATEGORIES, IN YOUR OWN WORDS"
-                            : "ONLY " + reading.joined(separator: " · ").uppercased() + " · SALES ALWAYS",
-                        size: 9
+                            ? "All of it, or only the pieces you name."
+                            : "Only " + reading.joined(separator: ", ") + ", and sales always.",
+                        size: 13
                     )
-                    .fixedSize(horizontal: false, vertical: true)
                 }
                 Spacer(minLength: 12)
                 Image(systemName: "chevron.right")
@@ -584,9 +581,10 @@ struct BrandDetailView: View {
                     Text(mode.title)
                         .font(.data(12, .medium))
                         .foregroundStyle(isChosen ? Color.ink : Color.muted)
-                    DataLabel(text: mode.detail, size: 9)
-                        .fixedSize(horizontal: false, vertical: true)
+                    NoteLine(text: mode.detail, size: 13)
                 }
+                // A button centres its label's lines; a detail that wraps must not.
+                .multilineTextAlignment(.leading)
                 Spacer(minLength: 12)
                 if isChosen {
                     if pendingMode == mode {
@@ -620,8 +618,9 @@ struct BrandDetailView: View {
                     Text(title)
                         .font(.data(12, .medium))
                         .foregroundStyle(isEmphasised ? Color.ink : Color.muted)
-                    if let detail { DataLabel(text: detail, size: 9) }
+                    if let detail { NoteLine(text: detail, size: 13) }
                 }
+                .multilineTextAlignment(.leading)
                 Spacer()
                 Image(systemName: symbol)
                     .font(.system(size: 11))
@@ -644,7 +643,7 @@ struct BrandDetailView: View {
                 Text(title)
                     .font(.editorial(19))
                     .foregroundStyle(Color.ink)
-                DataLabel(text: detail)
+                NoteLine(text: detail)
             }
             .padding(.horizontal, 20)
 
@@ -665,7 +664,7 @@ struct BrandDetailView: View {
             do {
                 try await remote.setFollowMode(mode, for: brand)
             } catch {
-                modeError = "NOT CHANGED — \(error.localizedDescription.uppercased())"
+                modeError = "Not changed: \(error.localizedDescription)"
             }
             pendingMode = nil
         }
@@ -719,9 +718,9 @@ extension FollowMode {
     /// follows from it — nothing is ever pushed that the feed would not have shown.
     var detail: String {
         switch self {
-        case .everything: "DROPS, RESTOCKS, SALES AND PRICE CUTS · ALERTS FOR DROPS AND SALES"
-        case .salesOnly: "ONLY SALES AND PRICE CUTS · ALERTS WHEN A SALE STARTS"
-        case .quiet: "NOTHING IN YOUR FEED, NO ALERTS · STILL SHAPES YOUR TASTE"
+        case .everything: "Everything in your feed; an alert for drops and sales."
+        case .salesOnly: "Only sales and price cuts; an alert when a sale starts."
+        case .quiet: "No feed, no alerts; it still shapes your taste."
         }
     }
 
@@ -730,8 +729,8 @@ extension FollowMode {
     var listLabel: String? {
         switch self {
         case .everything: nil
-        case .salesOnly: "SALES ONLY"
-        case .quiet: "QUIET"
+        case .salesOnly: "Sales only"
+        case .quiet: "Quiet"
         }
     }
 }
@@ -770,7 +769,7 @@ private struct CatalogueTile: View {
             // its own opinion about what counts as news. See `BrandUpdate.passes` for the
             // same rule applied to filtering.
             if let state = FeedState(update: update, profile: sizes.profile) {
-                DataLabel(text: state.text, size: 10, color: state.color)
+                NoteLine(text: state.text, size: 13, color: state.color)
             }
 
             Text(update.title)

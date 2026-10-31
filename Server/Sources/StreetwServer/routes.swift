@@ -250,43 +250,14 @@ func routes(_ app: Application) throws {
 
     // MARK: Brands
 
-    /// Search the shared catalog by name *or* address.
-    ///
-    /// One field for both because a person adding a brand has one of two things in hand —
-    /// its name, or a link they copied — and making them say which is a question with no
-    /// interesting answer. A pasted URL is reduced to its host and matched against `slug`,
-    /// which is exactly what discovery keys on, so "https://www.kith.com/products/foo"
-    /// finds the Kith that is already here rather than proposing to create a second one.
+    /// Search the shared catalog by name *or* address, accents and case aside — see
+    /// `BrandSearch`.
     authed.get("brands") { req async throws -> [BrandDTO] in
         let device = try await req.authenticatedDevice()
         let raw = (try? req.query.get(String.self, at: "q"))?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
 
-        var builder = BrandModel.query(on: req.db)
-        if !raw.isEmpty {
-            // `ILIKE` is Postgres-only; SQLite's LIKE is already case-insensitive for
-            // ASCII, so the local test database needs the plain operator.
-            let insensitive: DatabaseQuery.Filter.Method =
-                (req.db as? any SQLDatabase)?.dialect.name == "postgresql"
-                    ? .custom("ILIKE")
-                    : .custom("LIKE")
-
-            if let host = BrandDiscovery.normalizedURL(raw)?.host()?.replacingOccurrences(of: "www.", with: ""),
-               raw.contains(".") {
-                builder = builder.group(.or) { group in
-                    group
-                        .filter(\.$slug, insensitive, "%\(host)%")
-                        .filter(\.$name, insensitive, "%\(raw)%")
-                }
-            } else {
-                builder = builder.filter(\.$name, insensitive, "%\(raw)%")
-            }
-        }
-        let brands = try await builder
-            .sort(\.$name)
-            .limit(25)
-            .with(\.$sources)
-            .all()
+        let brands = try await BrandSearch.find(raw, on: req.db)
         // The caller's shop for each, as on every route that hands over a brand: the phone
         // stores one row per brand whichever route it arrived on.
         let serving = try await Storefronts.serving(req, brandIDs: brands.compactMap(\.id))

@@ -15,7 +15,8 @@
 //   "cheaper" — is printed as unused rather than silently dropped.
 //
 // And one line that keeps it honest: how many of the products on this phone the choice lets
-// through, and that sales and anything Dropwall cannot place always come through.
+// through, and that sales always come through — with what else does (anything Dropwall cannot
+// place, anything watched) behind its ⓘ.
 
 import StreetwCore
 import SwiftData
@@ -61,7 +62,7 @@ struct FollowFilterView: View {
                 wordsSection
                 previewLine
                 if let failure {
-                    DataLabel(text: failure, size: 10, color: .signal)
+                    NoteLine(text: failure, color: .signal)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
@@ -83,22 +84,38 @@ struct FollowFilterView: View {
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 10) {
-            DataLabel(text: isNewFollow ? "NOW FOLLOWING" : "WHAT REACHES YOU")
+            NoteLine(text: isNewFollow ? "Now following." : "What reaches you")
             Wordmark(name: brand.name, size: 18)
             Text("What do you want to hear about?")
                 .font(.editorial(24))
                 .foregroundStyle(Color.ink)
                 .fixedSize(horizontal: false, vertical: true)
-            Text("Only what you choose reaches your feed and your alerts. Sales, and anything Dropwall can't place, always come through.")
-                .font(.editorial(14))
-                .foregroundStyle(Color.muted)
-                .fixedSize(horizontal: false, vertical: true)
+            HStack(spacing: 2) {
+                NoteLine(text: "Sales always come through.")
+                InfoButton(note: Self.passInfo)
+            }
         }
     }
 
+    static let passInfo = InfoNote(
+        title: "What always comes through",
+        lines: [
+            "Sales always come through.",
+            "So does anything Dropwall can't place in a category.",
+            "So does anything you're watching."
+        ]
+    )
+
+    static let wordsInfo = InfoNote(
+        title: "Your own words",
+        lines: [
+            "Shop's words work here: a garment, a colour, “no …”, “under 100”."
+        ]
+    )
+
     private var categoriesSection: some View {
         VStack(alignment: .leading, spacing: 12) {
-            DataLabel(text: offered.isEmpty ? "CATEGORIES" : "ITS BIGGEST CATEGORIES")
+            NoteLine(text: offered.isEmpty ? "Categories" : "Its biggest categories", color: .ink)
             FlowRow(spacing: 8) {
                 ShopChip(title: "All", isOn: chosen.isEmpty) { chosen = [] }
                 ForEach(chips, id: \.id) { chip in
@@ -108,17 +125,20 @@ struct FollowFilterView: View {
             if isLoadingCategories && offered.isEmpty {
                 HStack(spacing: 8) {
                     ProgressView().controlSize(.mini)
-                    DataLabel(text: "COUNTING WHAT THEY SELL", size: 9)
+                    NoteLine(text: "Counting what they sell…", size: 13)
                 }
             } else if offered.isEmpty {
-                DataLabel(text: "NOTHING TO COUNT YET — YOUR OWN WORDS STILL WORK", size: 9)
+                NoteLine(text: "Nothing to count yet. Your own words still work.", size: 13)
             }
         }
     }
 
     private var wordsSection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            DataLabel(text: "OR IN YOUR OWN WORDS")
+            HStack(spacing: 2) {
+                NoteLine(text: "Or in your own words", color: .ink)
+                InfoButton(note: Self.wordsInfo)
+            }
             TextField("jeans · bags · no kids", text: $words)
                 .font(.editorial(17))
                 .foregroundStyle(Color.ink)
@@ -128,27 +148,23 @@ struct FollowFilterView: View {
             Rule()
             let reading = FollowFilter(words: words).reading
             if !reading.isEmpty {
-                DataLabel(text: reading.joined(separator: " · ").uppercased(), size: 10, color: .ink)
+                NoteLine(text: "Reads as: " + reading.joined(separator: ", ") + ".", size: 13, color: .ink)
                     .fixedSize(horizontal: false, vertical: true)
             }
             let unused = FollowFilter(words: words).unused
             if !unused.isEmpty {
-                DataLabel(text: "NOT USED FOR A FOLLOW: " + unused.joined(separator: " · ").uppercased(), size: 9)
+                NoteLine(text: "Not used for a follow: " + unused.joined(separator: ", ") + ".", size: 13)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            Text("The same words Shop's search reads: a kind of garment, a colour, \"no …\" to rule something out, \"under 100\".")
-                .font(.data(10))
-                .foregroundStyle(Color.muted)
-                .fixedSize(horizontal: false, vertical: true)
         }
     }
 
     @ViewBuilder
     private var previewLine: some View {
         if let admitted, !garments.isEmpty, !filter.isEmpty {
-            DataLabel(
-                text: "LETS THROUGH \(admitted) OF \(garments.count) PRODUCTS ON THIS PHONE",
-                size: 10,
+            NoteLine(
+                text: "Lets through \(admitted) of \(garments.count) products on this phone.",
+                size: 13,
                 color: admitted == 0 ? .signal : .muted
             )
         }
@@ -159,7 +175,7 @@ struct FollowFilterView: View {
             Button {
                 onDone()
             } label: {
-                Text(isNewFollow ? "SKIP" : "CANCEL")
+                Text(isNewFollow ? "Skip" : "Cancel")
                     .font(.data(12, .semibold))
                     .tracking(1.1)
                     .foregroundStyle(Color.ink)
@@ -176,7 +192,7 @@ struct FollowFilterView: View {
                     if isSaving {
                         ProgressView().tint(.paper)
                     } else {
-                        Text(filter.isEmpty ? "FOLLOW ALL OF IT" : "FOLLOW THESE")
+                        Text(filter.isEmpty ? "Follow all of it" : "Follow these")
                             .font(.data(12, .semibold))
                             .tracking(1.1)
                     }
@@ -247,7 +263,7 @@ struct FollowFilterView: View {
             try await remote.setFollowFilter(chosenFilter, for: brand)
             onDone()
         } catch {
-            failure = "NOT SAVED — \(error.localizedDescription.uppercased())"
+            failure = "Not saved: \(error.localizedDescription)"
         }
     }
 }

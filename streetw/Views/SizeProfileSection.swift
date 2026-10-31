@@ -34,12 +34,7 @@ struct SizeProfileSection: View {
 
     private var sizes: some View {
         VStack(alignment: .leading, spacing: 18) {
-            SettingsHeader(
-                title: "My sizes",
-                note: store.profile.isEmpty
-                    ? "Set these and Dropwall can tell you when something is back in a size you actually wear."
-                    : "Restocks in \(store.profile.summary) are ruled in vermilion in your feed."
-            )
+            SettingsHeader(title: "My sizes", info: SizeProfileSection.sizesInfo)
 
             SizeChipRow(
                 title: "Clothing",
@@ -88,13 +83,8 @@ struct SizeProfileSection: View {
         VStack(alignment: .leading, spacing: 14) {
             SettingsHeader(
                 title: "What to show",
-                // Says exactly what it will and won't do. The honesty matters: plenty of
-                // brands tag nothing useful, and someone who picks "Menswear" and still
-                // sees the occasional women's piece should know that's the filter being
-                // careful rather than broken.
-                note: store.profile.gender == .everything
-                    ? "Everything a brand posts, whoever it's cut for — including kids."
-                    : "Hides the opposite gender and kids. Unisex items, and anything a brand doesn't label, are always shown — a missed drop costs more than an extra one."
+                note: store.profile.gender.detail + ".",
+                info: SizeProfileSection.genderInfo
             )
             WordPicker(
                 options: GenderPreference.allCases.map { ($0.label, $0) },
@@ -104,11 +94,42 @@ struct SizeProfileSection: View {
         }
     }
 
+    /// Said once, behind the ⓘ: what a size does, and the one thing it never does.
+    static let sizesInfo = InfoNote(
+        title: "Your sizes",
+        lines: [
+            "Your sizes are ruled in vermilion on every product, and restocks in them are what alerts you.",
+            "A size never hides anything. Only What to show does.",
+            "A ladder you leave empty doesn't filter."
+        ]
+    )
+
+    /// Why somebody filtering to menswear still sees the odd women's piece: the filter being
+    /// careful, not broken.
+    static let genderInfo = InfoNote(
+        title: "What to show",
+        lines: [
+            "Menswear or Womenswear hides the other, and kids.",
+            "Unisex pieces, and anything a brand doesn't label, are always shown — a missed drop costs more than an extra one."
+        ]
+    )
+
     /// The server targets alerts using this profile, so a change here is useless until
     /// it's pushed.
     private func pushIfNeeded(_ profile: SizeProfile) {
         guard settings.isConfigured else { return }
         Task { await remote.pushSizes(profile) }
+    }
+}
+
+extension GenderPreference {
+    /// What the choice does, in a few words — the same line in onboarding and on You.
+    var detail: String {
+        switch self {
+        case .everything: "Menswear, womenswear and kids"
+        case .mens: "Hides womenswear and kids"
+        case .womens: "Hides menswear and kids"
+        }
     }
 }
 
@@ -168,24 +189,25 @@ struct DressAndSuitRows: View {
     }
 }
 
-/// A section title and the sentence under it, in the two faces this app uses for exactly
-/// that job everywhere else.
+/// A section title, an optional ⓘ beside it, and at most one short line under it.
+///
+/// The line is one short sentence — "Read from 6 saves." — never an explanation, and never
+/// keywords in capitals;
+/// what has to be explained goes in `info`, a tap away (`CLAUDE.md`, *Copy*).
 struct SettingsHeader: View {
     let title: String
     var note: String?
+    var info: InfoNote?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(title)
-                .font(.editorial(22))
-                .foregroundStyle(Color.ink)
-            if let note {
-                Text(note)
-                    .font(.data(11))
-                    .lineSpacing(2)
-                    .foregroundStyle(Color.muted)
-                    .fixedSize(horizontal: false, vertical: true)
+            HStack(alignment: .center, spacing: 2) {
+                Text(title)
+                    .font(.editorial(22))
+                    .foregroundStyle(Color.ink)
+                if let info { InfoButton(note: info) }
             }
+            if let note { NoteLine(text: note) }
         }
     }
 }

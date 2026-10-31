@@ -119,7 +119,7 @@ struct SaveToast: View {
             VStack(spacing: 0) {
                 HStack(spacing: 14) {
                     VStack(alignment: .leading, spacing: 3) {
-                        DataLabel(text: "KEPT TO \(pending.destination.uppercased())", size: 9)
+                        NoteLine(text: "Kept to \(pending.destination).", size: 12)
                         Text(pending.update.title)
                             .font(.editorial(13))
                             .foregroundStyle(Color.ink)

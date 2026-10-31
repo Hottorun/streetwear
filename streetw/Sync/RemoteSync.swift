@@ -325,9 +325,13 @@ final class RemoteSync {
     /// to the account. The next sync re-follows this phone's brands on the new device
     /// (`didRegisterAfresh`), which is what an install that never signed in has; without it
     /// the empty follow list would read as "unfollowed everything" and empty the app.
-    func deleteAccount(sizes: SizeProfile) async throws {
+    ///
+    /// - Parameter deleted: run once the server has deleted the account and before the phone
+    ///   reads as signed out — where `ProfileStore` releases `default.store`.
+    func deleteAccount(sizes: SizeProfile, deleted: () -> Void = {}) async throws {
         guard let api else { throw APIError.notConfigured }
         try await api.deleteAccount()
+        deleted()
         settings.token = nil
         settings.account = nil
         try await ensureRegistered(sizes: sizes)
@@ -1003,8 +1007,10 @@ final class RemoteSync {
             // registration above can be the one that signed the phone out; this session is
             // then about to be replaced (`ServerSettings.accountChanged`), and spending
             // `didRegisterAfresh` here would re-follow that account's brands on a device that
-            // is nobody's — or, after another sign-in, somebody else's.
-            if let owner = scope.account, owner != settings.account?.id { return true }
+            // is nobody's — or, after another sign-in, somebody else's. `default.store` is filed
+            // under whoever owns it: signed out of that account, it is hidden like the rest.
+            let filedUnder = scope.account ?? (scope.home == nil ? ProfileStores.owner : nil)
+            if let owner = filedUnder, owner != settings.account?.id { return true }
 
             if didRegisterAfresh {
                 // **The holder's to spend.** A new anonymous device has no account, so it has
@@ -1529,6 +1535,18 @@ final class RemoteSync {
         } else {
             update.refreshGender()
         }
+    }
+}
+
+extension RemoteSync {
+    /// Runs `work` with no sync writing any of `stores`: waits for those in flight, and holds
+    /// off any that start meanwhile until it is done. Signing out is the caller — see
+    /// `ProfileStore.signOut`.
+    static func holding(_ stores: [URL], _ work: () async throws -> Void) async throws {
+        let stores = Array(Set(stores))
+        for store in stores { await StoreWriters.acquire(store) }
+        defer { for store in stores { StoreWriters.release(store) } }
+        try await work()
     }
 }
 
