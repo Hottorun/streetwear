@@ -360,11 +360,17 @@ struct TourSheet: View {
         VStack(spacing: 0) {
             HStack {
                 Spacer()
-                Button("Done") { dismiss() }
-                    .font(.data(13, .semibold))
-                    .foregroundStyle(Color.ink)
-                    .padding(.horizontal, 20)
-                    .frame(minHeight: 44)
+                // The frame and the shape go on the label: outside the button they only move
+                // it, and the tap target stayed the 32×15 of the word.
+                Button { dismiss() } label: {
+                    Text("Done")
+                        .font(.data(13, .semibold))
+                        .foregroundStyle(Color.ink)
+                        .padding(.horizontal, 20)
+                        .frame(minWidth: 44, minHeight: 44)
+                        .contentShape(.rect)
+                }
+                .buttonStyle(.borderless)
             }
             TourCards(page: $page)
             VStack(spacing: 18) {
