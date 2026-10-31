@@ -1,28 +1,36 @@
 // ProductReading.swift
-// Which of a product's photographs is the clean product shot, and a few style words — read once
-// per product, on the server, and sent on the wire (Phase 5).
+// Whether one of a product's later photographs should stand in for the shop's first, and a few
+// style words — read once per product, on the server, and sent on the wire (Phase 5).
 //
-// The phone has always picked the photograph it measures and the wall's cover with Vision's
-// person detector (`ProductShot`), one save at a time, after somebody kept it. That works where
-// Vision runs and costs a fetch of a 2000–3000 px original per photograph tried. The server
-// already turns every product's lead photograph into a FashionSigLIP vector for search, and the
-// same model can be asked, zero-shot, whether a photograph looks more like "a product photo of a
-// garment on a plain background" or "a person wearing clothes" — so it answers once per product,
-// for every phone, before anybody saves it. Vision stays as the phone's fallback.
+// The phone used to pick the wall's cover with Vision's person detector (`ProductShot`), one
+// save at a time, and the first version of this did the same thing with the embedding model:
+// "no person in it" meant "product shot". Both were wrong in the same way. On Motel Rocks most
+// galleries carry a close-up of the fabric, and a swatch has nobody in it either — so the cover
+// of a dress became a square of cloth, on the server and on the phone alike, and nothing on
+// either side could tell. The rule now (the owner's, 2026-10-31):
 //
-// **SigLIP is the method; a model is the switch.** The owner's rule: implement it with the
-// embeddings, and use Claude only if it clearly reads the photographs better. `PRODUCT_READING=
-// haiku` sends the same photographs to the fast model instead, owner-paid and under
-// `AI_BACKGROUND_DAILY_CAP_MICROS`; it is off by default. `Server/ReadingEval` compares them on
-// 203 labelled products — see `docs/server.md` (*The product photograph and style words*).
+// **The shop's first photograph is the cover by default.** It is overridden only when the
+// reading is confident that the first photograph is on a person *and* that a later one is the
+// whole garment on a plain background — with close-ups, detail shots, swatches and labels ruled
+// out as their own class, not folded into "not a person". Anything uncertain keeps the shop's
+// choice: `shotIndex` is nil, and nil now means "nothing to say", never "no shot". A wrong
+// override is worse than none, so the margins below were chosen for precision over recall.
+//
+// **Zero-shot through the embedding model is the method; a model is the switch.** The server
+// already turns every product's lead photograph into a vector for search, and the same model can
+// be asked whether a photograph looks more like "a person wearing clothes", "a product photo of a
+// garment on a plain background" or "a close-up of fabric texture". `PRODUCT_READING=haiku` sends
+// the same photographs to the fast model with the same three-way question instead, owner-paid
+// and under `AI_BACKGROUND_DAILY_CAP_MICROS`; it is off by default. `Server/ReadingEval` measures
+// both on labelled products — see `docs/server.md` (*The product photograph and style words*).
 //
 // What is careful here, and why:
 //
-// - **The other photographs are embedded only when the first looks like a person.** Most shops
-//   lead with a packshot (170 of the 203), and for those the lead's vector — already stored by
-//   `EmbeddingBackfill` — answers alone, at no request. Otherwise up to `extraPhotographs` more
-//   are asked, a few at a time with a pause between, because every request holds the sidecar's
-//   model lock and a search waiting on it has 1.5 s.
+// - **The other photographs are embedded only when the first clearly looks like a person.** Most
+//   shops lead with a packshot (170 of the first 203 labelled), and for those the lead's vector —
+//   already stored by `EmbeddingBackfill` — answers alone, at no request. Otherwise up to
+//   `extraPhotographs` more are asked, a few at a time with a pause between, because every
+//   request holds the sidecar's model lock and a search waiting on it has 1.5 s.
 // - **Small renditions** (`ImageRendition`, 400 px): the model reads 224 px, and fetching
 //   storefront originals is most of what makes a photograph slow.
 // - **A photograph the sidecar cannot read** follows `EmbeddingBackfill`'s rules: `.gone` is
@@ -67,7 +75,10 @@ enum ProductReadingMethod: String, Sendable, Equatable {
 
 /// One product's answer.
 struct ProductPhotoVerdict: Sendable, Equatable {
-    /// Zero-based into the product's photographs; nil when none is a clean product shot.
+    /// Zero-based into the product's photographs: a later photograph that should stand in for
+    /// the shop's first, because the first is on a person and this one is the whole garment on
+    /// its own. Nil keeps the shop's choice — the lead is a product shot, or nothing was clear
+    /// enough to say. Never 0.
     var shotIndex: Int?
     var styleWords: [String]
 }
@@ -76,37 +87,53 @@ struct ProductPhotoVerdict: Sendable, Equatable {
 
 /// The embedding model asked about a photograph by comparing it with sentences.
 ///
-/// Every number here was measured on `Server/ReadingEval` (203 products from seven shops,
-/// labelled by hand). The prompts and the weights are the idea's; the two bars are the
-/// model's, because each model puts the same photograph and sentence at its own distance —
-/// so they are kept per model id (`measuredBars`), and **a model with none is not read**
-/// rather than read against another model's bars.
+/// Every number here was measured on `Server/ReadingEval` (233 products from seven shops,
+/// labelled by hand). The prompts and the weights are the idea's; the bars are the model's,
+/// because each model puts the same photograph and sentence at its own distance — so they are
+/// kept per model id (`measuredBars`), and **a model with none is not read** rather than read
+/// against another model's bars.
+///
+/// A photograph is scored against three classes of sentence — a person wearing it, the whole
+/// garment on its own, and a close-up or a swatch — and what counts is how far the winning
+/// class leads *both* others. Two classes were not enough: with "a close-up photo of fabric
+/// texture" one sentence among the "not a product" prompts, a swatch still read as more
+/// product than person and was handed the cover.
 enum ZeroShot {
     /// Bump when the prompts, the bars or the rules change: every product is read again.
-    static let version = 1
+    /// 2 is the close-up rule (the file header): the lead must clearly be on a person, a
+    /// stand-in must clearly be the whole garment over a person *and* a detail, and nil means
+    /// "keep the shop's choice".
+    static let version = 2
 
-    /// The two numbers that belong to a model: how far the product side must lead for a
-    /// photograph to be a product shot, and how far above its catalogue mean a style word must
-    /// score to be given.
+    /// The numbers that belong to a model: how far "a person" must lead both other classes for
+    /// the first photograph to be read as on a person at all, how far "the whole garment" must
+    /// lead both for a later photograph to stand in for it, and how far above its catalogue
+    /// mean a style word must score to be given.
     struct Bars: Sendable, Equatable {
+        var personMargin: Double
         var shotMargin: Double
         var styleBar: Double
     }
 
     /// Per model id, as the sidecar reports it — the same key as
     /// `ProductSearch.measuredThresholds`. Measured by running `ReadingEvalTests` against the
-    /// model with no entry here, which sweeps both bars and prints the table to choose from
-    /// (`docs/server.md`, *The reading eval*). `ProductReadingBackfill` waits, and says so, for
-    /// a model that is missing — the backfill would otherwise read ten thousand products
-    /// against bars that were never measured for them, and nothing on the wire would show it.
+    /// model, which sweeps the margins and prints the table to choose from (`docs/server.md`,
+    /// *The reading eval*). `ProductReadingBackfill` waits, and says so, for a model that is
+    /// missing — the backfill would otherwise read ten thousand products against bars that were
+    /// never measured for them, and nothing on the wire would show it.
     static let measuredBars: [String: Bars] = [
-        // 99.5 % of the labelled product shots clear 0.02, and it is what turned STAUD's
-        // on-model lead shots (0.01–0.016) from "product shot" into "look further".
-        "Marqo/marqo-fashionSigLIP@c56244cc94f9": Bars(shotMargin: 0.02, styleBar: 0.01),
-        // Swept on 2026-10-30: 0.03 reads 186 of the 203 shots right (0.916 — five points under
-        // SigLIP, which reads photographs better than it reads text); 0.035 gives words at
-        // SigLIP's precision (0.654 against 0.648) on a few fewer products (147 against 158).
-        "Marqo/marqo-fashionCLIP@44f4c655124e": Bars(shotMargin: 0.03, styleBar: 0.035),
+        // Swept on 2026-10-31 over the 233 labelled products (the table is in docs/server.md).
+        // SigLIP: every stand-in right at 0.01 / 0.02 (11 of 11, 11 of the 20 there were to
+        // find, no close-up); 0.00 / 0.02 finds 15 of 20, also all right, but a lead that
+        // reads as a person by nothing at all is not "clearly" one, and the prompts were
+        // tuned on these labels. The style bar is unchanged from the first rule.
+        "Marqo/marqo-fashionSigLIP@c56244cc94f9": Bars(personMargin: 0.01, shotMargin: 0.02, styleBar: 0.01),
+        // FashionCLIP reads "a person on a plain background" as a garment on a plain
+        // background far more often than SigLIP does: below a shot margin of 0.04 its wrong
+        // stand-ins are models seen from behind, and at 0.00 / 0.04 one of twelve is still
+        // one. 0.03 / 0.04 is every stand-in right (4 of 4, 4 of 20 found) — the precision
+        // the owner asked for, at a recall the search-chosen model cannot better.
+        "Marqo/marqo-fashionCLIP@44f4c655124e": Bars(personMargin: 0.03, shotMargin: 0.04, styleBar: 0.035),
     ]
 
     /// Said when a model has no bars.
@@ -117,24 +144,34 @@ enum ZeroShot {
         }
     }
 
-    /// What a clean product shot looks like. The best of these is compared with the best of
-    /// `otherPrompts`, so a shoe or a bag on a plain ground is not mistaken for nothing.
+    /// What the whole garment on its own looks like. The best of these is compared with the
+    /// best of each other class, so a shoe or a bag on a plain ground is not mistaken for nothing.
     static let productPrompts = [
-        "a product photo of a garment on a plain background",
-        "a flat lay photo of clothing",
+        "a product photo of a whole garment on a plain background",
+        "a flat lay photo of a complete piece of clothing",
         "a packshot of a product on a white background",
-        "a photo of shoes on a plain background",
+        "a photo of a pair of shoes on a plain background",
         "a photo of a bag on a plain background",
+        "a ghost mannequin photo of a garment",
     ]
-    /// What it is not: somebody wearing it, and a close-up of the cloth — without the last, a
-    /// gallery that leads with a model would hand the cover to its swatch.
-    static let otherPrompts = [
+    /// Somebody wearing it.
+    static let personPrompts = [
         "a person wearing clothes",
         "a model wearing an outfit",
         "a photo of a person",
         "a woman wearing a dress",
         "a fashion model posing",
+    ]
+    /// A part of it, or the cloth it is made of: what a gallery's close-ups are, and what a
+    /// cover must never be.
+    static let detailPrompts = [
         "a close-up photo of fabric texture",
+        "a swatch of material",
+        "a detail shot of a garment's stitching",
+        "a close-up of a button, a zip or a pocket",
+        "a clothing label",
+        "a macro photo of knitted or woven cloth",
+        "a cropped close-up of part of a garment",
     ]
     /// Each style word as a few phrases, averaged into one vector. Richer phrases than the bare
     /// word measured better (top-two precision 0.61 → 0.64).
@@ -177,7 +214,8 @@ enum ZeroShot {
         var model: String
         var bars: Bars
         var product: [[Float]]
-        var other: [[Float]]
+        var person: [[Float]]
+        var detail: [[Float]]
         /// In `StyleWords.vocabulary` order.
         var styles: [(word: String, vector: [Float])]
     }
@@ -193,13 +231,14 @@ enum ZeroShot {
         let model = try await provider.space.model
         guard let bars = bars ?? measuredBars[model] else { throw Unmeasured(model: model) }
         let product = try await provider.embed(texts: productPrompts)
-        let other = try await provider.embed(texts: otherPrompts)
+        let person = try await provider.embed(texts: personPrompts)
+        let detail = try await provider.embed(texts: detailPrompts)
         var styles: [(String, [Float])] = []
         for word in StyleWords.vocabulary {
             let phrases = (styleDescriptions[word] ?? [word]).map(stylePrompt)
             styles.append((word, normalised(mean(try await provider.embed(texts: phrases)))))
         }
-        return Prompts(model: model, bars: bars, product: product, other: other, styles: styles)
+        return Prompts(model: model, bars: bars, product: product, person: person, detail: detail, styles: styles)
     }
 
     /// Offsets from the mean photograph and the mean text: the mean of a dot product is the dot
@@ -212,18 +251,39 @@ enum ZeroShot {
         return Calibration(offsets: offsets)
     }
 
-    /// How much more a photograph looks like a product shot than like anything else.
-    static func shotScore(_ photo: [Float], _ prompts: Prompts) -> Double {
-        let product = prompts.product.map { dot($0, photo) }.max() ?? 0
-        let other = prompts.other.map { dot($0, photo) }.max() ?? 0
-        return product - other
+    /// How much a photograph looks like each class: its best similarity to that class's prompts.
+    struct Scores: Sendable, Equatable {
+        var product: Double
+        var person: Double
+        var detail: Double
+
+        /// How far "a person" leads both other classes.
+        var personLead: Double { person - max(product, detail) }
+        /// How far "the whole garment" leads both other classes.
+        var productLead: Double { product - max(person, detail) }
     }
 
-    static func isProductShot(_ score: Double, _ bars: Bars) -> Bool { score > bars.shotMargin }
+    static func scores(_ photo: [Float], _ prompts: Prompts) -> Scores {
+        Scores(
+            product: prompts.product.map { dot($0, photo) }.max() ?? 0,
+            person: prompts.person.map { dot($0, photo) }.max() ?? 0,
+            detail: prompts.detail.map { dot($0, photo) }.max() ?? 0
+        )
+    }
 
-    /// The best-scoring photograph that clears the bar, or nil.
-    static func best(_ scores: [(index: Int, score: Double)], _ bars: Bars) -> Int? {
-        scores.filter { isProductShot($0.score, bars) }.max { $0.score < $1.score }?.index
+    /// Whether the first photograph is clearly on a person — the only case where a later one
+    /// may stand in for it. Product-or-uncertain keeps the shop's choice.
+    static func isOnAPerson(_ scores: Scores, _ bars: Bars) -> Bool { scores.personLead > bars.personMargin }
+
+    /// Whether a photograph is clearly the whole garment on its own: ahead of "a person" and
+    /// ahead of "a close-up" by the same margin. Close-ups are a class of their own because a
+    /// swatch is also nobody.
+    static func isWholeGarment(_ scores: Scores, _ bars: Bars) -> Bool { scores.productLead > bars.shotMargin }
+
+    /// The photograph that most clearly is the whole garment, among those that clearly are; nil
+    /// when none is.
+    static func best(_ scored: [(index: Int, scores: Scores)], _ bars: Bars) -> Int? {
+        scored.filter { isWholeGarment($0.scores, bars) }.max { $0.scores.productLead < $1.scores.productLead }?.index
     }
 
     /// Every style word's score for one photograph, its catalogue mean taken off, best first.
@@ -250,7 +310,7 @@ enum ZeroShot {
     /// What became of reading one product.
     struct Outcome: Sendable {
         var verdict: ProductPhotoVerdict
-        /// The shot's own vector when it is not the first photograph — what photo search compares.
+        /// The stand-in's own vector — what photo search compares instead of the lead's.
         var shotVector: [Float]?
         /// Photographs written off in this reading, as stored.
         var gone: [String] = []
@@ -263,7 +323,8 @@ enum ZeroShot {
     /// One product's reading.
     ///
     /// - Parameters:
-    ///   - first: the lead photograph's stored vector, or nil when it was written off.
+    ///   - first: the lead photograph's stored vector, or nil when it was written off — and
+    ///     then nothing can say it is on a person, so the shop's choice stands unread.
     ///   - text: the product's stored text vector.
     ///   - others: the photographs after the first that may still be asked, as stored, with their
     ///     positions — those already written off left out by the caller.
@@ -278,14 +339,15 @@ enum ZeroShot {
         calibration: Calibration,
         embed: ([URL]) async throws -> [ImageEmbedding]
     ) async throws -> Outcome {
-        if let first, isProductShot(shotScore(first, prompts), prompts.bars) {
+        guard let first else { return Outcome(verdict: ProductPhotoVerdict(shotIndex: nil, styleWords: [])) }
+        guard isOnAPerson(scores(first, prompts), prompts.bars) else {
             return Outcome(verdict: ProductPhotoVerdict(
-                shotIndex: 0,
+                shotIndex: nil,
                 styleWords: styleWords(photo: first, text: text, prompts: prompts, calibration: calibration)
             ))
         }
         var outcome = Outcome(verdict: ProductPhotoVerdict(shotIndex: nil, styleWords: []))
-        var scored: [(index: Int, score: Double)] = []
+        var scored: [(index: Int, scores: Scores)] = []
         var vectors: [Int: [Float]] = [:]
         let candidates = others.prefix(extraPhotographs).compactMap { entry -> (index: Int, url: String, asked: URL)? in
             guard let url = URL(string: entry.url), url.scheme == "http" || url.scheme == "https" else {
@@ -304,7 +366,7 @@ enum ZeroShot {
                 switch answer {
                 case .vector(let vector):
                     vectors[entry.index] = vector
-                    scored.append((entry.index, shotScore(vector, prompts)))
+                    scored.append((entry.index, scores(vector, prompts)))
                 case .gone:
                     outcome.gone.append(entry.url)
                 case .unavailable:
@@ -318,10 +380,10 @@ enum ZeroShot {
         let measured = shot.flatMap { vectors[$0] } ?? first
         outcome.verdict = ProductPhotoVerdict(
             shotIndex: shot,
-            styleWords: measured.map { styleWords(photo: $0, text: text, prompts: prompts, calibration: calibration) } ?? []
+            styleWords: styleWords(photo: measured, text: text, prompts: prompts, calibration: calibration)
         )
         outcome.shotVector = shot.flatMap { vectors[$0] }
-        // A shot found settles it whatever else did not answer.
+        // A stand-in found settles it whatever else did not answer.
         if shot != nil { outcome.unavailable = 0 }
         return outcome
     }

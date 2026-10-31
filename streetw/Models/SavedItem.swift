@@ -181,20 +181,19 @@ final class SavedItem {
 
     /// The photograph the wall and this item's own page lead with.
     ///
-    /// **The product, not the brand's lead shot.** A feed card is an announcement, and there
-    /// the styling is part of it — so the feed and Discover keep the photograph the brand put
-    /// first. A wall of things somebody kept is the opposite case: it is a collection of
-    /// garments, and Stüssy's model-first galleries put a person in boots on the wall to stand
-    /// for a shirt. So the order is: a photograph chosen by hand; then the **server's** product
-    /// shot (`BrandUpdate.serverShotURLString`, read once per product off the embeddings, and
-    /// there before anything on this phone has looked); then `ProductShot`'s, Vision's frame
-    /// with nobody in it, which is the fallback where the server has not read the product or
-    /// found none; and where none is known — or the shot is not in the gallery any more — the
-    /// lead shot, which is exactly what the wall showed before.
+    /// **The shop's first photograph, unless somebody — or the server, confidently — says
+    /// otherwise.** The order is: a photograph chosen by hand; then the **server's** stand-in
+    /// (`BrandUpdate.serverShot`: the first photograph is on a person and a later one is the
+    /// whole garment on its own, read once per product off the embeddings with close-ups
+    /// ruled out, and there before anything on this phone has looked); else the lead shot.
+    /// Vision's packshot (`packshotURLString`) is no longer in the order — it chose by
+    /// "nobody in it", and on Motel Rocks that is the fabric close-up as often as the
+    /// packshot. The server's reading can see the difference; the phone's cannot, so it
+    /// goes back to choosing what to *measure*. See `docs/collection.md`.
     var coverURLString: String? {
         guard let update else { return ownPhotoURL?.absoluteString }
         if let chosen = coverImageURLString, update.imageURLStrings.contains(chosen) { return chosen }
-        return Self.automaticCover(of: update)
+        return update.automaticCoverURLString
     }
 
     var coverURL: URL? {
@@ -204,39 +203,29 @@ final class SavedItem {
 
     /// The cover's measured shape, or nil when nothing has measured it yet.
     ///
-    /// `imageAspect` is measured on the photograph `ImageTagger` analysed, which is the
-    /// packshot — the automatic cover — so it is the right shape whenever no cover has been
-    /// chosen by hand. A chosen one carries its own.
+    /// `imageAspect` is the shape of the photograph `imageAspectURL` names, and it is only
+    /// the cover's shape while that is the cover: the server's stand-in can arrive or be
+    /// withdrawn after a row was measured, and until `ImageTagger` reads the new cover (which
+    /// `adoptReading` makes due) the tile is drawn to a guess rather than to the shape of a
+    /// different photograph. A row measured before the stamp existed is shaped for Vision's
+    /// packshot, which is the cover only where that was the lead; `needsCoverShape` gives it
+    /// one more pass. A cover chosen by hand carries its own.
     var coverAspectMeasured: Double? {
         guard let update else { return ownAspect }
         if let chosen = coverImageURLString, chosen == coverURLString { return coverAspect }
-        // The server's shot, arrived after this phone measured another frame: unmeasured until
-        // `ImageTagger` reads it (which `adoptReading` makes due), rather than drawn to the
-        // shape of a different photograph.
-        if let shot = update.serverShotURLString, shot == coverURLString, update.packshotURLString != shot { return nil }
-        return update.imageAspect
-    }
-
-    /// What the cover is when nobody has chosen one.
-    private static func automaticCover(of update: BrandUpdate) -> String? {
-        if let shot = update.serverShotURLString, update.imageURLStrings.contains(shot) {
-            return shot
-        }
-        if let packshot = update.packshotURLString, update.imageURLStrings.contains(packshot) {
-            return packshot
-        }
-        return update.imageURLStrings.first { URL(string: $0) != nil }
+        let measured = update.imageAspectURL ?? update.packshotURLString
+        return measured == coverURLString ? update.imageAspect : nil
     }
 
     /// Chooses the cover. Returns whether anything changed, so a caller can skip the save.
     ///
     /// Choosing the photograph the automatic rule would pick anyway **clears** the choice
-    /// rather than pinning it: that is the way back to "whatever the product shot is", and it
-    /// means a better packshot found by a later analysis still reaches this item.
+    /// rather than pinning it: that is the way back to "whatever the rule says", and it means
+    /// a stand-in the server reads later still reaches this item.
     @discardableResult
     func setCover(_ string: String, aspect: Double?) -> Bool {
         guard let update, update.imageURLStrings.contains(string) else { return false }
-        let pinned = string == Self.automaticCover(of: update) ? nil : string
+        let pinned = string == update.automaticCoverURLString ? nil : string
         let shape = pinned == nil ? nil : aspect
         guard pinned != coverImageURLString || shape != coverAspect else { return false }
         coverImageURLString = pinned

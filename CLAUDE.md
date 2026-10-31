@@ -1281,9 +1281,12 @@ never reach through `update`, or the new surface silently leaves those garments 
 **drains** its backlog; a photograph that did not answer is not one that never will (`.gone` vs
 `.unavailable`); the first photograph is not necessarily a photograph of the product; a lift is
 verified before it is believed; bumping `Cutout.version` means bumping `VisualReading.version` with
-it; a facet is a query whose `matches` must mirror how `StyleProfile.build` counted; and the cover is
-a hand-picked photograph, then the **server's** product shot (`serverShotURLString`), then Vision's,
-then the lead — the feed and Discover keep the brand's own first photograph.
+it; a facet is a query whose `matches` must mirror how `StyleProfile.build` counted; and **the cover is
+the shop's first photograph** — overridden only by a hand-picked one, or by the server's stand-in
+(`BrandUpdate.serverShot`) where its reading is confident the first is on a person *and* a later one
+is the whole garment on a plain background, close-ups ruled out. Vision's packshot
+(`packshotURLString`) chooses what is *measured*, never the cover: "nobody in it" is a fabric swatch
+as readily as a packshot, and Motel Rocks' galleries put one in nearly every product.
 
 ### Fits
 
