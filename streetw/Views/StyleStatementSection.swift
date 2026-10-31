@@ -73,12 +73,11 @@ struct StyleStatementSection: View {
         let understood = store.statement.reading
         if !understood.isEmpty {
             VStack(alignment: .leading, spacing: 8) {
-                DataLabel(text: "READING")
+                NoteLine(text: "Dropwall read:")
                 FlowRow(spacing: 8) {
                     ForEach(understood, id: \.self) { term in
-                        Text(term.uppercased())
-                            .font(.data(10, .medium))
-                            .tracking(0.8)
+                        Text(term)
+                            .font(.data(11, .medium))
                             .foregroundStyle(Color.ink)
                             .padding(.horizontal, 10)
                             .padding(.vertical, 7)
@@ -89,7 +88,7 @@ struct StyleStatementSection: View {
         } else if !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             // Written something, understood nothing. Saying so is better than an empty
             // space that reads as the field having been ignored — which it has.
-            DataLabel(text: "NOTHING RECOGNISED · NAME COLOURS AND GARMENTS")
+            NoteLine(text: "Nothing recognised yet. Try naming colours and garments.")
         }
     }
 

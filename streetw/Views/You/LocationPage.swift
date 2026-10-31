@@ -26,7 +26,7 @@ struct LocationPage: View {
                 // The phone's own region first, so going back to following the phone is one
                 // tap rather than a search for your own country.
                 if query.isEmpty, let phone = LocationSetting.phoneRegion {
-                    row(code: phone, note: "THIS PHONE'S REGION", isChosen: location.followsPhone)
+                    row(code: phone, note: "This phone's region", isChosen: location.followsPhone)
                         .padding(.bottom, 24)
                 }
                 ForEach(matches, id: \.code) { country in
@@ -53,7 +53,7 @@ struct LocationPage: View {
                     .font(.editorial(16))
                     .foregroundStyle(Color.ink)
                 Spacer(minLength: 8)
-                if let note { DataLabel(text: note, size: 9) }
+                if let note { NoteLine(text: note, size: 13) }
                 if isChosen {
                     Image(systemName: "checkmark")
                         .font(.system(size: 11, weight: .semibold))

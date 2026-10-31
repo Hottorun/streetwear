@@ -136,10 +136,7 @@ struct YouView: View {
             if let remaining = ImageTagger.progress.remaining {
                 HStack(spacing: 8) {
                     ProgressView().controlSize(.mini).tint(.muted)
-                    DataLabel(
-                        text: remaining == 1 ? "READING 1 PHOTOGRAPH" : "READING \(remaining) PHOTOGRAPHS",
-                        size: 10
-                    )
+                    NoteLine(text: remaining == 1 ? "Reading 1 photograph…" : "Reading \(remaining) photographs…")
                 }
                 .transition(.opacity)
             }
@@ -167,9 +164,9 @@ struct YouView: View {
     ///   reads as the app having lost them.
     private func tasteNote(_ reading: TasteMemo.Reading) -> String {
         let total = reading.profile.totalSaves
-        guard !reading.profile.isEmpty, total > 0 else { return "NOTHING SAVED YET" }
-        let source = "FROM \(total) \(total == 1 ? "SAVE" : "SAVES")"
-        return reading.leftOut == 0 ? source : "\(source) · \(reading.leftOut) LEFT OUT"
+        guard !reading.profile.isEmpty, total > 0 else { return "Nothing saved yet." }
+        let source = "Read from \(total) \(total == 1 ? "save" : "saves")"
+        return reading.leftOut == 0 ? "\(source)." : "\(source); \(reading.leftOut) left out."
     }
 
     static let tasteInfo = InfoNote(
@@ -197,7 +194,7 @@ struct YouView: View {
                 ForEach(profile.ladders, id: \.ladder) { row in
                     YouRow(title: row.ladder.label, detail: row.sizes, detailColor: .ink)
                 }
-                YouRow(title: "Showing", detail: profile.gender.label.uppercased(), detailColor: .ink)
+                YouRow(title: "Showing", detail: profile.gender.label, detailColor: .ink)
                 NavigationLink {
                     SizesPage()
                 } label: {
@@ -225,7 +222,7 @@ struct YouView: View {
                 } label: {
                     YouRow(
                         title: "Country",
-                        detail: name?.uppercased() ?? "NOT SET",
+                        detail: name ?? "Not set",
                         detailColor: .ink,
                         chevron: true
                     )
@@ -283,8 +280,8 @@ struct YouView: View {
     private func followingNote(failing: Int) -> String? {
         switch failing {
         case 0: nil
-        case 1: "1 ISN'T ANSWERING · STILL TRYING"
-        default: "\(failing) AREN'T ANSWERING · STILL TRYING"
+        case 1: "One isn't answering. Dropwall keeps trying."
+        default: "\(failing) aren't answering. Dropwall keeps trying."
         }
     }
 
@@ -318,8 +315,8 @@ struct YouView: View {
                     YouRow(
                         title: "Drop calendar",
                         detail: isLocked
-                            ? "A STOREFRONT IS LOCKED"
-                            : (dates == 0 ? nil : "\(dates) \(dates == 1 ? "DATE" : "DATES") ADDED"),
+                            ? "A storefront is locked"
+                            : (dates == 0 ? nil : "\(dates) \(dates == 1 ? "date" : "dates") added"),
                         detailColor: isLocked ? .signal : .muted,
                         chevron: true
                     )
@@ -331,10 +328,10 @@ struct YouView: View {
 
     private func watchDetail(pending: Int, fired: Int) -> String {
         switch (pending, fired) {
-        case (0, 0): return "NOTHING ON WATCH"
-        case (_, 0): return "\(pending) WAITING"
-        case (0, _): return "\(fired) CAME BACK"
-        default: return "\(pending) WAITING · \(fired) CAME BACK"
+        case (0, 0): return "Nothing yet"
+        case (_, 0): return "\(pending) waiting"
+        case (0, _): return "\(fired) came back"
+        default: return "\(pending) waiting, \(fired) back"
         }
     }
 }
@@ -405,7 +402,9 @@ struct YouRow: View {
                 .foregroundStyle(Color.ink)
             Spacer(minLength: 8)
             if let detail {
-                DataLabel(text: detail, size: 10, color: detailColor)
+                Text(detail)
+                    .font(.editorial(15))
+                    .foregroundStyle(detailColor)
                     .lineLimit(1)
             }
             if chevron {
@@ -429,7 +428,8 @@ private struct FailingBrandRow: View {
             BrandMonogram(name: brand.name, logoURL: brand.logoURL, size: 34)
             VStack(alignment: .leading, spacing: 4) {
                 Wordmark(name: brand.name, size: 12)
-                DataLabel(text: brand.failingSources, size: 9, color: .signal)
+                NoteLine(text: brand.failingSources, size: 13, color: .signal)
+                    .lineLimit(1)
                     .lineLimit(1)
             }
             Spacer(minLength: 8)
@@ -499,7 +499,7 @@ struct FacetLine: View {
         let shown = StyleProfile.dominant(facets)
         if !shown.isEmpty {
             VStack(alignment: .leading, spacing: 6) {
-                DataLabel(text: title.uppercased(), size: 9)
+                NoteLine(text: title, size: 13)
                 // Each word is its own control, because each is its own query. Printed as
                 // one comma-joined line the block was the app's reading of your taste with
                 // nothing to do about it — a statement, on the page whose whole subject is

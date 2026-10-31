@@ -83,7 +83,7 @@ struct SizeProfileSection: View {
         VStack(alignment: .leading, spacing: 14) {
             SettingsHeader(
                 title: "What to show",
-                note: store.profile.gender.detail.uppercased(),
+                note: store.profile.gender.detail + ".",
                 info: SizeProfileSection.genderInfo
             )
             WordPicker(
@@ -191,7 +191,8 @@ struct DressAndSuitRows: View {
 
 /// A section title, an optional ⓘ beside it, and at most one short line under it.
 ///
-/// The line is a status or a label — "FROM 6 SAVES", "DROPWALL 1.4 (5)" — never an explanation;
+/// The line is one short sentence — "Read from 6 saves." — never an explanation, and never
+/// keywords in capitals;
 /// what has to be explained goes in `info`, a tap away (`CLAUDE.md`, *Copy*).
 struct SettingsHeader: View {
     let title: String

@@ -48,18 +48,18 @@ struct NotificationsSection: View {
             switch status {
             case .authorized, .provisional, .ephemeral:
                 VStack(alignment: .leading, spacing: 7) {
-                    DataLabel(text: "ALERTS ON", size: 11, color: .ink)
+                    NoteLine(text: "Alerts are on.", size: 15, color: .ink)
                     // Permission granted is not the same as deliverable, and saying
                     // "Alerts on" while nothing can arrive is the lie worth avoiding.
                     // Vermilion for the two states somebody can act on; muted for the one
                     // that is only the network having a bad minute.
                     switch delivery {
                     case .noKey:
-                        DataLabel(text: "NOT SENDING · THE SERVER HAS NO PUSH KEY", size: 10, color: .signal)
+                        NoteLine(text: "Nothing is being sent: the server has no push key.", color: .signal)
                     case .noToken:
-                        DataLabel(text: "NOT REGISTERED YET · REOPEN TO RETRY", size: 10, color: .signal)
+                        NoteLine(text: "This phone hasn't registered yet. Reopen the app to retry.", color: .signal)
                     case .unreachable:
-                        DataLabel(text: "CAN'T REACH THE SERVER", size: 10)
+                        NoteLine(text: "Can't reach the server right now.")
                     case .ok, .unknown:
                         EmptyView()
                     }
@@ -68,7 +68,7 @@ struct NotificationsSection: View {
                 // Once denied, the prompt never comes back — only Settings can undo it,
                 // so offering the button again would be a dead end.
                 VStack(alignment: .leading, spacing: 9) {
-                    DataLabel(text: "ALERTS OFF", size: 11)
+                    NoteLine(text: "Alerts are off.", size: 15, color: .ink)
                     if let url = URL(string: UIApplication.openSettingsURLString) {
                         Link(destination: url) {
                             SettingsAction(title: "Turn on in Settings")
@@ -231,7 +231,7 @@ struct AboutSection: View {
         VStack(alignment: .leading, spacing: 14) {
             SettingsHeader(
                 title: "About",
-                note: "DROPWALL \(version)"
+                note: "Dropwall \(version)"
             )
 
             VStack(spacing: 0) {

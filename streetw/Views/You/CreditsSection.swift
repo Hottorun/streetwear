@@ -33,14 +33,14 @@ struct CreditsSection: View {
         return VStack(alignment: .leading, spacing: 12) {
             SettingsHeader(
                 title: "Credits",
-                note: unlimited ? "NEVER CHARGED · USAGE STILL COUNTED" : nil,
+                note: unlimited ? "This account is never charged; usage is still counted." : nil,
                 info: info(summary)
             )
 
             VStack(spacing: 0) {
                 YouRow(
                     title: "Balance",
-                    detail: unlimited ? "UNLIMITED" : balance(summary.balance ?? 0),
+                    detail: unlimited ? "Unlimited" : balance(summary.balance ?? 0),
                     detailColor: (summary.balance ?? 0) < 0 && !unlimited ? .signal : .ink
                 )
                 YouRow(title: "This month", detail: usage(summary.thisMonth ?? []), detailColor: .ink)
@@ -61,7 +61,7 @@ struct CreditsSection: View {
             }
 
             if let message = credits.message {
-                DataLabel(text: message.uppercased(), size: 10)
+                NoteLine(text: message)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -86,8 +86,8 @@ struct CreditsSection: View {
     private var prices: [(title: String, detail: String)] {
         guard ai.isAvailable else { return [] }
         let named: [(CreditAction, String, String?)] = [
-            (.search, "Ask Dropwall", "REPLIES INCLUDED"),
-            (.webSearch, "Show me more", "THE OPEN WEB"),
+            (.search, "Ask Dropwall", "replies free"),
+            (.webSearch, "Show me more", "the open web"),
             (.scan, "Scan a garment", nil),
             (.fitJudge, "Judge a fit", nil),
             (.fitSuggest, "Suggest for a fit", nil)
@@ -105,10 +105,10 @@ struct CreditsSection: View {
 
     /// "23 SEARCHES · 2 SCANS", most used first — the order the server sends.
     private func usage(_ rows: [CreditUsage]) -> String {
-        guard !rows.isEmpty else { return "NOTHING YET" }
+        guard !rows.isEmpty else { return "Nothing yet" }
         return rows
-            .map { "\($0.count) \(CreditAction($0.action).label(count: $0.count))".uppercased() }
-            .joined(separator: " · ")
+            .map { "\($0.count) \(CreditAction($0.action).label(count: $0.count))" }
+            .joined(separator: ", ")
     }
 }
 
@@ -131,7 +131,9 @@ private struct PackRow: View {
                 } else {
                     // No product means StoreKit has not answered — or does not sell this pack
                     // in this storefront — and a price we made up would be a promise.
-                    DataLabel(text: product?.displayPrice ?? "—", size: 10, color: product == nil ? .muted : .ink)
+                    Text(product?.displayPrice ?? "—")
+                        .font(.editorial(15))
+                        .foregroundStyle(product == nil ? Color.muted : Color.ink)
                 }
             }
             .padding(.vertical, 12)

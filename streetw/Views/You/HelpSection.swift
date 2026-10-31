@@ -26,7 +26,7 @@ struct HelpSection: View {
                 } label: {
                     YouRow(
                         title: "Show tips again",
-                        detail: didReplayTips ? "ON — THEY'LL SHOW AS YOU GO" : nil,
+                        detail: didReplayTips ? "They'll show as you go" : nil,
                         detailColor: .ink
                     )
                 }

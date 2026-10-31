@@ -218,7 +218,7 @@ struct OnboardingView: View {
     /// Step marker, title and blurb as one block — the thing the page is about, set once.
     private var header: some View {
         VStack(alignment: .leading, spacing: 10) {
-            DataLabel(text: "STEP \((Step.numbered.firstIndex(of: step) ?? 0) + 1) OF \(Step.numbered.count)")
+            NoteLine(text: "Step \((Step.numbered.firstIndex(of: step) ?? 0) + 1) of \(Step.numbered.count)")
             HStack(alignment: .center, spacing: 2) {
                 Text(title)
                     .font(.editorial(30))
@@ -350,7 +350,7 @@ struct OnboardingView: View {
             if alertsDenied {
                 // iOS asks once, so the one way back is named — and opened, rather than described.
                 VStack(alignment: .leading, spacing: 10) {
-                    DataLabel(text: "ALERTS ARE OFF · iOS ASKS ONLY ONCE", color: .signal)
+                    NoteLine(text: "Alerts are off, and iOS asks only once.", color: .signal)
                     if let url = URL(string: UIApplication.openSettingsURLString) {
                         Link(destination: url) {
                             NotificationsSection.SettingsAction(title: "Turn on in Settings")
@@ -377,7 +377,7 @@ struct OnboardingView: View {
                     Text(label)
                         .font(.editorial(17))
                         .foregroundStyle(Color.ink)
-                    DataLabel(text: detail.uppercased(), size: 10)
+                    NoteLine(text: detail)
                 }
                 Spacer(minLength: 8)
                 Rectangle()
@@ -401,7 +401,7 @@ struct OnboardingView: View {
             HStack(spacing: 14) {
                 VStack(alignment: .leading, spacing: 5) {
                     Wordmark(name: brand.name, size: 14)
-                    DataLabel(text: brand.note.uppercased(), size: 10)
+                    NoteLine(text: brand.note)
                 }
                 Spacer(minLength: 8)
                 // A rule rather than a tick: the same mark the size run uses for "this
@@ -449,7 +449,7 @@ struct OnboardingView: View {
                     .padding(.bottom, 8)
             }
             if let progress {
-                DataLabel(text: progress.uppercased())
+                NoteLine(text: progress)
             }
             // Above the button that caused it, and only ever visible on the step it belongs
             // to. The first run is the one place where a silent failure is indistinguishable
@@ -573,7 +573,7 @@ struct OnboardingView: View {
         defer { isAdding = false }
 
         for brand in chosen {
-            progress = "Checking \(brand.name)"
+            progress = "Checking \(brand.name)…"
             if settings.isConfigured {
                 // The starter pack's own label is not sent: the catalogue is global and the
                 // server takes a brand's name from its storefront. Ours would be one more
@@ -624,7 +624,7 @@ struct OnboardingView: View {
             addFailure = "Added \(added) of \(chosen.count). \(failure)"
         }
 
-        progress = "Fetching first updates"
+        progress = "Fetching the first updates…"
         if settings.isConfigured { await remote.sync(sizes: sizes.profile) }
         progress = nil
         step = .alerts

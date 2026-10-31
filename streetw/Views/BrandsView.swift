@@ -188,7 +188,8 @@ extension Brand {
 
     /// Only the sources that are failing — what a row about a brand that needs attention says.
     var failingSources: String {
-        watchedSources.filter(\.isFailing).map(\.label).joined(separator: " · ") + " FAILING"
+        let failing = watchedSources.filter(\.isFailing).map(\.label)
+        return ListFormatter.localizedString(byJoining: failing) + (failing.count == 1 ? " isn't answering" : " aren't answering")
     }
 }
 

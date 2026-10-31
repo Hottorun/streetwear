@@ -45,8 +45,7 @@ struct AccountSection: View {
                         signedOut
                     }
                     if let failure {
-                        DataLabel(text: failure.uppercased(), size: 10, color: .signal)
-                            .fixedSize(horizontal: false, vertical: true)
+                        NoteLine(text: failure, color: .signal)
                     }
                 }
             }
@@ -59,7 +58,7 @@ struct AccountSection: View {
         VStack(alignment: .leading, spacing: 14) {
             SettingsHeader(
                 title: "Account",
-                note: "Sign in with Apple — keeps your follows, sizes and watches if you reinstall."
+                note: "Sign in with Apple to keep your follows, sizes and watches if you reinstall."
             )
             signInControl
                 .disabled(isWorking)
@@ -138,7 +137,7 @@ struct AccountSection: View {
         VStack(alignment: .leading, spacing: 12) {
             SettingsHeader(
                 title: "Account",
-                note: "Your follows, sizes and watches are kept on your account, and come back if you reinstall."
+                note: "Your follows, sizes and watches come back if you reinstall."
             )
 
             VStack(alignment: .leading, spacing: 0) {
@@ -181,23 +180,22 @@ struct AccountSection: View {
                 // Your own saves stay only when they are the phone's — the store that was here
                 // before you signed in. An Apple ID that signed in after somebody else's had a
                 // store of its own, and it goes with the account.
+                // Short sentences, but every thing that is deleted is still named — Apple asks
+                // that deleting an account be clear, and this is the one place it is said.
                 Text(profiles.accountDeletionKeepsSaves ? """
-                    Dropwall's server deletes your account and everything it keeps under it — \
-                    follows, sizes, watches, drop dates and every profile — on every phone signed \
-                    in, and any unused credits. Other profiles' saves go from this phone too. Your \
-                    own brands and saves stay, and the app carries on without an account.
+                    The server deletes your account: follows, sizes, watches, drop dates, profiles \
+                    and unused credits, on every phone. Other profiles' saves go from this phone. Your own \
+                    brands and saves stay.
                     """ : """
-                    Dropwall's server deletes your account and everything it keeps under it — \
-                    follows, sizes, watches, drop dates and every profile — on every phone signed \
-                    in, and any unused credits. Your saves, boards and fits go from this phone \
-                    too.
+                    The server deletes your account: follows, sizes, watches, drop dates, profiles \
+                    and unused credits, on every phone. Your saves, boards and fits go from this phone.
                     """)
             }
         }
     }
 
     private func since(_ account: AccountDTO) -> String? {
-        account.createdAt.map { "SINCE \($0.formatted(.dateTime.month(.abbreviated).year()).uppercased())" }
+        account.createdAt.map { "Since \($0.formatted(.dateTime.month(.abbreviated).year()))" }
     }
 
     // MARK: - Running

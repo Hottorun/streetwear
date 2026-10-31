@@ -56,7 +56,7 @@ struct ProfilesSection: View {
                 }
 
                 if let failure = profiles.failure {
-                    DataLabel(text: failure.uppercased(), size: 10, color: .signal)
+                    NoteLine(text: failure, color: .signal)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
@@ -118,11 +118,11 @@ struct ProfilesSection: View {
                         .foregroundStyle(Color.ink)
                     Spacer(minLength: 8)
                     if !profile.alertsEnabled {
-                        DataLabel(text: "ALERTS OFF", size: 10)
+                        NoteLine(text: "Alerts off")
                     }
                     // The accent is for things happening now, and being somebody is not news:
                     // the current profile is said in ink, the others offer to switch.
-                    DataLabel(text: isCurrent ? "CURRENT" : "SWITCH", size: 10, color: isCurrent ? .ink : .muted)
+                    NoteLine(text: isCurrent ? "Current" : "Switch", size: 15, color: isCurrent ? .ink : .muted)
                 }
                 .contentShape(.rect)
             }
@@ -180,7 +180,7 @@ struct OtherAccountsRow: View {
                     .fixedSize(horizontal: false, vertical: true)
                 Spacer(minLength: 8)
                 Button { isConfirming = true } label: {
-                    DataLabel(text: "REMOVE", size: 10, color: .muted)
+                    NoteLine(text: "Remove", size: 15)
                         .contentShape(.rect)
                 }
                 .buttonStyle(.borderless)

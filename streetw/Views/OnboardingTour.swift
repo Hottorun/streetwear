@@ -189,7 +189,7 @@ private struct TourFollowPicture: View {
         VStack(alignment: .leading, spacing: 18) {
             Wordmark(name: "Aimé Leon Dore", size: 16)
             VStack(alignment: .leading, spacing: 10) {
-                DataLabel(text: "WHAT REACHES YOU", size: 9)
+                NoteLine(text: "What reaches you", size: 13)
                 HStack(spacing: 18) {
                     ForEach(["Everything", "Sales only", "Quiet"], id: \.self) { mode in
                         let isOn = mode == "Everything"
@@ -205,14 +205,14 @@ private struct TourFollowPicture: View {
                 }
             }
             VStack(alignment: .leading, spacing: 10) {
-                DataLabel(text: "WHICH PIECES", size: 9)
+                NoteLine(text: "Which pieces", size: 13)
                 FlowRow(spacing: 7) {
                     ForEach([("Knitwear", true), ("Trousers", true), ("Shoes", false), ("Outerwear", true), ("Accessories", false)], id: \.0) { chip, isOn in
                         HStack(spacing: 5) {
                             if isOn {
                                 Image(systemName: "checkmark").font(.system(size: 8, weight: .bold))
                             }
-                            Text(chip.uppercased()).font(.data(10, isOn ? .semibold : .regular))
+                            Text(chip).font(.data(10, isOn ? .semibold : .regular))
                         }
                         .foregroundStyle(isOn ? Color.paper : Color.ink)
                         .padding(.horizontal, 10)
@@ -328,8 +328,7 @@ private struct TourSearchPicture: View {
             .background(Color.paper)
             .overlay(Rectangle().stroke(Color.ink, lineWidth: 1))
 
-            DataLabel(text: "IN EVERY SHOP WE WATCH · 9,947 PRODUCTS", size: 8.5)
-            DataLabel(text: "BLACK · TROUSERS · UNDER 200", size: 8.5, color: .ink)
+            NoteLine(text: "18 matches in every shop we watch.", size: 13, color: .ink)
                 .padding(.bottom, 4)
 
             HStack(alignment: .top, spacing: 12) {

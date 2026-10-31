@@ -128,11 +128,11 @@ struct AddBrandView: View {
                 if isSearching && results.isEmpty {
                     HStack(spacing: 10) {
                         ProgressView()
-                        DataLabel(text: "SEARCHING")
+                        NoteLine(text: "Searching…")
                     }
                     .padding(20)
                 } else if let searchError {
-                    EditorialEmptyState(title: "Couldn't search", action: searchError.uppercased())
+                    EditorialEmptyState(title: "Couldn't search", action: searchError)
                         .frame(minHeight: 220)
                 } else if results.isEmpty && !trimmed.isEmpty {
                     notFound
@@ -154,7 +154,7 @@ struct AddBrandView: View {
                         // question — `pending` is nil again by the time this draws, so the
                         // id is compared against the one the failure was recorded for.
                         if let followError, failedToFollow == dto.id {
-                            DataLabel(text: followError.uppercased(), color: .signal)
+                            NoteLine(text: followError, color: .signal)
                                 .padding(.horizontal, 20)
                                 .padding(.bottom, 14)
                         }
@@ -186,7 +186,7 @@ struct AddBrandView: View {
                     Text("Or start here")
                         .font(.editorial(19))
                         .foregroundStyle(Color.ink)
-                    DataLabel(text: "ALREADY IN THE CATALOGUE")
+                    NoteLine(text: "Already in the catalogue.")
                 }
                 .padding(.horizontal, 20)
                 .padding(.top, 12)
@@ -207,7 +207,7 @@ struct AddBrandView: View {
 
             VStack(alignment: .leading, spacing: 5) {
                 Wordmark(name: dto.name, size: 14)
-                DataLabel(text: dto.slug.uppercased(), size: 10)
+                DataLabel(text: dto.slug, size: 11)
             }
 
             Spacer(minLength: 8)
@@ -215,7 +215,7 @@ struct AddBrandView: View {
             if pending == dto.id {
                 ProgressView()
             } else if alreadyFollowed {
-                DataLabel(text: "FOLLOWING", size: 10)
+                NoteLine(text: "Following", size: 15)
             } else {
                 Button("Follow") { Task { await follow(dto) } }
                     .font(.data(11, .semibold))
@@ -249,7 +249,7 @@ struct AddBrandView: View {
                 Button {
                     newBrand = NewBrandDraft(url: trimmed)
                 } label: {
-                    Text("CHECK THIS SITE")
+                    Text("Check this site")
                         .font(.data(12, .semibold))
                         .tracking(1.1)
                         .foregroundStyle(Color.paper)
@@ -259,7 +259,7 @@ struct AddBrandView: View {
                 }
                 .buttonStyle(.borderless)
             } else {
-                DataLabel(text: "PASTE ITS WEBSITE TO ADD IT")
+                NoteLine(text: "Paste its website to add it.", size: 16)
             }
         }
         .padding(20)
@@ -445,13 +445,12 @@ struct NewBrandView: View {
                     VStack(alignment: .leading, spacing: 8) {
                         HStack(spacing: 10) {
                             ProgressView()
-                            DataLabel(text: "CHECKING THE SITE")
+                            NoteLine(text: "Checking the site…", size: 16, color: .ink)
                         }
                         // A shop off Shopify can take minutes, and nobody has to watch it.
-                        DataLabel(
-                            text: isQueued ? "WATCHING AS SOON AS IT'S DONE · WE'LL TELL YOU" : "CAN TAKE A FEW MINUTES · NO NEED TO WAIT",
-                            color: .ink
-                        )
+                        NoteLine(text: isQueued
+                            ? "Dropwall starts watching when it's done, and tells you."
+                            : "This can take a few minutes. You don't have to wait.")
                     }
                 } else if let probeError {
                     couldNotCheck(probeError)
@@ -463,7 +462,7 @@ struct NewBrandView: View {
 
                 VStack(alignment: .leading, spacing: 8) {
                     HStack(spacing: 2) {
-                        DataLabel(text: "NAME · FROM THE SITE")
+                        DataLabel(text: "NAME")
                         InfoButton(note: Self.nameInfo)
                     }
                     Text(isChecking ? "…" : declaredName)
@@ -502,7 +501,7 @@ struct NewBrandView: View {
                     if isSaving {
                         ProgressView().tint(.paper)
                     } else {
-                        Text(isQueued ? "DONE" : check?.status == .checking ? "WATCH WHEN READY" : "START WATCHING")
+                        Text(isQueued ? "Done" : check?.status == .checking ? "Watch when ready" : "Start watching")
                             .font(.data(12, .semibold))
                             .tracking(1.1)
                     }
@@ -524,16 +523,16 @@ struct NewBrandView: View {
         VStack(alignment: .leading, spacing: 10) {
             DataLabel(text: "WHAT WE CAN WATCH")
             if watchable.isEmpty {
-                DataLabel(text: "NOTHING AUTOMATIC · A LINK YOU OPEN YOURSELF", color: .ink)
+                NoteLine(text: "Nothing automatic — a link you open yourself.", color: .ink)
             } else {
                 ForEach(watchable, id: \.url) { source in
                     HStack(spacing: 10) {
-                        Text(source.label.uppercased())
+                        Text(source.label)
                             .font(.data(11, .medium))
                             .foregroundStyle(source.isAutomatic ? Color.ink : Color.muted)
                         Spacer(minLength: 8)
                         if !source.isAutomatic {
-                            DataLabel(text: "LINK ONLY", size: 9)
+                            NoteLine(text: "Link only", size: 13)
                         }
                     }
                     .padding(.vertical, 7)
@@ -570,7 +569,7 @@ struct NewBrandView: View {
                     .font(.editorial(16))
                     .foregroundStyle(Color.ink)
                 HStack(spacing: 14) {
-                    DataLabel(text: "SHARE FROM SAFARI › DROPWALL")
+                    NoteLine(text: "Share from Safari › Dropwall")
                     InfoButton(note: Self.blockedInfo, label: "WHY?")
                 }
             case .sellsNoClothes:
@@ -584,7 +583,7 @@ struct NewBrandView: View {
                     .font(.editorial(19))
                     .foregroundStyle(Color.ink)
                 HStack(spacing: 14) {
-                    DataLabel(text: "WORTH TRYING AGAIN LATER")
+                    NoteLine(text: "Worth trying again later.")
                     InfoButton(note: Self.nothingInfo, label: "WHY?")
                 }
             }
@@ -609,16 +608,13 @@ struct NewBrandView: View {
                 .foregroundStyle(Color.ink)
             // About us, not the shop — said so in as many words, because the alternative reads
             // as a verdict on the site.
-            DataLabel(text: "DROPWALL DIDN'T ANSWER · NOT THE SITE", color: .ink)
+            NoteLine(text: "Dropwall's server didn't answer — this says nothing about the site.", color: .ink)
             Text(reason)
                 .font(.data(11))
                 .foregroundStyle(Color.signal)
                 .fixedSize(horizontal: false, vertical: true)
             Button { Task { await probe() } } label: {
-                DataLabel(text: "TRY AGAIN", color: .ink)
-                    .overlay(alignment: .bottom) {
-                        Rectangle().fill(Color.ink).frame(height: 1).offset(y: 3)
-                    }
+                NotificationsSection.SettingsAction(title: "Try again")
             }
             .buttonStyle(.borderless)
             .padding(.top, 2)
