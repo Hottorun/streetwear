@@ -103,10 +103,6 @@ struct ShopView: View {
     /// others; only one is ever on.
     @State private var moreFromMine = false
     @State private var onlyMine = false
-    /// What the last answer searched and how many products that was — the line under the
-    /// field, printed from the answer, never from what was asked.
-    @State private var searchedCount: Int?
-    @State private var searchedScope: ProductSearchScope?
     @State private var isShowingSort = false
     @State private var viewing: DiscoverCard?
     @State private var isLoadingMore = false
@@ -239,7 +235,6 @@ struct ShopView: View {
                         field
                         if isSearching {
                             if isServer {
-                                asking
                                 serverResults(profile: profile)
                                 // The open web: at the end of a thread's results, and on its
                                 // own under a free search that found little. Always its own
@@ -377,39 +372,36 @@ struct ShopView: View {
         return symbol
     }()
 
+    /// The box, and nothing around it: what is being searched is said once, by the status line
+    /// under it, from the answer (`statusLine`). The label above it and the scope line below it
+    /// were two of the nine rows above the first product.
     private var field: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            DataLabel(text: "DESCRIBE WHAT YOU WANT", size: 10, color: .ink)
-
-            HStack(alignment: .center, spacing: 10) {
-                Image(systemName: "magnifyingglass")
-                    .font(.system(size: 14, weight: .medium))
-                    .foregroundStyle(Color.ink)
-                TextField(
-                    "",
-                    text: $text,
-                    prompt: Text("A black suit under \(Self.promptCurrency)400").foregroundStyle(Color.muted),
-                    axis: .vertical
-                )
-                .font(.editorial(17))
+        HStack(alignment: .center, spacing: 10) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 14, weight: .medium))
                 .foregroundStyle(Color.ink)
-                .lineLimit(1...3)
-                .focused($isWriting)
-                .submitLabel(.search)
-                // Shop names and model numbers are the words most worth typing and the ones
-                // autocorrect is surest are mistakes.
-                .autocorrectionDisabled()
-                trailingControls
-            }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 13)
-            .overlay(Rectangle().stroke(isWriting ? Color.ink : Color.hairline, lineWidth: 1))
-
-            DataLabel(text: scope, size: 9)
+            TextField(
+                "",
+                text: $text,
+                prompt: Text("A black suit under \(Self.promptCurrency)400").foregroundStyle(Color.muted),
+                axis: .vertical
+            )
+            .font(.editorial(17))
+            .foregroundStyle(Color.ink)
+            .lineLimit(1...3)
+            .focused($isWriting)
+            .submitLabel(.search)
+            // Shop names and model numbers are the words most worth typing and the ones
+            // autocorrect is surest are mistakes.
+            .autocorrectionDisabled()
+            trailingControls
         }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 13)
+        .overlay(Rectangle().stroke(isWriting ? Color.ink : Color.hairline, lineWidth: 1))
         .padding(.horizontal, 20)
         .padding(.top, 4)
-        .padding(.bottom, 24)
+        .padding(.bottom, 14)
     }
 
     /// The controls at the field's trailing edge, in one row of their own. Anything else that
@@ -435,38 +427,85 @@ struct ShopView: View {
         }
     }
 
-    /// What is being searched, in so many words, always under the box.
-    private var scope: String {
-        if isServer {
-            // The server's catalogue, not this phone's — so never "on this phone" — and what
-            // the last answer searched, with its count: never what the chips asked for, since
-            // a server that predates them answers the plain search.
-            guard let searchedCount, let searchedScope else { return "SEARCHES EVERY SHOP WE WATCH" }
-            let place = searchedScope == .followed ? "IN YOUR SHOPS" : "IN EVERY SHOP WE WATCH"
-            return "\(place) · \(searchedCount.formatted()) \(searchedCount == 1 ? "PRODUCT" : "PRODUCTS")"
+    // MARK: - Above the results: one line, one row of chips
+
+    /// **What was searched, in one sentence** — and, in a thread, that it was AI and what it
+    /// cost. Printed from the answer, never from the chips, so the scope is always the one that
+    /// was searched. How we sort is the ⓘ at its end; the × leaves a thread.
+    ///
+    /// This one line replaced four: the scope under the field, "ASKED DROPWALL · AI", the charge,
+    /// and "18 MATCHES IN EVERY SHOP WE WATCH · HOW WE SORT".
+    private func statusLine(_ sentence: String, sorts: Bool = false, isWorking: Bool = false) -> some View {
+        HStack(alignment: .center, spacing: 6) {
+            if isWorking {
+                ProgressView().controlSize(.mini).tint(.muted)
+            }
+            if sorts {
+                // The sentence and its ⓘ are one control: the ⓘ is set inline, so it ends the
+                // sentence on whichever line the sentence ends.
+                Button { isShowingSort = true } label: {
+                    (Text(sentence) + Text("  ") + Text(Image(systemName: "info.circle")))
+                        .font(.editorial(15))
+                        .foregroundStyle(Color.ink)
+                        .multilineTextAlignment(.leading)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .buttonStyle(.borderless)
+                .accessibilityHint("Shows how we sort")
+            } else {
+                Text(sentence)
+                    .font(.editorial(15))
+                    .foregroundStyle(isWorking ? Color.muted : Color.ink)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 8)
+            if ask.isOpen {
+                Button { ask.end() } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(Color.muted)
+                        .frame(width: 30, height: 24)
+                        .contentShape(.rect)
+                }
+                .buttonStyle(.borderless)
+                .accessibilityLabel("Leave the AI search")
+            }
         }
-        switch catalogue.phase {
-        case .unread, .reading:
-            return "READING YOUR SHOPS…"
-        case .ready:
-            guard catalogue.shops > 0 else { return "YOUR SHOPS · YOU DON'T FOLLOW ANY YET" }
-            let count = catalogue.shown.formatted()
-            let products = catalogue.shown == 1 ? "PRODUCT" : "PRODUCTS"
-            return catalogue.isCapped
-                ? "IN YOUR SHOPS · THE NEWEST \(count) \(products) ON THIS PHONE"
-                : "IN YOUR SHOPS · \(count) \(products) ON THIS PHONE"
-        }
+        .padding(.horizontal, 20)
+        .padding(.bottom, 12)
     }
 
-    // MARK: - Results
-
-    /// The chips under the field. The flags the words alone set are read off the text, so a
-    /// chip can tell a word in the field from its own state — parsing is microseconds; it is
-    /// the search that waits for the typing to settle.
+    /// **One row of chips**: the offer to ask (server mode, where there is a model), the model's
+    /// suggested replies while a thread is open, then the grammar's filters and the two that
+    /// change where the one list looks. A suggestion that names a filter is left out — the
+    /// filter is the same thing, free, and "Cheaper" appeared twice.
+    ///
+    /// The flags the words alone set are read off the text, so a chip can tell a word in the
+    /// field from its own state — parsing is microseconds; it is the search that waits for the
+    /// typing to settle.
     private var chips: some View {
         let typed = ShopQuery.parse(text)
+        let filters = isServer
+            ? ["Cheaper", "More formal", "In my size", "More from my brands", "Only my brands"]
+            : ["Cheaper", "More formal", "In my size"]
+        let suggestions = (ask.reading?.suggestions ?? []).filter { suggestion in
+            !filters.contains { $0.caseInsensitiveCompare(suggestion.trimmingCharacters(in: .whitespaces)) == .orderedSame }
+        }
         return ScrollView(.horizontal) {
             HStack(spacing: 8) {
+                if isServer, ai.isAvailable, !ask.isOpen {
+                    AskChip {
+                        let opening = text.trimmingCharacters(in: .whitespacesAndNewlines)
+                        isWriting = false
+                        runAsk { await ask.ask(opening, inMySize: inMySize, reach: reach, via: ai) }
+                    }
+                }
+                ForEach(suggestions, id: \.self) { suggestion in
+                    SuggestionChip(title: suggestion) {
+                        runAsk { await ask.reply(suggestion, inMySize: inMySize, reach: reach, via: ai) }
+                    }
+                    .disabled(ask.isAsking)
+                }
                 ShopChip(title: "Cheaper", isOn: cheaper || typed.cheaper, isTyped: typed.cheaper) { cheaper.toggle() }
                 ShopChip(title: "More formal", isOn: formal || typed.formal, isTyped: typed.formal) { formal.toggle() }
                 ShopChip(title: "In my size", isOn: inMySize || typed.inMySize, isTyped: typed.inMySize) { inMySize.toggle() }
@@ -487,39 +526,49 @@ struct ShopView: View {
             .padding(.horizontal, 20)
         }
         .scrollIndicators(.hidden)
-        .padding(.bottom, 18)
+        .padding(.bottom, 14)
     }
+
+    /// The thread's reply field, compact, only while a thread has a reading to reply to.
+    @ViewBuilder
+    private var replyField: some View {
+        if ask.isOpen, ask.reading != nil {
+            AskReplyField(ask: ask) { reply in
+                runAsk { await ask.reply(reply, inMySize: inMySize, reach: reach, via: ai) }
+            }
+            .padding(.horizontal, 20)
+            .padding(.bottom, 14)
+        }
+    }
+
+    // MARK: - Results
 
     @ViewBuilder
     private func results(profile: SizeProfile) -> some View {
         let query = found.query
         let result = found.result
 
-        chips
-
         if catalogue.phase != .ready {
-            reading(label: "READING YOUR SHOPS")
+            statusLine("Reading your shops…", isWorking: true)
         } else if catalogue.shops == 0 {
-            emptyState(
-                title: "You don't follow any shops yet",
-                action: "FOLLOW ONE TO SEARCH IT"
-            )
+            emptyState(title: "You don't follow any shops yet", action: "Follow one to search it.")
         } else if catalogue.index.listings.isEmpty {
-            emptyState(
-                title: "Nothing from your shops yet",
-                action: "ARRIVING WITH THE NEXT SYNC"
-            )
+            emptyState(title: "Nothing from your shops yet", action: "It arrives with the next sync.")
         } else if query.text.isEmpty {
             // Typed, not yet settled. The previous answer, if any, stays rather than blinking.
-            reading(label: "LOOKING")
+            statusLine("Looking…", isWorking: true)
         } else {
-            understood(query: query, unknown: result.unknown, cheaperThan: result.cheaperThan, outcome: result.outcome, place: .phone)
+            switch result.outcome {
+            case .found, .closest:
+                statusLine(summary(total: result.total, shown: result.exact.count, isCapped: false, place: .phone))
+            default:
+                EmptyView()
+            }
+            chips
+            readingNote(query: query, unknown: result.unknown, cheaperThan: result.cheaperThan, outcome: result.outcome, place: .phone)
             switch result.outcome {
             case .found, .closest:
                 VStack(alignment: .leading, spacing: 0) {
-                    DataLabel(text: summary(total: result.total, shown: result.exact.count, isCapped: false, place: .phone), size: 10)
-                        .padding(.horizontal, 20)
-                        .padding(.bottom, 16)
                     grid(result.exact)
                     if !result.partial.isEmpty {
                         if !result.exact.isEmpty { partlyMatching }
@@ -547,28 +596,27 @@ struct ShopView: View {
             self = scope == .followed ? .yourShops : .everyShop
         }
 
-        /// "in your shops", as a title's ending.
+        /// "in your shops", as a sentence's ending.
         var phrase: String {
             switch self {
-            case .phone, .yourShops: "in your shops"
+            case .phone: "in your shops on this phone"
+            case .yourShops: "in your shops"
             case .everyShop: "in every shop we watch"
             }
         }
 
-        var label: String { phrase.uppercased() }
-
-        /// What "none of the N products … says it" counts.
+        /// What a search that found no product saying the word looked through.
         func searched(_ count: Int) -> String {
-            switch self {
-            case .phone: "\(count.formatted()) PRODUCTS ON THIS PHONE SEARCHED · TRY ANOTHER WORD"
-            case .yourShops, .everyShop: "\(count.formatted()) PRODUCTS SEARCHED · TRY ANOTHER WORD"
-            }
+            "\(count.formatted()) \(count == 1 ? "product" : "products") searched. Try another word."
         }
     }
 
-    /// What the field took from the sentence, said back in the data voice.
+    /// **What the grammar did, said only where it differs from what was typed** — a word no
+    /// product carries, a bound read as a price, a size it does not read, and in a thread the
+    /// model's own reading of the description. A reading that only repeats the field in capitals
+    /// ("BLACK · TROUSERS · UNDER 200") said nothing, and was a row above the first product.
     @ViewBuilder
-    private func understood(
+    private func readingNote(
         query: ShopQuery,
         unknown: [String],
         cheaperThan: Double?,
@@ -576,51 +624,48 @@ struct ShopView: View {
         place: Place,
         byMeaning: Bool = false
     ) -> some View {
-        let words = query.reading.map { term in
-            if term == "cheaper", let middle = cheaperThan {
-                return "cheaper — under \(ShopQuery.amount(middle))"
+        let lines = readingLines(query: query, unknown: unknown, cheaperThan: cheaperThan, outcome: outcome, byMeaning: byMeaning)
+        if !lines.isEmpty {
+            VStack(alignment: .leading, spacing: 4) {
+                ForEach(lines, id: \.self) { NoteLine(text: $0) }
             }
-            return term
+            .padding(.horizontal, 20)
+            .padding(.bottom, 14)
         }
-        let struck = Set(unknown)
-        VStack(alignment: .leading, spacing: 5) {
-            if !words.isEmpty {
-                // A word in no product is struck through rather than dropped from the reading:
-                // the field did read it, and the line under says what became of it — struck,
-                // the way a size that is gone is struck in a run.
-                words.enumerated().reduce(Text(verbatim: "")) { line, entry in
-                    let word = Text(verbatim: entry.element.uppercased())
-                    let piece = struck.contains(entry.element)
-                        ? word.strikethrough(color: .muted).foregroundStyle(Color.muted)
-                        : word
-                    return entry.offset == 0 ? Text("\(line)\(piece)") : Text("\(line) · \(piece)")
-                }
-                .font(.data(10))
-                .tracking(0.4)
-                .foregroundStyle(Color.ink)
-            }
-            // Set aside, and said: the search went on without these rather than returning
-            // nothing because one word of a sentence is in no product title. Not when every
-            // word was unknown — the empty state under this says exactly that, larger.
-            if !unknown.isEmpty, outcome != .notInYourShops(unknown) {
-                // No product says the word; where the answer was also compared by meaning, the
-                // word still shaped it, and saying "left out" would be untrue.
-                DataLabel(
-                    text: "NO " + unknown.map { "“\($0.uppercased())”" }.joined(separator: ", ")
-                        + " \(place.label) — " + (byMeaning ? "LOOKED FOR BY MEANING" : "LEFT OUT"),
-                    size: 10
-                )
-            }
-            if !query.ignored.isEmpty {
-                DataLabel(
-                    text: query.ignored.map { "“\($0.uppercased())”" }.joined(separator: ", ")
-                        + " ISN'T READ — “IN MY SIZE” IS",
-                    size: 10
-                )
-            }
+    }
+
+    private func readingLines(
+        query: ShopQuery,
+        unknown: [String],
+        cheaperThan: Double?,
+        outcome: ShopSearch.Outcome,
+        byMeaning: Bool
+    ) -> [String] {
+        var lines: [String] = []
+        let typed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        // The model's reading is what the page searched, so it is said whenever it is not the
+        // description as typed.
+        if let asked = ask.reading?.query, asked.caseInsensitiveCompare(typed) != .orderedSame {
+            lines.append("Searched for “\(asked)”.")
         }
-        .padding(.horizontal, 20)
-        .padding(.bottom, 18)
+        // Set aside, and said: the search went on without these rather than returning nothing
+        // because one word of a sentence is in no product title. Not when every word was
+        // unknown — the empty state under this says exactly that, larger. Where the answer was
+        // also compared by meaning, the word still shaped it, and "ignored" would be untrue.
+        if !unknown.isEmpty, outcome != .notInYourShops(unknown) {
+            let words = quoted(unknown)
+            let pronoun = unknown.count == 1 ? "it" : "them"
+            lines.append(byMeaning
+                ? "Looked for \(words) by meaning: no product names \(pronoun)."
+                : "Ignored \(words): no product mentions \(pronoun).")
+        }
+        if query.reading.contains("cheaper"), let middle = cheaperThan {
+            lines.append("Cheaper means under \(ShopQuery.amount(middle)).")
+        }
+        if !query.ignored.isEmpty {
+            lines.append("\(quoted(query.ignored)) isn't read — In my size is.")
+        }
+        return lines
     }
 
     /// Which constraint emptied the list — the same six answers wherever the search ran.
@@ -630,44 +675,35 @@ struct ShopView: View {
         case .found, .closest:
             EmptyView()
         case .nothingToSearch:
-            emptyState(
-                title: "Nothing to search for",
-                action: "NAME A GARMENT, A COLOUR OR A PRICE"
-            )
+            emptyState(title: "Nothing to search for", action: "Name a garment, a colour or a price.")
         case .notInYourShops(let words):
             emptyState(title: "No \(quoted(words)) \(place.phrase)", action: place.searched(searched))
         case .allRuledOut(let words):
             emptyState(
                 title: "Everything that matched is \(words.joined(separator: " or "))",
-                action: "TAKE OUT \(words.map { "“NO \($0.uppercased())”" }.joined(separator: ", ")) TO SEE THEM"
+                action: "Take out \(words.map { "“no \($0)”" }.joined(separator: ", ")) to see them."
             )
         case .hiddenByFilter(let count):
             emptyState(
                 title: "\(matches(count)), all hidden by your filter",
-                action: "SHOWING \(profile.gender.label.uppercased()) ONLY · SET ON YOU › SIZES"
+                action: "You're seeing \(profile.gender.label.lowercased()) only. Change it in You › Sizes."
             )
         case .outsidePrice(let count, let cheapest):
             emptyState(
                 title: "\(matches(count)), none \(bound(of: query))",
-                action: cheapest.map { "THE CHEAPEST IS \(ShopQuery.amount($0))" } ?? "NONE OF THEM HAS A PRICE"
+                action: cheapest.map { "The cheapest is \(ShopQuery.amount($0))." } ?? "None of them has a price."
             )
         case .noSizes:
-            emptyState(
-                title: "Your sizes aren't set",
-                action: "ADD THEM ON YOU › SIZES"
-            )
+            emptyState(title: "Your sizes aren't set", action: "Add them in You › Sizes.")
         case .noneInYourSize(let count):
-            emptyState(
-                title: "\(matches(count)), none in your size today",
-                action: "TURN OFF IN MY SIZE TO SEE THEM"
-            )
+            emptyState(title: "\(matches(count)), none in your size today", action: "Turn off In my size to see them.")
         }
     }
 
     private var partlyMatching: some View {
         VStack(alignment: .leading, spacing: 12) {
             Rule()
-            DataLabel(text: "ALSO PARTLY MATCHING", size: 10, color: .ink)
+            NoteLine(text: "Also partly matching", size: 15, color: .ink)
         }
         .padding(.horizontal, 20)
         .padding(.top, 30)
@@ -696,15 +732,12 @@ struct ShopView: View {
         .padding(.horizontal, 16)
     }
 
+    /// "18 matches in every shop we watch." — the count and the scope, as one sentence.
     private func summary(total: Int, shown: Int, isCapped: Bool, place: Place) -> String {
-        guard shown > 0 else { return "NOTHING HAS ALL OF IT · CLOSEST FIRST" }
+        guard shown > 0 else { return "Nothing has all of it, so the closest come first." }
         // "200+": the server's candidates reached their bound, so the count is a floor.
-        let count = isCapped
-            ? "\(total.formatted())+ MATCHES"
-            : (total == 1 ? "1 MATCH" : "\(total.formatted()) MATCHES")
-        return total > shown
-            ? "\(count) \(place.label) · THE FIRST \(shown)"
-            : "\(count) \(place.label)"
+        let count = isCapped ? "\(total.formatted())+ matches" : (total == 1 ? "1 match" : "\(total.formatted()) matches")
+        return "\(count) \(place.phrase)."
     }
 
     private func matches(_ count: Int) -> String {
@@ -733,7 +766,7 @@ struct ShopView: View {
     private func reading(label: String) -> some View {
         HStack(spacing: 8) {
             ProgressView().controlSize(.mini).tint(.muted)
-            DataLabel(text: label, size: 10)
+            NoteLine(text: label)
         }
         .padding(.horizontal, 20)
         .padding(.top, 8)
@@ -792,10 +825,6 @@ struct ShopView: View {
         let reach = reach
         let answer = await ask(query, reach: reach)
         guard !Task.isCancelled else { return }
-        if let response = answer.response {
-            searchedCount = response.searched
-            searchedScope = response.scope
-        }
         served = Served(query: query, reach: reach, answer: answer)
     }
 
@@ -843,25 +872,51 @@ struct ShopView: View {
     /// the grid: past that, the catalogue has answered.
     static let littleBelow = 6
 
+    /// The server's answer, in the order the page reads: the model's reply, the one status line,
+    /// the one chip row, the reply field, what the grammar did when it differs, and the results.
     @ViewBuilder
     private func serverResults(profile: SizeProfile) -> some View {
-        chips
+        if let reply = ask.reading?.reply, !reply.isEmpty, !ask.isAsking {
+            Text(reply)
+                .font(.editorial(17))
+                .foregroundStyle(Color.ink)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.horizontal, 20)
+                .padding(.bottom, 8)
+        }
+
+        if ask.isAsking {
+            statusLine("Asking Dropwall's AI…", isWorking: true)
+        } else if let refusal = ask.refusal {
+            AIRefusalNotice(refusal: refusal) {
+                runAsk { await ask.retry(inMySize: inMySize, reach: reach, via: ai) }
+            }
+            .padding(.horizontal, 20)
+            .padding(.bottom, 14)
+        }
 
         switch served.answer {
         case .idle, .looking:
-            reading(label: onlyMine ? "LOOKING IN YOUR SHOPS" : "LOOKING IN EVERY SHOP WE WATCH")
+            if !ask.isAsking {
+                statusLine(onlyMine ? "Searching your shops…" : "Searching every shop we watch…", isWorking: true)
+            }
+            chips
         case .failed(let message):
+            chips
             didNotRun(message)
         case .answered(let response):
             let place = Place(response.scope)
             if response.shops == 0 {
+                chips
                 // Only "Only my brands" can get here: every shop is never no shops.
-                emptyState(
-                    title: "You don't follow any shops yet",
-                    action: "TURN OFF ONLY MY BRANDS"
-                )
+                emptyState(title: "You don't follow any shops yet", action: "Turn off Only my brands to search every shop.")
             } else {
-                understood(
+                if !ask.isAsking, [.found, .closest].contains(response.outcome) {
+                    statusLine(threadSentence(response, place: place), sorts: true)
+                }
+                chips
+                replyField
+                readingNote(
                     query: served.query,
                     unknown: response.unknown,
                     cheaperThan: response.cheaperThan,
@@ -874,18 +929,33 @@ struct ShopView: View {
         }
     }
 
+    /// The status sentence for an answer: the count and the scope, and — when a thread asked
+    /// for it — that it was AI and what this turn cost.
+    private func threadSentence(_ response: ProductSearchResponse, place: Place) -> String {
+        let exact = response.exact.count
+        let found = summary(total: response.total, shown: exact, isCapped: response.isCapped, place: place)
+        guard ask.reading != nil, let charge = ask.charge else { return found }
+        let cost: String
+        if charge.credits == 0 {
+            cost = charge.balance == nil ? "at no charge" : "free, as a reply"
+        } else {
+            cost = "for " + AIStore.creditsLabel(charge.credits)
+        }
+        guard exact > 0 else { return "AI search, \(cost). " + found }
+        let count = response.isCapped ? "\(response.total.formatted())+" : response.total.formatted()
+        let noun = response.total == 1 && !response.isCapped ? "match" : "matches"
+        return "AI found \(count) \(noun) \(place.phrase), \(cost)."
+    }
+
     /// A search that did not run, said as one — and the way to run it again.
     private func didNotRun(_ message: String) -> some View {
         VStack(alignment: .leading, spacing: 0) {
-            emptyState(
-                title: "The search didn't run",
-                action: "COULDN'T REACH DROPWALL — \(message.uppercased())"
-            )
+            emptyState(title: "The search didn't run", action: "Couldn't reach Dropwall: \(message)")
             Button {
                 let source = ask.reading?.query ?? text
                 Task { await searchServer(ShopQuery.parse(source).refined(cheaper: cheaper, formal: formal, inMySize: inMySize)) }
             } label: {
-                DataLabel(text: "TRY AGAIN", size: 10, color: .ink)
+                NotificationsSection.SettingsAction(title: "Try again")
                     .padding(.horizontal, 20)
                     .frame(minHeight: 44, alignment: .leading)
                     .contentShape(.rect)
@@ -894,8 +964,8 @@ struct ShopView: View {
         }
     }
 
-    /// One server answer: the summary, the main list, the partial matches, a way to the next
-    /// page — or which constraint emptied it.
+    /// One server answer: the main list, the partial matches, a way to the next page — or
+    /// which constraint emptied it.
     @ViewBuilder
     private func answered(_ response: ProductSearchResponse, place: Place, profile: SizeProfile) -> some View {
         let saved = savedKeys
@@ -904,20 +974,10 @@ struct ShopView: View {
         switch response.outcome {
         case .found, .closest:
             if exact.isEmpty, partial.isEmpty {
-                DataLabel(text: "NOTHING \(place.label)", size: 10)
+                NoteLine(text: "Nothing \(place.phrase).")
                     .padding(.horizontal, 20)
             } else {
                 VStack(alignment: .leading, spacing: 0) {
-                    HStack(alignment: .firstTextBaseline, spacing: 8) {
-                        DataLabel(
-                            text: summary(total: response.total, shown: exact.count, isCapped: response.isCapped, place: place),
-                            size: 10
-                        )
-                        Spacer(minLength: 8)
-                        howWeSort
-                    }
-                    .padding(.horizontal, 20)
-                    .padding(.bottom, 16)
                     cardGrid(exact, saved: saved)
                     if response.nextCursor != nil {
                         Button {
@@ -925,7 +985,7 @@ struct ShopView: View {
                         } label: {
                             HStack(spacing: 8) {
                                 if isLoadingMore { ProgressView().controlSize(.mini).tint(.muted) }
-                                DataLabel(text: "MORE", size: 10, color: .ink)
+                                NotificationsSection.SettingsAction(title: "More")
                             }
                             .padding(.horizontal, 20)
                             .frame(minHeight: 44, alignment: .leading)
@@ -943,22 +1003,6 @@ struct ShopView: View {
         default:
             failure(response.outcome, query: served.query, profile: profile, place: place, searched: response.searched)
         }
-    }
-
-    /// The way to the note on how the list is ordered, beside the count it explains.
-    private var howWeSort: some View {
-        Button { isShowingSort = true } label: {
-            HStack(spacing: 4) {
-                DataLabel(text: "HOW WE SORT", size: 10, color: .ink)
-                Image(systemName: "info.circle")
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundStyle(Color.ink)
-            }
-            .frame(minHeight: 30)
-            .contentShape(.rect)
-        }
-        .buttonStyle(.borderless)
-        .fixedSize()
     }
 
     private func cardGrid(_ hits: [ProductSearchHit], saved: Set<String>) -> some View {
@@ -979,30 +1023,6 @@ struct ShopView: View {
 
     // MARK: - Asking Dropwall
 
-    /// The offer to ask, or the thread once one is open. Server mode only, and only where the
-    /// server has a model.
-    @ViewBuilder
-    private var asking: some View {
-        if ask.isOpen {
-            AskThreadHeader(
-                ask: ask,
-                reply: { reply in runAsk { await ask.reply(reply, inMySize: inMySize, reach: reach, via: ai) } },
-                retry: { runAsk { await ask.retry(inMySize: inMySize, reach: reach, via: ai) } },
-                end: { ask.end() }
-            )
-            .padding(.horizontal, 20)
-            .padding(.bottom, 24)
-        } else if ai.isAvailable {
-            AskOffer {
-                let opening = text.trimmingCharacters(in: .whitespacesAndNewlines)
-                isWriting = false
-                runAsk { await ask.ask(opening, inMySize: inMySize, reach: reach, via: ai) }
-            }
-            .padding(.horizontal, 20)
-            .padding(.bottom, 22)
-        }
-    }
-
     /// Runs one turn, then hands its results to the page as the answer for its own reading —
     /// when the chips on screen add nothing the model's request did not carry, which is the
     /// only case in which they are the same page.
@@ -1015,8 +1035,6 @@ struct ShopView: View {
             let query = asked.refined(cheaper: cheaper, formal: formal, inMySize: inMySize)
             guard query == asked.refined(cheaper: false, formal: false, inMySize: inMySize) else { return }
             served = Served(query: query, reach: sent, answer: .answered(results))
-            searchedCount = results.searched
-            searchedScope = results.scope
             primed = query
             primedReach = sent
         }
@@ -1105,30 +1123,26 @@ struct ShopView: View {
             Text("Today’s picks")
                 .font(.editorial(24))
                 .foregroundStyle(Color.ink)
-            DataLabel(
-                text: hasWardrobe
-                    ? "FROM YOUR SHOPS, FOR WHAT YOU OWN · NEW ONES TOMORROW"
-                    : "FROM YOUR SHOPS · NEW ONES TOMORROW",
-                size: 10
-            )
+            NoteLine(text: hasWardrobe
+                ? "From your shops, for what you own. New ones tomorrow."
+                : "From your shops. New ones tomorrow.")
             if picksSettled, !hasWardrobe, !picks.isEmpty {
                 // Said once, here, rather than on every card: with nothing to pair against
                 // the picks still work, and this is how they start arguing from your clothes.
-                DataLabel(text: "FILL YOUR WARDROBE AND PICKS PAIR WITH IT", size: 10)
-                    .padding(.top, 4)
+                NoteLine(text: "Fill your Wardrobe and they pair with it.")
             }
         }
         .padding(.horizontal, 20)
         .padding(.bottom, 22)
 
         if catalogue.phase != .ready || !picksSettled {
-            reading(label: "CHOOSING TODAY’S PICKS")
+            reading(label: "Choosing today’s picks…")
         } else if catalogue.shops == 0 {
-            picksNote("Follow a few shops and picks start here")
+            picksNote("Follow a few shops and picks start here.")
         } else if catalogue.index.listings.isEmpty {
-            picksNote("Nothing yet — arriving with the next sync")
+            picksNote("Nothing yet. It arrives with the next sync.")
         } else if picks.isEmpty {
-            picksNote("Nothing left to pick today")
+            picksNote("Nothing left to pick today.")
         } else {
             LazyVStack(alignment: .leading, spacing: 44) {
                 ForEach(picks) { pick in
@@ -1149,10 +1163,7 @@ struct ShopView: View {
     }
 
     private func picksNote(_ text: String) -> some View {
-        Text(text)
-            .font(.editorial(16))
-            .foregroundStyle(Color.muted)
-            .fixedSize(horizontal: false, vertical: true)
+        NoteLine(text: text, size: 16)
             .padding(.horizontal, 20)
     }
 
@@ -1203,7 +1214,7 @@ struct ShopView: View {
                         Text("More from brands like yours")
                             .font(.editorial(19))
                             .foregroundStyle(Color.ink)
-                        DataLabel(text: "THE DISCOVER DECK · SHOPS YOU DON'T FOLLOW YET", size: 10)
+                        NoteLine(text: "Shops you don't follow yet.")
                     }
                     Spacer(minLength: 8)
                     Image(systemName: "chevron.right")

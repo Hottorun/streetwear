@@ -206,13 +206,7 @@ struct SettingsHeader: View {
                     .foregroundStyle(Color.ink)
                 if let info { InfoButton(note: info) }
             }
-            if let note {
-                Text(note)
-                    .font(.data(11))
-                    .lineSpacing(2)
-                    .foregroundStyle(Color.muted)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
+            if let note { NoteLine(text: note) }
         }
     }
 }

@@ -166,6 +166,25 @@ struct DataLabel: View {
     }
 }
 
+/// One short sentence of secondary text, in the serif and in sentence case.
+///
+/// **The copy rule's replacement for a mono keyword line** (`CLAUDE.md`, *Copy*): where a screen
+/// has to say something, it says it as a sentence — "Nothing saved yet." — never as
+/// "NOTHING SAVED YET" or "18 MATCHES · HOW WE SORT". `DataLabel` stays for what is genuinely
+/// a label: a size, a count on a row, a field's name.
+struct NoteLine: View {
+    let text: String
+    var size: CGFloat = 14
+    var color: Color = .muted
+
+    var body: some View {
+        Text(text)
+            .font(.editorial(size))
+            .foregroundStyle(color)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+}
+
 // MARK: - Saying that the photographs are being read
 
 /// A thin line stating that `ImageTagger` is still working, and on how much.
@@ -475,7 +494,7 @@ struct Rule: View {
 }
 
 /// Empty and error states get the same editorial voice as everything else: a serif line
-/// that says what's true, a mono line that says what to do.
+/// that says what's true, and one short sentence under it that says what to do.
 struct EditorialEmptyState: View {
     let title: String
     let action: String
@@ -491,8 +510,7 @@ struct EditorialEmptyState: View {
                 .foregroundStyle(ink)
                 .multilineTextAlignment(.center)
             Text(action)
-                .font(.data(12))
-                .tracking(0.4)
+                .font(.editorial(16))
                 .foregroundStyle(detail)
                 .multilineTextAlignment(.center)
         }

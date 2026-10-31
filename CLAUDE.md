@@ -774,24 +774,25 @@ while it is empty, and the deck one row below. **Read `docs/discover.md` (*Shop*
 
 - **One list over every shop, and it says where** (Phase 5) — in server mode every product the
   server holds for every shop it watches, ranked once, your own shops lifted by a fixed amount of
-  score (`GET /v1/products/search?scope=all&boost=standard&meaning=true`, "IN EVERY SHOP WE WATCH
-  · N PRODUCTS"); chips **More from my brands** (`boost=more`) and **Only my brands**
-  (`scope=followed`, "IN YOUR SHOPS"); standalone the products from your shops on this phone
-  ("… ON THIS PHONE"). The line is printed from the answer, never from the chips. 1.2 and 1.3
+  score (`GET /v1/products/search?scope=all&boost=standard&meaning=true`, "18 matches in every
+  shop we watch."); chips **More from my brands** (`boost=more`) and **Only my brands**
+  (`scope=followed`, "… in your shops."); standalone the products from your shops on this phone
+  ("… in your shops on this phone."). The line is printed from the answer, never from the chips. 1.2 and 1.3
   send `scope` alone and get exactly what they got. **The free field never says AI or the web** —
   a magnifying glass and not a sparkle. A request that failed says it failed, never "no results".
 - **Meaning counts, labelled, and never past the grammar** — with `meaning=true` a product whose
   text vector clears the model's measured threshold (`ProductSearch.measuredThresholds`, 0.66) is
-  a result without the words — only when the words found fewer than twelve — MATCHED BY MEANING
+  a result without the words — only when the words found fewer than twelve — "Matched by meaning"
   on its tile; price bounds, "no …", in my size and
   gender still apply to it. A model with no measured threshold makes no meaning matches. The
   search eval (`Server/SearchEval`, `docs/server.md`) is run before and after every ranking
-  change. **How we sort** (`HowWeSortNote`) is beside the count: match, followed shops, taste,
-  size — never commission — each sentence about the answer on screen.
+  change. **How we sort** (`HowWeSortNote`) is the ⓘ ending the status sentence: what was searched,
+  match, followed shops, taste, size — never commission — each sentence about the answer on screen.
 - **Asking Dropwall is a second, explicit act, and it says it is AI and what it costs** (`ShopAsk`,
-  Phase 4): a sparkle row with the server's price, drawn only where `AIStore.isAvailable` (server
-  mode and `GET /v1/ai` available) — signed out it says "SIGN IN TO USE" and opens You, never a
-  dead button. The model's `reading.query` is printed through the phone's own `ShopQuery` line and
+  Phase 4): the first chip of the one row, "Ask AI — 1 credit" with a sparkle, drawn only where
+  `AIStore.isAvailable` (server mode and `GET /v1/ai` available) — signed out it says "Ask AI —
+  sign in" and opens You, never a dead button. The model's `reading.query` is said where it differs
+  from what was typed and
   is what the page searches, over the same one list as the field (the turn carries the chips'
   reach); replies continue the thread with its signed token, free, and the reply field says when
   the next one starts a new, paid search. A thread's answer is re-ordered by taste on the phone
@@ -1361,8 +1362,11 @@ fell out of the app into Settings.app for a moment. New screens compose `Color.p
 The owner's verdict on 1.4 was that the app read like code with comments in it — essays in small
 grey type nobody reads. Four rules since (Q40, Q41):
 
-1. **Labels and statuses stay, in a few words** — "IN EVERY SHOP WE WATCH · 2,400", "Not enough
-   credits", "2 CREDITS".
+1. **Where text is needed, it is one short plain sentence in sentence case** — "18 matches in
+   every shop we watch.", "1 credit used, 49 left.", "Nothing saved yet." — set in the serif
+   (`NoteLine`). **Never keywords**: no ALL-CAPS mono strings joined with " · " ("IN EVERY SHOP WE
+   WATCH · 3.470 PRODUCTS", "NOTHING SAVED YET"). Short labels on buttons, chips and rows are fine
+   ("Cheaper", "In my size", "Balance"); `DataLabel` is for those and for sizes and counts only.
 2. **Explanations go.** A how-to is an onboarding card (`TourCards`) or a one-time tip at the
    point of use (`Tips.swift`: TipKit, drawn by `PaperTip`, one line, never shown again).
 3. **What must stay true stays reachable by a tap, not printed**: an ⓘ or WHY? opening a short
@@ -1373,7 +1377,11 @@ grey type nobody reads. Four rules since (Q40, Q41):
 4. **No grey body paragraphs anywhere.** Secondary text is one line at most.
 
 The honesty rules in the docs are unchanged — say what was searched, say why it failed, never
-show a failure as "no results", say AI and its price — in a few words. Tips replay by moving
+show a failure as "no results", say AI and its price — in a few words. **Fewer rows, not only
+fewer words**: Shop's search is the field, one status sentence (what was searched, and in a thread
+that it was AI and what it cost, with How we sort as its ⓘ and a × to leave), one chip row
+(the AI offer, its suggestions and the filters, de-duplicated) and, in a thread, one reply line.
+What the grammar understood is said only where it differs from what was typed. Tips replay by moving
 `TipEpoch` on (You › Help), not by resetting the datastore, which only works before
 `Tips.configure`.
 

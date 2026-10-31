@@ -68,7 +68,7 @@ final class AIStore {
     }
 
     nonisolated static func creditsLabel(_ count: Int) -> String {
-        count == 1 ? "1 CREDIT" : "\(count) CREDITS"
+        count == 1 ? "1 credit" : "\(count) credits"
     }
 
     // MARK: - Reading
@@ -207,20 +207,20 @@ enum AIRefusal: Error, Equatable {
         }
     }
 
-    /// The data line under it: what happened, and what fixes it.
+    /// The sentence under it: what happened, and what fixes it.
     var detail: String {
         switch self {
         case .signedOut:
-            "CREDITS NEED AN ACCOUNT · NOTHING WAS CHARGED"
+            "Credits need an account. Nothing was charged."
         case .notEnoughCredits:
-            "NOTHING WAS CHARGED"
+            "Nothing was charged."
         case .costCap:
-            "NOTHING WAS CHARGED · RESETS ON THE 1ST"
+            "Nothing was charged. It resets on the 1st."
         case .unavailable:
-            "NOTHING WAS CHARGED · THE SEARCH STILL WORKS"
+            "Nothing was charged, and the search still works."
         case .failed(let message):
             // No claim about the charge: a reply lost on the way back may have been paid for.
-            "COULDN'T REACH DROPWALL — \(message.uppercased())"
+            "Couldn't reach Dropwall: \(message)"
         }
     }
 

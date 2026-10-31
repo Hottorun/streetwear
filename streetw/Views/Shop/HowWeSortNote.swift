@@ -24,9 +24,17 @@ struct HowWeSortNote: View {
                         .font(.editorial(28))
                         .foregroundStyle(Color.ink)
 
+                    // The scope and its size, from the answer — the line that used to sit under
+                    // the field, which the status line now says in a few words.
+                    if let answer {
+                        reason(
+                            "What was searched",
+                            "\(answer.searched.formatted()) products \(answer.scope == .followed ? "in the shops you follow" : "in every shop we watch")."
+                        )
+                    }
                     reason(
                         "How well it matches",
-                        "What you wrote, word by word: a product’s name counts most, then its type, its colours, its tags and the shop’s name. In stock comes before sold out, which still shows, because a size that’s gone can come back."
+                        "What you wrote, word by word: a product’s name counts most, then its type, its colours, its tags and the shop’s name. In stock comes before sold out, which still shows, because a size that’s gone can come back. A price is compared as each shop prints it — nothing is converted."
                             + (answer?.meaningSearched == true
                                 ? " Where a product doesn’t say your words but means what you wrote, it can still be a result, and it says MATCHED BY MEANING."
                                 : "")
