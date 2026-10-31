@@ -48,12 +48,12 @@ struct WardrobeTip: Tip {
     var title: Text { Text("Long-press a save to add it to your Wardrobe") }
 }
 
-/// The fit canvas, the first time it opens with pieces to place.
+/// The fit canvas: how to size a piece, which the empty canvas does not say.
 struct FitCanvasTip: Tip {
     var epoch = TipEpoch.current
 
     var id: String { "fit-canvas.\(epoch)" }
-    var title: Text { Text("Drag a piece onto the canvas, or tap it; pinch to size it") }
+    var title: Text { Text("Pinch a piece, or drag its corner, to size it") }
 }
 
 /// A tip as the app draws everything else: one serif line on the wash, a rule of ink at its

@@ -509,7 +509,7 @@ struct ShowMoreSection: View {
 
     /// Which web, said before it is asked.
     private var scopeNote: String {
-        let country = location.country.map { " · SHOPS IN \(LocationSetting.inSentence($0).uppercased())" } ?? ""
+        let country = location.country.map { " · SELLING IN \(LocationSetting.inSentence($0).uppercased())" } ?? ""
         return "AI · THE OPEN WEB, BEYOND OUR SHOPS\(country)"
     }
 

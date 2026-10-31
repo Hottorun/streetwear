@@ -155,8 +155,8 @@ this section is still the deck's, unchanged.
 
 - **The AI path says it is AI and what it costs; the free path still must not.** One row under
   the field, drawn only in server mode and only where `GET /v1/ai` answered `available: true`:
-  a sparkle, "Ask Dropwall", "AI READS YOUR DESCRIPTION, THEN SEARCHES EVERY SHOP WE WATCH", and the
-  price from the server's table ("1 CREDIT"). The field itself keeps its magnifying glass and its
+  a sparkle, "Ask Dropwall", "AI · EVERY SHOP WE WATCH · REPLIES FREE" (signed out, "AI · NEEDS AN
+  ACCOUNT"), and the price from the server's table ("1 CREDIT"). The field itself keeps its magnifying glass and its
   scope line; nothing typed there reaches a model until the row is pressed.
 - **Signed out it still draws, as "SIGN IN TO USE", and opens You** — where sign-in leads the
   page. A feature that silently does not exist for somebody reads as broken; a dead button is
@@ -173,7 +173,7 @@ this section is still the deck's, unchanged.
 - **The thread is the phone's, and its price is said before a reply is sent.** A reply field
   under the reading continues the thread with `thread` and `threadToken`; "4 MORE REPLIES IN THIS
   SEARCH · FREE" while the token is good, and once it is spent — six turns, or thirty minutes
-  less a minute's margin — "THIS SEARCH IS USED UP — A REPLY STARTS A NEW ONE · 1 CREDIT". A new
+  less a minute's margin — "A REPLY NOW STARTS A NEW SEARCH · 1 CREDIT". A new
   thread opens on the last reading plus the reply, so "no wool" still means no wool suits.
   Editing the field, clearing it, or BACK TO SEARCH ends the thread.
 - **The same one list, ordered by taste on the phone** (`TasteOrder`, core, tested): a turn
@@ -187,14 +187,16 @@ this section is still the deck's, unchanged.
 - **Every action says what it took**, from its own `AICharge`: "1 CREDIT · 48 LEFT", "NO CHARGE —
   PART OF THIS SEARCH · 48 LEFT", "NO CHARGE · UNLIMITED ACCOUNT". The charge goes to
   `CreditStore.apply`, so You's balance is right without asking again.
-- **A refusal is said in words, never as an empty list** (`AIRefusal`, `AIRefusalNotice`): 402
+- **A refusal is said in words, never as an empty list** (`AIRefusal`, `AIRefusalNotice`) — a
+  serif title, one data line ("NOTHING WAS CHARGED · RESETS ON THE 1ST") and, where there is more
+  to say, a WHY? that opens it (`AIRefusal.info`, `InfoNote`): 402
   "Not enough credits" with *Get credits* (opens You's Credits); 403 "Sign in to use" with
   *Sign in*; 429 "This month's AI limit is reached" with no retry; 503 "Dropwall's AI isn't
   available right now", which also re-reads the status so every affordance goes. The free
   results stay under it.
 - **Show me more** is the open web, offered under everything the catalogue had, only when the
-  status says `webSearch`: a sparkle, "AI SEARCHES THE OPEN WEB FOR SHOPS THAT SELL IN GERMANY —
-  BEYOND THE SHOPS WE WATCH", and its own price. `POST /v1/ai/search/web` with the latest reading
+  status says `webSearch`: a sparkle, "AI · THE OPEN WEB, BEYOND OUR SHOPS · SELLING IN GERMANY",
+  and its own price. `POST /v1/ai/search/web` with the latest reading
   and `LocationSetting.country`. Each result is a row that opens the shop's page in Safari; a
   result with a `brandID` you follow opens its brand page, one you do not follow is followed in
   place ("DROPWALL WATCHES THIS SHOP · FOLLOW IT", then a sync), and one with none offers

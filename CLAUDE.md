@@ -1355,6 +1355,27 @@ one built out of grouped sections, `.bordered` buttons and `LabeledContent`, and
 fell out of the app into Settings.app for a moment. New screens compose `Color.paper`,
 `.editorial()`, `Wordmark`, `DataLabel` and `Rule()` in a `ScrollView`.
 
+### Copy: a few words on the page, the rest a tap away
+
+The owner's verdict on 1.4 was that the app read like code with comments in it — essays in small
+grey type nobody reads. Four rules since (Q40, Q41):
+
+1. **Labels and statuses stay, in a few words** — "IN EVERY SHOP WE WATCH · 2,400", "Not enough
+   credits", "2 CREDITS".
+2. **Explanations go.** A how-to is an onboarding card (`TourCards`) or a one-time tip at the
+   point of use (`Tips.swift`: TipKit, drawn by `PaperTip`, one line, never shown again).
+3. **What must stay true stays reachable by a tap, not printed**: an ⓘ or WHY? opening a short
+   sheet (`InfoNote`, `InfoButton`, `InfoSheet`; `SettingsHeader(info:)`) — refusal reasons, how
+   ranking works (`HowWeSortNote`), what goes to the AI, credits, privacy, permission dead ends.
+   Account deletion stays clear, the ranking factors stay disclosed, and an AI action's price is
+   still printed **before** it is spent.
+4. **No grey body paragraphs anywhere.** Secondary text is one line at most.
+
+The honesty rules in the docs are unchanged — say what was searched, say why it failed, never
+show a failure as "no results", say AI and its price — in a few words. Tips replay by moving
+`TipEpoch` on (You › Help), not by resetting the datastore, which only works before
+`Tips.configure`.
+
 ### Keeping it fast
 
 Every rule here was measured, is cheap to break by accident, and expensive to find again.

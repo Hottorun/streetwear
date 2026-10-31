@@ -1126,7 +1126,7 @@ struct ShopView: View {
         } else if catalogue.shops == 0 {
             picksNote("Follow a few shops and picks start here")
         } else if catalogue.index.listings.isEmpty {
-            picksNote("Nothing from your shops yet — arriving with the next sync")
+            picksNote("Nothing yet — arriving with the next sync")
         } else if picks.isEmpty {
             picksNote("Nothing left to pick today")
         } else {
