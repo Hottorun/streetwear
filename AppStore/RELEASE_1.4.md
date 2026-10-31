@@ -92,12 +92,19 @@ production:
   - share, wait an hour, open the app: any question the share raised is still there;
   - a shop that blocks readers (Bershka): the save still gets its photo.
 - The feed in the evening still has the morning's items.
+- A fresh install shows the four tour cards before sizes and shops; the Shop, Saved and fit canvas
+  tips each appear once; You › Help replays the tour.
+- Add a brand: follow one, answer the "What do you want to hear about?" dialog, and the sheet
+  returns to the list (the row says Following) instead of closing.
+- Sign out (You › Account): the app is empty; sign in with the same Apple ID and everything is back.
+  Pushes for the account stop arriving on the signed-out phone.
 
 ## 6. Submit
 
 What's New from `WHATS_NEW_1.4.txt`; the notes from `REVIEW_NOTES.md`; Sign-in required stays
-unticked; build 1.4 (5). Screenshots: the 1.2 set still shows the app honestly, but Shop's search
-now reads "IN EVERY SHOP WE WATCH" — reshooting `02`/`04` is worthwhile (`AppStore/demo/`).
+unticked; build 1.4 (5). **Screenshots: reshoot them.** The copy redesign changed what most screens
+say and how Shop is laid out, so the 1.2 set no longer matches the app (`AppStore/demo/` has the
+shoot script).
 
 ## Known, not blockers
 
