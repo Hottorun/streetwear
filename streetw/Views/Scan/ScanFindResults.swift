@@ -55,11 +55,11 @@ struct ScanFindResults: View {
             case .loading:
                 HStack(spacing: 10) {
                     ProgressView().controlSize(.small)
-                    DataLabel(text: "LOOKING")
+                    NoteLine(text: "Looking…")
                 }
                 .padding(.horizontal, 20)
             case .found(let cards, let label):
-                DataLabel(text: label, size: 10, color: .ink)
+                NoteLine(text: label, color: .ink)
                     .padding(.horizontal, 20)
                 let saved = savedKeys
                 LazyVGrid(columns: columns, alignment: .leading, spacing: 28) {
@@ -82,7 +82,7 @@ struct ScanFindResults: View {
                     .padding(.horizontal, 20)
             case .failed:
                 VStack(alignment: .leading, spacing: 10) {
-                    Text("The search didn't go through — that's not the same as nothing being there.")
+                    Text("The search didn't go through, so this isn't a “nothing found”.")
                         .font(.editorial(16))
                         .foregroundStyle(Color.ink)
                         .fixedSize(horizontal: false, vertical: true)
@@ -126,10 +126,10 @@ struct ScanFindResults: View {
                 return
             }
             // From the answer's own scope, never from what was asked.
-            let place = response.scope == .followed ? "IN YOUR SHOPS" : "IN EVERY SHOP DROPWALL WATCHES"
+            let place = response.scope == .followed ? "in your shops" : "in every shop we watch"
             answer = .found(
                 cards: hits.map { (card: $0.card, matched: $0.byMeaning == true ? nil : $0.matched) },
-                label: "\(place) · “\(searchText.uppercased())”"
+                label: "“\(searchText)” \(place)."
             )
         } catch {
             answer = .failed
@@ -138,11 +138,11 @@ struct ScanFindResults: View {
 
     /// What `similar` was compared by, said above it.
     static func similarLabel(_ count: Int, basis: String?) -> String {
-        let products = count == 1 ? "ONE PRODUCT" : "\(count) PRODUCTS"
+        let products = count == 1 ? "One product" : "\(count) products"
         switch basis {
-        case "photograph": return "\(products) THAT LOOK LIKE YOUR PHOTOGRAPH"
-        case "description": return "\(products) LIKE ITS DESCRIPTION"
-        default: return count == 1 ? "ONE PRODUCT LOOKS LIKE IT" : "\(count) PRODUCTS LOOK LIKE IT"
+        case "photograph": return count == 1 ? "One product looks like your photograph." : "\(products) look like your photograph."
+        case "description": return "\(products) like its description."
+        default: return count == 1 ? "One product looks like it." : "\(count) products look like it."
         }
     }
 }

@@ -81,8 +81,8 @@ struct DropCalendarView: View {
                     EditorialEmptyState(
                         title: "Nothing on the horizon",
                         action: brands.isEmpty
-                            ? "ADD BRANDS AND THEIR RHYTHM APPEARS HERE"
-                            : "NO BRAND YOU FOLLOW HAS A PATTERN CLEAR ENOUGH TO CALL YET — ADD A DATE YOURSELF WITH +"
+                            ? "Follow a few brands and their rhythm appears here."
+                            : "No pattern is clear enough to call yet. Add a date with +."
                     )
                 } else {
                     list
@@ -129,6 +129,15 @@ struct DropCalendarView: View {
 
     /// Re-reads the list, re-schedules every reminder, and re-sends the poll hints. Called
     /// after any change to a planned drop.
+    static let info = InfoNote(
+        title: "Where the dates come from",
+        lines: [
+            "A locked storefront and a date a brand states are seen, not guessed.",
+            "A pattern is read from the brand's own history, and says how sure it is.",
+            "A date you add is marked as yours, with a reminder on the day and at the drop."
+        ]
+    )
+
     private func rebuild() {
         entries = build()
         UpcomingDrops.rescheduleAlerts(in: context, via: remote, hints: hints)
@@ -137,11 +146,13 @@ struct DropCalendarView: View {
     private var list: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
-                Text("Locked storefronts and stated dates are observed; patterns are read from each brand's own history. Know a date the app can't see? Add it with + and get a reminder on the day and at the drop.")
-                    .font(.editorial(14))
-                    .foregroundStyle(Color.muted)
-                    .padding(.horizontal, 20)
-                    .padding(.bottom, 20)
+                // Where each date comes from is on its own row; how the kinds differ is a tap away.
+                HStack(spacing: 2) {
+                    NoteLine(text: "Know a date Dropwall can't see? Add it with +.")
+                    InfoButton(note: Self.info)
+                }
+                .padding(.horizontal, 20)
+                .padding(.bottom, 14)
 
                 UpcomingDropList(
                     entries: entries,
