@@ -398,11 +398,10 @@ struct FitCanvas: View {
                 // The ground's own ink, not the app's: `Color.ink` inverts and this ground
                 // does not, so on a dark phone the invitation was white on bone.
                 .foregroundStyle(background.ink)
-            Text("Drag anything below onto the canvas, or tap to drop it in. Move it with a finger, size it with the corner handle or a pinch.")
+            // How to move and size a piece is the tray's one-time tip (`FitCanvasTip`).
+            Text("Drag or tap a piece below")
                 .font(.editorial(14))
-                .foregroundStyle(background.ink.opacity(0.55))
-                .multilineTextAlignment(.center)
-                .fixedSize(horizontal: false, vertical: true)
+                .foregroundStyle(background.ink.opacity(0.7))
         }
         .padding(.horizontal, 44)
         .allowsHitTesting(false)
@@ -412,6 +411,8 @@ struct FitCanvas: View {
 
     private func trayRow(_ tray: Tray) -> some View {
         VStack(alignment: .leading, spacing: 10) {
+            PaperTip(tip: FitCanvasTip())
+                .padding(.horizontal, 20)
             FitGroundPicker(selection: $background)
                 .padding(.horizontal, 20)
 

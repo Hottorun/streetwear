@@ -70,6 +70,7 @@ struct YouView: View {
                     NotificationsSection()
                     StyleStatementSection()
                     AboutSection()
+                    HelpSection()
                 }
                 .padding(.horizontal, 20)
                 .padding(.top, 4)
@@ -127,7 +128,7 @@ struct YouView: View {
     private func taste(_ reading: TasteMemo.Reading) -> some View {
         let profile = reading.profile
         return VStack(alignment: .leading, spacing: 18) {
-            SettingsHeader(title: "Your taste", note: tasteNote(reading))
+            SettingsHeader(title: "Your taste", note: tasteNote(reading), info: Self.tasteInfo)
 
             // The reading is built from what the photograph pass produces — colours, register,
             // silhouettes — so a collection still being measured describes itself thinly and
@@ -166,13 +167,19 @@ struct YouView: View {
     ///   reads as the app having lost them.
     private func tasteNote(_ reading: TasteMemo.Reading) -> String {
         let total = reading.profile.totalSaves
-        guard !reading.profile.isEmpty, total > 0 else {
-            return "Save a few things and this is where Dropwall says what it sees in them."
-        }
-        let source = "Read from \(total) saved \(total == 1 ? "item" : "items")"
-        let leftOut = reading.leftOut == 0 ? "" : ", \(reading.leftOut) left out"
-        return "\(source)\(leftOut). Tap a word to see those saves."
+        guard !reading.profile.isEmpty, total > 0 else { return "NOTHING SAVED YET" }
+        let source = "FROM \(total) \(total == 1 ? "SAVE" : "SAVES")"
+        return reading.leftOut == 0 ? source : "\(source) · \(reading.leftOut) LEFT OUT"
     }
+
+    static let tasteInfo = InfoNote(
+        title: "Your taste",
+        lines: [
+            "Read from what you save — the photographs as well as the names.",
+            "Tap a word to see the saves it came from.",
+            "A board set not to count, and anything you leave out, isn't read."
+        ]
+    )
 
     // MARK: - Sizes
 
@@ -184,12 +191,7 @@ struct YouView: View {
     private var sizesSection: some View {
         let profile = sizes.profile
         return VStack(alignment: .leading, spacing: 12) {
-            SettingsHeader(
-                title: "Sizes",
-                note: profile.isEmpty
-                    ? "Set them and Dropwall can tell you when something is back in a size you actually wear."
-                    : "Ruled in vermilion on every product. A size never hides anything — only what to show does."
-            )
+            SettingsHeader(title: "Sizes", info: SizeProfileSection.sizesInfo)
 
             VStack(spacing: 0) {
                 ForEach(profile.ladders, id: \.ladder) { row in
@@ -215,12 +217,7 @@ struct YouView: View {
     private var locationSection: some View {
         let name = location.country.map(LocationSetting.name(of:))
         return VStack(alignment: .leading, spacing: 12) {
-            SettingsHeader(
-                title: "Location",
-                note: location.country.map {
-                    "Prices and shops for \(LocationSetting.inSentence($0)) where a brand runs one; elsewhere the brand's main shop."
-                } ?? "Every brand's main shop. Choose a country to see a brand's shop there, where it runs one."
-            )
+            SettingsHeader(title: "Location", info: Self.locationInfo)
 
             VStack(spacing: 0) {
                 NavigationLink {
@@ -237,6 +234,14 @@ struct YouView: View {
             }
         }
     }
+
+    static let locationInfo = InfoNote(
+        title: "Location",
+        lines: [
+            "Where a brand runs a shop for your country, you see that shop and its prices.",
+            "Everywhere else, the brand's main shop. Prices are never converted, and no brand is hidden."
+        ]
+    )
 
     // MARK: - Following
 
@@ -274,15 +279,12 @@ struct YouView: View {
         }
     }
 
-    private func followingNote(failing: Int) -> String {
-        guard !brands.isEmpty else {
-            return "Any shop with a website — paste its address and Dropwall works out what it can watch."
-        }
-        let watched = "\(brands.count) \(brands.count == 1 ? "brand" : "brands"), watched for drops, restocks and sales."
+    /// Only what needs attention; the count is on the All brands row.
+    private func followingNote(failing: Int) -> String? {
         switch failing {
-        case 0: return watched
-        case 1: return "\(watched) One isn't answering — Dropwall keeps trying."
-        default: return "\(watched) \(failing) aren't answering — Dropwall keeps trying."
+        case 0: nil
+        case 1: "1 ISN'T ANSWERING · STILL TRYING"
+        default: "\(failing) AREN'T ANSWERING · STILL TRYING"
         }
     }
 
@@ -304,10 +306,7 @@ struct YouView: View {
         let isLocked = brands.contains(where: \.isAnnouncingLock)
 
         return VStack(alignment: .leading, spacing: 12) {
-            SettingsHeader(
-                title: "Waiting for",
-                note: "Restocks you're watching for, and the drops that are coming."
-            )
+            SettingsHeader(title: "Waiting for")
 
             VStack(spacing: 0) {
                 Button { isShowingWatches = true } label: {

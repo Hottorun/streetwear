@@ -43,10 +43,7 @@ struct NotificationsSection: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            SettingsHeader(
-                title: "Alerts",
-                note: "Get told when a brand you follow drops, goes on sale, or locks its storefront, and when something you watch comes back."
-            )
+            SettingsHeader(title: "Alerts", info: Self.info)
 
             switch status {
             case .authorized, .provisional, .ephemeral:
@@ -58,11 +55,11 @@ struct NotificationsSection: View {
                     // that is only the network having a bad minute.
                     switch delivery {
                     case .noKey:
-                        DataLabel(text: "THE SERVER HAS NO PUSH KEY — NOTHING IS BEING SENT", size: 10, color: .signal)
+                        DataLabel(text: "NOT SENDING · THE SERVER HAS NO PUSH KEY", size: 10, color: .signal)
                     case .noToken:
-                        DataLabel(text: "THIS DEVICE HASN'T REGISTERED YET — REOPEN THE APP TO RETRY", size: 10, color: .signal)
+                        DataLabel(text: "NOT REGISTERED YET · REOPEN TO RETRY", size: 10, color: .signal)
                     case .unreachable:
-                        DataLabel(text: "CAN'T REACH THE SERVER RIGHT NOW", size: 10)
+                        DataLabel(text: "CAN'T REACH THE SERVER", size: 10)
                     case .ok, .unknown:
                         EmptyView()
                     }
@@ -96,27 +93,15 @@ struct NotificationsSection: View {
             // Its own switch because it is the one alert about your collection rather than
             // about a brand — and the only one the server never sees, since saves stay here.
             Toggle(isOn: $savedPriceDrops) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Price drops on things you saved")
-                        .font(.editorial(15))
-                        .foregroundStyle(Color.ink)
-                    Text("Worked out on this phone — your saves never leave it.")
-                        .font(.editorial(12))
-                        .foregroundStyle(Color.muted)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
+                Text("Price drops on things you saved")
+                    .font(.editorial(15))
+                    .foregroundStyle(Color.ink)
             }
 
             Toggle(isOn: $dailyPicks) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Today’s picks, in the morning")
-                        .font(.editorial(15))
-                        .foregroundStyle(Color.ink)
-                    Text("Once a day, naming the picks Shop has chosen — never on a day you've already seen them.")
-                        .font(.editorial(12))
-                        .foregroundStyle(Color.muted)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
+                Text("Today’s picks, in the morning")
+                    .font(.editorial(15))
+                    .foregroundStyle(Color.ink)
             }
             .onChange(of: dailyPicks) { _, on in
                 Task {
@@ -138,6 +123,16 @@ struct NotificationsSection: View {
             delivery = await checkDelivery()
         }
     }
+
+    /// What each alert is, and the two decided on this phone — said once, behind the ⓘ.
+    static let info = InfoNote(
+        title: "Alerts",
+        lines: [
+            "A shop you follow drops something, goes on sale or locks its storefront, and something you watch comes back.",
+            "Price drops on things you saved are worked out on this phone — your saves never leave it.",
+            "Today's picks: once a morning, never on a day you've already seen them."
+        ]
+    )
 
     /// The one shape a settings screen uses for something you can press.
     ///
@@ -206,6 +201,32 @@ struct AboutSection: View {
         return "\(short) (\(build))"
     }
 
+    /// The promise, said whole, once — the app was making it in pieces in three places
+    /// ("Boards are private", "Nothing is shared anywhere", "Saved as a link, never scraped").
+    private var privacyNote: InfoNote {
+        InfoNote(
+            title: "What stays on this phone",
+            lines: [
+                "Your saves, boards, fits and what you write about your style stay on this phone.",
+                "Only the brands you follow and your sizes reach the server, so it knows what to watch and when to wake you.",
+                "Signed in with Apple, the server also keeps the anonymous ID Apple gives Dropwall — no name, no email."
+            ],
+            link: .init(title: "Privacy policy", url: Self.privacy)
+        )
+    }
+
+    private var aiNote: InfoNote {
+        InfoNote(
+            title: "What goes to the AI",
+            lines: [
+                "What you ask Dropwall's AI — a description, a reply, a photograph you choose to send — goes through the server to Anthropic, which answers it.",
+                "The server keeps none of it.",
+                "Today's picks send a short description of your piece, never a photograph."
+            ],
+            link: .init(title: "Privacy policy", url: Self.privacy)
+        )
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             SettingsHeader(
@@ -213,30 +234,12 @@ struct AboutSection: View {
                 note: "DROPWALL \(version)"
             )
 
-            Text("""
-                Your saves, your boards, your fits and what you write about your style stay \
-                on this phone. Only the brands you follow and your sizes reach the server, \
-                so it knows what to watch and when to wake you. If you sign in with Apple, \
-                the server also keeps the anonymous ID Apple gives Dropwall — no name, no email.
-                """)
-                .font(.editorial(15))
-                .lineSpacing(3)
-                .foregroundStyle(Color.muted)
-                .fixedSize(horizontal: false, vertical: true)
-
-            // The promise above stays true only if the exception is said beside it: what you
-            // choose to ask the AI goes out to be answered. Only where there is an AI to ask.
-            if ai.isAvailable {
-                Text("""
-                    What you ask Dropwall's AI — a description, a reply, a photograph you choose \
-                    to send — goes through the server to Anthropic, which answers it. The server \
-                    keeps none of it. Today's picks send a short description of your piece, never \
-                    a photograph.
-                    """)
-                    .font(.editorial(15))
-                    .lineSpacing(3)
-                    .foregroundStyle(Color.muted)
-                    .fixedSize(horizontal: false, vertical: true)
+            VStack(spacing: 0) {
+                PlainInfoRow(title: "What stays on this phone", note: privacyNote)
+                // Only where there is an AI to ask: the exception to the promise above.
+                if ai.isAvailable {
+                    PlainInfoRow(title: "What goes to the AI", note: aiNote)
+                }
             }
 
             Button { openURL(Self.privacy) } label: {
@@ -249,5 +252,21 @@ struct AboutSection: View {
             }
             .buttonStyle(.borderless)
         }
+    }
+}
+
+/// A row that opens a short sheet — the You page's way of keeping a statement a tap away.
+struct PlainInfoRow: View {
+    let title: String
+    let note: InfoNote
+
+    @State private var isShowing = false
+
+    var body: some View {
+        Button { isShowing = true } label: {
+            YouRow(title: title, chevron: true)
+        }
+        .buttonStyle(.borderless)
+        .sheet(isPresented: $isShowing) { InfoSheet(note: note) }
     }
 }

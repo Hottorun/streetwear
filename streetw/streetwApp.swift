@@ -54,6 +54,7 @@ struct streetwApp: App {
     init() {
         Net.configureSharedCache()
         Appearance.configure()
+        TipEpoch.configure()
 
         let settings = ServerSettings()
         let location = MainActor.assumeIsolated { LocationSetting() }

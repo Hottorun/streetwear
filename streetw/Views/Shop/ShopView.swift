@@ -253,6 +253,10 @@ struct ShopView: View {
                                 results(profile: profile)
                             }
                         } else {
+                            // Once, before the first search: what the field takes.
+                            PaperTip(tip: ShopSearchTip(scans: ai.isAvailable))
+                                .padding(.horizontal, 20)
+                                .padding(.bottom, 22)
                             picksSection(day: day)
                             discoverEntry
                         }
@@ -445,7 +449,7 @@ struct ShopView: View {
         case .unread, .reading:
             return "READING YOUR SHOPS…"
         case .ready:
-            guard catalogue.shops > 0 else { return "SEARCHES THE SHOPS YOU FOLLOW — YOU DON'T FOLLOW ANY YET" }
+            guard catalogue.shops > 0 else { return "YOUR SHOPS · YOU DON'T FOLLOW ANY YET" }
             let count = catalogue.shown.formatted()
             let products = catalogue.shown == 1 ? "PRODUCT" : "PRODUCTS"
             return catalogue.isCapped
@@ -498,12 +502,12 @@ struct ShopView: View {
         } else if catalogue.shops == 0 {
             emptyState(
                 title: "You don't follow any shops yet",
-                action: "SHOP SEARCHES THE SHOPS YOU FOLLOW, SO THERE IS NOTHING HERE TO SEARCH"
+                action: "FOLLOW ONE TO SEARCH IT"
             )
         } else if catalogue.index.listings.isEmpty {
             emptyState(
-                title: "Nothing from your shops on this phone yet",
-                action: "THEIR PRODUCTS ARRIVE WITH THE NEXT SYNC"
+                title: "Nothing from your shops yet",
+                action: "ARRIVING WITH THE NEXT SYNC"
             )
         } else if query.text.isEmpty {
             // Typed, not yet settled. The previous answer, if any, stays rather than blinking.
@@ -556,9 +560,8 @@ struct ShopView: View {
         /// What "none of the N products … says it" counts.
         func searched(_ count: Int) -> String {
             switch self {
-            case .phone: "NONE OF THE \(count.formatted()) PRODUCTS FROM YOUR SHOPS ON THIS PHONE SAYS IT — TRY ANOTHER WORD"
-            case .yourShops: "NONE OF THE \(count.formatted()) PRODUCTS IN YOUR SHOPS SAYS IT — TRY ANOTHER WORD"
-            case .everyShop: "NONE OF THE \(count.formatted()) PRODUCTS IN EVERY SHOP WE WATCH SAYS IT — TRY ANOTHER WORD"
+            case .phone: "\(count.formatted()) PRODUCTS ON THIS PHONE SEARCHED · TRY ANOTHER WORD"
+            case .yourShops, .everyShop: "\(count.formatted()) PRODUCTS SEARCHED · TRY ANOTHER WORD"
             }
         }
     }
@@ -628,8 +631,8 @@ struct ShopView: View {
             EmptyView()
         case .nothingToSearch:
             emptyState(
-                title: "Nothing to search for yet",
-                action: "NAME A GARMENT, A COLOUR OR A PRICE — “BLACK TROUSERS UNDER 200”"
+                title: "Nothing to search for",
+                action: "NAME A GARMENT, A COLOUR OR A PRICE"
             )
         case .notInYourShops(let words):
             emptyState(title: "No \(quoted(words)) \(place.phrase)", action: place.searched(searched))
@@ -641,7 +644,7 @@ struct ShopView: View {
         case .hiddenByFilter(let count):
             emptyState(
                 title: "\(matches(count)), all hidden by your filter",
-                action: "YOU'RE SEEING \(profile.gender.label.uppercased()) ONLY — IT'S SET WITH YOUR SIZES"
+                action: "SHOWING \(profile.gender.label.uppercased()) ONLY · SET ON YOU › SIZES"
             )
         case .outsidePrice(let count, let cheapest):
             emptyState(
@@ -651,12 +654,12 @@ struct ShopView: View {
         case .noSizes:
             emptyState(
                 title: "Your sizes aren't set",
-                action: "ADD THEM UNDER YOU, AND “IN MY SIZE” CAN ANSWER"
+                action: "ADD THEM ON YOU › SIZES"
             )
         case .noneInYourSize(let count):
             emptyState(
                 title: "\(matches(count)), none in your size today",
-                action: "TURN OFF IN MY SIZE TO SEE THEM — A SIZE THAT'S GONE CAN COME BACK"
+                action: "TURN OFF IN MY SIZE TO SEE THEM"
             )
         }
     }
@@ -694,7 +697,7 @@ struct ShopView: View {
     }
 
     private func summary(total: Int, shown: Int, isCapped: Bool, place: Place) -> String {
-        guard shown > 0 else { return "NOTHING HAS ALL OF IT — THE CLOSEST, MOST FIRST" }
+        guard shown > 0 else { return "NOTHING HAS ALL OF IT · CLOSEST FIRST" }
         // "200+": the server's candidates reached their bound, so the count is a floor.
         let count = isCapped
             ? "\(total.formatted())+ MATCHES"
@@ -855,7 +858,7 @@ struct ShopView: View {
                 // Only "Only my brands" can get here: every shop is never no shops.
                 emptyState(
                     title: "You don't follow any shops yet",
-                    action: "TURN OFF ONLY MY BRANDS TO SEARCH EVERY SHOP WE WATCH"
+                    action: "TURN OFF ONLY MY BRANDS"
                 )
             } else {
                 understood(
@@ -1111,7 +1114,7 @@ struct ShopView: View {
             if picksSettled, !hasWardrobe, !picks.isEmpty {
                 // Said once, here, rather than on every card: with nothing to pair against
                 // the picks still work, and this is how they start arguing from your clothes.
-                DataLabel(text: "SAVE WHAT YOU OWN TO YOUR WARDROBE AND PICKS PAIR WITH IT", size: 10)
+                DataLabel(text: "FILL YOUR WARDROBE AND PICKS PAIR WITH IT", size: 10)
                     .padding(.top, 4)
             }
         }
@@ -1123,9 +1126,9 @@ struct ShopView: View {
         } else if catalogue.shops == 0 {
             picksNote("Follow a few shops and picks start here")
         } else if catalogue.index.listings.isEmpty {
-            picksNote("Nothing from your shops on this phone yet — their products arrive with the next sync")
+            picksNote("Nothing from your shops yet — arriving with the next sync")
         } else if picks.isEmpty {
-            picksNote("Nothing left to pick today — you've kept or turned down everything that qualifies")
+            picksNote("Nothing left to pick today")
         } else {
             LazyVStack(alignment: .leading, spacing: 44) {
                 ForEach(picks) { pick in

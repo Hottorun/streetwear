@@ -211,16 +211,30 @@ enum AIRefusal: Error, Equatable {
     var detail: String {
         switch self {
         case .signedOut:
-            "AI ACTIONS USE CREDITS, AND CREDITS ARE KEPT ON YOUR ACCOUNT — NOTHING WAS CHARGED"
+            "CREDITS NEED AN ACCOUNT · NOTHING WAS CHARGED"
         case .notEnoughCredits:
-            "NOTHING WAS CHARGED — CREDITS NEVER EXPIRE, AND SOME ARE FREE EACH MONTH YOU USE THEM"
+            "NOTHING WAS CHARGED"
         case .costCap:
-            "A SAFETY LIMIT ON WHAT THIS ACCOUNT'S AI CAN COST IN A MONTH — NOTHING WAS CHARGED. IT RESETS ON THE 1ST"
+            "NOTHING WAS CHARGED · RESETS ON THE 1ST"
         case .unavailable:
-            "NOTHING WAS CHARGED — THE SEARCH ABOVE STILL WORKS WITHOUT IT"
+            "NOTHING WAS CHARGED · THE SEARCH STILL WORKS"
         case .failed(let message):
             // No claim about the charge: a reply lost on the way back may have been paid for.
             "COULDN'T REACH DROPWALL — \(message.uppercased())"
+        }
+    }
+
+    /// The reason behind the line, a tap away — only where there is more to say than the line.
+    var info: InfoNote? {
+        switch self {
+        case .signedOut:
+            InfoNote(title: "Why sign in", lines: ["AI actions use credits, and credits are kept on your account."])
+        case .notEnoughCredits:
+            InfoNote(title: "Credits", lines: ["Credits never expire, and some are free each month you use them."])
+        case .costCap:
+            InfoNote(title: "This month's AI limit", lines: ["A safety limit on what this account's AI can cost in a month. It resets on the 1st."])
+        case .unavailable, .failed:
+            nil
         }
     }
 

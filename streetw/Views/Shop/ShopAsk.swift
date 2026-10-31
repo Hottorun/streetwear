@@ -232,8 +232,8 @@ struct AskOffer: View {
 
     private var note: String {
         ai.isSignedIn
-            ? "AI READS YOUR DESCRIPTION, THEN SEARCHES EVERY SHOP WE WATCH · REPLIES IN THE SAME SEARCH ARE FREE"
-            : "AI READS YOUR DESCRIPTION — CREDITS NEED AN ACCOUNT"
+            ? "AI · EVERY SHOP WE WATCH · REPLIES FREE"
+            : "AI · NEEDS AN ACCOUNT"
     }
 }
 
@@ -270,8 +270,13 @@ struct AIRefusalNotice: View {
             Text(refusal.title)
                 .font(.editorial(19))
                 .foregroundStyle(Color.ink)
-            DataLabel(text: refusal.detail, size: 9.5)
-                .fixedSize(horizontal: false, vertical: true)
+            HStack(spacing: 10) {
+                DataLabel(text: refusal.detail, size: 9.5)
+                    .fixedSize(horizontal: false, vertical: true)
+                if let info = refusal.info {
+                    InfoButton(note: info, label: "WHY?")
+                }
+            }
             HStack(spacing: 22) {
                 if let remedy = refusal.remedy {
                     Button { you.open() } label: {
@@ -395,7 +400,7 @@ struct AskThreadHeader: View {
             return left == 1 ? "1 MORE REPLY IN THIS SEARCH · FREE" : "\(left) MORE REPLIES IN THIS SEARCH · FREE"
         }
         let price = ai.costLabel(for: .search) ?? "CREDITS"
-        return "THIS SEARCH IS USED UP — A REPLY STARTS A NEW ONE · \(price)"
+        return "A REPLY NOW STARTS A NEW SEARCH · \(price)"
     }
 
     private var trimmed: String { draft.trimmingCharacters(in: .whitespacesAndNewlines) }
@@ -504,8 +509,8 @@ struct ShowMoreSection: View {
 
     /// Which web, said before it is asked.
     private var scopeNote: String {
-        let country = location.country.map { " THAT SELL IN \(LocationSetting.inSentence($0).uppercased())" } ?? ""
-        return "AI SEARCHES THE OPEN WEB FOR SHOPS\(country) — BEYOND THE SHOPS WE WATCH"
+        let country = location.country.map { " · SHOPS IN \(LocationSetting.inSentence($0).uppercased())" } ?? ""
+        return "AI · THE OPEN WEB, BEYOND OUR SHOPS\(country)"
     }
 
     @ViewBuilder
@@ -522,7 +527,7 @@ struct ShowMoreSection: View {
         .padding(.bottom, 14)
 
         if items.isEmpty {
-            Text("Nothing on the web that the search could stand behind")
+            Text("Nothing on the web it could vouch for")
                 .font(.editorial(16))
                 .foregroundStyle(Color.muted)
         } else {

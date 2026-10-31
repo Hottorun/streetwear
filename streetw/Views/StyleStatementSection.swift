@@ -34,7 +34,14 @@ struct StyleStatementSection: View {
         VStack(alignment: .leading, spacing: 18) {
             SettingsHeader(
                 title: "In your words",
-                note: "Say how you actually dress and Dropwall will lean that way when it suggests fits, pairings and brands. It never hides anything you'd otherwise see."
+                info: InfoNote(
+                    title: "In your words",
+                    lines: [
+                        "Say how you actually dress, and Dropwall leans that way when it suggests fits, pairings and brands.",
+                        "It never hides anything you'd otherwise see.",
+                        "It stays on this phone."
+                    ]
+                )
             )
 
             VStack(alignment: .leading, spacing: 10) {
@@ -82,7 +89,7 @@ struct StyleStatementSection: View {
         } else if !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             // Written something, understood nothing. Saying so is better than an empty
             // space that reads as the field having been ignored — which it has.
-            DataLabel(text: "NOTHING RECOGNISED YET — TRY NAMING COLOURS AND GARMENTS")
+            DataLabel(text: "NOTHING RECOGNISED · NAME COLOURS AND GARMENTS")
         }
     }
 

@@ -1,9 +1,13 @@
 // OnboardingView.swift
-// The first run, in four steps.
+// The first run: four cards on what the app does, then four steps.
+//
+// **The cards first** (`TourCards`): watch your shops, follow only what you want, save from
+// anywhere, search or scan. Each is a picture of the app and one sentence — they replace a "How
+// it works" step of grey text, one line of which described a swipe the app no longer has.
 //
 // A watcher with nothing to watch is a dead end: the old empty state told you to paste a
 // website, which assumes you already know which sites are worth pasting. So the first run
-// asks the four things that make the app work at all, in the order they start paying off:
+// then asks the four things that make the app work at all, in the order they start paying off:
 //
 // 1. **Sizes** — before brands, because the very first sync is what fills the feed, and a
 //    profile set afterwards can't retroactively highlight anything in it.
@@ -16,7 +20,8 @@
 //    question is "do you want to know when *these* drop", which is a question with an
 //    obvious answer.
 //
-// Every step is skippable and everything set here is editable later, on You.
+// Every step is skippable and everything set here is editable later, on You. Each says one
+// line; what a setting does in detail is behind its ⓘ, as on You (`CLAUDE.md`, *Copy*).
 
 import StreetwCore
 import SwiftData
@@ -77,16 +82,15 @@ struct OnboardingView: View {
     let onFinish: (_ mayLatch: Bool) -> Void
 
     private enum Step: Int, CaseIterable {
+        /// The four cards. Not numbered: they are a picture of the app, not a question.
+        case tour
         case sizes
         case gender
         case brands
-        /// Placed *after* brands on purpose. It explains saving, boards, sharing in and
-        /// watching — none of which mean anything until there is something to do them to,
-        /// and all of which are otherwise undiscoverable: the share extension in
-        /// particular lives entirely outside the app and nothing in the UI hints it
-        /// exists. It also covers the wait while the first sync runs.
-        case howItWorks
         case alerts
+
+        /// The setup steps, which are numbered — everything after the cards.
+        static let numbered = allCases.filter { $0 != .tour }
 
         /// Whether the step is tall enough to need scrolling rather than sitting as one
         /// block above centre.
@@ -98,7 +102,8 @@ struct OnboardingView: View {
         var scrolls: Bool { self == .brands || self == .sizes }
     }
 
-    @State private var step: Step = .sizes
+    @State private var step: Step = .tour
+    @State private var tourPage = 0
     @State private var selected: Set<String> = []
     @State private var isAdding = false
     @State private var progress: String?
@@ -127,7 +132,9 @@ struct OnboardingView: View {
     var body: some View {
         NavigationStack {
             Group {
-                if step.scrolls {
+                if step == .tour {
+                    TourCards(page: $tourPage)
+                } else if step.scrolls {
                     ScrollView {
                         VStack(alignment: .leading, spacing: 26) {
                             header
@@ -173,7 +180,9 @@ struct OnboardingView: View {
                     // Every step is skippable. The brand step is the only one where
                     // skipping leaves the app genuinely empty, and that is the user's
                     // call to make.
-                    Button(step == .alerts ? "Not now" : "Skip") { advance(skipping: true) }
+                    Button(step == .alerts ? "Not now" : "Skip") {
+                        if step == .tour { step = .sizes } else { advance(skipping: true) }
+                    }
                         .disabled(isAdding)
                         .font(.data(12))
                 }
@@ -185,10 +194,10 @@ struct OnboardingView: View {
 
     private var title: String {
         switch step {
+        case .tour: ""
         case .sizes: "Your sizes"
         case .gender: "What to show"
         case .brands: "Your shops"
-        case .howItWorks: "How it works"
         case .alerts: "Drop alerts"
         }
     }
@@ -196,10 +205,10 @@ struct OnboardingView: View {
     @ViewBuilder
     private var currentStep: some View {
         switch step {
+        case .tour: EmptyView()
         case .sizes: sizeStep
         case .gender: genderStep
         case .brands: brandStep
-        case .howItWorks: howItWorksStep
         case .alerts: alertStep
         }
     }
@@ -209,67 +218,40 @@ struct OnboardingView: View {
     /// Step marker, title and blurb as one block — the thing the page is about, set once.
     private var header: some View {
         VStack(alignment: .leading, spacing: 10) {
-            DataLabel(text: "STEP \(step.rawValue + 1) OF \(Step.allCases.count)")
-            Text(title)
-                .font(.editorial(30))
-                .foregroundStyle(Color.ink)
-                .fixedSize(horizontal: false, vertical: true)
+            DataLabel(text: "STEP \((Step.numbered.firstIndex(of: step) ?? 0) + 1) OF \(Step.numbered.count)")
+            HStack(alignment: .center, spacing: 2) {
+                Text(title)
+                    .font(.editorial(30))
+                    .foregroundStyle(Color.ink)
+                    .fixedSize(horizontal: false, vertical: true)
+                if let info { InfoButton(note: info) }
+            }
             Text(blurb)
                 .font(.editorial(16))
-                .foregroundStyle(Color.muted)
+                .foregroundStyle(Color.ink)
                 .fixedSize(horizontal: false, vertical: true)
         }
         .padding(.horizontal, 20)
     }
 
+    /// One line each: what the step is for, never how it works.
     private var blurb: String {
         switch step {
-        case .sizes:
-            "Tell Dropwall what you wear and it can say which drops are actually buyable in your size — and tell you when something comes back in it."
-        case .gender:
-            "Narrow the feed to what you'd actually wear."
-        case .brands:
-            "Pick a few to start with. Dropwall watches their catalogues for new arrivals, restocks, sales and the moment a storefront locks down — and any other shop can be added later by its website."
-        case .howItWorks:
-            "Four things that are easy to miss."
-        case .alerts:
-            "The best pieces go first. Dropwall can tell you the moment one of your shops releases something, goes on sale or restocks in your size."
+        case .tour: ""
+        case .sizes: "So Dropwall can say what's buyable in your size."
+        case .gender: "Narrow the feed to what you'd wear."
+        case .brands: "Pick a few to start. Add any shop later."
+        case .alerts: "Know the moment your shops drop, restock or go on sale."
         }
     }
 
-    /// The features that are otherwise invisible. The share extension especially: it lives
-    /// outside the app entirely, so nothing in the interface can hint that it exists.
-    ///
-    /// One line each, set at a readable size. The first version explained each feature in
-    /// two or three sentences of 11pt monospace — a wall of small text on the screen where
-    /// someone is least invested in reading. A person skims this once; it has to be
-    /// glanceable, and what it really needs to do is tell them these things *exist*.
-    private var howItWorksStep: some View {
-        VStack(alignment: .leading, spacing: 22) {
-            ForEach([
-                ("bookmark", "Save what you like", "Swipe a card left to file it, right to clear it."),
-                ("square.and.arrow.up", "Share links in", "From Safari, Instagram, anywhere."),
-                ("square.grid.2x2", "Build boards and fits", "Group what you keep into outfits."),
-                ("bell", "Watch a sold-out size", "Get told the moment it's back.")
-            ], id: \.1) { symbol, heading, detail in
-                HStack(alignment: .top, spacing: 16) {
-                    Image(systemName: symbol)
-                        .font(.system(size: 17))
-                        .foregroundStyle(Color.ink)
-                        .frame(width: 26)
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text(heading)
-                            .font(.editorial(18))
-                            .foregroundStyle(Color.ink)
-                        Text(detail)
-                            .font(.editorial(14))
-                            .foregroundStyle(Color.muted)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                }
-            }
+    /// The same ⓘ as on You, where the step is a setting You has too.
+    private var info: InfoNote? {
+        switch step {
+        case .sizes: SizeProfileSection.sizesInfo
+        case .gender: SizeProfileSection.genderInfo
+        default: nil
         }
-        .padding(.horizontal, 20)
     }
 
     /// The ladders, in the same order and the same shapes Settings uses.
@@ -316,11 +298,8 @@ struct OnboardingView: View {
             // on this screen has every dress in her first sync read on no ladder of hers.
             DressAndSuitRows()
 
-            // Nothing here is required, and the step is skippable — but somebody who fills
-            // in one ladder and not the others should know that the empty ones are not a
-            // filter they have accidentally left on.
-            DataLabel(text: "A LADDER YOU LEAVE EMPTY SIMPLY DOESN'T FILTER")
-                .padding(.top, 2)
+            // Somebody who fills in one ladder and not the others should know that the empty
+            // ones are not a filter left on — said behind the header's ⓘ (`sizesInfo`).
         }
         .padding(.horizontal, 20)
     }
@@ -330,7 +309,7 @@ struct OnboardingView: View {
             ForEach(GenderPreference.allCases) { preference in
                 choice(
                     label: preference.label,
-                    detail: detail(for: preference),
+                    detail: preference.detail,
                     isOn: sizes.profile.gender == preference
                 ) {
                     sizes.setGender(preference)
@@ -338,14 +317,6 @@ struct OnboardingView: View {
             }
         }
         .padding(.horizontal, 20)
-    }
-
-    private func detail(for preference: GenderPreference) -> String {
-        switch preference {
-        case .everything: "Menswear, womenswear and kids"
-        case .mens: "Hides womenswear and kids"
-        case .womens: "Hides menswear and kids"
-        }
     }
 
     private var brandStep: some View {
@@ -359,10 +330,10 @@ struct OnboardingView: View {
     private var alertStep: some View {
         VStack(alignment: .leading, spacing: 16) {
             ForEach([
-                ("bolt.fill", "A shop you follow drops something new"),
-                ("tag.fill", "A shop you follow goes on sale"),
-                ("arrow.clockwise", "Something comes back in your size"),
-                ("lock.fill", "A storefront locks down — usually minutes before a release")
+                ("bolt.fill", "New drops"),
+                ("tag.fill", "Sales"),
+                ("arrow.clockwise", "Back in your size"),
+                ("lock.fill", "A storefront locking — a drop is minutes away")
             ], id: \.1) { symbol, line in
                 HStack(alignment: .top, spacing: 12) {
                     Image(systemName: symbol)
@@ -377,12 +348,14 @@ struct OnboardingView: View {
             }
 
             if alertsDenied {
-                VStack(alignment: .leading, spacing: 6) {
-                    DataLabel(text: "ALERTS ARE OFF", color: .signal)
-                    Text("iOS only asks once. You can turn them on in Settings › Dropwall › Notifications — Dropwall will pick it up the next time you open it.")
-                        .font(.editorial(14))
-                        .foregroundStyle(Color.muted)
-                        .fixedSize(horizontal: false, vertical: true)
+                // iOS asks once, so the one way back is named — and opened, rather than described.
+                VStack(alignment: .leading, spacing: 10) {
+                    DataLabel(text: "ALERTS ARE OFF · iOS ASKS ONLY ONCE", color: .signal)
+                    if let url = URL(string: UIApplication.openSettingsURLString) {
+                        Link(destination: url) {
+                            NotificationsSection.SettingsAction(title: "Turn on in Settings")
+                        }
+                    }
                 }
                 .padding(.top, 4)
             }
@@ -471,6 +444,10 @@ struct OnboardingView: View {
 
     private var actionControls: some View {
         VStack(spacing: 10) {
+            if step == .tour {
+                TourDots(page: tourPage)
+                    .padding(.bottom, 8)
+            }
             if let progress {
                 DataLabel(text: progress.uppercased())
             }
@@ -509,7 +486,8 @@ struct OnboardingView: View {
 
     private var primaryLabel: String {
         switch step {
-        case .sizes, .gender, .howItWorks: "Continue"
+        case .tour: tourPage < TourCards.count - 1 ? "Next" : "Set up"
+        case .sizes, .gender: "Continue"
         case .brands:
             if selected.isEmpty {
                 "Choose at least one"
@@ -530,6 +508,12 @@ struct OnboardingView: View {
 
     private func advance(skipping: Bool) {
         switch step {
+        case .tour:
+            if tourPage < TourCards.count - 1 {
+                withAnimation { tourPage += 1 }
+            } else {
+                step = .sizes
+            }
         case .sizes:
             step = .gender
         case .gender:
@@ -548,12 +532,10 @@ struct OnboardingView: View {
             }
         case .brands:
             if skipping {
-                step = .howItWorks
+                step = .alerts
             } else {
                 Task { await add() }
             }
-        case .howItWorks:
-            step = .alerts
         case .alerts:
             if skipping || alertsDenied {
                 onFinish(!didFailToAdd)
@@ -632,7 +614,7 @@ struct OnboardingView: View {
         // would rather get on with it.
         guard added > 0 else {
             didFailToAdd = true
-            addFailure = failure ?? "Dropwall couldn't reach those sites. Check your connection and try again."
+            addFailure = failure ?? "Couldn't reach those sites. Check your connection."
             return
         }
 
@@ -645,6 +627,6 @@ struct OnboardingView: View {
         progress = "Fetching first updates"
         if settings.isConfigured { await remote.sync(sizes: sizes.profile) }
         progress = nil
-        step = .howItWorks
+        step = .alerts
     }
 }

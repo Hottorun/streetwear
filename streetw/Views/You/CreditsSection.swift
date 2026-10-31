@@ -31,7 +31,11 @@ struct CreditsSection: View {
     private func content(_ summary: CreditsSummary) -> some View {
         let unlimited = summary.unlimited == true
         return VStack(alignment: .leading, spacing: 12) {
-            SettingsHeader(title: "Credits", note: note(summary, unlimited: unlimited))
+            SettingsHeader(
+                title: "Credits",
+                note: unlimited ? "NEVER CHARGED · USAGE STILL COUNTED" : nil,
+                info: info(summary)
+            )
 
             VStack(spacing: 0) {
                 YouRow(
@@ -63,12 +67,18 @@ struct CreditsSection: View {
         }
     }
 
-    private func note(_ summary: CreditsSummary, unlimited: Bool) -> String {
-        if unlimited {
-            return "This account is never charged. Usage is still counted, so you can see what it does."
+    /// The whole pricing policy, a tap from the balance — nothing about it is small print, so
+    /// it is said at full size in the sheet rather than in grey under the title.
+    private func info(_ summary: CreditsSummary) -> InfoNote {
+        var lines = [
+            "Credits never expire.",
+            "Each AI action costs a fixed number of them, set from what it measurably costs to run."
+        ]
+        if let allowance = summary.monthlyAllowance {
+            lines.append("\(allowance) are free each month you use them.")
         }
-        let allowance = summary.monthlyAllowance.map { " \($0) are free each month you use them." } ?? ""
-        return "Credits never expire. Each AI action costs a fixed number of them, set from what it measurably costs to run.\(allowance)"
+        lines.append("Every action says its price before you press it, and what it took after.")
+        return InfoNote(title: "Credits", lines: lines)
     }
 
     /// Each paid action this build offers, by the name its button uses, and what it costs.

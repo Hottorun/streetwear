@@ -452,13 +452,19 @@ struct SavedView: View {
         case .type(.inspiration): return "TAP THE BOOKMARK ON ANYTHING IN YOUR FEED"
         case .type(.wardrobe): return "LONG-PRESS AN ITEM AND CHOOSE ADD TO WARDROBE"
         case .fits: return "SAVE A FEW THINGS AND THE OUTFITS THEY MAKE START HERE"
-        case .board: return "SWIPE A CARD IN THE FEED, OR SELECT SAVES ON THE WALL TO FILE THEM HERE"
+        // Not a swipe: the feed's swipe to file went with the spreads in Phase 1.
+        case .board: return "LONG-PRESS ANYTHING AND CHOOSE ADD TO BOARD"
         }
     }
 
     private func wall(_ wall: Wall) -> some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
+                // Once, the first time there is something on the wall to move.
+                if !isSelecting, filter == .type(.inspiration) {
+                    PaperTip(tip: WardrobeTip())
+                        .padding(.horizontal, 20)
+                }
                 if !isSelecting { boardFits }
                 if wall.isEmpty {
                     // Fits and nothing else. The wall stays, so the line explains the

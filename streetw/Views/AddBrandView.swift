@@ -186,7 +186,7 @@ struct AddBrandView: View {
                     Text("Or start here")
                         .font(.editorial(19))
                         .foregroundStyle(Color.ink)
-                    DataLabel(text: "ALREADY IN THE CATALOG · TYPE TO SEARCH IT ALL")
+                    DataLabel(text: "ALREADY IN THE CATALOGUE")
                 }
                 .padding(.horizontal, 20)
                 .padding(.top, 12)
@@ -246,11 +246,6 @@ struct AddBrandView: View {
                 .fixedSize(horizontal: false, vertical: true)
 
             if looksLikeSite {
-                Text("Add it and Dropwall will work out what its site publishes — the catalogue, a feed, or the page itself.")
-                    .font(.editorial(14))
-                    .foregroundStyle(Color.muted)
-                    .fixedSize(horizontal: false, vertical: true)
-
                 Button {
                     newBrand = NewBrandDraft(url: trimmed)
                 } label: {
@@ -264,10 +259,7 @@ struct AddBrandView: View {
                 }
                 .buttonStyle(.borderless)
             } else {
-                Text("Paste a link to the brand's website and Dropwall can add it.")
-                    .font(.editorial(14))
-                    .foregroundStyle(Color.muted)
-                    .fixedSize(horizontal: false, vertical: true)
+                DataLabel(text: "PASTE ITS WEBSITE TO ADD IT")
             }
         }
         .padding(20)
@@ -453,14 +445,13 @@ struct NewBrandView: View {
                     VStack(alignment: .leading, spacing: 8) {
                         HStack(spacing: 10) {
                             ProgressView()
-                            DataLabel(text: "CHECKING WHAT THIS SITE PUBLISHES")
+                            DataLabel(text: "CHECKING THE SITE")
                         }
-                        Text(isQueued
-                             ? "Dropwall will start watching as soon as the check finishes, and let you know."
-                             : "Shops that aren't on Shopify can take a few minutes. You don't have to wait — tap below and Dropwall will tell you.")
-                            .font(.editorial(14))
-                            .foregroundStyle(Color.muted)
-                            .fixedSize(horizontal: false, vertical: true)
+                        // A shop off Shopify can take minutes, and nobody has to watch it.
+                        DataLabel(
+                            text: isQueued ? "WATCHING AS SOON AS IT'S DONE · WE'LL TELL YOU" : "CAN TAKE A FEW MINUTES · NO NEED TO WAIT",
+                            color: .ink
+                        )
                     }
                 } else if let probeError {
                     couldNotCheck(probeError)
@@ -471,29 +462,27 @@ struct NewBrandView: View {
                 }
 
                 VStack(alignment: .leading, spacing: 8) {
-                    DataLabel(text: "NAME")
+                    HStack(spacing: 2) {
+                        DataLabel(text: "NAME · FROM THE SITE")
+                        InfoButton(note: Self.nameInfo)
+                    }
                     Text(isChecking ? "…" : declaredName)
                         .font(.editorial(17))
                         .foregroundStyle(Color.ink)
                     Rule()
-                    Text("Taken from the site itself, so every brand is called the same thing for everyone.")
-                        .font(.data(10))
-                        .foregroundStyle(Color.muted)
                 }
 
                 VStack(alignment: .leading, spacing: 8) {
-                    DataLabel(text: "INSTAGRAM · OPTIONAL")
+                    HStack(spacing: 2) {
+                        DataLabel(text: "INSTAGRAM · OPTIONAL")
+                        InfoButton(note: Self.instagramInfo)
+                    }
                     TextField("@handle", text: $instagram)
                         .font(.editorial(17))
                         .foregroundStyle(Color.ink)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                     Rule()
-                    // Stated because it is a deliberate limitation people ask about, not
-                    // an oversight.
-                    Text("Saved as a link, never scraped — Instagram's terms don't allow aggregating profiles.")
-                        .font(.data(10))
-                        .foregroundStyle(Color.muted)
                 }
 
                 if let failure {
@@ -535,10 +524,7 @@ struct NewBrandView: View {
         VStack(alignment: .leading, spacing: 10) {
             DataLabel(text: "WHAT WE CAN WATCH")
             if watchable.isEmpty {
-                Text("Nothing automatic found. You can still add it and open it yourself.")
-                    .font(.editorial(14))
-                    .foregroundStyle(Color.muted)
-                    .fixedSize(horizontal: false, vertical: true)
+                DataLabel(text: "NOTHING AUTOMATIC · A LINK YOU OPEN YOURSELF", color: .ink)
             } else {
                 ForEach(watchable, id: \.url) { source in
                     HStack(spacing: 10) {
@@ -580,29 +566,27 @@ struct NewBrandView: View {
                     .font(.editorial(19))
                     .foregroundStyle(Color.ink)
                     .fixedSize(horizontal: false, vertical: true)
-                Text("Saving from Safari still works. Its site turns away programs like Dropwall's, so it can't be followed here — but share a product from Safari and Dropwall saves it from your own browser.")
-                    .font(.editorial(14))
-                    .foregroundStyle(Color.muted)
-                    .fixedSize(horizontal: false, vertical: true)
-                DataLabel(text: "SHARE FROM SAFARI › DROPWALL")
+                Text("Saving from Safari still works.")
+                    .font(.editorial(16))
+                    .foregroundStyle(Color.ink)
+                HStack(spacing: 14) {
+                    DataLabel(text: "SHARE FROM SAFARI › DROPWALL")
+                    InfoButton(note: Self.blockedInfo, label: "WHY?")
+                }
             case .sellsNoClothes:
                 Text("\(name) doesn't sell clothes online.")
                     .font(.editorial(19))
                     .foregroundStyle(Color.ink)
                     .fixedSize(horizontal: false, vertical: true)
-                Text("Its own site sells no clothes — they are sold in its boutiques — so there is nothing here for a follow to watch.")
-                    .font(.editorial(14))
-                    .foregroundStyle(Color.muted)
-                    .fixedSize(horizontal: false, vertical: true)
+                InfoButton(note: Self.noClothesInfo, label: "WHY?")
             case .nothingAnswered:
                 Text("Nothing to watch here")
                     .font(.editorial(19))
                     .foregroundStyle(Color.ink)
-                Text("Dropwall couldn't read anything from this site — no catalogue, no feed, no sitemap, not even the page itself. It may be down.")
-                    .font(.editorial(14))
-                    .foregroundStyle(Color.muted)
-                    .fixedSize(horizontal: false, vertical: true)
-                DataLabel(text: "WORTH TRYING AGAIN LATER")
+                HStack(spacing: 14) {
+                    DataLabel(text: "WORTH TRYING AGAIN LATER")
+                    InfoButton(note: Self.nothingInfo, label: "WHY?")
+                }
             }
         }
     }
@@ -623,10 +607,9 @@ struct NewBrandView: View {
             Text("Couldn't check this site")
                 .font(.editorial(19))
                 .foregroundStyle(Color.ink)
-            Text("Dropwall couldn't reach its own servers to look, so this says nothing about the site itself.")
-                .font(.editorial(14))
-                .foregroundStyle(Color.muted)
-                .fixedSize(horizontal: false, vertical: true)
+            // About us, not the shop — said so in as many words, because the alternative reads
+            // as a verdict on the site.
+            DataLabel(text: "DROPWALL DIDN'T ANSWER · NOT THE SITE", color: .ink)
             Text(reason)
                 .font(.data(11))
                 .foregroundStyle(Color.signal)
@@ -641,6 +624,37 @@ struct NewBrandView: View {
             .padding(.top, 2)
         }
     }
+
+    static let nameInfo = InfoNote(
+        title: "The name",
+        lines: ["Taken from the site itself, so every brand is called the same thing for everyone."]
+    )
+
+    static let instagramInfo = InfoNote(
+        title: "Instagram",
+        lines: ["Saved as a link, never scraped — Instagram's terms don't allow aggregating profiles."]
+    )
+
+    static let blockedInfo = InfoNote(
+        title: "Why it can't be followed",
+        lines: [
+            "Its site turns away programs like Dropwall's, so it can't be watched from here.",
+            "Share a product from Safari and Dropwall saves it from your own browser."
+        ]
+    )
+
+    static let noClothesInfo = InfoNote(
+        title: "Nothing to follow",
+        lines: ["Its own site sells no clothes — they're sold in its boutiques — so there's nothing here for a follow to watch."]
+    )
+
+    static let nothingInfo = InfoNote(
+        title: "Nothing answered",
+        lines: [
+            "Dropwall couldn't read anything from this site — no catalogue, no feed, no sitemap, not even the page itself.",
+            "It may be down."
+        ]
+    )
 
     private var handle: String? {
         let trimmed = instagram.trimmingCharacters(in: .whitespaces)
@@ -688,7 +702,7 @@ struct NewBrandView: View {
             }
             switch current.status {
             case .interrupted:
-                probeError = "The check stopped before it finished — most likely the server restarted."
+                probeError = "The check stopped — the server probably restarted."
             case .ready where current.isWatching:
                 // Watched while it ran. Asking again is idempotent and waits for the server's
                 // own settle, so the brand arrives now rather than on the next foreground.

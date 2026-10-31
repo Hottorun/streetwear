@@ -28,7 +28,13 @@ struct ProfilesSection: View {
             VStack(alignment: .leading, spacing: 12) {
                 SettingsHeader(
                     title: "Profiles",
-                    note: "Each profile keeps its own sizes, brands, saves and alerts. Alerts for somebody else start with their name."
+                    info: InfoNote(
+                        title: "Profiles",
+                        lines: [
+                            "Each profile keeps its own sizes, brands, saves and alerts.",
+                            "Alerts for somebody else start with their name."
+                        ]
+                    )
                 )
 
                 VStack(spacing: 0) {
@@ -93,10 +99,7 @@ struct ProfilesSection: View {
                 }
                 Button("Keep", role: .cancel) { deleting = nil }
             } message: {
-                Text("""
-                    Its brands, watches and drop dates are deleted from Dropwall's server, and its \
-                    saves, boards and fits from this phone. Your own profile is not touched.
-                    """)
+                Text("Its brands, watches and drop dates go from the server; its saves, boards and fits from this phone. Yours stay.")
             }
         }
     }
@@ -171,7 +174,7 @@ struct OtherAccountsRow: View {
     var body: some View {
         if profiles.holdsOtherAccounts {
             HStack(alignment: .firstTextBaseline, spacing: 10) {
-                Text("Saves from another Apple ID are kept on this phone.")
+                Text("Another Apple ID's saves are on this phone")
                     .font(.editorial(14))
                     .foregroundStyle(Color.muted)
                     .fixedSize(horizontal: false, vertical: true)
@@ -193,11 +196,7 @@ struct OtherAccountsRow: View {
                 }
                 Button("Keep", role: .cancel) {}
             } message: {
-                Text("""
-                    Their saves, boards, fits and drop dates are deleted from this phone, for every \
-                    profile on that account. Nothing on Dropwall's server changes, and yours are not \
-                    touched.
-                    """)
+                Text("Their saves, boards, fits and drop dates go from this phone, for every profile. The server and yours are untouched.")
             }
         }
     }
