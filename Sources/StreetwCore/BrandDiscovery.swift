@@ -75,8 +75,10 @@ public enum BrandDiscovery {
 
             // The homepage, once, first: the name and the mark come out of it, and so do the
             // feeds it declares and the country shops it names (`hreflang`). It used to be
-            // fetched last, for the name alone; reading it first costs nothing more.
-            let home = await SiteIdentityProbe.homepage(at: base, http: http)
+            // fetched last, for the name alone; reading it first costs nothing more. A typed
+            // store view (`/de_en`) is its own homepage: its feeds are the ones it declares.
+            let page = storeViewPage(base, hint: hint)
+            let home = await SiteIdentityProbe.homepage(at: page, http: http)
             if let home {
                 result.alternates = SiteAlternates.languages(in: home.html, base: home.url)
             }
@@ -169,7 +171,6 @@ public enum BrandDiscovery {
             // nothing to add. A typed store view (`subdued.com/de_en`) is watched at that
             // view, so a country's shop on one host is a page of its own.
             let catalogued = result.sources.contains { [.shopify, .ucp, .sitemap].contains($0.kind) }
-            let page = storeViewPage(base, hint: hint)
             if !catalogued,
                let watch = try? await PageWatchSource(http: http)
                    .fetch(BrandSource(kind: .page, url: page), since: nil),

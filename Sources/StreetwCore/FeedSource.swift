@@ -142,7 +142,7 @@ public struct FeedSource: SourceAdapter {
         return namesNewProducts(title)
     }
 
-    static let productPathMarkers = [
+    public static let productPathMarkers = [
         "new_products", "new-products", "newproducts", "new_arrivals", "new-arrivals", "newarrivals"
     ]
 

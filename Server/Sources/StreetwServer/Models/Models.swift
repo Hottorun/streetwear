@@ -785,6 +785,10 @@ final class BrandCheckModel: Model, @unchecked Sendable {
     /// once the check finds a real shop, and follow nobody — see `AddCatalogueOnlyCheck`.
     /// **The row records nothing about who asked**, and the route adds no watcher for it.
     @OptionalField(key: "catalogue_only") var catalogueOnly: Bool?
+    /// The homepage's `hreflang` alternates, JSON-encoded `[LanguageAlternate]` — what the
+    /// brand's country shops are found from once the check makes a brand (`CountryShops`), so
+    /// the homepage the check already read is not fetched again. See `AddRediscovery`.
+    @OptionalField(key: "alternates") var alternates: String?
 
     @Children(for: \.$check) var watchers: [BrandCheckWatcherModel]
 
@@ -844,4 +848,37 @@ final class UsageCountModel: Model, @unchecked Sendable {
     @Field(key: "total") var total: Int
 
     init() {}
+}
+
+/// One brand looked at again under one version of discovery's rules — see `Rediscovery`.
+///
+/// The ledger that makes the pass run once: a brand with a row for the current
+/// `Rediscovery.version` is never claimed again, whether its look finished or is still running
+/// on another instance, and the row is written *before* the first request so a restart resumes
+/// with the next brand rather than the one it was on. Unique on (brand, version).
+final class RediscoveryModel: Model, @unchecked Sendable {
+    static let schema = "rediscoveries"
+
+    @ID(key: .id) var id: UUID?
+    @Parent(key: "brand_id") var brand: BrandModel
+    @Field(key: "version") var version: Int
+    @Field(key: "started_at") var startedAt: Date
+    /// Nil while the look is running — or after the process running it died, which
+    /// `Rediscovery.abandonAfter` turns back into a claim.
+    @OptionalField(key: "finished_at") var finishedAt: Date?
+    /// What it did, as logged: "subdued.com: +feed new_products, +storefront US us.subdued.com (ucp)".
+    @OptionalField(key: "line") var line: String?
+    /// Sources added to the main shop, and country shops attached.
+    @Field(key: "added") var added: Int
+    @Field(key: "storefronts") var storefronts: Int
+
+    init() {}
+
+    init(brandID: UUID, version: Int, startedAt: Date = Date()) {
+        self.$brand.id = brandID
+        self.version = version
+        self.startedAt = startedAt
+        self.added = 0
+        self.storefronts = 0
+    }
 }

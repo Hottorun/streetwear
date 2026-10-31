@@ -1576,6 +1576,28 @@ func routes(_ app: Application) throws {
     /// storefront, a sitemap with no `lastmod`, a source erroring quietly behind a backoff.
     ///
     /// Sorted with the emptiest first, because the list is read to find what is broken.
+    /// What the rediscovery pass has done under the current rules (`Rediscovery`): how far it
+    /// has got, what it added, and one line per brand that changed — every brand with `?all=true`.
+    /// Newest first. Reads only.
+    admin.get("rediscovery") { req async throws -> String in
+        let all = (try? req.query.get(Bool.self, at: "all")) ?? false
+        let summary = try await Rediscovery.summary(on: req.db)
+        let rows = try await RediscoveryModel.query(on: req.db)
+            .filter(\.$version == Rediscovery.version)
+            .sort(\.$startedAt, .descending)
+            .all()
+        let lines = rows.compactMap { row -> String? in
+            guard let line = row.line else { return row.finishedAt == nil ? "… \(row.$brand.id) (in progress)" : nil }
+            return all || row.added > 0 || row.storefronts > 0 || line.contains("not added") ? line : nil
+        }
+        return ([
+            "rediscovery v\(summary.version): \(summary.finished) of \(summary.brands) brands looked at"
+                + (summary.running > 0 ? ", \(summary.running) in progress" : "")
+                + " — +\(summary.sourcesAdded) source(s), +\(summary.storefrontsAttached) storefront(s)"
+                + (all ? "" : " (changes only; ?all=true for every brand)"),
+        ] + lines).joined(separator: "\n")
+    }
+
     admin.get("catalog") { req async throws -> String in
         let brands = try await BrandModel.query(on: req.db)
             .with(\.$sources)
@@ -1846,53 +1868,12 @@ func routes(_ app: Application) throws {
             throw Abort(.badRequest)
         }
 
-        // A shop wholly taken over is replaced, so its catalogue is not "already read".
-        let replaced = Set(shops.filter { Set($0.countryCodes).isSubset(of: countries) }.compactMap(\.id))
-        let read = Set(
-            brand.sources
-                .filter { $0.$storefront.id.map { !replaced.contains($0) } ?? true }
-                .map(\.url)
+        let attachment = try await Storefronts.attach(
+            brand: brand, base: base, found: found, countries: countries, force: force, on: req.db
         )
-        if let same = usable.first(where: { read.contains($0.url.absoluteString) }) {
-            let owner = brand.sources.first { $0.url == same.url.absoluteString }?.$storefront.id
-            if let owner, let shop = shops.first(where: { $0.id == owner }) {
-                return "refused: \(same.url.absoluteString) is the shop \(brand.name) already reads for "
-                    + "\(StorefrontAdmin.codes(shop.countryCodes)). One shop is read once: give it more countries with "
-                    + "POST /admin/brands/\(brandID)/storefronts/\(shop.homeCountry)/add?countries=…"
-            }
-            return "refused: \(same.url.absoluteString) is a catalogue \(brand.name) already reads — "
-                + "the main shop. One shop is read once."
-        }
-        let unshipped = found.shipsTo.isEmpty ? [] : countries.subtracting(found.shipsTo)
-        if !unshipped.isEmpty, !force {
-            return "refused: \(host) says it ships to \(found.shipsTo.count) "
-                + "countr\(found.shipsTo.count == 1 ? "y" : "ies") and not \(StorefrontAdmin.codes(unshipped)) "
-                + "(\(found.shipsTo.prefix(8).joined(separator: ","))\(found.shipsTo.count > 8 ? ",…" : "")). "
-                + "Re-run with &force=true if that is wrong."
-        }
-
-        let sorted = countries.sorted()
-        let storefront = StorefrontModel(
-            brandID: brandID,
-            homeCountry: sorted[0],
-            url: base.absoluteString,
-            currency: found.currency
-        )
-        let released = try await req.db.transaction { db -> Storefronts.Released in
-            // First, so neither unique constraint sees a country held twice mid-transaction.
-            let released = try await Storefronts.release(countries, brandID: brandID, on: db)
-            try await storefront.save(on: db)
-            try await Storefronts.add(countries, to: storefront, on: db)
-            let storefrontID = try storefront.requireID()
-            for source in usable {
-                try await SourceModel(
-                    brandID: brandID,
-                    kind: source.kind,
-                    url: source.url.absoluteString,
-                    storefrontID: storefrontID
-                ).save(on: db)
-            }
-            return released
+        guard case .attached(_, let watched, let released) = attachment else {
+            if case .refused(let why) = attachment { return why }
+            throw Abort(.internalServerError)
         }
         let replacedNote = released.removed.map { removed in
             " (replaced \(URL(string: removed.url)?.host() ?? removed.url), \(removed.products) product(s) cleared)"
@@ -1902,7 +1883,7 @@ func routes(_ app: Application) throws {
         }.joined()
         return "\(brand.name): \(host) serves \(StorefrontAdmin.codes(countries))"
             + (found.currency.map { " in \($0)" } ?? "")
-            + ", watched by \(usable.map(\.kind.rawValue).joined(separator: "+"))"
+            + ", watched by \(watched.map(\.kind.rawValue).joined(separator: "+"))"
             + replacedNote + narrowedNote
             + StorefrontAdmin.notSwitchedOn(countries, req.application)
     }

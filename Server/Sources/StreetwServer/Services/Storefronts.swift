@@ -236,6 +236,92 @@ enum Storefronts {
         }
     }
 
+    /// What attaching a shop came to.
+    enum Attachment {
+        case attached(storefront: StorefrontModel, sources: [BrandSource], released: Released)
+        /// Nothing was written; the sentence says why.
+        case refused(String)
+    }
+
+    /// Attaches the shop at `base` as the brand's for `countries`, read by what discovery found
+    /// there. **The one way a country's shop is written**, whoever asked: an operator, through
+    /// `POST /admin/brands/:id/storefronts`, or `CountryShops`, from the brand's own `hreflang`.
+    ///
+    /// Refuses three mistakes rather than storing them — nothing watchable there; a catalogue
+    /// the brand already reads (the main shop, or another country's shop, which is given more
+    /// countries instead); and countries the shop's own `/meta.json` says it does not ship to,
+    /// unless `force`. Attaching for countries another shop serves takes them off it
+    /// (`release`). The new sources start un-baselined, so their first read is context, not news.
+    ///
+    /// - Parameter brand: with its sources loaded.
+    static func attach(
+        brand: BrandModel,
+        base: URL,
+        found: DiscoveredSources,
+        countries: Set<String>,
+        force: Bool,
+        on db: any Database
+    ) async throws -> Attachment {
+        let brandID = try brand.requireID()
+        let host = base.host() ?? base.absoluteString
+        let usable = found.sources.filter { $0.kind.isAutomatic }
+        guard !usable.isEmpty, !countries.isEmpty else {
+            return .refused("refused: nothing watchable at \(host); \(brand.name) is unchanged")
+        }
+        let shops = try await StorefrontModel.query(on: db)
+            .filter(\.$brand.$id == brandID).with(\.$countries).all()
+
+        // A shop wholly taken over is replaced, so its catalogue is not "already read".
+        let replaced = Set(shops.filter { Set($0.countryCodes).isSubset(of: countries) }.compactMap(\.id))
+        let read = Set(
+            brand.sources
+                .filter { $0.$storefront.id.map { !replaced.contains($0) } ?? true }
+                .map(\.url)
+        )
+        if let same = usable.first(where: { read.contains($0.url.absoluteString) }) {
+            let owner = brand.sources.first { $0.url == same.url.absoluteString }?.$storefront.id
+            if let owner, let shop = shops.first(where: { $0.id == owner }) {
+                return .refused("refused: \(same.url.absoluteString) is the shop \(brand.name) already reads for "
+                    + "\(StorefrontAdmin.codes(shop.countryCodes)). One shop is read once: give it more countries with "
+                    + "POST /admin/brands/\(brandID)/storefronts/\(shop.homeCountry)/add?countries=…")
+            }
+            return .refused("refused: \(same.url.absoluteString) is a catalogue \(brand.name) already reads — "
+                + "the main shop. One shop is read once.")
+        }
+        let unshipped = found.shipsTo.isEmpty ? [] : countries.subtracting(found.shipsTo)
+        if !unshipped.isEmpty, !force {
+            return .refused("refused: \(host) says it ships to \(found.shipsTo.count) "
+                + "countr\(found.shipsTo.count == 1 ? "y" : "ies") and not \(StorefrontAdmin.codes(unshipped)) "
+                + "(\(found.shipsTo.prefix(8).joined(separator: ","))\(found.shipsTo.count > 8 ? ",…" : "")). "
+                + "Re-run with &force=true if that is wrong.")
+        }
+
+        let sorted = countries.sorted()
+        let storefront = StorefrontModel(
+            brandID: brandID,
+            homeCountry: sorted[0],
+            url: base.absoluteString,
+            currency: found.currency
+        )
+        let released = try await db.transaction { db -> Released in
+            // First, so neither unique constraint sees a country held twice mid-transaction.
+            let released = try await release(countries, brandID: brandID, on: db)
+            try await storefront.save(on: db)
+            try await add(countries, to: storefront, on: db)
+            let storefrontID = try storefront.requireID()
+            for source in usable {
+                try await SourceModel(
+                    brandID: brandID,
+                    kind: source.kind,
+                    url: source.url.absoluteString,
+                    storefrontID: storefrontID
+                ).save(on: db)
+            }
+            return released
+        }
+        return .attached(storefront: storefront, sources: usable, released: released)
+    }
+
     /// What `release` did, for the admin route to say.
     struct Released {
         /// Shops left serving nobody, removed with what was read from them: (url, products).
