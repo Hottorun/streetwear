@@ -1119,27 +1119,47 @@ STREETW_READING_EVAL=haiku ANTHROPIC_API_KEY=… swift test --filter ReadingEval
 ```
 
 The Haiku run needs nothing but the key — no database, no server, no sidecar — and is estimated
-at about forty cents. **Measured on 2026-10-30, FashionSigLIP v1:**
+at about forty cents.
 
-| | SigLIP zero-shot | Haiku |
-|---|---|---|
-| product shot right | **196/203 = 0.966** | not yet run (no key on the build machine) |
-| …where the lead is not one | 28/33 = 0.848 | |
-| lead photograph judged right | 199/203 = 0.980 | |
-| style words right (precision) | 177/273 = 0.648 | |
-| products with a right word | 129/199 = 0.648 | |
-| products given any word | 158/203 = 0.778 | |
-| photographs embedded beyond the leads | 136 | |
-| time / cost | 53 s on a Mac / nothing | |
+**A model with no bars is measured, not scored.** Run the `siglip` command against a sidecar
+serving a model that `ZeroShot.measuredBars` does not name and the harness embeds every
+photograph, sweeps the shot margin and then the style bar, and prints both tables (shot right,
+right where the lead is not one, lead judged right; precision, products with a right word,
+products given a word) without writing a results file. Choose from the tables, add the row, and
+run it again for the scored table below. `results-siglip.json` is the last scored run of the
+default model.
+
+**Measured on 2026-10-30**, FashionSigLIP v1 (bars 0.02 / 0.01) and FashionCLIP (bars 0.03 /
+0.035, chosen from the sweep that day — the shot margin that read most right, and the style bar
+nearest SigLIP's precision):
+
+| | SigLIP zero-shot | FashionCLIP zero-shot (default) | Haiku |
+|---|---|---|---|
+| product shot right | **196/203 = 0.966** | 186/203 = 0.916 | not yet run (no key on the build machine) |
+| …where the lead is not one | 28/33 = 0.848 | 22/33 = 0.667 | |
+| lead photograph judged right | 199/203 = 0.980 | 189/203 = 0.931 | |
+| style words right (precision) | 177/273 = 0.648 | 161/246 = 0.654 | |
+| products with a right word | 129/199 = 0.648 | 120/199 = 0.603 | |
+| products given any word | 158/203 = 0.778 | 147/203 = 0.724 | |
+| photographs embedded beyond the leads | 136 | 160 | |
+| time / cost | 53 s on a Mac / nothing | 38 s on a Mac / nothing | |
+
+**FashionCLIP reads photographs worse than SigLIP by five points on the shot** and twelve where
+the lead is a person — its sweep peaks at 0.916 at any margin — while reading text better (*The
+search eval*). The one sidecar serves both, so the model is chosen for search and the reading
+takes what it gets; the phone's Vision check (`ProductShot`) still stands behind it for saves.
+If the reading matters more than the search's two points, the owner's switch back is the two
+variables in `Embeddings/README.md`.
 
 For scale: always answering "streetwear" would be right on 35 % of products, so the words are
 about twice the base rate, and the misses are honest ones (a puffer read as grunge). **The prompts,
-the margin, the weights and the bar were tuned on these same labels**, which flatters SigLIP: the
-shot margin is a round number that clears 99.5 % of product shots, and the richer style prompts
-moved top-two precision from 0.61 to 0.64, so expect a few points less on a fresh set. Haiku gets
-no tuning beyond its prompt — label a second set before switching on a small margin. The shot
-misses (seven): a lifestyle lead of loafers on feet that scored just over the bar (0.021), a
-lookbook page read as a product, two galleries on models all the way down where a later on-model
+the margin, the weights and the bar were tuned on these same labels**, which flatters both
+zero-shot columns: SigLIP's shot margin is a round number that clears 99.5 % of product shots, the
+richer style prompts moved its top-two precision from 0.61 to 0.64, and FashionCLIP's bars were
+picked off the same sweep — so expect a few points less on a fresh set. Haiku gets no tuning
+beyond its prompt — label a second set before switching on a small margin. SigLIP's shot misses
+(seven): a lifestyle lead of loafers on feet that scored just over the bar (0.021), a lookbook
+page read as a product, two galleries on models all the way down where a later on-model
 photograph cleared the bar (STAUD's silk top, Stüssy's bib), a close-up of board shorts on a
 body, sunglasses seen side-on, and a Siouxsie Sioux tee whose printed face read as a person.
 

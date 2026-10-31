@@ -276,8 +276,8 @@ included, in 5½ minutes.
 **FashionCLIP** (the default since 2026-10-30) has not been measured in Docker. It is a ViT-B/16
 at 224 px like FashionSigLIP v1 with a smaller text tower (63M parameters against 110M), so
 expect the v1 numbers or slightly better; natively on this Mac it loaded in 2 s and read the
-203 reading-eval products' photographs at the pace FashionSigLIP did. Measure once deployed, as
-above.
+203 reading-eval products (363 photographs fetched and embedded) in 38 s where FashionSigLIP
+took 53 s for 339. Measure once deployed, as above.
 
 **Embedding 100k products once** at 3–10 images a second is 3–9 hours on 2 vCPU,
 which costs about $0.20–0.80 in CPU and memory at Railway's usage rates ($20 per
